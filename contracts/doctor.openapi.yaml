@@ -89,6 +89,90 @@ components:
         age:         { type: integer }
         gender:      { type: string, enum: [male, female, other] }
 
+    # ── dashboard tiles ──────────────────────────────────────────────────────────
+    DashboardRevenue:
+      type: object
+      description: >-
+        Consult money, projected from settlements. pendingKobo is escrowed money that
+        has not settled, derived with the same split arithmetic settlement.Settle pays
+        by; lifetimeKobo/thisMonthKobo sum settlements.provider_kobo for settled
+        telemedicine rows. Available money is deliberately NOT here — it is the user
+        wallet, which the ledger projects as walletBalanceKobo.
+      properties:
+        pendingKobo:       { $ref: '#/components/schemas/Money' }
+        lifetimeKobo:      { $ref: '#/components/schemas/Money' }
+        thisMonthKobo:     { $ref: '#/components/schemas/Money' }
+        consultsThisMonth: { type: integer, description: 'Completed consults whose scheduled_at falls in the doctor''s current local month. Comes from the same read as todaysCount, not from the money query.' }
+    DashboardMetrics:
+      type: object
+      description: >-
+        The landing tiles. Every count is scoped to this doctor and every date is
+        evaluated in the doctor's own timezone (doctor_profiles.timezone, the column
+        the app's timezone screen writes, defaulting to Africa/Lagos). Counts and the queue both come from
+        public.appointments joined through doctors.user_id — the plane bookings
+        actually land in.
+      properties:
+        todaysCount:
+          type: integer
+          description: Non-cancelled consults on the doctor's local day. Uncapped, so it can exceed the 20 listed rows.
+        upcomingCount:
+          type: integer
+          description: Rows with status booked or confirmed scheduled after now.
+        satisfactionPct:
+          type: number
+          nullable: true
+          description: ROUND(AVG(rating)/5*100) over visible doctor_reviews. null means no reviews yet — distinct from 0.
+        ratingCount:
+          type: integer
+          description: How many reviews satisfactionPct is built from; 0 exactly when satisfactionPct is null.
+        revenue:  { $ref: '#/components/schemas/DashboardRevenue' }
+        timezone: { type: string, description: IANA zone the counts and slot strings are computed in. }
+        today:    { type: string, description: 'The doctor''s local day, YYYY-MM-DD — the date the queue was listed for.' }
+    DashboardQueueAppointment:
+      type: object
+      description: >-
+        One row of today's queue. slotDate is a calendar day and slotTime is
+        doctor-local wall clock, so the row renders without a client-side timezone.
+        initials/avatarColor are presentation and derived by the client, not here.
+      properties:
+        id:          { type: string }
+        ref:         { type: string }
+        patient:
+          type: object
+          description: The four stored fields this read selects. Avatar colour and initials are not here — the client derives them.
+          properties:
+            id:     { type: string }
+            name:   { type: string }
+            age:    { type: integer }
+            gender: { type: string, enum: [male, female, other], description: 'Normalised in SQL: anything that is not male or female, case-insensitively, arrives as other.' }
+        consultType: { type: string, description: 'The stored consultation_type verbatim: video, audio, chat or in_person.' }
+        status:      { type: string, enum: [upcoming, confirmed, completed], description: '''booked'' is renamed ''upcoming'' and cancelled rows are never listed. No in_progress: appointments_status_check has no such status.' }
+        slotDate:    { type: string, description: 'YYYY-MM-DD in the doctor''s timezone.' }
+        slotTime:    { type: string, description: 'HH:MM AM/PM in the doctor''s timezone.' }
+        feeKobo:     { $ref: '#/components/schemas/Money' }
+        reason:      { type: string }
+        isHmo:       { type: boolean, description: 'Always false: public.appointments records no HMO coverage.' }
+        createdAt:   { type: string, format: date-time }
+    DashboardResponse:
+      type: object
+      description: GET /doctor/dashboard — the flat batch-1 projection plus the tile metrics and today's queue.
+      properties:
+        appointmentCounts:
+          type: object
+          additionalProperties: { type: integer }
+          description: >-
+            Booking-plane status counts (appointmentStatusCounts over
+            public.appointments, with 'booked' reported as 'pending' because that is
+            the key the client's pendingRequests tile already reads). This field used
+            to count doctor_appointments, which no booking path ever writes.
+        unreadNotifications: { type: integer }
+        walletBalanceKobo:   { $ref: '#/components/schemas/Money' }
+        currency:            { type: string }
+        metrics:             { $ref: '#/components/schemas/DashboardMetrics' }
+        todaysAppointments:
+          type: array
+          items: { $ref: '#/components/schemas/DashboardQueueAppointment' }
+
     # ── MVP: profile & verification ──────────────────────────────────────────────
     DoctorProfile:
       type: object
@@ -1246,7 +1330,7 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
   /doctor/dashboard:
-    get: { tags: [doctor-batch1], summary: Doctor dashboard data, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+    get: { tags: [doctor-batch1], summary: Doctor dashboard data, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DashboardResponse' } } } } } }
   /doctor/announcements/latest:
     get: { tags: [doctor-batch1], summary: Latest platform announcement, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
   /doctor/announcements/{announcementId}/dismiss:
