@@ -96,12 +96,18 @@ jobs:
           if [ "$TARGET" = production ]; then enabled="$PROD_ENABLED"; else enabled="$STAGING_ENABLED"; fi
           if [ "$SKIP_APPLY" = true ]; then
             echo "apply=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::$TARGET apply skipped — $SKIP_REASON"
+            # ::warning::, not ::notice::. This is a GREEN no-op by design (a
+            # job-level `if:` skip would cancel the deploy after it), and release.yml
+            # takes this path on EVERY rollback — skip_apply is `not main tip`. A
+            # job titled "migrate production database" that wrote nothing has to be
+            # visible in the run's Annotations without opening the job, or the next
+            # reader assumes production's schema moved.
+            echo "::warning::$TARGET apply skipped — $SKIP_REASON"
             exit 0
           fi
           if [ "$enabled" != true ]; then
             echo "apply=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::$TARGET apply skipped — its enablement variable is not 'true'. Nothing was written."
+            echo "::warning::$TARGET apply skipped — its enablement variable is not 'true'. Nothing was written."
             exit 0
           fi
           echo "apply=true" >> "$GITHUB_OUTPUT"
