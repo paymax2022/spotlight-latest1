@@ -31,7 +31,6 @@ const CATEGORY_ICON: Record<RecordCategory, LucideIcon> = {
   referrals:     Icons.Share2,
   hmo:           Icons.ShieldCheck,
   dependents:    Icons.Users,
-  pets:          Icons.PawPrint,
 };
 
 export default function DoctorRecordsScreen() {
