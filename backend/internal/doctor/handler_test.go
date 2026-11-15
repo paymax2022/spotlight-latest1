@@ -68,6 +68,7 @@ func TestReads_NoAuth(t *testing.T) {
 	}{
 		{"GetEarnings", http.MethodGet, "/earnings", func(r *gin.Engine) { r.GET("/earnings", h.GetEarnings) }},
 		{"ListAppointments", http.MethodGet, "/appointments", func(r *gin.Engine) { r.GET("/appointments", h.ListAppointments) }},
+		{"GetDashboard", http.MethodGet, "/dashboard", func(r *gin.Engine) { r.GET("/dashboard", h.GetDashboard) }},
 		{"GetProfile", http.MethodGet, "/profile", func(r *gin.Engine) { r.GET("/profile", h.GetProfile) }},
 		{"GetSettings", http.MethodGet, "/settings", func(r *gin.Engine) { r.GET("/settings", h.GetSettings) }},
 	}
