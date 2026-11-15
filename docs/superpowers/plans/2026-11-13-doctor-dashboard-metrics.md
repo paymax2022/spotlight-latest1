@@ -2112,7 +2112,7 @@ const QUEUE_ROW = {
 };
 
 const FULL: DashboardWire = {
-  appointmentCounts: { pending: 3, completed: 9 },
+  appointmentCounts: { pending: 7, completed: 9 },   // 7, not 3: see the pendingRequests assert
   unreadNotifications: 2,
   walletBalanceKobo: 500000,
   currency: 'NGN',
@@ -2139,10 +2139,14 @@ test('every tile reads the wire, not a literal', () => {
   assert.equal(d.earnings.thisMonthKobo, 510000);
   assert.equal(d.earnings.consultsThisMonth, 12);
   assert.equal(d.todaysAppointments.length, 1);
+  assert.equal(d.todaysAppointments[0].id, 'a1');
+  assert.equal(d.todaysAppointments[0].patient.initials, 'TA');
   // The wallet is not consult revenue — the old code used one for both.
   assert.notEqual(d.earnings.lifetimeKobo, d.earnings.availableKobo);
-  // Untouched reads still feed their own tiles.
-  assert.equal(d.counts.pendingRequests, 3);
+  // Untouched reads still feed their own tiles. `pending` is 7 while
+  // todaysCount is 3 so this also pins WHICH field feeds which tile: with both
+  // at 3 the mapper could read either for either and stay green (T1).
+  assert.equal(d.counts.pendingRequests, 7);
   assert.equal(d.counts.unreadMessages, 2);
 });
 
@@ -2168,6 +2172,28 @@ test('a thin wire yields zeros and empty arrays, never undefined', () => {
   assert.deepEqual(d.alerts, []);
   assert.deepEqual(d.messages, []);
   assert.deepEqual(d.waitingRoom, []);
+  // The five `?? 0` fallbacks the block above did not reach: each of these is a
+  // mutant that stays green without it (`?? 0` -> `?? 1` on pendingRequests,
+  // unreadMessages, lifetimeKobo, thisMonthKobo, consultsThisMonth).
+  assert.equal(d.counts.pendingRequests, 0);
+  assert.equal(d.counts.unreadMessages, 0);
+  assert.equal(d.earnings.lifetimeKobo, 0);
+  assert.equal(d.earnings.thisMonthKobo, 0);
+  assert.equal(d.earnings.consultsThisMonth, 0);
+});
+
+test('the tile path keeps the passthrough, not just the exported helper', () => {
+  // mapDashboardWire has to route the queue through mapQueueAppointment. Mapping
+  // it with mapAppointmentWire directly compiles, leaves every other assertion in
+  // this file green, and puts the 'anything unrecognised is video' collapse back
+  // on the one screen that actually renders the queue (spec D8). The seam has to
+  // be pinned from the tile, because the tile is the production path.
+  const d = mapDashboardWire({
+    ...FULL,
+    todaysAppointments: [{ ...QUEUE_ROW, consultType: 'in_person' }],
+  });
+  assert.equal(d.todaysAppointments[0].consultType, 'in_person');
+  assert.equal(mapAppointmentWire({ ...QUEUE_ROW, consultType: 'in_person' }).consultType, 'video');
 });
 
 test('a queue row becomes the DoctorAppointment the row component expects', () => {
@@ -2413,8 +2439,8 @@ node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --te
 echo "exit: $?"; grep -E "^# (tests|pass|fail|skipped|cancelled)" /tmp/t5-step6.txt
 ```
 
-Expected: `exit: 0`, then `# tests 9`, `# suites 0`, `# pass 9`, `# fail 0`, `# cancelled 0`,
-`# skipped 0` — the exact lines this task printed. `grep` the summary rather than `tail` it: the
+Expected: `exit: 0`, then `# tests 10`, `# suites 0`, `# pass 10`, `# fail 0`, `# cancelled 0`,
+`# skipped 0` — the fix wave adds the tenth test. `grep` the summary rather than `tail` it: the
 tail works for this one (the summary really is last) but it silently varies with how much output
 each test emits, and a red run's assertion text is what you need to see.
 
@@ -2428,11 +2454,12 @@ npm run test:doctor-mapping > /tmp/t5-step7.txt 2>&1
 echo "exit: $?"; grep -E "^# (tests|suites|pass|fail|cancelled|skipped)|dashboardWire|batch6Wire" /tmp/t5-step7.txt
 ```
 
-Expected: `exit: 0`, `# tests 47`, `# pass 47`, `# fail 0`, `# skipped 0`, and both file names
+Expected: `exit: 0`, `# tests 48`, `# pass 48`, `# fail 0`, `# skipped 0`, and both file names
 named. The count is the falsifiable part: this runner measured **`# tests 38` / `# pass 38` /
 `# fail 0`** on this worktree before the task existed (measured at `ec3fcd715`), which is what
 "the glob already covers my new file" has to mean — 38 after Step 2 says the spec was written and
-never picked up, and anything but 47 says the file name or the glob is wrong. If `# skipped` is
+never picked up, and anything but 48 (38 + this file's ten tests) says the file name or the glob
+is wrong. If `# skipped` is
 nonzero, say so: a skipped suite is not a passing one. Capture to a file instead of piping to
 `grep` — the pipe reports grep's status, and this command's original form had no `^# tests`
 alternative, so the number the step leans on never appeared in its own output.
@@ -2516,14 +2543,16 @@ original bytes back (capture `sha256` of the file before you start and check it 
 never `git checkout --` — this worktree is shared and that command would discard another
 session's uncommitted work. After the four mutations the file must hash back to the value
 it had when the commit landed, and `npm run test:doctor-mapping` must be back to
-`# pass 47` / `# fail 0`.
+`# pass 48` / `# fail 0`.
 
-| # | Mutation (in `dashboardWire.ts`) | The test that must go red |
+| # | Mutation (in `dashboardWire.ts`, unless the row says the spec) | The test that must go red |
 |---|---|---|
 | 1 | `mapQueueAppointment`: return `row` instead of `{ ...row, consultType: … }` | *in_person passes through rather than becoming a video consult* |
 | 2 | `mapDashboardWire`: `satisfactionPct: m.satisfactionPct ?? null` → `?? 0` | *no reviews is null, which the tile renders as an em dash* — and, as seen in `task-5-mutation.md`, *a thin wire yields zeros and empty arrays, never undefined* too: that spec's `assert.equal(d.satisfactionPct, null)` rests on the same fallback, so the table under-claimed and coverage is one test wider than written |
 | 3 | `mapDashboardWire`: `todaysAppointments: m.todaysCount ?? 0` → `todaysAppointments: 0` | *every tile reads the wire, not a literal* |
 | 4 | `formatSlotDateLabel`: drop the `.slice(0, 10)` | *the slot date label survives a full timestamp* (`'Invalid Date'` vs `'Nov 13'`) |
+| 5 | `todaysAppointments: (wire.todaysAppointments ?? []).map(mapQueueAppointment)` → `.map((w) => mapAppointmentWire({ ...w, id: w.id ?? '' }))` (drop the `consultType` override; keep the import) | *the tile path keeps the passthrough, not just the exported helper* — this is the mutant that shipped green before the fix wave |
+| 6 | `pendingRequests: statusCounts.pending ?? 0` → `m.todaysCount ?? 0` | *every tile reads the wire, not a literal* (7 vs 3); before `pending` moved off 3 this mutant survived all nine tests |
 
 Mutation 1 is the one that matters most, and it has now been answered rather than assumed: with
 the override removed, *in_person passes through rather than becoming a video consult* goes red
