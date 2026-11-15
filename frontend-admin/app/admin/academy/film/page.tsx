@@ -25,8 +25,9 @@ import {
   Kpi, Bar, btn, btnPrimary, btnDanger, th, td, input, label, select, card, fmtDate,
 } from '../_ui';
 import * as svc from '@/services/filmAcademyAdminService';
+import { TopicsTab } from './TopicsTab';
 
-type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'settings';
+type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'topics' | 'settings';
 
 const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'batches',     label: 'Batches',      hint: 'Cohorts the app offers on /film-academy' },
@@ -35,6 +36,7 @@ const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'curriculum',  label: 'Curriculum',   hint: 'Modules, lessons and the week 1-4 assignment timeline' },
   { key: 'progress',    label: 'Progress',     hint: 'Who has sent which part, and who is behind' },
   { key: 'submissions', label: 'Submissions',  hint: 'Grades appear on /film-academy/assignments' },
+  { key: 'topics',      label: 'Topic Mastery',hint: 'TMFA gates, curriculum import, media, holds, practicals, mastery, pilot' },
   { key: 'settings',    label: 'Settings',     hint: 'Fees and areas used by the apply form' },
 ];
 
@@ -106,6 +108,7 @@ export default function FilmAcademyAdminPage() {
       {tab === 'curriculum'   ? <CurriculumTab onNotice={setNotice} /> : null}
       {tab === 'progress'     ? <ProgressTab onNotice={setNotice} /> : null}
       {tab === 'submissions'  ? <SubmissionsTab onNotice={setNotice} /> : null}
+      {tab === 'topics'       ? <TopicsTab onNotice={setNotice} /> : null}
       {tab === 'settings'     ? <SettingsTab onNotice={setNotice} /> : null}
     </Page>
   );
