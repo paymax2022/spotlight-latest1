@@ -26,6 +26,12 @@ fi
 if bash "$LIST" --remote "$TMP/empty.txt" --migrations "$MIG" >/dev/null 2>&1; then
   echo "FAIL: empty remote list must be refused"; exit 1
 fi
+# A hand-written --remote can pad a row with spaces: :28 accepts that shape and
+# :29 strips spaces for the max, so membership must normalise as well or an
+# applied migration is reported pending above-max.
+printf '20270000000001\n  20270000000003  \n' > "$TMP/padded.txt"
+padout="$(bash "$LIST" --remote "$TMP/padded.txt" --migrations "$MIG" || true)"
+echo "$padout" | grep -q '^pending 20270000000003' && { echo "FAIL: padded applied version listed as pending"; exit 1; }
 # --remote-table reads the CLI's own table. The 20270000000002 row is LOCAL-ONLY
 # (Remote padded with a space between backticks), so it must still come back as
 # pending; sweeping every 14-digit run instead calls it applied and hides it.

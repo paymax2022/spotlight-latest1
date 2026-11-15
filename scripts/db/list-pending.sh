@@ -48,7 +48,7 @@ for f in "${files[@]}"; do
   # The -lt comparison below and the apply order both assume a 14-digit prefix;
   # a mis-named file would otherwise error mid-sweep or mis-sort silently.
   [[ "$v" =~ ^2[0-9]{13}$ ]] || { echo "refusing: '$(basename "$f")' has no 14-digit version prefix" >&2; exit 2; }
-  grep -qx "$v" "$REMOTE" && continue
+  grep -qx "$v" <(tr -d ' ' < "$REMOTE") && continue
   # Same vocabulary as .github/workflows/_reusable-migration-guard.yml:102-104 —
   # one source of truth for "destructive", plus SET NOT NULL (a narrowing CI's
   # regex cannot judge without seeing the data) and TRUNCATE. Comments are

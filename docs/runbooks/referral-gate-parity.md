@@ -141,8 +141,10 @@ gate shipped without the workflow update described below.
    routes even though the file declares them `=true` (ledger §16.2 items 6 and 13).
    Until that deploy is proven on the host, a hand-edit is the only route that changes
    what a visitor sees. Both guards then keep it honest: `make flag-parity`
-   structurally (the file vs. every `envFlag` name in the code), and the lane's
-   own validator at deploy time. Hand-editing the Node app's environment (cPanel
+   structurally (the file vs. every `envFlag` name in the code — 45
+   accessor-declared names; direct `process.env` reads are outside this gate,
+   one money-path name today, recorded in ledger §10.3), and the lane's own
+   validator at deploy time. Hand-editing the Node app's environment (cPanel
    "Node.js App" env vars, or the app's server-side `.env`) still works, but it is
    the one shape **neither guard can see** — ledger §9.7 names "a host edited by
    hand outside the lane" as exactly that hole — so if you must do it, record it
