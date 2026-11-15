@@ -2727,7 +2727,7 @@ MSG
 ### Task 8: Docs, full gate run, publish
 
 **Files:**
-- Modify: `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md:76,77,88` (D1/D2/D13 rows) and the note above the table
+- Modify: `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md`, the D1 / D2 / D13 rows of the Section D table and the note above it (measured at `1d27c7a40`: `:75`, `:76`, `:87` — this step's original cite of `76,77,88` was one line off, i.e. D2/D3/D14, which would have rewritten the wrong rows and left the three false PASSes in place; re-locate them by `grep -n "^| D1 \|^| D2 \|^| D13 " docs/QA_DOCTOR_BATCH1_REPORT.md`, not by number)
 - Modify: `mobile-app/reactnative/docs/DOCTOR_BATCH1_API_CONTRACT.md` (Section D — record that live mode maps through `dashboardWire.ts`)
 
 **Interfaces:** none new.
