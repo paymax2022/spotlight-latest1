@@ -1792,10 +1792,9 @@ Two of the four schemas below are deliberately narrower or wider than they look,
       additionalProperties: false
       description: >-
         The landing tiles. Every count is scoped to this doctor and every date is
-        evaluated in the doctor's own timezone (doctor_profiles.timezone — the column
-        `PUT /schedule/timezone` writes, which the app's own timezone screen never
-        actually calls in live mode, so today it is almost always the default
-        Africa/Lagos; spec F5 tracks the screen). Counts and the queue both come from
+        evaluated in the doctor's own timezone (doctor_profiles.timezone, the column
+        `PUT /schedule/timezone` writes, or Africa/Lagos when the stored value is not
+        a zone Postgres accepts). Counts and the queue both come from
         public.appointments joined through doctors.user_id — the plane bookings
         actually land in.
       properties:
