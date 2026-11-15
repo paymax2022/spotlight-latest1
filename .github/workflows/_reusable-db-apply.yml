@@ -1,0 +1,168 @@
+name: _reusable-db-apply
+
+# ONE apply path per database, called by release.yml (per environment, before the
+# code that needs it) and by db-migrate.yml (operator dispatch only). Extracted
+# because db-migrate.yml's staging apply fires only on a push to the `staging`
+# branch — once releases come from `main` alone and the promotion branches stop
+# receiving work, the staging schema would silently drift behind the code being
+# deployed to it.
+#
+# WHY THE JOB DECLARES `environment:` AND THE CALLER DOES NOT. A job calling a
+# reusable workflow with `uses:` may only carry name/uses/with/secrets/needs/if/
+# permissions — actionlint v1.7.12 rejects `environment:` on it, and so does
+# GitHub. Production's SUPABASE_DB_PASSWORD is an ENVIRONMENT secret (the only one
+# that exists; staging and development hold none), so the caller cannot read it to
+# pass it down. Declaring the environment here also preserves today's precedence
+# exactly: GitHub resolves an environment secret over a repository secret of the
+# same name, so this move cannot change which password production applies with.
+#
+# The additive-only guard is NOT called from here, on purpose. release.yml's
+# `gates` already waits on `migrations (additive-only guard) / guard` as a
+# required check, and db-migrate.yml keeps its own sibling `guard` job. Nesting
+# _reusable-migration-guard.yml inside this workflow would run the guard twice per
+# release and add a nesting level for no new information.
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: 'Which database to apply to: staging | production'
+        required: true
+        type: string
+      dry_run:
+        description: 'List pending migrations only — do not apply'
+        required: false
+        type: boolean
+        default: false
+      include_all:
+        description: 'Pass --include-all so migrations older than the last applied one are applied too'
+        required: false
+        type: boolean
+        default: false
+      skip_apply:
+        description: 'Do not apply; report why and succeed (a stale ref, or a rollback to a pre-tip SHA)'
+        required: false
+        type: boolean
+        default: false
+      skip_reason:
+        description: 'Shown in the notice when skip_apply is true'
+        required: false
+        type: string
+        default: 'not requested'
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    name: supabase db push (${{ inputs.target }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ inputs.target == 'production' && secrets.SUPABASE_PROJECT_ID || secrets.SUPABASE_STAGING_PROJECT_ID }}
+      SUPABASE_DB_PASSWORD: ${{ inputs.target == 'production' && secrets.SUPABASE_DB_PASSWORD || secrets.SUPABASE_STAGING_DB_PASSWORD }}
+      TARGET: ${{ inputs.target }}
+      PROD_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      STAGING_PROJECT_ID: ${{ secrets.SUPABASE_STAGING_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Runs FIRST and unconditionally. The secret ternaries above can only ever
+      # pick between two known branches once this has passed, so a typo'd or
+      # interpolated-empty target is caught before any credential is resolved.
+      - name: Refuse an unknown target
+        run: |
+          case "$TARGET" in
+            staging|production) echo "target: $TARGET" ;;
+            *) echo "::error::target must be staging or production, got '$TARGET'"; exit 1 ;;
+          esac
+
+      # DECIDES, rather than gating the job on `if:`. A SKIPPED `needs:`
+      # dependency makes GitHub skip every job downstream of it, so an
+      # `if:`-skipped migrate job would cancel the deploy that follows it — a
+      # rollback would deploy nothing at all. The job always runs; this step
+      # chooses whether the later steps do anything.
+      - name: Decide whether to apply
+        id: gate
+        env:
+          SKIP_APPLY: ${{ inputs.skip_apply }}
+          SKIP_REASON: ${{ inputs.skip_reason }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PROD_ENABLED: ${{ vars.DB_MIGRATE_ENABLED }}
+          STAGING_ENABLED: ${{ vars.DB_MIGRATE_STAGING_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [ "$TARGET" = production ]; then enabled="$PROD_ENABLED"; else enabled="$STAGING_ENABLED"; fi
+          if [ "$SKIP_APPLY" = true ]; then
+            echo "apply=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$TARGET apply skipped — $SKIP_REASON"
+            exit 0
+          fi
+          if [ "$enabled" != true ]; then
+            echo "apply=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$TARGET apply skipped — its enablement variable is not 'true'. Nothing was written."
+            exit 0
+          fi
+          echo "apply=true" >> "$GITHUB_OUTPUT"
+          echo "$TARGET apply is enabled; dry_run=$DRY_RUN."
+
+      # Fails BEFORE any db push. This is the safe failure mode of a missing
+      # `secrets: inherit` on a caller: the credentials resolve empty and the
+      # chain stops here rather than pushing with no password.
+      - name: Check required secrets are present
+        if: steps.gate.outputs.apply == 'true'
+        run: |
+          : "${SUPABASE_ACCESS_TOKEN:?missing SUPABASE_ACCESS_TOKEN}"
+          : "${SUPABASE_PROJECT_ID:?missing the $TARGET project ref}"
+          : "${SUPABASE_DB_PASSWORD:?missing the $TARGET database password}"
+
+      # The ternaries above fall through on an EMPTY string, so a missing
+      # production ref would silently resolve to the STAGING ref. Both directions
+      # are checked; the production-direction check is carried over from
+      # db-migrate.yml:258 unchanged, and the staging direction is new because
+      # this workflow is the first thing that can point staging at production.
+      - name: Refuse to run production against the staging project
+        if: steps.gate.outputs.apply == 'true' && inputs.target == 'production'
+        run: |
+          if [ -n "$STAGING_PROJECT_ID" ] && [ "$SUPABASE_PROJECT_ID" = "$STAGING_PROJECT_ID" ]; then
+            echo "::error::the production project ref resolved to the STAGING ref — refusing to push."
+            exit 1
+          fi
+          echo "Production project ref is distinct from staging."
+
+      - name: Refuse to run staging against the production project
+        if: steps.gate.outputs.apply == 'true' && inputs.target == 'staging'
+        run: |
+          if [ -n "$PROD_PROJECT_ID" ] && [ "$SUPABASE_PROJECT_ID" = "$PROD_PROJECT_ID" ]; then
+            echo "::error::the staging project ref equals the production project ref — refusing to push."
+            exit 1
+          fi
+          echo "Staging project ref is distinct from production."
+
+      # PINNED, and deliberately the SAME pin as db-migrate.yml (:152, :249),
+      # ops-db-push.yml and maps-ci.yml: if two of those could disagree about how
+      # a migration applies, a chain that went green on staging would prove
+      # nothing about production. Bump all four together.
+      - uses: supabase/setup-cli@v3
+        if: steps.gate.outputs.apply == 'true'
+        with:
+          version: 2.114.0
+
+      - name: Link project
+        if: steps.gate.outputs.apply == 'true'
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+
+      # Informational, and `|| true` on purpose: a fresh project with no applied
+      # migrations makes this exit non-zero, and that is not a reason to stop.
+      - name: Show pending migrations (informational)
+        if: steps.gate.outputs.apply == 'true'
+        run: supabase migration list --linked || true
+
+      - name: Apply migrations (db push)
+        if: steps.gate.outputs.apply == 'true' && inputs.dry_run == false
+        run: supabase db push --linked ${{ inputs.include_all && '--include-all' || '' }}
+
+      - name: Nothing applied
+        if: steps.gate.outputs.apply == 'true' && inputs.dry_run == true
+        run: echo "Dry-run only — listed pending migrations, nothing applied."
