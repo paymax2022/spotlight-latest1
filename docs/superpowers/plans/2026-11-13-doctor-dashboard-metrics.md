@@ -2649,6 +2649,24 @@ step used to walk into: `npx --max-old-space-size=4096 tsc` does not set the hea
 swallows the flag before tsc sees it, so the run either dies with exit 134 or succeeds for the wrong
 reason), and `… 2>&1 | tail -10; echo "tsc exit: $?"` reports **`tail`'s** status, not tsc's — this
 harness runs zsh, which has no `PIPESTATUS` to rescue it. Capture to a file and read `$?` directly.
+
+Then prove the old code is really gone — by matching the **code shapes**, not the bare word
+`ConsultType`. The comment Step 1 mandates verbatim contains that token, so
+`grep -n "ConsultType\|toLocaleDateString\|new Date("` exits **0** and prints line 19. That
+falsified this task's original verification step (finding F-1): its expectation of "no output, exit
+1" could not hold while the comment stayed, and a verifier reading the number rather than assuming
+it would have reported a pass-condition failure for code that was correct. The pass is exit 1 on:
+
+```bash
+cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
+grep -n "Record<ConsultType\|DoctorAppointment, ConsultType\|toLocaleDateString\|new Date(" src/features/doctor/components/AppointmentRow.tsx; echo "grep exit: $?"
+```
+
+Measured both ways on Task 6's close: the bare-word form exits 0 printing only line 19 (the
+comment); the form above exits 1 with no output. Also expect the positive grep —
+`grep -n "TYPE_ICON\|FALLBACK_ICON\|formatSlotDateLabel\|CalendarDays"` — to print the two imports,
+the `TYPE_ICON` declaration plus its comment, `FALLBACK_ICON`, and the two derived locals.
+
 The date-parsing branch is covered by `formatSlotDateLabel`'s spec; the icon fallback is a map
 lookup whose visible behaviour is confirmed in the browser pass (Task 8) — say so rather than
 claiming it is tested.
