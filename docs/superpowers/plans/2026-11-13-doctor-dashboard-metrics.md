@@ -2023,7 +2023,12 @@ MSG
 
 ### Task 5: The client mapping — one pure module, all five tiles
 
-Today `getDashboard`'s live branch returns literal `0`s for the tiles and `earnings.lifetimeKobo = walletBalanceKobo` ([mobile-app/reactnative/src/api/doctor.batch1.api.ts:342-379](../../mobile-app/reactnative/src/api/doctor.batch1.api.ts#L342), post-#1008 line numbers). This moves the wire→domain translation into a pure module the same way `batch6Wire.ts` does, so it is testable without a device.
+Today `getDashboard`'s live branch returns literal `0`s for the tiles and `earnings.lifetimeKobo = walletBalanceKobo` ([mobile-app/reactnative/src/api/doctor.batch1.api.ts:343-379](../../mobile-app/reactnative/src/api/doctor.batch1.api.ts#L343), post-#1008 line numbers, confirmed against `git show 63b1ebb77:…`). This moves the wire→domain translation into a pure module the same way `batch6Wire.ts` does, so it is testable without a device.
+
+**Shipped as `80d6e9661`** (4 files, 307+/46−). Both new files are byte-identical to the
+blocks below — verified by diffing the committed blobs against this section's fences, not by
+eyeballing — and the gates read `# tests 47` / `# pass 47` / `# fail 0` / `# skipped 0` and
+`tsc exit: 0` with an empty output file.
 
 The queue rows are **not re-derived here**. #1008 landed `mapAppointmentWire` ([mobile-app/reactnative/src/features/doctor/mapping.ts:158](../../mobile-app/reactnative/src/features/doctor/mapping.ts#L158)), which already turns that same `patient` jsonb into this same `DoctorAppointment` — avatar rule, `booked` → `upcoming`, gender normalise, id-derived `ref` — with three spec files pinning all of it. Re-implementing any of that on the dashboard would give one patient different initials and a different circle colour depending on which screen they were opened from, and would have quietly kept a bug this task's first draft carried: its own gender lookup never lowercased, so `'Female'` mapped to `'other'`. So `mapQueueAppointment` delegates and overrides exactly one field, for the reason written into Step 4.
 
@@ -2236,10 +2241,20 @@ test('the slot date label survives a full timestamp', () => {
 
 ```bash
 cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
-node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "src/features/doctor/__tests__/dashboardWire.test.ts" 2>&1 | tail -15
+node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \
+  "src/features/doctor/__tests__/dashboardWire.test.ts" > /tmp/t5-step3.txt 2>&1
+echo "exit: $?"; grep -n "Cannot find module\|ERR_MODULE_NOT_FOUND\|# pass\|# fail" /tmp/t5-step3.txt
 ```
 
-Expected: a load error, `Cannot find module '.../src/features/doctor/dashboardWire.ts'`.
+Expected: `exit: 1` and a `Cannot find module` line naming the mapper. Capture to a file — the
+`| tail -15` form of this command showed only `# pass 0` / `# fail 1` and the trailer, because
+Node prints the loader error near the **top** of the output and the summary at the bottom, so
+the very line this step exists to observe was cut (seen in this task's own run at
+`task-5-report.md`, Step 3). The observed line, before `dashboardWire.ts` existed:
+
+```text
+# Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/private/tmp/spot-doctor-metrics/mobile-app/reactnative/src/features/doctor/dashboardWire.ts' imported from /private/tmp/spot-doctor-metrics/mobile-app/reactnative/src/features/doctor/__tests__/dashboardWire.test.ts
+```
 
 - [ ] **Step 4: Write the mapper**
 
@@ -2393,10 +2408,15 @@ In `mobile-app/reactnative/src/types/doctor.batch1.ts`, replace line 256:
 
 ```bash
 cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
-node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "src/features/doctor/__tests__/dashboardWire.test.ts" 2>&1 | tail -20
+node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \
+  "src/features/doctor/__tests__/dashboardWire.test.ts" > /tmp/t5-step6.txt 2>&1
+echo "exit: $?"; grep -E "^# (tests|pass|fail|skipped|cancelled)" /tmp/t5-step6.txt
 ```
 
-Expected: `# tests 9`, `# pass 9`, `# fail 0`, `# skipped 0`.
+Expected: `exit: 0`, then `# tests 9`, `# suites 0`, `# pass 9`, `# fail 0`, `# cancelled 0`,
+`# skipped 0` — the exact lines this task printed. `grep` the summary rather than `tail` it: the
+tail works for this one (the summary really is last) but it silently varies with how much output
+each test emits, and a red run's assertion text is what you need to see.
 
 - [ ] **Step 7: Prove the existing runner already covers the new file**
 
@@ -2404,20 +2424,22 @@ Expected: `# tests 9`, `# pass 9`, `# fail 0`, `# skipped 0`.
 
 ```bash
 cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
-npm run test:doctor-mapping 2>&1 | grep -E "dashboardWire|batch6Wire|^# (pass|fail|skipped)"
+npm run test:doctor-mapping > /tmp/t5-step7.txt 2>&1
+echo "exit: $?"; grep -E "^# (tests|suites|pass|fail|cancelled|skipped)|dashboardWire|batch6Wire" /tmp/t5-step7.txt
 ```
 
-Expected: both `dashboardWire.test.ts` and `batch6Wire.test.ts` named, `# fail 0`,
-`# skipped 0`. The counts are the falsifiable part: this runner measured **`# tests 38` /
-`# pass 38` / `# fail 0`** on this worktree before the task existed (measured at `ec3fcd715`,
-which is what "the glob already covers my new file" has to mean), so the amended run must land
-on `# tests 47` / `# pass 47`. 38 means the new spec was written and never run; anything else
-means the glob or the file name is wrong. If `# skipped` is nonzero, say so — a skipped suite
-is not a passing one.
+Expected: `exit: 0`, `# tests 47`, `# pass 47`, `# fail 0`, `# skipped 0`, and both file names
+named. The count is the falsifiable part: this runner measured **`# tests 38` / `# pass 38` /
+`# fail 0`** on this worktree before the task existed (measured at `ec3fcd715`), which is what
+"the glob already covers my new file" has to mean — 38 after Step 2 says the spec was written and
+never picked up, and anything but 47 says the file name or the glob is wrong. If `# skipped` is
+nonzero, say so: a skipped suite is not a passing one. Capture to a file instead of piping to
+`grep` — the pipe reports grep's status, and this command's original form had no `^# tests`
+alternative, so the number the step leans on never appeared in its own output.
 
 - [ ] **Step 8: Delegate the api module's live branch**
 
-In `mobile-app/reactnative/src/api/doctor.batch1.api.ts`, delete the local `interface DashboardWire { … }` block and its comment (post-#1008 lines 331-340), and replace the whole `getDashboard` function (lines 342-379, signature included) with:
+In `mobile-app/reactnative/src/api/doctor.batch1.api.ts`, delete the local `interface DashboardWire { … }` block and its comment (post-#1008 lines 331-341 — comment 331-335, interface 336-341; the numbers are from `git show 63b1ebb77:…` and the implementer's first pass mis-read them as ending at 340), and replace the whole `getDashboard` function (lines 343-379, signature included) with:
 
 ```ts
 export async function getDashboard(): Promise<DoctorDashboardData> {
@@ -2499,13 +2521,15 @@ it had when the commit landed, and `npm run test:doctor-mapping` must be back to
 | # | Mutation (in `dashboardWire.ts`) | The test that must go red |
 |---|---|---|
 | 1 | `mapQueueAppointment`: return `row` instead of `{ ...row, consultType: … }` | *in_person passes through rather than becoming a video consult* |
-| 2 | `mapDashboardWire`: `satisfactionPct: m.satisfactionPct ?? null` → `?? 0` | *no reviews is null, which the tile renders as an em dash* |
+| 2 | `mapDashboardWire`: `satisfactionPct: m.satisfactionPct ?? null` → `?? 0` | *no reviews is null, which the tile renders as an em dash* — and, as seen in `task-5-mutation.md`, *a thin wire yields zeros and empty arrays, never undefined* too: that spec's `assert.equal(d.satisfactionPct, null)` rests on the same fallback, so the table under-claimed and coverage is one test wider than written |
 | 3 | `mapDashboardWire`: `todaysAppointments: m.todaysCount ?? 0` → `todaysAppointments: 0` | *every tile reads the wire, not a literal* |
-| 4 | `formatSlotDateLabel`: drop the `.slice(0, 10)` | *the slot date label survives a full timestamp* |
+| 4 | `formatSlotDateLabel`: drop the `.slice(0, 10)` | *the slot date label survives a full timestamp* (`'Invalid Date'` vs `'Nov 13'`) |
 
-Mutation 1 is the one that matters most: it is the delegation seam, and if the spec stays
-green without the override then the *queue row and the appointments list are the same row*
-test is carrying the assertion instead — say which, rather than reporting a clean sweep.
+Mutation 1 is the one that matters most, and it has now been answered rather than assumed: with
+the override removed, *in_person passes through rather than becoming a video consult* goes red
+(`'video'` vs `'in_person'`) while *the queue row and the appointments list are the same row*
+stays `ok` — so the delegation seam really is carried by its own test, and the equality test is
+not silently absorbing it. Re-run this if you change either test's shape.
 
 What this does **not** cover, recorded so the next reader does not over-claim it: the
 `getDashboard` delegation in `src/api/doctor.batch1.api.ts` has no node:test coverage (the
