@@ -2,6 +2,7 @@ import { getLeaderboard, listContests } from '@/src/server/openmic/persistence';
 import type { OpenMicContest, OpenMicSubmission } from '@/src/features/openmic/types';
 import { slugifyArtist } from '@/src/features/openmic/workflow';
 import { publicBeatUrl } from '@/src/features/openmic/beat-storage';
+import { standingsSwitches } from '@/src/features/openmic/standings-visibility';
 
 /**
  * An edition is current from the moment it is published until its result is
@@ -133,8 +134,7 @@ export function buildOpenMicEditionStepsData(
   // boundary and report the same window twice.
   const now = Date.now();
 
-  const showLeaderboard = contest.votingConfig?.leaderboardVisible !== false;
-  const showVoteCounts = contest.votingConfig?.voteCountPublic !== false;
+  const { showLeaderboard, showVoteCounts } = standingsSwitches(contest.votingConfig);
 
   return {
     id: contest.id,

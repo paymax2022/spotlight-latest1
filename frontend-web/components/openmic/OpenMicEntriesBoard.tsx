@@ -9,7 +9,8 @@ type Entry = {
   stageName: string;
   songTitle: string;
   songUrl: string;
-  voteCount: number;
+  /** `null` when the edition's counts are private — see standings-visibility. */
+  voteCount: number | null;
   status: string;
 };
 
@@ -20,6 +21,7 @@ type Props = {
   votePriceNgn: number;
   paidVoting: boolean;
   freeVoting: boolean;
+  showVoteCounts: boolean;
 };
 
 const RANK_COLORS = ['#f59e0b', '#94a3b8', '#cd7f32'];
@@ -68,7 +70,7 @@ function MiniPlayer({ url }: { url: string }) {
 
 /* ── Single entry card ───────────────────────────────────────────────────── */
 function EntryCard({
-  entry, rank, contestSlug, totalVotes, freeVoting, paidVoting,
+  entry, rank, contestSlug, totalVotes, freeVoting, paidVoting, showVoteCounts,
   onVoteClick,
 }: {
   entry: Entry & { localVotes: number };
@@ -77,9 +79,10 @@ function EntryCard({
   totalVotes: number;
   freeVoting: boolean;
   paidVoting: boolean;
+  showVoteCounts: boolean;
   onVoteClick: () => void;
 }) {
-  const liveCount = entry.voteCount + entry.localVotes;
+  const liveCount = (entry.voteCount ?? 0) + entry.localVotes;
   const pct = totalVotes > 0 ? Math.round((liveCount / totalVotes) * 100) : 0;
   const isTop3 = rank <= 3;
 
@@ -119,25 +122,29 @@ function EntryCard({
           </div>
         </div>
 
-        {/* Live vote count */}
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <p style={{ color: '#f59e0b', fontWeight: 900, fontSize: 20, marginBottom: 0, lineHeight: 1 }}>
-            {liveCount.toLocaleString()}
-          </p>
-          <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10, marginBottom: 0 }}>{pct}% of votes</p>
-        </div>
+        {/* Live vote count — withheld while an admin has marked counts private */}
+        {showVoteCounts && (
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <p style={{ color: '#f59e0b', fontWeight: 900, fontSize: 20, marginBottom: 0, lineHeight: 1 }}>
+              {liveCount.toLocaleString()}
+            </p>
+            <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10, marginBottom: 0 }}>{pct}% of votes</p>
+          </div>
+        )}
       </div>
 
       {/* Progress bar */}
-      <div style={{ marginTop: 12, height: 5, background: 'rgba(255,255,255,0.07)', borderRadius: 4, overflow: 'hidden' }}>
-        <div style={{
-          height: '100%', width: `${pct}%`,
-          background: isTop3
-            ? `linear-gradient(90deg,${RANK_COLORS[rank - 1]},${RANK_COLORS[rank - 1]}88)`
-            : 'linear-gradient(90deg,#6366f1,#818cf8)',
-          borderRadius: 4, transition: 'width 0.6s ease',
-        }} />
-      </div>
+      {showVoteCounts && (
+        <div style={{ marginTop: 12, height: 5, background: 'rgba(255,255,255,0.07)', borderRadius: 4, overflow: 'hidden' }}>
+          <div style={{
+            height: '100%', width: `${pct}%`,
+            background: isTop3
+              ? `linear-gradient(90deg,${RANK_COLORS[rank - 1]},${RANK_COLORS[rank - 1]}88)`
+              : 'linear-gradient(90deg,#6366f1,#818cf8)',
+            borderRadius: 4, transition: 'width 0.6s ease',
+          }} />
+        </div>
+      )}
 
       {/* Audio preview */}
       {entry.songUrl && <MiniPlayer url={entry.songUrl} />}
@@ -180,7 +187,7 @@ function EntryCard({
 
 /* ── Main board ──────────────────────────────────────────────────────────── */
 export default function OpenMicEntriesBoard({
-  contestId, contestSlug, entries, votePriceNgn, paidVoting, freeVoting,
+  contestId, contestSlug, entries, votePriceNgn, paidVoting, freeVoting, showVoteCounts,
 }: Props) {
   const [search, setSearch]     = useState('');
   const [sort, setSort]         = useState<'votes' | 'name'>('votes');
@@ -190,6 +197,8 @@ export default function OpenMicEntriesBoard({
 
   // SSE — subscribe to real-time vote count updates
   useEffect(() => {
+    // No counts on screen means nothing to stream; don't hold the connection open.
+    if (!showVoteCounts) return;
     const es = new EventSource(`/api/open-mic/votes/stream?contestId=${encodeURIComponent(contestId)}`);
 
     es.onopen = () => setLiveStatus('live');
@@ -198,12 +207,14 @@ export default function OpenMicEntriesBoard({
       try {
         const msg = JSON.parse(e.data) as {
           type: string;
-          entries: { id: string; voteCount: number }[];
+          entries: { id: string; voteCount?: number }[];
         };
         if (msg.type === 'snapshot' && Array.isArray(msg.entries)) {
           setLiveCounts((prev) => {
             const next = { ...prev };
-            for (const row of msg.entries) next[row.id] = row.voteCount;
+            for (const row of msg.entries) {
+              if (row.voteCount !== undefined) next[row.id] = row.voteCount;
+            }
             return next;
           });
           setLiveStatus('live');
@@ -214,7 +225,7 @@ export default function OpenMicEntriesBoard({
     es.onerror = () => setLiveStatus('error');
 
     return () => es.close();
-  }, [contestId]);
+  }, [contestId, showVoteCounts]);
 
   const enriched = useMemo(
     () => entries.map((e) => ({
@@ -226,14 +237,14 @@ export default function OpenMicEntriesBoard({
   );
 
   const totalVotes = useMemo(
-    () => enriched.reduce((s, e) => s + e.voteCount, 0),
+    () => enriched.reduce((s, e) => s + (e.voteCount ?? 0), 0),
     [enriched],
   );
 
   const sorted = useMemo(() => {
     const base = [...enriched].sort((a, b) =>
       sort === 'votes'
-        ? b.voteCount - a.voteCount
+        ? (b.voteCount ?? 0) - (a.voteCount ?? 0)
         : a.stageName.localeCompare(b.stageName),
     );
     const q = search.trim().toLowerCase();
@@ -261,7 +272,7 @@ export default function OpenMicEntriesBoard({
       }}>
         {[
           { label: 'Total Entries',  value: entries.length },
-          { label: 'Votes Cast',     value: totalVotes.toLocaleString() },
+          ...(showVoteCounts ? [{ label: 'Votes Cast', value: totalVotes.toLocaleString() }] : []),
           { label: 'Leading Artist', value: sorted[0]?.stageName || '—' },
           { label: 'Voting',         value: freeVoting && paidVoting ? 'Free & Paid' : freeVoting ? 'Free' : 'Paid' },
         ].map(({ label, value }) => (
@@ -270,19 +281,21 @@ export default function OpenMicEntriesBoard({
             <p style={{ color: '#f59e0b', fontWeight: 800, fontSize: 16, marginBottom: 0 }}>{value}</p>
           </div>
         ))}
-        {/* Live indicator */}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{
-            width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-            background: liveStatus === 'live' ? '#10b981' : liveStatus === 'error' ? '#ef4444' : '#f59e0b',
-            boxShadow: liveStatus === 'live' ? '0 0 6px #10b981' : 'none',
-            animation: liveStatus === 'connecting' ? 'pulse 1.2s infinite' : 'none',
-          }} />
-          <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}`}</style>
-          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontWeight: 600 }}>
-            {liveStatus === 'live' ? 'LIVE' : liveStatus === 'error' ? 'Offline' : 'Connecting…'}
-          </span>
-        </div>
+        {/* Live indicator — only while a live count feed is actually open */}
+        {showVoteCounts && (
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{
+              width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+              background: liveStatus === 'live' ? '#10b981' : liveStatus === 'error' ? '#ef4444' : '#f59e0b',
+              boxShadow: liveStatus === 'live' ? '0 0 6px #10b981' : 'none',
+              animation: liveStatus === 'connecting' ? 'pulse 1.2s infinite' : 'none',
+            }} />
+            <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}`}</style>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontWeight: 600 }}>
+              {liveStatus === 'live' ? 'LIVE' : liveStatus === 'error' ? 'Offline' : 'Connecting…'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ── Controls ───────────────────────────────────────────────────── */}
@@ -333,6 +346,7 @@ export default function OpenMicEntriesBoard({
               totalVotes={totalVotes}
               freeVoting={freeVoting}
               paidVoting={paidVoting}
+              showVoteCounts={showVoteCounts}
               onVoteClick={() => setVoteTarget(entry)}
             />
           ))}
