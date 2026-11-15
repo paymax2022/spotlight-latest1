@@ -448,6 +448,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Doctor Finance', href: '/admin/telemedicine/finance', section: 'Health', permissions: ['telemedicine.admin.view'] },
   { label: 'Support & Disputes', href: '/admin/telemedicine/support', section: 'Health', permissions: ['telemedicine.admin.view'] },
   { label: 'Safety & Emergencies', href: '/admin/telemedicine/safety', section: 'Health', permissions: ['telemedicine.admin.view'] },
+  { label: 'Platform Announcements', href: '/admin/telemedicine/announcements', section: 'Health', permissions: ['telemedicine.admin.view'] },
   // Labelled "Savings Pools", NOT "Groups". These two rows and the Associations
   // rows below both sit in Community and both gate on savings.admin.*, so
   // "Groups Overview" / "Groups & Members" read as the association console's
