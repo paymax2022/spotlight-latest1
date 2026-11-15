@@ -16,11 +16,11 @@ interface Props {
   onPress:     () => void;
 }
 
-// Keyed by string, not ConsultType: appointments.consultation_type allows in_person,
-// which the union does not have yet (follow-up F4). `TYPE_ICON[x]` is undefined for an
-// unmapped type and rendering undefined throws, taking the whole screen with it. That
-// value reaches this row from the dashboard queue this PR wires up; it cannot arrive via
-// useAppointments(), whose mapConsultType collapses every unrecognised type to 'video'.
+// Keyed by string, not ConsultType: appointments.consultation_type allows in_person, which the
+// union does not have yet (follow-up F4). `TYPE_ICON[x]` is undefined for an unmapped type and
+// rendering undefined throws. This row is reachable that way only from a stored value: the queue
+// passes consultation_type through verbatim, while the booking path has refused in_person since
+// 3e061a53e — normalizeConsultMode (backend/internal/telemedicine/consult.go:52-62) has no case.
 const TYPE_ICON: Record<string, LucideIcon> = { video: Video, audio: Phone, chat: MessageCircle };
 const FALLBACK_ICON = CalendarDays;
 

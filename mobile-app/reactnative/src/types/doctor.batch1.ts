@@ -245,7 +245,7 @@ export interface DoctorDashboardData {
   presence:           DoctorPresence;
   acceptsInstant:     boolean;              // availability status toggle
   counts:             DashboardCounts;
-  todaysAppointments: DoctorAppointment[];  // today's + upcoming (preview)
+  todaysAppointments: DoctorAppointment[];  // today only, non-cancelled, capped at 20 — counts.todaysAppointments is the uncapped number
   pendingRequests:    DoctorAppointment[];  // pending consultation requests
   activeConsultation?: ActiveConsultationCard; // present when a consult is live
   waitingRoom:        WaitingRoomEntry[];   // waiting-room queue preview
