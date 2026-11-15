@@ -87,7 +87,8 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate request"})
 	case errors.Is(err, ledger.ErrInsufficientFunds):
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "insufficient available balance"})
-	case errors.Is(err, ErrIdempotencyRequired), errors.Is(err, ErrInvalidAmount), errors.Is(err, ErrScheduleRequired):
+	case errors.Is(err, ErrIdempotencyRequired), errors.Is(err, ErrInvalidAmount), errors.Is(err, ErrScheduleRequired),
+		errors.Is(err, ErrInvalidTimezone), errors.Is(err, ErrInvalidReminders):
 		c.JSON(http.StatusBadRequest, gin.H{"error": httperr.Msg(c, http.StatusBadRequest, err)})
 	// A decision the booking table cannot record is the caller's to know about,
 	// not an outage: without this it falls through to 500 and the doctor's

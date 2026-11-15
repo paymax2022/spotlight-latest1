@@ -180,7 +180,11 @@ func (s *Service) GetScheduleSettings(ctx context.Context, userID string) (*Sche
 	if err != nil {
 		return nil, err
 	}
-	reminders, err := s.repo.ListReminders(ctx, userID)
+	tz, err := s.repo.GetTimezone(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	reminders, err := s.repo.AppointmentReminderSettings(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -193,6 +197,11 @@ func (s *Service) GetScheduleSettings(ctx context.Context, userID string) (*Sche
 	default:
 		return nil, vErr
 	}
+	// One zone per payload: doctor_profiles.timezone is the column the doctor
+	// writes (PUT /schedule/timezone) and the client's AvailabilitySchedule has no
+	// zone of its own, so the nested row mirrors it rather than answering the
+	// availability column's stale default.
+	avail.Timezone = tz
 	return &ScheduleSettings{
 		Schedule: *avail,
 		// The screen's two switches, named as it names them: the row stores
@@ -203,6 +212,7 @@ func (s *Service) GetScheduleSettings(ctx context.Context, userID string) (*Sche
 		RecurringRules:     rules,
 		Reminders:          reminders,
 		Vacation:           vac,
+		Timezone:           tz,
 	}, nil
 }
 
@@ -348,10 +358,53 @@ func (s *Service) GetOnboardingSlides(ctx context.Context, userID string) ([]Onb
 	}, nil
 }
 
-// GetLatestAnnouncement returns the latest platform announcement. No announcement
-// table is wired for doctors yet, so this is a derived empty projection (nil =
-// "no announcement"), surfaced as a 200 with a null body by the handler.
-func (s *Service) GetLatestAnnouncement(ctx context.Context, userID string) (any, error) {
-	_ = userID
-	return nil, nil
+// announcementDetail is the presentation an operator authors alongside the notice
+// itself. doctor_notifications.detail is free-form JSON, so every field is
+// optional and the defaults below keep a bare row renderable.
+type announcementDetail struct {
+	Tone        string  `json:"tone"`
+	Dismissible *bool   `json:"dismissible"`
+	CTALabel    *string `json:"ctaLabel"`
+	CTARoute    *string `json:"ctaRoute"`
+}
+
+// GetLatestAnnouncement projects the newest unread platform notice. The banner
+// used to be a hard nil because no announcement table exists; the notice an
+// operator broadcasts is a doctor_notifications row of type 'system' — support
+// replies and compliance notices answer their own views and are skipped here.
+func (s *Service) GetLatestAnnouncement(ctx context.Context, userID string) (*PlatformAnnouncement, error) {
+	n, err := s.repo.LatestSystemNotification(ctx, userID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := &PlatformAnnouncement{
+		ID:          n.ID,
+		Tone:        "info",
+		Dismissible: true,
+		PublishedAt: n.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if n.Title != nil {
+		out.Title = *n.Title
+	}
+	if n.Body != nil {
+		out.Body = *n.Body
+	}
+	var detail announcementDetail
+	if len(n.Detail) > 0 && json.Unmarshal(n.Detail, &detail) == nil {
+		// The banner maps tone to a fixed palette, so an operator typo must not
+		// reach it as a value no style exists for.
+		switch detail.Tone {
+		case "info", "success", "warning":
+			out.Tone = detail.Tone
+		}
+		if detail.Dismissible != nil {
+			out.Dismissible = *detail.Dismissible
+		}
+		out.CTALabel = detail.CTALabel
+		out.CTARoute = detail.CTARoute
+	}
+	return out, nil
 }

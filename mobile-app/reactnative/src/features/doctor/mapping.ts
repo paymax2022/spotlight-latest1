@@ -20,9 +20,9 @@ export interface AnnouncementWire {
  * The latest platform announcement, or null when there is none.
  *
  * null, never undefined, is the contract: react-query rejects `undefined` query
- * data outright, and the backend answers `{"announcement": null}` for every
- * doctor because no announcement table is wired yet (service_tail2.go
- * GetLatestAnnouncement is a derived empty projection).
+ * data outright, and the backend answers `{"announcement": null}` for a doctor
+ * with no unread notice (service_tail2.go GetLatestAnnouncement projects the
+ * newest unread doctor_notifications row of type 'system').
  */
 export function mapAnnouncementWire(wire: AnnouncementWire): PlatformAnnouncement | null {
   return wire.announcement ?? null;

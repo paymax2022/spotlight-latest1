@@ -118,6 +118,8 @@ var (
 	ErrInvalidAmount       = errors.New("doctor: amount must be a positive integer (kobo)")
 	ErrDuplicateRequest    = errors.New("doctor: duplicate request (idempotency replay)")
 	ErrScheduleRequired    = errors.New("doctor: schedule is required")
+	ErrInvalidTimezone     = errors.New("doctor: unknown timezone")
+	ErrInvalidReminders    = errors.New("doctor: reminder settings are malformed")
 )
 
 func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, error) {

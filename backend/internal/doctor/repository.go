@@ -788,6 +788,23 @@ func (r *Repository) ListNotifications(ctx context.Context, userID string) ([]No
 	return out, rows.Err()
 }
 
+// LatestSystemNotification is the newest unread platform notice for the banner.
+// Support replies and compliance notices are separate views, so they are skipped.
+func (r *Repository) LatestSystemNotification(ctx context.Context, userID string) (*Notification, error) {
+	const q = `
+		SELECT id, user_id, notif_type, title, body, read, read_at, detail, created_at
+		FROM doctor_notifications
+		WHERE user_id = $1 AND notif_type = 'system' AND read = false
+		ORDER BY created_at DESC LIMIT 1`
+	n := &Notification{}
+	err := r.db.QueryRow(ctx, q, userID).Scan(&n.ID, &n.UserID, &n.Type, &n.Title, &n.Body,
+		&n.Read, &n.ReadAt, &n.Detail, &n.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return n, err
+}
+
 func (r *Repository) MarkNotificationRead(ctx context.Context, userID, id string) error {
 	const q = `UPDATE doctor_notifications SET read = true, read_at = now() WHERE id = $1 AND user_id = $2`
 	tag, err := r.db.Exec(ctx, q, id, userID)

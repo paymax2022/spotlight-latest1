@@ -502,8 +502,32 @@ type ScheduleSettings struct {
 
 	BlockedDates   []BlockedDate   `json:"blockedDates"`
 	RecurringRules []RecurringRule `json:"recurringRules"`
-	Reminders      []Reminder      `json:"reminders"`
-	Vacation       *Vacation       `json:"vacation,omitempty"`
+	// Reminders is the object reminders.tsx edits, not the row list
+	// GET /schedule/reminders still answers. The row behind it is
+	// doctor_reminders where reminder_type = 'appointment'.
+	Reminders ReminderSettings `json:"reminders"`
+	Vacation  *Vacation        `json:"vacation,omitempty"`
+	// Timezone is the doctor's stored zone (doctor_profiles.timezone), the column
+	// PUT /schedule/timezone writes.
+	Timezone string `json:"timezone"`
+}
+
+// SaveReminderSettingsResult is the reminders screen's save echo.
+type SaveReminderSettingsResult struct {
+	Reminders ReminderSettings `json:"reminders"`
+}
+
+// PlatformAnnouncement is the dashboard banner projection: one unread
+// doctor_notifications row of type 'system', presented the way the banner renders it.
+type PlatformAnnouncement struct {
+	ID          string  `json:"id"`
+	Tone        string  `json:"tone"`
+	Title       string  `json:"title"`
+	Body        string  `json:"body"`
+	PublishedAt string  `json:"publishedAt"`
+	Dismissible bool    `json:"dismissible"`
+	CTALabel    *string `json:"ctaLabel,omitempty"`
+	CTARoute    *string `json:"ctaRoute,omitempty"`
 }
 
 // AccountStatus is the derived account-state projection for GET /account/status.
