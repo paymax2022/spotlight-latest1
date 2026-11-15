@@ -34,8 +34,35 @@ up the scheduled dump in §3. Record the decision here.
 
 Supabase backups cover platform disasters, not operator error speed —
 a bad migration or destructive script is best recovered from a dump you
-control. The pattern (not yet scheduled — no `render.yaml` cron or GitHub
-Actions job exists as of this writing):
+control. The pattern (still **unscheduled** as of 2026-11-14, and this is stated
+in prose on purpose — no job was created, enabled or dispatched here):
+
+**Owner.** The dump is owned by the same person the front matter names —
+DevOps/DBA — which operationally means *whoever holds the `spotlight-prod`
+database credentials*: the Supabase dashboard for `nmseefdlliejmdbxytej` and the
+`Production` GitHub environment of `paymax2022/spotlight-latest1` (where
+`SUPABASE_DB_PASSWORD` exists as a secret). Nobody else can run the command
+below, because the direct-connection DSN it needs is reachable only from those
+two places.
+
+**Cadence.** Nightly, per the command's own comment, with the retention this
+file already suggests: 30 daily + 12 monthly (first-of-month) dumps. Choose the
+carrier (a `render.yaml` cron, a GitHub Actions scheduled workflow, or a host
+cron) as an explicit decision and record it here — the choice is not made by
+this document.
+
+**What the 2026-11-12 staging→production migration actually produced here:
+nothing scheduled, and no dump taken on either side.** Its tooling is the
+read-only pending-set chain in `scripts/db/` (`list-pending.sh`,
+`classify-pending-migrations.sh`, `reconcile-pending.sh`) — that is a *schema
+reconciliation* route, not a backup route, and it must not be read as one.
+`git grep -ln pg_dump -- ':!docs'` returns **no** file, i.e. there is still no
+runnable dump path in this repo. Ledger §5.7 records why staging was never
+dumped either (its DB password is reachable only as a masked Actions secret, so
+no `pg_dump` credential route exists from a review session), and Task 3's
+prod-dump-and-restore-rehearsal step is **still open and operator-owned** — see
+ledger §16. Do not treat any "dump exists" sentence in a plan document as
+evidence; the only evidence is a dated §5 rehearsal row in this file.
 
 ```bash
 # nightly; DATABASE_URL = direct connection string (port 5432, not the pooler)
