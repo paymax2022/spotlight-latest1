@@ -151,6 +151,19 @@ for shadow in ".env.${NODE_ENV}.local" ".env.local"; do
   fi
 done
 
+# The plane interlock: $ENV_FILE must describe the same plane as eas.json's profile
+# of that name. Nothing else can catch it — .env.production is gitignored, so no
+# tracked file contradicts it; these scripts run local Gradle, so eas.json's own
+# `env` block never applies; and the artifact is stamped app-release-$NODE_ENV
+# whatever the file actually holds. Found 2026-11-15 with a .env.production carrying
+# the staging API host, the staging Supabase project and EXPO_PUBLIC_APP_ENV=staging
+# — which also enables the on-device server switch (serverProfile.ts) and would have
+# made the production module registry govern nothing in a store build.
+if ! node scripts/check-env-plane.mjs "$ENV_FILE"; then
+  echo "❌ $ENV_FILE disagrees with eas.json's $NODE_ENV profile — fix it before building." >&2
+  exit 1
+fi
+
 # Every *_USE_MOCK flag referenced anywhere in source must be "false" in
 # $ENV_FILE — a flag left unset defaults to MOCK (see client.ts per module), so
 # a missed one ships fixture data (or, for a module whose screen has no error

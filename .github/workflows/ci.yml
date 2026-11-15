@@ -166,6 +166,14 @@ jobs:
       # rejection of brace patterns. Sub-second, so it shares this runner.
       - name: Test the module router
         run: python3 scripts/ci/test-changed-modules.py
+      # RN-PLANE-001: a store build bakes mobile-app/reactnative/.env.production,
+      # which is gitignored and which eas.json cannot correct — the build scripts run
+      # local Gradle, so the profile's env never applies. Found with that file naming
+      # the staging plane, which put the shipped app under the staging module registry
+      # and re-enabled the on-device server switch. This is the only lane that can
+      # check it: no RN unit spec runs in CI.
+      - name: Test the RN env plane interlock
+        run: node scripts/ci/check-rn-env-plane.mjs
 
       # Product rule, not a style preference: a veterinarian onboards through the
       # landing page Vet module, so the Doctor app must not offer a route into the
