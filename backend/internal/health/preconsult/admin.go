@@ -211,11 +211,13 @@ func (s *Service) Monitoring(ctx context.Context, incompleteOnly bool, nearMinut
 	if nearMinutes <= 0 {
 		nearMinutes = 120
 	}
-	const q = `SELECT i.id, i.appointment_id, i.patient_id::text, i.provider_id::text, i.status,
-	                  a.slot_start, i.red_flag_severity, i.submitted_at
+	const q = `SELECT i.id, COALESCE(i.appointment_id, i.telemedicine_appointment_id)::text,
+	                  i.patient_id::text, COALESCE(i.provider_id, i.doctor_id)::text, i.status,
+	                  COALESCE(a.slot_start, ta.scheduled_at, i.created_at), i.red_flag_severity, i.submitted_at
 	           FROM health_preconsult_intake i
-	           JOIN health_appointments a ON a.id = i.appointment_id
-	           ORDER BY a.slot_start ASC LIMIT 500`
+	           LEFT JOIN health_appointments a ON a.id = i.appointment_id
+	           LEFT JOIN appointments ta ON ta.id = i.telemedicine_appointment_id
+	           ORDER BY COALESCE(a.slot_start, ta.scheduled_at, i.created_at) ASC LIMIT 500`
 	rows, err := s.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
@@ -307,7 +309,8 @@ type RedFlagQueueRow struct {
 }
 
 func (s *Service) RedFlagQueue(ctx context.Context) ([]RedFlagQueueRow, error) {
-	const q = `SELECT id, appointment_id, patient_id::text, COALESCE(red_flag_severity,''), red_flag_level, red_flag_hits, submitted_at
+	const q = `SELECT id, COALESCE(appointment_id, telemedicine_appointment_id)::text, patient_id::text,
+	                  COALESCE(red_flag_severity,''), red_flag_level, red_flag_hits, submitted_at
 	           FROM health_preconsult_intake
 	           WHERE red_flag_severity IS NOT NULL
 	           ORDER BY submitted_at DESC NULLS LAST LIMIT 500`

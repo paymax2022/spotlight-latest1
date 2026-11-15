@@ -17,34 +17,50 @@ import (
 // every table). Answer bodies live only in health_intake_responses; the link row
 // (health_preconsult_intake) and the access/audit logs carry IDs + flags only.
 
+// The two appointment planes an intake can hang on. ADR-010 is a telemedicine
+// requirement, but the link entity was built against the health scheduling plane
+// (health_appointments + health_providers, whose domain CHECK has no doctor
+// value), and a human booking writes `appointments` + `doctors` instead. The
+// discriminator lets one intake engine serve both, the way consult_sessions
+// already does with `vertical` + `provider_owner_kind`.
+const (
+	SourceHealth       = "health"
+	SourceTelemedicine = "telemedicine"
+)
+
 // Intake is the health_preconsult_intake link row.
 type Intake struct {
-	ID              string          `json:"id"`
-	AppointmentID   string          `json:"appointment_id"`
-	ConsultID       *string         `json:"consult_id,omitempty"`
-	PatientID       string          `json:"patient_id"`
-	ProviderID      string          `json:"provider_id"`
-	ResponseID      *string         `json:"response_id,omitempty"`
-	SchemaID        *string         `json:"schema_id,omitempty"`
-	Status          string          `json:"status"` // DRAFT | SUBMITTED
-	ConsentVersion  *int            `json:"consent_version,omitempty"`
-	ConsentAt       *time.Time      `json:"consent_at,omitempty"`
-	RedFlagLevel    *int            `json:"red_flag_level,omitempty"`
-	RedFlagSeverity *string         `json:"red_flag_severity,omitempty"`
-	RedFlagHits     json.RawMessage `json:"red_flag_hits"`
-	Attachments     json.RawMessage `json:"attachments"`
-	SubmittedAt     *time.Time      `json:"submitted_at,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID                string          `json:"id"`
+	AppointmentID     string          `json:"appointment_id"`
+	AppointmentSource string          `json:"appointment_source"` // health | telemedicine
+	ConsultID         *string         `json:"consult_id,omitempty"`
+	PatientID         string          `json:"patient_id"`
+	ProviderID        string          `json:"provider_id"` // health plane: health_providers.id; telemedicine plane: doctors.id
+	ResponseID        *string         `json:"response_id,omitempty"`
+	SchemaID          *string         `json:"schema_id,omitempty"`
+	Status            string          `json:"status"` // DRAFT | SUBMITTED
+	ConsentVersion    *int            `json:"consent_version,omitempty"`
+	ConsentAt         *time.Time      `json:"consent_at,omitempty"`
+	RedFlagLevel      *int            `json:"red_flag_level,omitempty"`
+	RedFlagSeverity   *string         `json:"red_flag_severity,omitempty"`
+	RedFlagHits       json.RawMessage `json:"red_flag_hits"`
+	Attachments       json.RawMessage `json:"attachments"`
+	SubmittedAt       *time.Time      `json:"submitted_at,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
-const intakeCols = `id, appointment_id, consult_id, patient_id, provider_id, response_id, schema_id,
+// intakeCols projects whichever plane the row lives on onto the one shape
+// clients already read: appointment_id echoes the id they called with, and
+// provider_id echoes whoever is assigned on the other side.
+const intakeCols = `id, COALESCE(appointment_id, telemedicine_appointment_id)::text, appointment_source,
+	consult_id, patient_id, COALESCE(provider_id, doctor_id)::text, response_id, schema_id,
 	status, consent_version, consent_at, red_flag_level, red_flag_severity, red_flag_hits,
 	attachments, submitted_at, created_at, updated_at`
 
 func scanIntake(row interface{ Scan(...any) error }) (*Intake, error) {
 	var it Intake
-	if err := row.Scan(&it.ID, &it.AppointmentID, &it.ConsultID, &it.PatientID, &it.ProviderID,
+	if err := row.Scan(&it.ID, &it.AppointmentID, &it.AppointmentSource, &it.ConsultID, &it.PatientID, &it.ProviderID,
 		&it.ResponseID, &it.SchemaID, &it.Status, &it.ConsentVersion, &it.ConsentAt,
 		&it.RedFlagLevel, &it.RedFlagSeverity, &it.RedFlagHits, &it.Attachments, &it.SubmittedAt,
 		&it.CreatedAt, &it.UpdatedAt); err != nil {
@@ -53,17 +69,34 @@ func scanIntake(row interface{ Scan(...any) error }) (*Intake, error) {
 	return &it, nil
 }
 
-// getIntakeByAppointment returns the link row (or pgx.ErrNoRows).
+// getIntakeByAppointment returns the link row (or pgx.ErrNoRows). An appointment
+// id names exactly one row in either plane, so both columns are matched; the
+// literal is uuid-shaped by the handler gate.
 func (s *Service) getIntakeByAppointment(ctx context.Context, appointmentID string) (*Intake, error) {
-	row := s.db.QueryRow(ctx, `SELECT `+intakeCols+` FROM health_preconsult_intake WHERE appointment_id=$1`, appointmentID)
+	row := s.db.QueryRow(ctx, `SELECT `+intakeCols+` FROM health_preconsult_intake
+	                           WHERE appointment_id=$1 OR telemedicine_appointment_id=$1`, appointmentID)
 	return scanIntake(row)
 }
 
-// insertIntake creates the DRAFT link row for an appointment.
+// insertIntake creates the DRAFT link row for an appointment. Only the columns
+// belonging to the row's own plane are written: the health-plane pair is
+// FK-bound to health_appointments/health_providers, so filling it with a
+// telemedicine id/doctor would abort the insert — and leaving the telemedicine
+// pair NULL instead would strand the intake from its appointment.
 func (s *Service) insertIntake(ctx context.Context, it *Intake) error {
-	const ins = `INSERT INTO health_preconsult_intake (id, appointment_id, consult_id, patient_id, provider_id, schema_id, status)
-	             VALUES ($1,$2,$3,$4,$5,$6,'DRAFT')`
-	_, err := s.db.Exec(ctx, ins, it.ID, it.AppointmentID, it.ConsultID, it.PatientID, it.ProviderID, it.SchemaID)
+	const ins = `INSERT INTO health_preconsult_intake
+		             (id, appointment_source, consult_id, patient_id, schema_id, status,
+		              appointment_id, provider_id, telemedicine_appointment_id, doctor_id)
+	             VALUES ($1,$2,$3,$4,$5,'DRAFT',$6,$7,$8,$9)`
+	var healthAppt, healthProvider, telemedAppt, doctor any
+	switch it.AppointmentSource {
+	case SourceTelemedicine:
+		telemedAppt, doctor = it.AppointmentID, it.ProviderID
+	default:
+		healthAppt, healthProvider = it.AppointmentID, it.ProviderID
+	}
+	_, err := s.db.Exec(ctx, ins, it.ID, it.AppointmentSource, it.ConsultID, it.PatientID, it.SchemaID,
+		healthAppt, healthProvider, telemedAppt, doctor)
 	return err
 }
 
@@ -235,11 +268,11 @@ type PresignResult struct {
 // must be the appointment's patient). Fails closed when the presigner is not
 // configured. The returned key must be echoed back via RecordAttachment.
 func (s *Service) PresignAttachment(ctx context.Context, caller, appointmentID, kind, fileName, contentType string) (*PresignResult, error) {
-	patientID, _, err := s.loadAppointment(ctx, appointmentID)
+	ap, err := s.loadAppointment(ctx, appointmentID)
 	if err != nil {
 		return nil, err
 	}
-	if caller != patientID { // foreign appointment → uniform not-found
+	if caller != ap.patientID { // foreign appointment → uniform not-found
 		return nil, ErrAppointmentNotFound
 	}
 	if s.presigner == nil || !s.presigner.Configured() {

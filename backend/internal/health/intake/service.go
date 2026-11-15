@@ -31,6 +31,11 @@ type Field struct {
 	Type     string   `json:"type"` // text | number | bool | select
 	Required bool     `json:"required"`
 	Options  []string `json:"options,omitempty"` // for select
+	// UI carries the asking-side presentation (step grouping, label, help, option
+	// labels) for the client that renders this schema. It is never read by
+	// validate: name/type/required/options remain the storage contract, so a field
+	// can be re-worded without re-versioning what answers are accepted.
+	UI json.RawMessage `json:"ui,omitempty"`
 }
 
 // Schema is a versioned questionnaire. version is immutable per row; a new version
