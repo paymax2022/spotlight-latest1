@@ -253,9 +253,10 @@ Add a new section immediately before "## Reconciliation checklist". Anchor on th
 "Verified current state") found **no content on either branch that `main`
 lacks**. `git cherry` marks eleven commits `+` (re-run 2026-11-15 after Task 1:
 seven on `prod`, four on `staging`), but a `+` means the *patch-id* was
-not found upstream — it does not mean the content is missing. Five are already on
-`main` in full; five are cases where `main` has moved ahead and merging would
-revert it; one resurrects a deliberately deleted workflow.
+not found upstream — it does not mean the content is missing. Six are already on
+`main` in content; three are cases where `main` has moved ahead and merging would
+revert it; two resurrect deliberately deleted code. That is 6 + 5, matching the
+five-row table below and the six-item already-on-main list after it.
 
 The tips are preserved as tags `archive/prod-2026-11-15` (`76f1a6103`) and
 `archive/staging-2026-11-15` (`2a82a62ef`) so the branches can be reset without
@@ -365,9 +366,9 @@ git commit -m "$(cat <<'EOF'
 docs(devops): record the retired promotion model and the do-not-merge list
 
 origin/prod and origin/staging still point at commits whose trees are older than
-main's. Screening all ten git-cherry candidates file by file found no content on
-either branch that main lacks — four are already on main in full, five would
-revert main, one resurrects a deleted workflow. Until that is written down the
+main's. Screening all eleven git-cherry candidates file by file found no content on
+either branch that main lacks — six are already on main in content, three would
+revert main, two resurrect deliberately deleted code. Until that is written down the
 next person who merges a promotion branch "to catch up" silently reverts it.
 
 Archive tags archive/prod-2026-11-15 and archive/staging-2026-11-15 preserve the
@@ -385,14 +386,15 @@ git -c credential.helper='!gh auth git-credential' push -u origin chore/release-
 
 Expected: `git status --short` shows only `docs/devops/deployment-matrix.md` staged before the commit. If it shows anything else, another session has uncommitted work in this tree — stop, do not commit it.
 
-- [ ] **Step 9: Open PR A**
+- [ ] **Step 9: Push and open PR A**
 
 ```bash
 cd /private/tmp/spot-phase0
+git -c credential.helper='!gh auth git-credential' push -u origin chore/release-phase0-archive-record
 gh pr create --title "docs(devops): record the retired promotion branches and the do-not-merge list" --body "$(cat <<'EOF'
 ## Summary
-- Archive the `origin/prod` and `origin/staging` tips as `archive/prod-2026-11-15` / `archive/staging-2026-11-15` so the branches can be reset later without losing history.
-- Record in the canonical deployment matrix which five promotion-branch commits must **never** be merged into `main`, and why: four are already on `main`, five would revert it, one resurrects a workflow `b5bc4480f` deleted.
+- Archive the `origin/prod` and `origin/staging` tips as `archive/prod-2026-11-15` (`76f1a6103`) / `archive/staging-2026-11-15` (`2a82a62ef`) so the branches can be reset later without losing history.
+- Record in the canonical deployment matrix which five promotion-branch commits must **never** be merged into `main`, and what merging each one does. The wider screening covered all eleven `git cherry` candidates: six are already on `main` in content, three would revert it, two resurrect deliberately deleted code.
 - Declare the `release.yml` row **Pending** — the matrix's own reconciliation checklist requires the row to exist before the writer does.
 - Record the `notification-worker` version state as UNVERIFIED FROM THE REPO, with both branches of its consequence, because no Render credentials exist here.
 
@@ -406,6 +408,9 @@ Phase 0 of `docs/superpowers/specs/2026-11-15-auto-deploy-release-pipeline-desig
 EOF
 )"
 ```
+
+The push uses the credential helper because a plain `git push` dies on auth in this
+repo. Never pass `--delete-branch` to the merge later — see Global Constraints.
 
 **Do not merge PR A yourself.** Merging needs the user's word.
 
