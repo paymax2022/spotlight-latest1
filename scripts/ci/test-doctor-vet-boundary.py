@@ -61,6 +61,25 @@ UNION_PETS_IN_COMMENT = (
 UNION_RENAMED = (
     "export type RecordsCategory =\n"
     "  | 'consultations';\n")
+VET_TAB_SCREEN = (
+    "export default function Reviews() {\n"
+    "  const [tab, setTab] = useState<'patients' | 'vet'>('patients');\n"
+    "  return tab === 'vet' ? <VetList /> : null;\n"
+    "}\n")
+VET_ARG_SCREEN = (
+    "export default function Reviews() {\n"
+    "  return <Tab onPress={() => setTab('vet')} />;\n"
+    "}\n")
+VET_COPY_SCREEN = (
+    "export default function Reviews() {\n"
+    "  return <Text>Vet clients</Text>;\n"
+    "}\n")
+VET_COMMENT_SCREEN = (
+    "export default function Reviews() {\n"
+    "  // No vet clients tab here: a human doctor has none, and a 'vet' channel\n"
+    "  /* filter belongs to the Vet module's own reviews screen. */\n"
+    "  return null;\n"
+    "}\n")
 
 
 def build(tmp, *, screen=CLEAN_SCREEN, options=OPTIONS_CLEAN, landing=LANDING_OK,
@@ -163,6 +182,40 @@ with tempfile.TemporaryDirectory() as tmp:
     check('renamed union fails the guard', code, 1)
     check('renamed union says why', 'not found' in out, True)
 
+# --- a vet channel in a doctor screen fires --------------------------------
+# The Reviews screen once split into "Patient reviews" / "Vet clients" and
+# filtered feedback by channel. That navigates nowhere, so check 1 cannot see
+# it; the channel value and the copy naming it are what give it away.
+with tempfile.TemporaryDirectory() as tmp:
+    build(tmp, screen=VET_TAB_SCREEN)
+    code, out = run()
+    check('vet channel union fires', code, 1)
+    check('vet channel names the file', 'index.tsx:2' in out, True)
+    check('vet channel explains the rule', 'its own channel' in out, True)
+
+with tempfile.TemporaryDirectory() as tmp:
+    build(tmp, screen=VET_ARG_SCREEN)
+    code, out = run()
+    check("setTab('vet') argument fires", code, 1)
+
+with tempfile.TemporaryDirectory() as tmp:
+    build(tmp, screen=VET_COPY_SCREEN)
+    code, out = run()
+    check('vet client copy fires', code, 1)
+
+# --- prose naming the channel is not the channel ---------------------------
+# The shipped screen carries a comment explaining why there is no tab. A check
+# that reads comments would fail its own rationale, so comment spans are blanked.
+with tempfile.TemporaryDirectory() as tmp:
+    build(tmp, screen=VET_COMMENT_SCREEN)
+    code, out = run()
+    check('vet channel in a comment stays quiet', code, 0)
+
+# --- the legacy subtree may still speak the channel ------------------------
+with tempfile.TemporaryDirectory() as tmp:
+    build(tmp, legacy_body=VET_TAB_SCREEN)
+    check('legacy subtree excluded from channel check', run()[0], 0)
+
 # --- a moved tree fails loudly rather than passing --------------------------
 code, out = '', ''
 with tempfile.TemporaryDirectory() as tmp:
@@ -171,6 +224,16 @@ with tempfile.TemporaryDirectory() as tmp:
     code, out = run()
 check('absent doctor tree fails', code, 1)
 check('absent doctor tree says why', 'missing' in out, True)
+
+# --- a doctor tree with no screens fails the walk, not silently passes -----
+# Checks 1 and 5 iterate the screens; an empty walk would report no violations.
+with tempfile.TemporaryDirectory() as tmp:
+    build(tmp)
+    for path in sorted(pathlib.Path(cvb.DOCTOR_APP).rglob('*.tsx')):
+        path.unlink()
+    code, out = run()
+    check('empty doctor walk fails', code, 1)
+    check('empty doctor walk says why', 'empty walk' in out, True)
 
 if failures:
     print('FAIL')
