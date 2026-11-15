@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Video, Phone, MessageCircle, ChevronRight, ShieldCheck } from 'lucide-react-native';
+import { Video, Phone, MessageCircle, ChevronRight, ShieldCheck, CalendarDays } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -8,21 +8,27 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import { DoctorAvatar, ConsultStatusBadge } from '@/features/telemedicine/components';
-import type { DoctorAppointment, ConsultType } from '@/types/doctor';
+import { formatSlotDateLabel } from '@/features/doctor/dashboardWire';
+import type { DoctorAppointment } from '@/types/doctor';
 
 interface Props {
   appointment: DoctorAppointment;
   onPress:     () => void;
 }
 
-const TYPE_ICON: Record<ConsultType, LucideIcon> = { video: Video, audio: Phone, chat: MessageCircle };
+// Keyed by string, not ConsultType: the booking table allows in_person, which the
+// union does not have yet (follow-up F4). An unmapped type draws the neutral
+// calendar — `TYPE_ICON[x]` was undefined for it and rendering undefined throws,
+// which took the whole dashboard down.
+const TYPE_ICON: Record<string, LucideIcon> = { video: Video, audio: Phone, chat: MessageCircle };
+const FALLBACK_ICON = CalendarDays;
 
 // New component: doctor-side appointment row keyed off DoctorAppointment (shows
 // the PATIENT, not the doctor). The patient-side AppointmentRow lives inside a
 // protected telemedicine screen and uses a different type, so this is new.
 export default function AppointmentRow({ appointment, onPress }: Props) {
-  const TypeIcon = TYPE_ICON[appointment.consultType];
-  const dateLabel = new Date(`${appointment.slotDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const TypeIcon = TYPE_ICON[appointment.consultType] ?? FALLBACK_ICON;
+  const dateLabel = formatSlotDateLabel(appointment.slotDate);
 
   return (
     <Pressable
