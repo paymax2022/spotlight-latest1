@@ -2752,12 +2752,14 @@ Then derive the first line of the block mechanically. The block starts at the **
 ```bash
 cd /private/tmp/spot-release
 DD=$(grep -n "^  deploy-development:" .github/workflows/ci.yml | cut -d: -f1)
-START=$(awk -v dd="$DD" 'NR<dd && /^[[:space:]]*#/ {last=NR} NR<dd && /^[[:space:]]*$/ {last_blank=NR} END{print (last>last_blank ? last : dd)}' .github/workflows/ci.yml)
+START=$(awk -v dd="$DD" 'NR<dd { line[NR]=$0 } NR==dd { s=dd-1; while (s>=1 && line[s] ~ /^[[:space:]]*#/) s--; print s+1 }' .github/workflows/ci.yml)
 echo "deploy-development at $DD; delete from $START to EOF ($(wc -l < .github/workflows/ci.yml))"
 sed -n "$((START-3)),$((DD+1))p" .github/workflows/ci.yml
 ```
 
 Expected: `START` is 3 lines above `DD` (`:492` given `:495`), and the printed window shows the tail of the `workflow-lint` job (`run: actionlint …`), a blank line, then a **comment** explaining that Railway deployment is deliberately manual, then `deploy-development:`. The comment belongs to the deploy block and must be deleted with it — leaving it behind would be a stale claim that deployment is manual, sitting in a file that no longer deploys.
+
+**Why this `awk` looks the way it does — a defect in the first version of this step.** The original one-liner tracked two independent variables, `last` (last comment line seen before `dd`) and `last_blank` (last blank line seen before `dd`), and printed whichever was larger. That is the wrong question. It answers "where is the last comment before the job?", not "where does this comment block *start*?", so on the real file it returned **`:494`**, the *last* line of the 3-line comment, and `sed "${START},\$d"` would have deleted the comment's final line while leaving its first two lines — `# Railway deployment is deliberately manual. The repository variable remains` and its continuation — stranded at the new EOF of `ci.yml`, immediately after the `workflow-lint` job's last line. A file that ends by asserting deployment is manual, right after its final job, is worse than no comment at all: it is a lie that reads like documentation. The version above walks *backwards* from `dd` across the run of contiguous comment lines and prints the first one, which is the span's real start. Measured against the `6199a6b57` blob (`DD=495`): `START=492`, 320 lines deleted, 491 left, and the first deleted line is the comment's first line. Negative control — the same `awk` on a file with no comment above the job — returns `START == dd`, i.e. it deletes from the job keyword and invents nothing.
 
 - [ ] **Step 2: Confirm the line above the block must SURVIVE**
 
