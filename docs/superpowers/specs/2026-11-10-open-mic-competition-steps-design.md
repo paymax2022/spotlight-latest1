@@ -54,11 +54,11 @@ An artist arriving on the Open Mic programme page can, in order: hear and downlo
 | 02 Get the Spotlight beat | inline player on the reader URL, Download mp3 button, producer credit, usage rules | same URL, `?download=1` |
 | 03 Make and submit a song | submission window with open/closed state, format and size limits stated from the real cap | `/open-mic/<slug>/enter` |
 | 04 Share and rally votes | the signed-in visitor's own live entry link and its vote count; otherwise the honest "appears when your entry is live" | `/api/open-mic/submissions` client-side, already scoped to `userId` |
-| 05 Leaderboard | top 5: rank, artist, song, vote count; edition entry count and total votes — subject to the two `votingConfig` switches below | per-row Vote CTA → `/open-mic/<slug>/entries`; "View all" → the same |
+| 05 Leaderboard | top 5: rank, artist, song, vote count; edition entry count and total votes — subject to the two `votingConfig` switches below | per-row Vote CTA → `/open-mic/<slug>/entry/<artistSlug>`, that contestant's own voting page (the existing plane's artist card hosts the vote modal, so the CTA lands where a vote for *that* artist can actually be cast); the panel-level "Vote now" and "Full leaderboard" → `/open-mic/<slug>/entries`. Every one of those affordances, panel-level or per-row, exists only while `leaderboardVisible` is on — hidden standings mean no links into them, not links next to a note saying they are private. |
 
 The bottom "Go to voting" CTA (`page.tsx:684`) repoints from `/voting` to the edition's board, falling back to `/open-mic` when there is no edition.
 
-**H2. Admin display switches are honoured, not overridden.** `OpenMicVotingConfig` already carries `leaderboardVisible` and `voteCountPublic` (`src/features/openmic/types.ts:94-95`). The step 05 preview renders nothing but the "see the full board" hand-off when the leaderboard is hidden, and shows ranks without numbers when `voteCountPublic` is off. The server resolves both into `showLeaderboard` / `showVoteCounts` so no client branch is needed.
+**H2. Admin display switches are honoured, not overridden.** `OpenMicVotingConfig` already carries `leaderboardVisible` and `voteCountPublic` (`src/features/openmic/types.ts:94-95`). When the leaderboard is hidden the step 05 preview renders only the private-standings note — no board, and no "Full leaderboard" hand-off beside it, because a link to the full standings would refute the sentence printed above it. When `voteCountPublic` is off the preview shows ranks without numbers, and the server leaves those numbers out of the payload entirely rather than shipping them for the client to hide (a value in the RSC payload is delivered, not displayed). The server resolves both switches into `showLeaderboard` / `showVoteCounts`, so the client branches on the resolved booleans and on `null` counts, never on `votingConfig`. Enforcing the same two switches inside the existing `/open-mic/<slug>/entries` board is deliberately out of scope here (decision A wires that plane, it does not change it) and is recorded as follow-up work.
 
 **I. The new link builder uses the canonical slug.** Every artist URL minted by this work goes through `slugifyArtist`, never a local copy, so a preview link cannot disagree with the entry page's lookup.
 
@@ -87,14 +87,19 @@ The bottom "Go to voting" CTA (`page.tsx:684`) repoints from `/voting` to the ed
 | `components/openmic/OpenMicAdminContestEditor.tsx:58-80` | same |
 | `app/open-mic/[slug]/page.tsx:95-99` | player uses the same availability rule as decision E |
 
-`OpenMicEditionStepsData` (serialisable, no `Date` objects). `OpenMicContest` declares its window fields as optional (`types.ts:153-156`) and puts the voting window on `votingConfig` (`:100-101`), so the server normalises every `undefined` to `null` and the client only ever has to test for `null`:
+`OpenMicEditionStepsData` (serialisable, no `Date` objects). `OpenMicContest` declares its window fields as optional (`types.ts:153-156`) and puts the voting window on `votingConfig` (`:100-101`), so the server normalises every `undefined` to `null` and the client only ever has to test for `null`. Which side of each window the clock is on is resolved by the same read, against one instant — the browser computes nothing during render, because the HTML is written at request time and the first client render happens later:
 
 ```ts
+type WindowState = 'open' | 'not-started' | 'closed' | 'unknown';
+
 type OpenMicEditionStepsData = {
   id: string; slug: string; title: string; status: string;
   registrationStartAt: string | null; registrationEndAt: string | null;
+  registrationState: WindowState;
   submissionStartAt: string | null; submissionEndAt: string | null;
+  submissionState: WindowState;
   votingStartAt: string | null; votingEndAt: string | null;
+  votingState: WindowState;
   registrationFeeNgn: number; entryFeeRequired: boolean;
   showLeaderboard: boolean; showVoteCounts: boolean;
   beat: null | {
@@ -102,8 +107,12 @@ type OpenMicEditionStepsData = {
     previewUrl: string | null; downloadUrl: string | null;
     downloadable: boolean; requiresPaidEntry: boolean;
   };
-  leaderboard: { rank: number; artistSlug: string; stageName: string; songTitle: string; voteCount: number }[];
-  entryCount: number; totalVotes: number;
+  // `null` is "the board could not be read", not "0 entries" — a different
+  // fact, and no branch may print a number for it.
+  board: null | {
+    rows: { rank: number; artistSlug: string; stageName: string; songTitle: string; voteCount: number }[];
+    entryCount: number; totalVotes: number;
+  };
 };
 ```
 
@@ -133,7 +142,7 @@ type OpenMicEditionStepsData = {
 
 - **Unit, `tests/unit/media/open-mic-beat-storage.test.ts`** — the reader's prefix allowlist (accepts `openmic-beats/…`, 404s `registration/…` and traversal), `?download=1` vs inline disposition, the upload route's type and size rejection, and the legacy-URL availability rule (a `/api/registration/uploads/` value yields `previewUrl: null`).
 - **Unit, `tests/unit/openmic/active-edition.test.ts`** — `getActiveOpenMicEdition` picks the newest qualifying edition, ignores `ended`/`draft`/hidden, returns `null` when nothing qualifies; `undefined` window dates normalise to `null`; `showLeaderboard` / `showVoteCounts` come from `votingConfig`; the board truncates to 5 and totals votes.
-- **E2E, `tests/e2e/openmic/competition-steps.spec.ts`** (run with `--workers=1`) against the `open-mic-dev` fixture — step 02's audio src resolves 200 with an audio content-type, the download control resolves 200 with `Content-Disposition: attachment`, step 03 links to `/open-mic/open-mic-dev/enter`, step 05 shows five ranked rows with counts and a Vote CTA into `/open-mic/open-mic-dev/entries`, and no link on the page points at `/voting`.
+- **E2E, `tests/e2e/openmic/competition-steps.spec.ts`** (run with `--workers=1`) against the `open-mic-dev` fixture — step 02's audio src resolves 200 with an audio content-type, the download control resolves 200 with `Content-Disposition: attachment`, step 03 links to `/open-mic/open-mic-dev/enter`, step 05 pins all five ranked rows by name, whole-number count and a Vote CTA into that contestant's own `/open-mic/open-mic-dev/entry/<artistSlug>`, with the panel-level "Vote now" going to `/open-mic/open-mic-dev/entries`, and no link on the page points at `/voting`.
 - **Hand pass for the signed-in variant of step 04** with a minted dev session (per the project's local session-minting note); the spec above covers the signed-out honest line only, because this plane has no e2e auth helper and inventing one is out of scope here.
 - **Browser pass, by hand** — desktop and 390 px, on `/service-details/open-mic-competition`, `/open-mic/<slug>` and both admin surfaces, with screenshots written to disk; plus one *real* admin re-upload of an mp3 so the new route is proven, not just the seeded row.
 - **Gates on the exact tree** — `npx tsc --noEmit`, `npm run lint`, `npm run contract:check`, `vitest run tests/unit/config`, `npm run test:regression`, `npm run test:money`, `npm run build` with a scratch `DIST_DIR` so the shared dev server's `.next` is never clobbered.
