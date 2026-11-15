@@ -2770,7 +2770,7 @@ MSG
 ### Task 8: Docs, full gate run, publish
 
 **Files:**
-- Modify: `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md`, the D1 / D2 / D13 rows of the Section D table and the note above it (measured at `1d27c7a40`: `:75`, `:76`, `:87` — this step's original cite of `76,77,88` was one line off, i.e. D2/D3/D14, which would have rewritten the wrong rows and left the three false PASSes in place; re-locate them by `grep -n "^| D1 \|^| D2 \|^| D13 " docs/QA_DOCTOR_BATCH1_REPORT.md`, not by number)
+- Modify: `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md`, the D1 / D2 / D13 rows of the Section D table and the note above it. Locate them by `grep -n "^| D1 \|^| D2 \|^| D13 " docs/QA_DOCTOR_BATCH1_REPORT.md`, **never** by number. Measured on the current tree, that grep prints `:76`, `:77`, `:88`, and the file has been unchanged since `5526a8bc1` (2026-06-23) — so every commit on this branch shows the same three rows. An earlier revision of this very line asserted the rows were at `75,76,87` and that `76,77,88` was a one-line-off cite for D2/D3/D14; that "correction" was itself unmeasured and is **false**: `:75` is the table's `|---|` separator and `:87` is D12 *Earnings summary*. Reason it is recorded rather than quietly overwritten: a number written into a plan without the command output beside it is a guess wearing the shape of evidence, and the grep rule is what stops the next reader inheriting it.
 - Modify: `mobile-app/reactnative/docs/DOCTOR_BATCH1_API_CONTRACT.md` (Section D — record that live mode maps through `dashboardWire.ts`)
 
 **Interfaces:** none new.
@@ -2783,12 +2783,19 @@ In `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md`, replace the three r
 cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && grep -n "label=\"Today's consults\"\|label=\"Upcoming\"\|label=\"Satisfaction\"\|\.map((a) =>" "app/(doctor)/(tabs)/index.tsx"
 ```
 
-Use the line numbers that command prints — the three `StatCard` lines, and for D1's queue reference the `todays.map((a) =>` line that renders the rows, not the `alerts.map` above it and not the `SectionHeader` above that. A docs commit that cites a line which no longer holds that code is worse than one that cites nothing: it reads as verified.
+Use the line numbers that command prints — the three `StatCard` lines, and for D1's queue reference the
+`queue.map((a) =>` line that renders the rows (Task 7 renames it from `todays.map`), not the `alerts.map`
+above it and not the `SectionHeader` above that. A docs commit that cites a line which no longer holds
+that code is worse than one that cites nothing: it reads as verified. This is why the three rows below
+name their slots instead of filling them — replace `<TODAY_CARD>`, `<QUEUE_MAP>`, `<UPCOMING_CARD>` and
+`<SAT_CARD>` with the line numbers your grep printed for, respectively, the `Today's consults` StatCard,
+the `queue.map((a) =>`, the `Upcoming` StatCard and the `Satisfaction` StatCard. Everything else in each
+row is verbatim, including the em-dash rendering and the backticks:
 
 ```markdown
-| D1 | Today's appointments | StatCard `counts.todaysAppointments` + "Today's queue" list (index.tsx:179,314) | PASS — live mode: `GET /dashboard` `metrics.todaysCount` / `todaysAppointments`, both dated in the doctor's timezone |
-| D2 | Upcoming appointments | StatCard `counts.upcomingAppointments` (index.tsx:180) | PASS — live mode: `metrics.upcomingCount` |
-| D13 | Patient satisfaction rating | StatCard `dashboard.satisfactionPct` (index.tsx:184) | PASS — live mode: `metrics.satisfactionPct`, `null` (rendered `—`) when the doctor has no reviews |
+| D1 | Today's appointments | StatCard `counts.todaysAppointments` + "Today's queue" list (index.tsx:<TODAY_CARD>,<QUEUE_MAP>) | PASS — live mode: `GET /dashboard` `metrics.todaysCount` / `todaysAppointments`, both dated in the doctor's timezone |
+| D2 | Upcoming appointments | StatCard `counts.upcomingAppointments` (index.tsx:<UPCOMING_CARD>) | PASS — live mode: `metrics.upcomingCount` |
+| D13 | Patient satisfaction rating | StatCard `dashboard.satisfactionPct` (index.tsx:<SAT_CARD>) | PASS — live mode: `metrics.satisfactionPct`, `null` (rendered `—`) when the doctor has no reviews |
 ```
 
 Then, immediately below the table's intro paragraph ("All entries are cards/alerts/banners/states of the single `DoctorDashboardData` aggregate on `(tabs)/index.tsx`, per the consolidation plan."), add:
