@@ -1760,7 +1760,13 @@ MSG
 
 - [ ] **Step 1: Add the component schemas**
 
-In `contracts/doctor.openapi.yaml`, insert immediately after the `PatientSummary` schema block (which ends at the `gender:` line, [contracts/doctor.openapi.yaml:90](../../contracts/doctor.openapi.yaml#L90)) — `DashboardQueueAppointment` embeds it, so it must already exist above:
+In `contracts/doctor.openapi.yaml`, insert immediately after the `PatientSummary` schema block (which ends at the `gender:` line) and before the `# ── MVP: profile & verification ──` divider — locate it with `grep -n "^    PatientSummary:" contracts/doctor.openapi.yaml`, not by number: Step 2 edits the same file further down, and your own insert moves every line below it.
+
+Two of the four schemas below are deliberately narrower or wider than they look, and both choices are load-bearing, so read them before "tidying" them:
+
+- `DashboardQueueAppointment.patient` is an **inline four-field object, not `$ref: PatientSummary`**. `DashboardQueuePatient` (`dashboard_metrics.go:64-69`) emits `id`, `name`, `age`, `gender` and nothing else, while `PatientSummary` also declares `initials` and `avatarColor` — which this response never sends, because Task 5 derives them client-side. Embedding the shared shape would promise two fields the server does not write, which is the same class of defect this whole PR exists to close.
+- `status` enumerates exactly the three values `todayQueue` can produce, and `in_progress` is not one of them: `appointments_status_check` allows `booked|confirmed|completed|cancelled` (`supabase/migrations/20260616280000_telemedicine.sql:27-28`, and `pg_get_constraintdef` on the dev DB says the same today), the read drops `cancelled` and renames `booked` → `upcoming`. Naming the absent value in the description keeps the claim falsifiable instead of aspirational.
+- `consultType` is **not** an enum on purpose. The column carries `video|audio|chat|in_person` (`20260618040000_telemedicine_clinical.sql:10`) and the read passes it through verbatim; spec F4 tracks widening the client's icon map. An enum here would turn a booking the app cannot draw into a contract-validation failure instead of a fallback icon.
 
 ```yaml
     # ── dashboard tiles ──────────────────────────────────────────────────────────
@@ -1776,7 +1782,7 @@ In `contracts/doctor.openapi.yaml`, insert immediately after the `PatientSummary
         pendingKobo:       { $ref: '#/components/schemas/Money' }
         lifetimeKobo:      { $ref: '#/components/schemas/Money' }
         thisMonthKobo:     { $ref: '#/components/schemas/Money' }
-        consultsThisMonth: { type: integer }
+        consultsThisMonth: { type: integer, description: 'Completed consults whose scheduled_at falls in the doctor''s current local month. Comes from the same read as todaysCount, not from the money query.' }
     DashboardMetrics:
       type: object
       description: >-
@@ -1811,9 +1817,16 @@ In `contracts/doctor.openapi.yaml`, insert immediately after the `PatientSummary
       properties:
         id:          { type: string }
         ref:         { type: string }
-        patient:     { $ref: '#/components/schemas/PatientSummary' }
+        patient:
+          type: object
+          description: The four stored fields this read selects. Avatar colour and initials are not here — the client derives them.
+          properties:
+            id:     { type: string }
+            name:   { type: string }
+            age:    { type: integer }
+            gender: { type: string, enum: [male, female, other], description: 'Normalised in SQL: anything that is not male or female, case-insensitively, arrives as other.' }
         consultType: { type: string, description: 'The stored consultation_type verbatim: video, audio, chat or in_person.' }
-        status:      { type: string, enum: [upcoming, confirmed, in_progress, completed] }
+        status:      { type: string, enum: [upcoming, confirmed, completed], description: '''booked'' is renamed ''upcoming'' and cancelled rows are never listed. No in_progress: appointments_status_check has no such status.' }
         slotDate:    { type: string, description: 'YYYY-MM-DD in the doctor''s timezone.' }
         slotTime:    { type: string, description: 'HH:MM AM/PM in the doctor''s timezone.' }
         feeKobo:     { $ref: '#/components/schemas/Money' }
@@ -1827,7 +1840,11 @@ In `contracts/doctor.openapi.yaml`, insert immediately after the `PatientSummary
         appointmentCounts:
           type: object
           additionalProperties: { type: integer }
-          description: Status counts over doctor_appointments (the doctor module's own queue table).
+          description: >-
+            Booking-plane status counts (appointmentStatusCounts over
+            public.appointments, with 'booked' reported as 'pending' because that is
+            the key the client's pendingRequests tile already reads). This field used
+            to count doctor_appointments, which no booking path ever writes.
         unreadNotifications: { type: integer }
         walletBalanceKobo:   { $ref: '#/components/schemas/Money' }
         currency:            { type: string }
