@@ -26,10 +26,20 @@ name: CI — CLAUDE.md gates
 
 on:
   # An earlier comment here claimed Railway performs native GitHub deployments from
-  # develop/staging/prod once "its per-environment branch mapping is configured". It
-  # never was: every service in every environment reports `source: null`, so a branch
-  # push cannot deploy anything and `railway up` is the only route. That sentence sent
-  # at least one reader looking for a mapping that does not exist.
+  # develop/staging/prod once "its per-environment branch mapping is configured". That
+  # sentence sent a reader looking for a mapping nobody had built. Measured 2026-11-16
+  # with `railway service list --json` across all three environments: development and
+  # production report `source.repo: null` for every service, so a branch push there
+  # cannot deploy anything at all and `railway up` is the only route. Staging is
+  # different and was mis-stated before: its `backend`, `frontend-web` and
+  # `frontend-admin` DO carry a connected source on paymax2022/spotlight-latest1.
+  # They still do not deploy from `main` — main moved at 2026-11-15 21:49 +01:00 and
+  # the latest staging deployments are 10:55 and 10:39 the same day, i.e. hours
+  # earlier — so whatever branch that connector watches, it is not main, and the
+  # branches it might watch are frozen. Consequence for this file and release.yml:
+  # release.yml's `railway up` is the intended writer, and nobody may push to
+  # `develop` / `staging` / `prod` again without turning that connector into a second
+  # writer of the staging environment.
   #
   # What this file owns is the evidence release.yml waits on: the required checks in
   # .github/required-checks.txt. release-gates.py polls those names before it will let
