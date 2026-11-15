@@ -2607,10 +2607,23 @@ Date" on the shipped dashboard (Task 6 review finding T6-R1, confirmed by the co
   unrecognised value to `'video'`. The `in_person` value that *would* throw lives in
   `dashboard.todaysAppointments`, and at this commit no screen reads that array — Task 7's edit 5 is
   what routes it here. So the throw is a code-path inference about the next task, not an observed
-  failure. It is still a real hazard: `BookAppointmentRequest.ConsultationType`
-  (`internal/telemedicine/model.go:229`) carries no `oneof` binding and `service.go:571` inserts the
-  value verbatim, so `in_person` bookings exist as soon as the queue is read from `appointments` —
-  and rendering `undefined` as a component element throws, taking the whole screen with it.
+  failure. It is still a real hazard, but **its source is stored data, not new bookings** — an earlier
+  revision of this bullet claimed `service.go:571` "inserts the value verbatim, so `in_person` bookings
+  exist as soon as the queue is read", and that is false at the write end (Task 7 review finding T7-R6,
+  confirmed by the controller). Measured: `service.go:489` calls `resolveConsultPackage`, whose
+  no-package branch runs `normalizeConsultMode` (`internal/telemedicine/consult.go:52-62`), which has no
+  `in_person` case and returns `ErrConsultModeInvalid` — `consult_test.go:25-27` asserts exactly that,
+  and `go test ./internal/telemedicine/ -run TestNormalizeConsultMode` → `ok … 1.369s`. With a
+  `packageID` the value comes from `moduleConsultType(pkg.Mode)`, and `consult_session_packages.mode` is
+  CHECK'd to `('chat','voice','video')` (`supabase/migrations/20271405000000_consult_sessions.sql:12`).
+  So nothing this branch ships can *create* the value. What makes the fallback necessary is that the
+  column's CHECK has always allowed it and the endpoint wrote `req.ConsultationType` verbatim until
+  `3e061a53e` (2026-11-04) — at `aee407792` that line is `service.go:486` — so pre-existing rows can
+  carry `in_person`, and the queue read passes them through unchanged
+  (`dashboard_metrics.go:216` → `dashboardWire.ts:90-93` → `index.tsx:315`). Rendering `undefined` as a
+  component element throws, which is why the fallback had to land before the screen rewired. Task 8 must
+  not write a QA step that says "book an in-person consult": the row is obtained from a legacy row or by
+  hand-inserting SQL, and if neither is available the step is not runnable and says so.
 - **No `Invalid Date` on either path.** The queue's date is produced as
   `to_char(a.scheduled_at AT TIME ZONE $2, 'YYYY-MM-DD')` (`backend/internal/doctor/dashboard_metrics.go:218`),
   so it is day-shaped by construction, and `formatSlotDateLabel`'s `slice(0, 10)` is defensive
@@ -2851,7 +2864,7 @@ row is verbatim, including the em-dash rendering and the backticks:
 ```markdown
 | D1 | Today's appointments | StatCard `counts.todaysAppointments` + "Today's queue" list (index.tsx:<TODAY_CARD>,<QUEUE_MAP>) | PASS — live mode: `GET /dashboard` `metrics.todaysCount` / `todaysAppointments`, both dated in the doctor's timezone |
 | D2 | Upcoming appointments | StatCard `counts.upcomingAppointments` (index.tsx:<UPCOMING_CARD>) | PASS — live mode: `metrics.upcomingCount` |
-| D13 | Patient satisfaction rating | StatCard `dashboard.satisfactionPct` (index.tsx:<SAT_CARD>) | PASS — live mode: `metrics.satisfactionPct`, `null` (rendered `—`) when the doctor has no reviews |
+| D13 | Patient satisfaction rating | StatCard `dashboard.satisfactionPct` (index.tsx:<SAT_CARD>) | PASS — live mode: `metrics.satisfactionPct`, `null` (rendered `—`) when the doctor has no reviews. Say the glyph's whole meaning, not one case of it: `—` also shows while `GET /dashboard` is in flight or has failed (follow-up F10), so the row must not read as "`—` proves no reviews" |
 ```
 
 Then, immediately below the table's intro paragraph ("All entries are cards/alerts/banners/states of the single `DoctorDashboardData` aggregate on `(tabs)/index.tsx`, per the consolidation plan."), add:
@@ -2943,7 +2956,7 @@ cd /private/tmp/spot-doctor-metrics && gh pr create --base main --head feat/doct
 - `GET /doctor/dashboard` gains `metrics` (todaysCount / upcomingCount / satisfactionPct+ratingCount / revenue / timezone / today) and `todaysAppointments[]`, typed in `contracts/doctor.openapi.yaml` in place of `Generic`.
 - Consult revenue is projected over `settlements`: settled rows sum `provider_kobo`, escrowed rows run through `settlement.ComputeLegs` so the pending figure is the arithmetic `Settle` actually pays by. `Available` stays the ledger wallet — two planes, labelled apart.
 - `satisfactionPct` is nullable end-to-end; the tile renders `—` instead of `0%` for a doctor with no reviews.
-- The mobile queue row is made safe to render from the aggregate: an unmapped consult type looked `TYPE_ICON[x]` up as `undefined`, which throws when rendered — `in_person` is creatable (no `oneof` binding, and the column's CHECK allows it) and the new queue passes it through verbatim, so the fallback had to land before the screen rewired. Day-slicing the label moves to one shared helper. Neither defect was visible on the old `useAppointments()` path, which collapses every unrecognised type to `'video'` and receives day-shaped dates from SQL; the tiles read the aggregate instead of a client-side status filter that also dropped completed consults from the day it was naming.
+- The mobile queue row is made safe to render from the aggregate: an unmapped consult type looked `TYPE_ICON[x]` up as `undefined`, which throws when rendered — `in_person` is allowed by the column's CHECK and reaches the row from data written before `3e061a53e` (2026-11-04), which is when the booking path began refusing it (`normalizeConsultMode` has no case for it), and the new queue passes the stored value through verbatim, so the fallback had to land before the screen rewired. Day-slicing the label moves to one shared helper. Neither defect was visible on the old `useAppointments()` path, which collapses every unrecognised type to `'video'` and receives day-shaped dates from SQL; the tiles read the aggregate instead of a client-side status filter that also dropped completed consults from the day it was naming.
 
 ## Verification
 - `go build ./...`, `go vet ./internal/doctor/... ./internal/integrations/...`, `go test ./internal/doctor/...`
@@ -2955,7 +2968,7 @@ cd /private/tmp/spot-doctor-metrics && gh pr create --base main --head feat/doct
 - [ ] Doctor with bookings today/tomorrow → the two counts and the queue match them, in the doctor's timezone.
 - [ ] Doctor with an escrowed consult → `pendingKobo` equals what settling it will pay.
 - [ ] Doctor with no reviews → satisfaction reads `—`, not `0%`.
-- [ ] An `in_person` booking in today's queue → row renders with the fallback icon, no crash.
+- [ ] A row in today's queue whose stored `consultation_type` is `in_person` → renders with the fallback icon, no crash. **How to obtain that row:** the app cannot produce one any more (`normalizeConsultMode` refuses `in_person` since `3e061a53e`), so use a booking written before then, or hand-insert one against the dev database. If neither is available, mark this step not-run rather than implying the app was exercised.
 - [ ] Pending consultation requests tile unchanged.
 
 Spec: `docs/superpowers/specs/2026-11-13-doctor-dashboard-metrics-design.md`. Plan: `docs/superpowers/plans/2026-11-13-doctor-dashboard-metrics.md`.
@@ -3017,3 +3030,44 @@ Each is its own change:
 - **F7** — `metrics.timezone` and `metrics.today` are dropped the same way. The server computes the counts and the queue inside `doctor_availability.timezone` and returns the day it listed for, and that is exactly the midnight-boundary guarantee D2 relies on, but nothing carries it to the client. Task 6 is safe without it because each queue row's `slotDate` is the server's own string, copied and never recomputed; a future "Today, 13 Nov" heading would otherwise have to invent the day from the device clock.
 - **F8** — `src/features/doctor/components/QueueItemRow.tsx:24,44` has the same `Record<ConsultType, LucideIcon>` lookup with no fallback as the row Task 6 fixes. It is not a live crash yet because `/queue` reads `doctor_consult_queue`, the orphan table no booking path writes (the spec's out-of-scope list); it becomes one the moment that table is wired. Deliberately untouched: Task 6's brief is that one component, and widening it would let a fix ride along with an unverifiable claim.
 - **F9** — no gate in this package typechecks a `node:test` spec. `mobile-app/reactnative/tsconfig.json:12-17` excludes `**/__tests__/**` and `tsconfig.doctorcheck.json` inherits that list, so `--listFiles` under the doctor config contains zero test files even though its `include` names the directory. Adding a test file to `include` cannot fix it: under TS's `extends`, a child's `exclude` replaces the inherited array rather than narrowing it, so the change is to restate `exclude` in the child without the `__tests__` pattern (and to decide whether the whole-app `typecheck` should keep excluding them — that is what keeps `banking` and `tsconfig.merchant.json` out). Do not believe such an edit until `npx tsc --noEmit --listFiles -p tsconfig.doctorcheck.json | grep -c __tests__` prints a nonzero number, which is the same command that measured the blindness. Out of scope here because it changes a shared gate, and Task 5's suite already runs the spec under `--experimental-strip-types`, so a wrong *value* is caught even where a wrong *type* is not.
+- **F10** — the dashboard cannot tell a doctor that it does not know yet. Task 7's review (T7-R1) measured
+  the state honestly and I declined its one-line remedy, so the reasoning belongs here rather than in a
+  resolved-finding table. Measured: `mockAllowed('false', true) → false`, so `doctorPlaceholder`
+  (`src/api/doctor.client.ts:16-18`) gives react-query `placeholderData: undefined` and an observer
+  reports `data = undefined / isPending = true`; `GetDashboard` issues its reads one after another
+  (`backend/internal/doctor/service_tail2.go:154-179`, seven visible there) against one for `/profile`,
+  so the tiles usually paint before the aggregate exists, and on `dashError` they stay that way. The suggestion was to render
+  `…` while `dashboard == null` at `app/(doctor)/(tabs)/index.tsx:181`. Not taken, for three reasons that
+  are all measurements: (a) `…` has no precedent as a *value* in this vertical — every `'…'` site is a
+  busy button label or a truncated string (`dues/index.tsx:51`, `consult/[id]/call.tsx:281`,
+  `connect/voting/leaderboard.tsx:51`, `services/food.tsx:370`), while `—` is the established no-figure
+  glyph, including for a number still arriving (`(tabs)/earnings.tsx:73` renders
+  `wLoading && !wallet ? '—' : formatKobo(…)`, plus six `|| '—'` sites in `app/(doctor)/`); (b) gating one
+  tile of five makes the screen internally dishonest — during the same load `Today's consults`, `Upcoming`
+  and `Available` render `0`, `0` and `₦0` from `?? 0` and the queue renders the words "No consults
+  scheduled" (`index.tsx:312`), which assert more firmly than an em dash does; (c) a real fix needs a
+  loading affordance that `StatCard` does not have — its `Props` (`components/StatCard.tsx:10-16`) carry
+  no state beyond `value: string` (`:13`), rendered in a `numberOfLines={1}` Text (`:27`) — so it is a
+  design change, not a ternary. What *is* done here:
+  Task 8's D13 row says the glyph's whole meaning instead of one case of it. Whoever takes this should
+  land the affordance and then pin the rule where a gate runs it — T7-R7's shape, a pure
+  `satisfactionTile(dashboard)` under `src/features/doctor/` (outside `__tests__`, so
+  `tsconfig.doctorcheck.json` typechecks it) with cases for `undefined`, `null`, `0` and `96`. That
+  module is deliberately not created for the status quo: a test asserting the two branches this round
+  chose not to separate would be structure built around a decision rather than a requirement.
+  T7-R2's truncation is the same family — the queue is `LIMIT 20` (`dashboard_metrics.go:230`,
+  `dashboardQueueLimit = 20` at `:41`) under a header that says "Today's queue" with no "showing 20 of
+  31" line, and its two protective live-DB tests (`dashboard_metrics_live_db_test.go:307,825`) **skip**
+  without `TEST_DATABASE_URL`, which the review measured — so on any laptop clone that guard is silent.
+- **F11** — four `DoctorDashboardData` arrays are hard-coded empty in live mode, and the screen's copy
+  does not say so. `dashboardWire.ts:117-120` returns `[]` for `pendingRequests`, `waitingRoom`,
+  `messages` and `alerts`, and `:108-109,:111-114` return `0` for `waitingRoom`, `followUpRequests`,
+  `newLabResults`, `pendingPrescriptions`, `refillRequests` and `hmoApprovals`. So "Needs attention"
+  (`index.tsx:230,232`) and "Recent messages" (`:253`) can never render for a live-mode doctor, and the
+  Waiting chip is dead — yet each section is written as ordinary content and the endpoint simply has no
+  field for them. Task 7's
+  review (T7-R4) raised this while asking only about a stale comment on the neighbouring field; the arrays
+  are a Task 5 decision that deserves its own line, not a comment edit that implies they are wired. The
+  honest options are a server field per section or copy that says the section is unavailable — either way
+  it is a contract change, which is why it is not in this PR (spec "Out of scope": every read here uses
+  columns and tables that already exist).

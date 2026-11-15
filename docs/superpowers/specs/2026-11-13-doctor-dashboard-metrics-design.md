@@ -98,6 +98,17 @@ Measured at `origin/main` = `effe1b355` on 2026-11-13.
   > behaviour a doctor could see — the fixes stand, the motivating observations do not. Line 282's
   > "cannot render Invalid Date for any shape the server sends" remains literally true, and is now
   > the weaker claim: the server only ever sends one shape.
+  > **Refined the same day by Task 7's review (T7-R6):** "creates the route" is true of the *read* side
+  > only. The write side refuses the value — `service.go:489` reaches `normalizeConsultMode`
+  > (`internal/telemedicine/consult.go:52-62`), which has no `in_person` case and returns
+  > `ErrConsultModeInvalid` (`consult_test.go:25-27` asserts exactly that), and with a package the value
+  > comes from `pkg.Mode`, CHECK'd to `('chat','voice','video')`
+  > (`supabase/migrations/20271405000000_consult_sessions.sql:12`). Nothing this branch ships can
+  > *create* it. What the fallback actually guards is **stored** data: the endpoint wrote
+  > `req.ConsultationType` verbatim until `3e061a53e` (2026-11-04; at `aee407792` that line is
+  > `service.go:486`), with only the column CHECK in the way, so rows carrying `in_person` can exist and
+  > the queue now lists them. The paragraph above therefore stands, but "a doctor could see" needs its
+  > subject: a doctor sees it only if their database already holds such a row.
 - `EXPO_PUBLIC_DOCTOR_USE_MOCK` is `false` locally and `mockPolicy.ts` forces mockless in
   staging/production, so these tiles are live-mode behaviour, not a dev-only artefact.
   `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md` records D1 as PASS from the mock fixtures — a false
