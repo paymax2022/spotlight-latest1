@@ -19,6 +19,21 @@ single pipeline. Module lanes are deliberately *not* required: they are gated on
 the router and report `skipped` when their module did not change, so requiring
 them would couple branch protection to routing for no gain.
 
+**Those nine names only exist where `ci.yml` runs, and since 2026-11-15 it runs on
+`main` alone** (`push: branches: [main]`, `pull_request: branches: [main]`). `develop`
+still has them configured as required, so a PR targeting `develop` today would sit on
+"Expected — waiting for status" forever with nothing explaining why. Measured 2026-11-16:
+no open PR targets `develop`, which is the only reason that is latent rather than broken.
+If `develop` is ever needed again, either drop its required-checks to a set something
+actually emits on it, or add `develop` back to `ci.yml`'s triggers — do not re-apply
+`apply-branch-protection.sh develop` as it stands.
+
+Separately, `main`'s live required checks are **not** these nine. `main` protection
+requires five bare contexts (`backend`, `frontend-admin`, `frontend-web`, `migrations`,
+`secrets-scan`) emitted by `ci-optimized.yml`'s inline jobs. Two branch protections that
+name different workflows is a real inconsistency, not a typo in this file; resolving it
+means picking which lane `main` is gated on, and that has not been decided here.
+
 | Setting | Value | Why |
 |---|---|---|
 | `enforce_admins` | **false** | Required checks block **direct pushes**, and the checks only run *after* a push lands. With admins enforced, the standing "rebase, one fast-forward `git push origin HEAD:develop`" workflow becomes impossible and every change would need a PR. Admins keep the bypass; the gate still applies to PRs and to everyone else. |
@@ -100,12 +115,37 @@ gh api -X PUT "repos/$OWNER/$REPO/branches/main/protection" \
 
 ## GitHub Environments (for deploy)
 
-Create two environments used by `deploy.yml` and the Railway deploy jobs in `ci.yml`:
+The environments the release chain names are `development`, `staging` and
+`production` — declared by `release.yml`'s deploy jobs and, for the database apply, by
+`_reusable-db-apply.yml`'s `environment: ${{ inputs.target }}`. `deploy.yml` uses its own
+`staging`/`production` gate for the Cloud Run lane.
 
-- **staging** — no gate; holds staging secrets (`RAILS_MODE=sandbox`, sandbox provider keys, staging DB URL, GCP WIF vars).
-- **production** — **required reviewers** (human gate); holds live secrets. Restrict to the `main` branch.
+**No environment on the release path may have required reviewers.** Measured 2026-11-16:
+`development`, `staging`, `production` and the legacy capital-`Production` all report
+`reviewers: 0`, no wait timer, `can_admins_bypass: true`. The `Production` environment's two
+required reviewers (`spec-ng`, `TheBraveByte`) were removed on 2026-11-15 (~16:34Z) — that
+removal *is* the removal of the last human gate on a production release.
+
+This is not cosmetic. A reusable-workflow job that declares `environment:` inherits that
+environment's protection rules, so re-adding a reviewer to `production` would silently
+re-gate `release.yml`'s automatic `db push` on every release — the chain would park at a
+gate nobody is told to look at and read like a hang.
+
+Rollback (only if you mean to re-gate every automatic production apply as well — this is a
+PUT to a shared branch-protection surface, so it is a deliberate, reviewed action):
+
+```bash
+gh api -X PUT repos/paymax2022/spotlight-latest1/environments/Production --input - <<'JSON'
+{"wait_timer":0,"prevent_self_review":false,"can_admins_bypass":true,
+ "reviewers":[{"type":"User","id":18039055},{"type":"User","id":59900242}]}
+JSON
+```
 
 Store per-env values as Environment secrets/variables — never in the repo, image, or logs.
+Currently only `production` holds an environment secret (`SUPABASE_DB_PASSWORD`, which
+overrides the repo-level copy of the same name for jobs in that environment); everything
+else the chain reads is repo-level. `staging-Old` is not a GitHub environment — it 404s, and
+survives only as a Railway environment name.
 
 ## Activation variables (deploys are OFF until set)
 
@@ -115,7 +155,8 @@ Deploy workflows **skip** (grey, not red) until you opt in with a repository/Env
 | Workflow | Activate with variable | Plus secrets |
 |---|---|---|
 | `deploy.yml` (Cloud Run) | `GCP_PROJECT_ID` (+ `GCP_REGION`, `GCP_ARTIFACT_REGISTRY`) | `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT` |
-| `ci.yml` (Railway, per environment) | `RAILWAY_DEPLOY_ENABLED=true` — plus a manual `workflow_dispatch` naming the environment and typing `DEPLOY` to confirm, from the matching promotion branch | `RAILWAY_TOKEN_DEVELOPMENT`, `RAILWAY_TOKEN_STAGING`, `RAILWAY_TOKEN_PRODUCTION` |
+| `release.yml` (Railway, all three environments) | `RAILWAY_DEPLOY_ENABLED=true` — the ONLY brake. Set it to anything else and the chain stops at its first job. Nothing else has to be typed, dispatched, or approved. | `RAILWAY_TOKEN_DEVELOPMENT`, `RAILWAY_TOKEN_STAGING`, `RAILWAY_TOKEN_PRODUCTION` |
+| `db-migrate.yml` + `release.yml` (Supabase apply) | `DB_MIGRATE_ENABLED=true` (production), `DB_MIGRATE_STAGING_ENABLED=true` (staging) — each environment's apply is gated on its own variable, so one can be disabled without touching the other | `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`, `SUPABASE_STAGING_PROJECT_ID`, and `SUPABASE_DB_PASSWORD` / `SUPABASE_STAGING_DB_PASSWORD` |
 | `deploy-cpanel.yml` (Namecheap cPanel) | `CPANEL_DEPLOY_ENABLED=true` | see the workflow header |
 | `mobile-eas.yml` (EAS) | `EAS_ENABLED=true` | `EXPO_TOKEN` |
 

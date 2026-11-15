@@ -2,8 +2,9 @@
 # Upload one service to one Railway environment, wait for the deployment to
 # settle, and dump a REDACTED crash log when it does not.
 #
-# Extracted from ci.yml's three deploy jobs and development-deploy.yml, where it
-# existed four times and three of the four were wrong. Two behaviours in here were
+# Extracted from ci.yml's three deploy jobs and development-deploy.yml — all four
+# now deleted, text at 6199a6b57 — where it existed four times and three of the
+# four were wrong. Two behaviours in here were
 # each discovered the hard way; they are documented at the point of use so nobody
 # "fixes" them back.
 #
@@ -37,11 +38,14 @@
 #                           - `frontend-web --path-as-root` makes Railway look for
 #                             `frontend-*/` inside an archive that already IS that
 #                             folder.
-#                         Only ci.yml's staging matrix ever got this right
+#                         Only the staging matrix in the old ci.yml got this right
 #                         (ci.yml:622-637). ci.yml:563, ci.yml:790 and
 #                         development-deploy.yml:98 all hardcoded --path-as-root
 #                         for every service, which is why development's
-#                         frontend-web deployment failed on 2026-11-13.
+#                         frontend-web deployment failed on 2026-11-13. Those three
+#                         jobs and that file are now deleted — read their text at
+#                         6199a6b57. The citations above are deliberately
+#                         historical, not pointers into the current tree.
 
 set -euo pipefail
 

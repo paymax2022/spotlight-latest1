@@ -3,18 +3,22 @@
 This guide is for application-code work in this repository. Follow it before
 changing code or releasing a build.
 
-## Branch ownership and promotion
+## Branch ownership
 
-- `main` is the client's existing working branch. Do not force-push, reset, or
-  make deployment changes there.
-- `develop` is the active Development branch and the branch for current coding
-  and Development releases.
-- `staging` is promoted from a validated `develop` revision.
-- `prod` is promoted from a validated `staging` revision and deploys to
-  Production.
+As of 2026-11-15 there is one release branch: `main`. A push to `main` runs CI
+and, once that commit's checks are provably green, `release.yml` deploys it to
+development, staging and production in that order.
 
-Do not deploy from feature branches. Do not merge or push unrelated history to
-`staging` or `prod`.
+- Do not force-push or reset `main`. Every accepted push there is a production
+  release, so a rewritten history re-releases a tree someone else chose.
+- Do not push to `main` a commit whose change you have not had reviewed through a
+  PR, unless the work was explicitly asked to go in unreviewed.
+- `develop`, `staging` and `prod` are no longer part of the release path. The
+  `staging` and `prod` tips are preserved as tags `archive/staging-2026-11-15`
+  and `archive/prod-2026-11-15`; see `docs/devops/deployment-matrix.md` for why
+  they must not be merged.
+
+Do not deploy from feature branches. Feature work goes to `main` through a PR.
 
 ## Current Development deployment
 
@@ -87,30 +91,39 @@ Module-specific CI lanes run only when their matching paths change. This is
 intentional cost control; do not create duplicate CI workflows for the same
 checks.
 
-## Manual Railway release procedure
+## Railway release procedure
 
-Only release after the required CI checks have passed.
+There is nothing to run. Push the commit to `main` and `release.yml` does the
+rest: it waits for that commit's CI, deploys development, migrates and deploys
+staging, probes staging, then migrates and deploys production.
 
-1. Open GitHub **Actions**.
-2. Select **CI — CLAUDE.md gates**.
-3. Select **Run workflow**.
-4. Select the matching branch and environment exactly:
+Two controls exist, and they are the only ones:
 
-   | Branch | `deploy_environment` input |
-   | --- | --- |
-   | `develop` | `development` |
-   | `staging` | `staging` |
-   | `prod` | `production` |
+- **Brake.** Set the repository variable `RAILWAY_DEPLOY_ENABLED` to anything
+  other than `true` and the chain stops at its first job. Use it before you
+  revert a bad commit, not after.
+- **Rollback.** Run `release.yml` by hand with `ref=<prior main SHA>`. A rollback
+  deliberately does **not** apply migrations — an older `supabase/migrations/`
+  tree makes `supabase db push` abort. Add `skip_gates=true` only if that SHA is
+  old enough that its check-runs are past retention.
 
-5. Type exactly `DEPLOY` in `confirm_deploy`.
-6. Run the workflow and wait for all three service deployment jobs to finish.
-7. Verify the public endpoints and backend health endpoint after a successful
-   Railway deployment.
+`RAILWAY_DEPLOY_ENABLED` and the per-environment Railway token secrets are read
+from repository-level secrets and variables; a missing token makes the deploy job
+fail closed rather than deploy nothing quietly.
 
-The pipeline rejects a branch/environment mismatch. It also requires the
-GitHub repository variable `RAILWAY_DEPLOY_ENABLED` to be `true` and the
-environment-specific Railway token secret to exist. Do not bypass these gates
-or run `railway up` manually from a local machine for a normal release.
+Do not run `railway up` manually from a local machine for a normal release. The
+one exception is a service this repo's chain does not cover, and that has to be
+decided deliberately — see `docs/devops/deployment-matrix.md`.
+
+Verify a release by reading what each environment is actually serving, not by
+looking at a green tick:
+
+```bash
+curl -s https://backend-production-1b33d.up.railway.app/api/v1/public/build
+```
+
+`.commit` must equal the SHA you released. A green run with an old commit means
+the deploy did not replace the process.
 
 ## Current frontend-web compatibility note
 
