@@ -1749,7 +1749,7 @@ MSG
 
 ### Task 4: Type the dashboard response in the contract
 
-`/doctor/dashboard` is `{ $ref: Generic }` today ([contracts/doctor.openapi.yaml:1248](../../contracts/doctor.openapi.yaml#L1248)) — which is *why* the client could cast the flat wire straight into its rich view model and invent fields. Typing it is the guard against a repeat.
+`Shipped in `a03ed2f27`, tightened in `6a58b8be4`, prose corrected in `dce246b53`. On `origin/main` this path answered `{ $ref: Generic }` — which is *why* the client could cast the flat wire straight into its rich view model and invent fields. Typing it is the guard against a repeat, and Step 4 is the proof the guard actually rejects the drift.
 
 **Files:**
 - Modify: `contracts/doctor.openapi.yaml` (four new component schemas; the `/doctor/dashboard` response `$ref`)
@@ -1887,9 +1887,127 @@ python3 -c "import yaml; yaml.safe_load(open('contracts/doctor.openapi.yaml')); 
 npx --yes @redocly/cli@1 lint contracts/doctor.openapi.yaml --config redocly.yaml --format=stylish; echo "redocly exit: $?"
 ```
 
-Expected: `redocly exit: 0`. Warnings are acceptable (the file already carries them for missing `operationId`s); an error is not. Capture the exit code as shown — piping lint output straight to `tail` hides it.
+Expected: `redocly exit: 0` **with exactly `You have 920 warnings.`** — that is the count this file carried before Task 4 and it carries after both commits, so a different number means the new block introduced a problem rather than a warning. Warnings are acceptable (the file already carries them for missing `operationId`s); an error is not. Capture the exit code unpiped — zsh has no `PIPESTATUS`, and piping lint output straight to `tail` hides it. Assert too that no warning names a `Dashboard*` schema: `grep -ci dashboard` on the saved output must print `0`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Prove the schema bites — the drift harness**
+
+A guard nobody tested is a decoration, and "it lints" is not evidence that it *rejects*
+anything: this block was shipped once with `required` and `additionalProperties` missing, and
+Redocly lint passed it at exit 0 with all 920 warnings, exactly as it passes the tightened
+block. So run the payload matrix twice — once against the schema before your fix and once
+after — and keep both outputs. The before-run is the negative control: if the drifted payloads
+validate *after* the fix, or fail to validate *before* it, the harness is broken and the fix is
+unproven.
+
+Three traps are already paid for: `ajv-cli@5` takes `-s`/`-d` and rejects `--schema`; draft-07
+does not know the `int64` format, so the `format` keys have to be stripped or ajv refuses to
+compile the mirror; and OpenAPI's `nullable: true` must become `type: [T, 'null']` or the honest
+payload fails for the wrong reason. The `renamed-key` case drops the old key rather than setting
+it to `null` — a null violates `type: integer` even in a toothless schema, so the negative
+control would pass for a reason that has nothing to do with the guard under test.
+
+```python
+import json, subprocess, sys, yaml
+
+SRC = sys.argv[1]           # a contracts/doctor.openapi.yaml to read
+TAG = sys.argv[2]           # 'before' or 'after', used in the filenames
+doc = yaml.safe_load(open(SRC))
+sch = doc['components']['schemas']
+
+def conv(n):
+    if isinstance(n, dict):
+        d = {}
+        for k, v in n.items():
+            if k == '$ref':
+                d[k] = v.replace('#/components/schemas/', '#/definitions/')
+            elif k == 'format':
+                continue
+            elif k == 'nullable':
+                continue
+            else:
+                d[k] = conv(v)
+        if n.get('nullable') is True:
+            d['type'] = [d.get('type', 'string'), 'null']
+        return d
+    if isinstance(n, list):
+        return [conv(x) for x in n]
+    return n
+
+defs = {'Money': {'type': 'integer'}}
+for name in ('DashboardRevenue', 'DashboardMetrics', 'DashboardQueueAppointment',
+             'DashboardResponse'):
+    defs[name] = conv(sch[name])
+mirror = {'$schema': 'http://json-schema.org/draft-07/schema#',
+          'definitions': defs, '$ref': '#/definitions/DashboardResponse'}
+sp = f'/tmp/t4-{TAG}-schema.json'
+open(sp, 'w').write(json.dumps(mirror))
+
+row = {'id': 'a', 'ref': 'TM-1',
+       'patient': {'id': 'p', 'name': 'n', 'age': 1, 'gender': 'male'},
+       'consultType': 'video', 'status': 'upcoming', 'slotDate': '2026-11-15',
+       'slotTime': '09:00 AM', 'feeKobo': 0, 'reason': '', 'isHmo': False,
+       'createdAt': '2026-11-15T08:00:00Z'}
+good = {'appointmentCounts': {'pending': 1}, 'unreadNotifications': 0,
+        'walletBalanceKobo': 0, 'currency': 'NGN',
+        'metrics': {'todaysCount': 0, 'upcomingCount': 0, 'satisfactionPct': None,
+                    'ratingCount': 0,
+                    'revenue': {'pendingKobo': 0, 'lifetimeKobo': 0, 'thisMonthKobo': 0,
+                                'consultsThisMonth': 0},
+                    'timezone': 'Africa/Lagos', 'today': '2026-11-15'},
+        'todaysAppointments': []}
+cases = [('good', good, True),
+         ('empty-object', {}, False),
+         # A rename drops the old key; leaving it as null would fail `type: integer` even in
+         # the toothless before-schema, so the negative control would pass for the wrong reason.
+         ('renamed-key', {**good, 'metrics': dict(
+                              (k, v) for k, v in good['metrics'].items() if k != 'todaysCount'
+                          ) | {'todayCount': 0}}, False),
+         ('dropped-key', {**good, 'metrics': {k: v for k, v in good['metrics'].items()
+                                              if k != 'ratingCount'}}, False),
+         ('invented-top-level', {**good, 'someNewThing': 1}, False),
+         ('currency-changed', {**good, 'currency': 'NGA'}, False),
+         ('queue-too-long', {**good, 'todaysAppointments': [dict(row) for _ in range(21)]},
+          False)]
+# In the before-run the point is that the shipped schema accepts the drift, so every case
+# is expected VALID there; the after-run expects the drift rejected.
+baseline = (TAG == 'before')
+bad = 0
+for name, payload, want_valid in cases:
+    expect = True if baseline else want_valid
+    dp = f'/tmp/t4-{TAG}-{name}.json'
+    open(dp, 'w').write(json.dumps(payload))
+    r = subprocess.run(['npx', '--yes', 'ajv-cli@5', 'validate', '-s', sp, '-d', dp],
+                       capture_output=True, text=True)
+    valid = (r.returncode == 0)
+    ok = (valid == expect)
+    bad += (not ok)
+    print(f'{name:20s} {"VALID  " if valid else "INVALID"} expected '
+          f'{"valid" if expect else "invalid"} {"ok" if ok else "MISMATCH"}')
+print(f'{TAG}: {bad} harness mismatches')
+sys.exit(1 if bad else 0)
+```
+
+```bash
+cd /private/tmp/spot-doctor-metrics
+git show a03ed2f27:contracts/doctor.openapi.yaml > /tmp/t4-before.yaml   # the toothless schema
+python3 /tmp/t4-drift.py /tmp/t4-before.yaml before
+python3 /tmp/t4-drift.py contracts/doctor.openapi.yaml after
+```
+
+Observed for this task — before against `a03ed2f27` (no `required`, no
+`additionalProperties: false`, no `maxItems`), after against the tightened block:
+
+```text
+before: all seven payloads VALID (the six drifted ones included) -> before: 0 harness mismatches
+after:  good VALID; empty-object, renamed-key, dropped-key, invented-top-level,
+        currency-changed and queue-too-long all INVALID          -> after: 0 harness mismatches
+```
+
+Those six `VALID` lines are the finding: the typed contract accepted an empty body, a renamed
+`todaysCount`, a dropped `ratingCount`, an invented top-level field, a wrong currency code and a
+21-row queue. A `MISMATCH` line in either arm means fix the harness, not the expectation.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 cd /private/tmp/spot-doctor-metrics && git add contracts/doctor.openapi.yaml && git commit -m "$(cat <<'MSG'
