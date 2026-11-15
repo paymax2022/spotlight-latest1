@@ -2864,8 +2864,14 @@ row is verbatim, including the em-dash rendering and the backticks:
 ```markdown
 | D1 | Today's appointments | StatCard `counts.todaysAppointments` + "Today's queue" list (index.tsx:<TODAY_CARD>,<QUEUE_MAP>) | PASS — live mode: `GET /dashboard` `metrics.todaysCount` / `todaysAppointments`, both dated in the doctor's timezone |
 | D2 | Upcoming appointments | StatCard `counts.upcomingAppointments` (index.tsx:<UPCOMING_CARD>) | PASS — live mode: `metrics.upcomingCount` |
-| D13 | Patient satisfaction rating | StatCard `dashboard.satisfactionPct` (index.tsx:<SAT_CARD>) | PASS — live mode: `metrics.satisfactionPct`, `null` (rendered `—`) when the doctor has no reviews. Say the glyph's whole meaning, not one case of it: `—` also shows while `GET /dashboard` is in flight or has failed (follow-up F10), so the row must not read as "`—` proves no reviews" |
+| D13 | Patient satisfaction rating | StatCard `dashboard.satisfactionPct` (index.tsx:<SAT_CARD>) | PASS — live mode: `metrics.satisfactionPct`; a `null` renders `—`, which is this app's no-figure glyph — a doctor with no reviews, and any doctor while `GET /dashboard` is still in flight or has failed (follow-up F10 in the plan) |
 ```
+
+The D13 row states the glyph's whole meaning rather than one case of it. Task 7's review (T7-R1) measured
+that `—` is on screen while the aggregate is loading, and the controller declined to give loading its own
+glyph (see F10 for all three reasons), so a row that said "`—` when the doctor has no reviews" would be
+true and still mislead a reader who took it as exclusive. Keep the wording reader-facing: the row is
+published documentation, not an instruction to whoever writes it.
 
 Then, immediately below the table's intro paragraph ("All entries are cards/alerts/banners/states of the single `DoctorDashboardData` aggregate on `(tabs)/index.tsx`, per the consolidation plan."), add:
 
