@@ -71,10 +71,19 @@ UI)** plus minor reuse/consistency/a11y polish items. None are blockers.
 All entries are cards/alerts/banners/states of the single `DoctorDashboardData` aggregate
 on `(tabs)/index.tsx`, per the consolidation plan.
 
+> **Correction (2026-11-13).** D1, D2 and D13 were previously recorded PASS from the
+> `DEMO_*` fixtures. In live mode (`EXPO_PUBLIC_DOCTOR_USE_MOCK=false`, which
+> `mockPolicy.ts` forces in staging and production) they were 0, 0 and `0%` for every
+> doctor: the counts came from `doctor_appointments`, which no booking path writes,
+> and the queue was a status filter with no date filter. `GET /dashboard` now carries
+> `metrics` + `todaysAppointments` from `public.appointments`, mapped in
+> `src/features/doctor/dashboardWire.ts`. See
+> `docs/superpowers/specs/2026-11-13-doctor-dashboard-metrics-design.md`.
+
 | # | Entry | How covered | Status |
 |---|-------|-------------|--------|
-| D1 | Today's appointments | StatCard `counts.todaysAppointments` + "Today's queue" list (index.tsx:167,294) | PASS |
-| D2 | Upcoming appointments | StatCard `counts.upcomingAppointments` (index.tsx:168) | PASS |
+| D1 | Today's appointments | StatCard `counts.todaysAppointments` + "Today's queue" list (index.tsx:176,314) | PASS — live mode: `GET /dashboard` `metrics.todaysCount` / `todaysAppointments`, both dated in the doctor's timezone |
+| D2 | Upcoming appointments | StatCard `counts.upcomingAppointments` (index.tsx:177) | PASS — live mode: `metrics.upcomingCount` |
 | D3 | Pending consultation requests | quick-stat → deep-links `appointments/requests` (index.tsx:198) | PASS |
 | D4 | Active consultation card | `dashboard.activeConsultation` card (index.tsx:176-193) | PASS |
 | D5 | Waiting-room queue | quick-stat → deep-links `queue/waiting-room` (index.tsx:203) | PASS |
@@ -85,7 +94,7 @@ on `(tabs)/index.tsx`, per the consolidation plan.
 | D10 | Refill requests | `alerts[kind='refill_request']` | PASS |
 | D11 | HMO approval alerts | `alerts[kind='hmo_approval']` | PASS |
 | D12 | Earnings summary | StatCard `dashboard.earnings.availableKobo` via formatKobo (index.tsx:171) | PASS |
-| D13 | Patient satisfaction rating | StatCard `dashboard.satisfactionPct` (index.tsx:172) | PASS |
+| D13 | Patient satisfaction rating | StatCard `dashboard.satisfactionPct` (index.tsx:181) | PASS — live mode: `metrics.satisfactionPct`; a `null` renders `—`, which is this app's no-figure glyph — a doctor with no reviews, and any doctor while `GET /dashboard` is still in flight or has failed (follow-up F10 in the plan) |
 | D14 | Online/offline + availability | header status card + Go online/offline toggle (index.tsx:144-163), `useSetPresence` | PASS — see Minor #7 (rendered as toggle, not a presence-picker sheet) |
 | D15 | Urgent case alert | `alerts[kind='urgent_case']` severity `critical` | PASS |
 | D16 | Compliance alert | `alerts[kind='compliance']` | PASS |

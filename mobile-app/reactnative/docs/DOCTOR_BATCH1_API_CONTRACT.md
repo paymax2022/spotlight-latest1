@@ -140,6 +140,18 @@ Ownership Map for which spec entries are full screens vs states vs reuse-existin
 | `useSetPresence()` | mutation | `Omit<SetPresenceInput,'idempotencyKey'>` |
 | `useDismissAnnouncement()` | mutation | `Omit<DismissAnnouncementInput,'idempotencyKey'>` |
 
+**Live mode.** `GET /dashboard` answers the flat projection `DashboardResponse` in
+`contracts/doctor.openapi.yaml`. `src/features/doctor/dashboardWire.ts` (pure, no
+React Native imports) maps it onto `DoctorDashboardData`:
+`metrics.todaysCount`/`upcomingCount` → the two appointment tiles,
+`metrics.satisfactionPct` (`null` = no reviews) → the satisfaction tile,
+`walletBalanceKobo` → `earnings.availableKobo` and
+`metrics.revenue.*` → the consult-revenue fields (two different planes — the wallet
+includes non-consult money), `todaysAppointments[]` → the queue rows. `patient.initials`
+and `avatarColor` are derived client-side. Fields the endpoint has no data for stay
+neutral (`waitingRoom`, `messages`, `alerts`, `pendingRequests[]`, `payouts`) — see the
+follow-ups in the spec.
+
 ### Section E — schedule (`useSchedule.ts`)
 | Hook | Kind | Signature |
 |------|------|-----------|
