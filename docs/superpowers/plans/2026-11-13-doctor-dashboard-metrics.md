@@ -2537,22 +2537,47 @@ MSG
 
 - [ ] **Step 11: Mutation evidence — prove the spec bites**
 
-Nine green tests do not prove the mapper is what makes them green. Break the mapper four
+Ten green tests do not prove the mapper is what makes them green. Break the mapper six
 ways, one at a time, and record which test goes red for each. Restore by writing the
 original bytes back (capture `sha256` of the file before you start and check it after),
 never `git checkout --` — this worktree is shared and that command would discard another
-session's uncommitted work. After the four mutations the file must hash back to the value
+session's uncommitted work. After the six mutations the file must hash back to the value
 it had when the commit landed, and `npm run test:doctor-mapping` must be back to
 `# pass 48` / `# fail 0`.
 
-| # | Mutation (in `dashboardWire.ts`, unless the row says the spec) | The test that must go red |
+| # | Mutation (all six are in `dashboardWire.ts`; the spec is never mutated) | The test that must go red |
 |---|---|---|
-| 1 | `mapQueueAppointment`: return `row` instead of `{ ...row, consultType: … }` | *in_person passes through rather than becoming a video consult* |
+| 1 | `mapQueueAppointment`: return `row` instead of `{ ...row, consultType: … }` | *in_person passes through rather than becoming a video consult* **and** the new *the tile path keeps the passthrough, not just the exported helper* (measured: 8 pass / 2 fail) |
 | 2 | `mapDashboardWire`: `satisfactionPct: m.satisfactionPct ?? null` → `?? 0` | *no reviews is null, which the tile renders as an em dash* — and, as seen in `task-5-mutation.md`, *a thin wire yields zeros and empty arrays, never undefined* too: that spec's `assert.equal(d.satisfactionPct, null)` rests on the same fallback, so the table under-claimed and coverage is one test wider than written |
 | 3 | `mapDashboardWire`: `todaysAppointments: m.todaysCount ?? 0` → `todaysAppointments: 0` | *every tile reads the wire, not a literal* |
 | 4 | `formatSlotDateLabel`: drop the `.slice(0, 10)` | *the slot date label survives a full timestamp* (`'Invalid Date'` vs `'Nov 13'`) |
 | 5 | `todaysAppointments: (wire.todaysAppointments ?? []).map(mapQueueAppointment)` → `.map((w) => mapAppointmentWire({ ...w, id: w.id ?? '' }))` (drop the `consultType` override; keep the import) | *the tile path keeps the passthrough, not just the exported helper* — this is the mutant that shipped green before the fix wave |
 | 6 | `pendingRequests: statusCounts.pending ?? 0` → `m.todaysCount ?? 0` | *every tile reads the wire, not a literal* (7 vs 3); before `pending` moved off 3 this mutant survived all nine tests |
+
+**Fix wave 1, measured (`533d982b5`, transcript `task-5-fix1-mutation.md`).** All six mutants and
+the mirror of 6 went red — none survived — and the five `?? 0`→`?? 1` extras Edit 3 was written to
+reach went red too. The two rows that matter are 5 and 6: each is killed by exactly the assertion
+the fix wave added (5 by the new tile-path test alone, 6 by test 1's `pendingRequests === 7`). The
+implementer also ran the negative control nobody had to ask for: with the pre-fix nine-test spec
+from `git show HEAD:…` the same two mutants come back **exit 0, 9/9 green**, so the kills are
+attributable to the new assertions rather than to something that was already true. Gate numbers
+re-measured by the controller in the real tree, not copied: `# tests 10 / # pass 10 / # fail 0`,
+`npm run test:doctor-mapping` `# tests 48 / # pass 48 / # fail 0 / # skipped 0`,
+`tsc exit: 0` with an empty output file, and `shasum -a 256` on `dashboardWire.ts` =
+`8c651bd1a…5230ca`, byte-identical to the commit that shipped it — the mapper really was not
+touched, which is what let this round be a spec-only change.
+
+One premise in that round's brief was **wrong and the implementer caught it**: the brief asserted
+"`tsconfig.doctorcheck.json` `include`s `src/features/doctor/**/*`, which is this test file, so the
+tenth test really is typechecked". `include` does not win: the config `extends: "./tsconfig.json"`,
+which excludes `**/__tests__/**` at `mobile-app/reactnative/tsconfig.json:12-17`, and the child
+inherits that list. Proved two ways — `npx tsc --showConfig -p tsconfig.doctorcheck.json` prints the
+`exclude` array, and `npx tsc --noEmit --listFiles -p tsconfig.doctorcheck.json | grep -c __tests__`
+is **0**. So Step 9's typecheck validates the mapper, the types and the api module and has never
+validated a single line of any `node:test` spec in this package. `node --experimental-strip-types`
+parses and runs the file but checks no types, which is why the suite is still meaningful: a typo in
+an assertion is a runtime `undefined` and a red test, not a green type error. Recorded as **F9**
+below, because the way to close it is not the obvious one.
 
 Mutation 1 is the one that matters most, and it has now been answered rather than assumed: with
 the override removed, *in_person passes through rather than becoming a video consult* goes red
@@ -2784,11 +2809,11 @@ follow-ups in the spec.
 ```bash
 cd /private/tmp/spot-doctor-metrics/backend && go build ./... && go vet ./internal/doctor/... ./internal/integrations/... && echo "go ok"
 cd /private/tmp/spot-doctor-metrics/backend && git diff --name-only origin/main...HEAD -- internal/doctor | grep '\.go$' | xargs gofmt -l; echo "gofmt: nothing listed above = every file THIS BRANCH touched is formatted"
-cd /private/tmp/spot-doctor-metrics/backend && go test ./internal/doctor/... -count=1 2>&1 | tail -8
+cd /private/tmp/spot-doctor-metrics/backend && go test ./internal/doctor/... -count=1 > /tmp/t8-gotest.txt 2>&1; echo "go test exit: $?"; tail -8 /tmp/t8-gotest.txt
 cd /private/tmp/spot-doctor-metrics && python3 -c "import yaml; yaml.safe_load(open('contracts/doctor.openapi.yaml')); print('openapi parses')"
 cd /private/tmp/spot-doctor-metrics && npx --yes @redocly/cli@1 lint contracts/doctor.openapi.yaml --config redocly.yaml --format=stylish; echo "redocly exit: $?"
-cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && npx --max-old-space-size=4096 tsc --noEmit -p tsconfig.doctorcheck.json; echo "tsc exit: $?"
-cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && npm run test:doctor-mapping 2>&1 | tail -6
+cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && NODE_OPTIONS=--max-old-space-size=4096 npx tsc --noEmit -p tsconfig.doctorcheck.json > /tmp/t8-tsc.txt 2>&1; echo "tsc exit: $?"; wc -l < /tmp/t8-tsc.txt; cat /tmp/t8-tsc.txt
+cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && npm run test:doctor-mapping > /tmp/t8-test.txt 2>&1; echo "test exit: $?"; grep -E "^# (tests|suites|pass|fail|cancelled|skipped|todo)" /tmp/t8-test.txt
 ```
 
 Then the live-DB run against the dev database, with the DSN taken from `docs/maps/CI-ON-COWORK.md` (never printed). Two traps already paid for here, so don't repay them: the DSN in that file is markdown-escaped, so the trailing backslash is not part of it — strip it and check the length (55 chars; a 56-char string is the escaped one and fails exactly like a stopped database). And check the database is actually listening before you read a red as behavioural: `lsof -nP -iTCP:54322 -sTCP:LISTEN`. A run whose summary is `PASS 1 / SKIP 0 / FAIL 11` with `connection refused` says Docker is down, not that the code is wrong — bring it up, or say in the report that the live gate did not run and leave the task unverified rather than claiming a pass.
@@ -2834,7 +2859,7 @@ cd /private/tmp/spot-doctor-metrics && gh pr create --base main --head feat/doct
 ## Verification
 - `go build ./...`, `go vet ./internal/doctor/... ./internal/integrations/...`, `go test ./internal/doctor/...`
 - Live-DB (TEST_DATABASE_URL): **12** `TestLiveDB_Dashboard*` cases — doctor-local day boundary (Karachi, asserted by row identity not just count), the timezone fallback for a doctor with no profile row, upcoming excluding past and finished rows, queue wire shape, count-vs-capped-list, appointments scoped to one doctor, revenue across settled/escrowed/refunded and both other-module status shapes (with this-month money separated from lifetime by a row settled in the previous month, and the escrowed and settled sums proven by different fixtures), a poisoned timezone degrading to the default instead of failing the read, a zone the probe itself cannot read propagating its error rather than silently degrading, satisfaction scoped to one doctor, the brand-new doctor, and the composed payload. Every clock-sensitive expectation is placed on a row that is past or future at ANY run time.
-- `redocly lint contracts/doctor.openapi.yaml` (exit 0), `tsc --noEmit -p tsconfig.doctorcheck.json`, `npm run test:doctor-mapping` (9 `dashboardWire.test.ts` cases, riding the same glob as #1008's three mapping suites and `batch6Wire.test.ts`).
+- `redocly lint contracts/doctor.openapi.yaml` (exit 0), `tsc --noEmit -p tsconfig.doctorcheck.json`, `npm run test:doctor-mapping` (48 cases, of which 10 are `dashboardWire.test.ts`, riding the same glob as #1008's three mapping suites and `batch6Wire.test.ts`). The typecheck in that trio does not look at any of the 48 — see F9 — so a green `tsc` and a green `node --test` are two different kinds of evidence, not one claim doubled.
 - Not done: the in-browser tile pass, which needs the shared API container rebuilt and Metro restarted — say so here if it was not run.
 
 ## Test plan
@@ -2902,3 +2927,4 @@ Each is its own change:
 - **F6** — `metrics.ratingCount` is typed in `DashboardMetricsWire` and read by nobody. The server always sends it (`required` in the contract, `RatingCount int64` in `dashboard_metrics.go`, set from `rep.ReviewCount`) and it is the only proof of the satisfaction percentage's size, but `DoctorDashboardData` has no field to carry it, so the tile can only ever say "96%". Task 5's review proved this by deleting the declaration — all nine tests stayed green. Spec §D's tile copy asks for the percentage alone, so dropping it is conformant today; adding a "of 24 reviews" subtitle needs the domain type widened.
 - **F7** — `metrics.timezone` and `metrics.today` are dropped the same way. The server computes the counts and the queue inside `doctor_availability.timezone` and returns the day it listed for, and that is exactly the midnight-boundary guarantee D2 relies on, but nothing carries it to the client. Task 6 is safe without it because each queue row's `slotDate` is the server's own string, copied and never recomputed; a future "Today, 13 Nov" heading would otherwise have to invent the day from the device clock.
 - **F8** — `src/features/doctor/components/QueueItemRow.tsx:24,44` has the same `Record<ConsultType, LucideIcon>` lookup with no fallback as the row Task 6 fixes. It is not a live crash yet because `/queue` reads `doctor_consult_queue`, the orphan table no booking path writes (the spec's out-of-scope list); it becomes one the moment that table is wired. Deliberately untouched: Task 6's brief is that one component, and widening it would let a fix ride along with an unverifiable claim.
+- **F9** — no gate in this package typechecks a `node:test` spec. `mobile-app/reactnative/tsconfig.json:12-17` excludes `**/__tests__/**` and `tsconfig.doctorcheck.json` inherits that list, so `--listFiles` under the doctor config contains zero test files even though its `include` names the directory. Adding a test file to `include` cannot fix it: under TS's `extends`, a child's `exclude` replaces the inherited array rather than narrowing it, so the change is to restate `exclude` in the child without the `__tests__` pattern (and to decide whether the whole-app `typecheck` should keep excluding them — that is what keeps `banking` and `tsconfig.merchant.json` out). Do not believe such an edit until `npx tsc --noEmit --listFiles -p tsconfig.doctorcheck.json | grep -c __tests__` prints a nonzero number, which is the same command that measured the blindness. Out of scope here because it changes a shared gate, and Task 5's suite already runs the spec under `--experimental-strip-types`, so a wrong *value* is caught even where a wrong *type* is not.
