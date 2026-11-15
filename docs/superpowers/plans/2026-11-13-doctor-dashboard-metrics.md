@@ -1767,11 +1767,14 @@ Two of the four schemas below are deliberately narrower or wider than they look,
 - `DashboardQueueAppointment.patient` is an **inline four-field object, not `$ref: PatientSummary`**. `DashboardQueuePatient` (`dashboard_metrics.go:64-69`) emits `id`, `name`, `age`, `gender` and nothing else, while `PatientSummary` also declares `initials` and `avatarColor` — which this response never sends, because Task 5 derives them client-side. Embedding the shared shape would promise two fields the server does not write, which is the same class of defect this whole PR exists to close.
 - `status` enumerates exactly the three values `todayQueue` can produce, and `in_progress` is not one of them: `appointments_status_check` allows `booked|confirmed|completed|cancelled` (`supabase/migrations/20260616280000_telemedicine.sql:27-28`, and `pg_get_constraintdef` on the dev DB says the same today), the read drops `cancelled` and renames `booked` → `upcoming`. Naming the absent value in the description keeps the claim falsifiable instead of aspirational.
 - `consultType` is **not** an enum on purpose. The column carries `video|audio|chat|in_person` (`20260618040000_telemedicine_clinical.sql:10`) and the read passes it through verbatim; spec F4 tracks widening the client's icon map. An enum here would turn a booking the app cannot draw into a contract-validation failure instead of a fallback icon.
+- Every one of the five objects declares **`required` with its full key list plus `additionalProperties: false`**, which is the first time this file does that on a *response* — its existing convention puts `required` on request bodies only. It is deliberate, and it is the difference between a typed contract and a decorative one: without it, a schema that validates `{}` accepts a payload with `todaysCount` renamed to `todayCount`, `ratingCount` missing, and an invented top-level field, which is exactly the drift class this task exists to prevent. The claim is safe to make because the Go structs carry no `omitempty` anywhere on these fields (so every key is always present, `satisfactionPct` included, as `null` when there are no reviews) and the queue read initialises an empty slice rather than a nil one. `appointmentCounts` keeps `additionalProperties: { type: integer }` and no key list — it is a map built by `GROUP BY`, so which keys appear depends on the doctor's data, and OpenAPI 3.0 cannot enumerate a map's keys without misstating the zero case.
 
 ```yaml
     # ── dashboard tiles ──────────────────────────────────────────────────────────
     DashboardRevenue:
       type: object
+      required: [pendingKobo, lifetimeKobo, thisMonthKobo, consultsThisMonth]
+      additionalProperties: false
       description: >-
         Consult money, projected from settlements. pendingKobo is escrowed money that
         has not settled, derived with the same split arithmetic settlement.Settle pays
@@ -1785,10 +1788,14 @@ Two of the four schemas below are deliberately narrower or wider than they look,
         consultsThisMonth: { type: integer, description: 'Completed consults whose scheduled_at falls in the doctor''s current local month. Comes from the same read as todaysCount, not from the money query.' }
     DashboardMetrics:
       type: object
+      required: [todaysCount, upcomingCount, satisfactionPct, ratingCount, revenue, timezone, today]
+      additionalProperties: false
       description: >-
         The landing tiles. Every count is scoped to this doctor and every date is
-        evaluated in the doctor's own timezone (doctor_profiles.timezone, the column
-        the app's timezone screen writes, defaulting to Africa/Lagos). Counts and the queue both come from
+        evaluated in the doctor's own timezone (doctor_profiles.timezone — the column
+        `PUT /schedule/timezone` writes, which the app's own timezone screen never
+        actually calls in live mode, so today it is almost always the default
+        Africa/Lagos; spec F5 tracks the screen). Counts and the queue both come from
         public.appointments joined through doctors.user_id — the plane bookings
         actually land in.
       properties:
@@ -1806,10 +1813,12 @@ Two of the four schemas below are deliberately narrower or wider than they look,
           type: integer
           description: How many reviews satisfactionPct is built from; 0 exactly when satisfactionPct is null.
         revenue:  { $ref: '#/components/schemas/DashboardRevenue' }
-        timezone: { type: string, description: IANA zone the counts and slot strings are computed in. }
+        timezone: { type: string, description: 'The zone the counts and slot strings are computed in — anything Postgres accepts as a zone: an IANA name or a fixed offset such as -05. An unrecognised stored value is rejected by the read, so this field is never the junk that was stored.' }
         today:    { type: string, description: 'The doctor''s local day, YYYY-MM-DD — the date the queue was listed for.' }
     DashboardQueueAppointment:
       type: object
+      required: [id, ref, patient, consultType, status, slotDate, slotTime, feeKobo, reason, isHmo, createdAt]
+      additionalProperties: false
       description: >-
         One row of today's queue. slotDate is a calendar day and slotTime is
         doctor-local wall clock, so the row renders without a client-side timezone.
@@ -1819,6 +1828,8 @@ Two of the four schemas below are deliberately narrower or wider than they look,
         ref:         { type: string }
         patient:
           type: object
+          required: [id, name, age, gender]
+          additionalProperties: false
           description: The four stored fields this read selects. Avatar colour and initials are not here — the client derives them.
           properties:
             id:     { type: string }
@@ -1835,6 +1846,8 @@ Two of the four schemas below are deliberately narrower or wider than they look,
         createdAt:   { type: string, format: date-time }
     DashboardResponse:
       type: object
+      required: [appointmentCounts, unreadNotifications, walletBalanceKobo, currency, metrics, todaysAppointments]
+      additionalProperties: false
       description: GET /doctor/dashboard — the flat batch-1 projection plus the tile metrics and today's queue.
       properties:
         appointmentCounts:
@@ -1847,10 +1860,12 @@ Two of the four schemas below are deliberately narrower or wider than they look,
             to count doctor_appointments, which no booking path ever writes.
         unreadNotifications: { type: integer }
         walletBalanceKobo:   { $ref: '#/components/schemas/Money' }
-        currency:            { type: string }
+        currency:            { type: string, enum: [NGN], description: 'Literal NGN on this endpoint; every kobo field is its minor unit.' }
         metrics:             { $ref: '#/components/schemas/DashboardMetrics' }
         todaysAppointments:
           type: array
+          maxItems: 20
+          description: 'Today''s rows ascending by slot, capped at the list limit. metrics.todaysCount is NOT capped, so the number can exceed this array. Always present: the read initialises an empty slice, never nil.'
           items: { $ref: '#/components/schemas/DashboardQueueAppointment' }
 ```
 
