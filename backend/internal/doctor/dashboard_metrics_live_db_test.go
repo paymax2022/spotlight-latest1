@@ -469,15 +469,21 @@ func TestLiveDB_DashboardConsultRevenue(t *testing.T) {
 	// ThisMonthKobo is arithmetically the same figure as LifetimeKobo and the
 	// whole FILTER — including the `$2` timezone parameter, which appears nowhere
 	// else in settledQ — can be deleted or pointed at another date column and
-	// nothing notices. Settled one calendar month back, and with a provider_kobo
-	// of 90000 where the projection for its own total would be 76500, it is
-	// counted by LifetimeKobo and excluded by ThisMonthKobo. Its escrowed_at is
-	// the column default now() (NOT NULL DEFAULT now(), verified live), which is
-	// what turns a `settled_at` → `escrowed_at` swap in the FILTER into a wrong
-	// number rather than a different way of saying the same thing.
+	// nothing notices. Settled forty days back — deliberately not AddDate(0,-1,0),
+	// which Go normalises: on the 29th to 31st of a month whose predecessor is
+	// shorter it lands in the CURRENT month (2027-03-29 becomes 2027-03-01), and on
+	// those eight days a year this row stops being last month's, ThisMonthKobo
+	// rises to LifetimeKobo, and the suite goes red for a reason that is nothing to
+	// do with the product. Forty days always crosses at least one month boundary,
+	// since no month is longer than 31. With a provider_kobo of 90000 where the
+	// projection for its own total would be 76500, it is counted by LifetimeKobo and
+	// excluded by ThisMonthKobo. Its escrowed_at is the column default now() (NOT
+	// NULL DEFAULT now(), verified live), which is what turns a `settled_at` →
+	// `escrowed_at` swap in the FILTER into a wrong number rather than a different
+	// way of saying the same thing.
 	prevMonthID, _ := f.bookLocal(t, tz, "completed", -40, 10*60)
 	f.escrow(t, prevMonthID, "settled", 90000, 90000, 0,
-		time.Now().UTC().AddDate(0, -1, 0), "telemedicine")
+		time.Now().UTC().AddDate(0, 0, -40), "telemedicine")
 
 	rev, err := NewRepository(pool).consultRevenue(ctx, f.doctorUser, tz)
 	if err != nil {
