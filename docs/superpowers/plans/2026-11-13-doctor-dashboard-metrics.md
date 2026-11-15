@@ -424,13 +424,13 @@ type dashboardCounters struct {
 // anchored to Lagos). `GET /schedule` is not a read-back of this column: none of
 // ScheduleSettings' top-level fields carries a zone, and the one zone that
 // response does expose is the nested `schedule.timezone` — `doctor_availability`'s
-// column, not this one. Since #1008 that is not hypothetical: `Schedule`
-// (handler_tail2.go:499, model.go:76) is typed `Availability`, and the
-// appointments plane renders slots with `AT TIME ZONE COALESCE(av.timezone, …)`
-// (repository.go:220). So the same doctor's dashboard and appointment list can
-// price "today" against two different columns — spec F5 documents the screen
-// that fails to write this one. A doctor with no profile row at all is the default,
-// not an error.
+// column, not this one. Since #1008 that is not hypothetical: ScheduleSettings'
+// `Schedule Availability` field is typed `Availability`, whose `Timezone`
+// (model.go:76) is that column, and the appointments plane renders slots with
+// `AT TIME ZONE COALESCE(av.timezone, …)` (repository.go:220). So the same
+// doctor's dashboard and appointment list can price "today" against two different
+// columns — spec F5 documents the screen that fails to write this one. A doctor
+// with no profile row at all is the default, not an error.
 func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string, error) {
 	p, err := s.repo.GetProfile(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
@@ -1380,20 +1380,20 @@ Expected: build and vet silent, `ok spotlight/backend/internal/doctor`. A failur
 
 - [ ] **Step 0b: Bring `dashboardTimezone`'s comment in line with #1008**
 
-Task 2 wrote, in `dashboard_metrics.go`, that `GET /schedule` is not a read-back of `doctor_profiles.timezone` because `ScheduleSettings` carries no zone. Post-#1008 that sentence is half true and misleading: the struct gained `Schedule Availability` ([backend/internal/doctor/handler_tail2.go:499](../../backend/internal/doctor/handler_tail2.go#L499)), whose `Timezone` is `model.go:76` — so the response does expose a zone, just the other column's. Replace the sentence with the Step-4 text below, which is what the rebase makes true. Nothing in the read changes; this is a comment-only commit, staged alone.
+Task 2 wrote, in `dashboard_metrics.go`, that `GET /schedule` is not a read-back of `doctor_profiles.timezone` because `ScheduleSettings` carries no zone. Post-#1008 that sentence is half true and misleading: the struct gained `Schedule Availability`, which is typed `Availability` and therefore carries `Availability.Timezone` (`model.go:76`) — so the response does expose a zone, just the other column's. Name the field and the type rather than a line number: `ScheduleSettings` grows with every comment above it, so a numeric cite here rots inside the same round. Replace the sentence with the Step-4 text below, which is what the rebase makes true. Nothing in the read changes; this is a comment-only commit, staged alone.
 
 ```go
 // doctor who chose Asia/Karachi would otherwise have every "today" predicate
 // anchored to Lagos). `GET /schedule` is not a read-back of this column: none of
 // ScheduleSettings' top-level fields carries a zone, and the one zone that
 // response does expose is the nested `schedule.timezone` — `doctor_availability`'s
-// column, not this one. Since #1008 that is not hypothetical: `Schedule`
-// (handler_tail2.go:499, model.go:76) is typed `Availability`, and the
-// appointments plane renders slots with `AT TIME ZONE COALESCE(av.timezone, …)`
-// (repository.go:220). So the same doctor's dashboard and appointment list can
-// price "today" against two different columns — spec F5 documents the screen
-// that fails to write this one. A doctor with no profile row at all is the default,
-// not an error.
+// column, not this one. Since #1008 that is not hypothetical: ScheduleSettings'
+// `Schedule Availability` field is typed `Availability`, whose `Timezone`
+// (model.go:76) is that column, and the appointments plane renders slots with
+// `AT TIME ZONE COALESCE(av.timezone, …)` (repository.go:220). So the same
+// doctor's dashboard and appointment list can price "today" against two different
+// columns — spec F5 documents the screen that fails to write this one. A doctor
+// with no profile row at all is the default, not an error.
 ```
 
 ```bash
@@ -1452,11 +1452,19 @@ func TestLiveDB_DashboardReportsSeededNumbers(t *testing.T) {
 	// Today's rows are both 'completed': a row inside today may sit before or after
 	// CURRENT_TIMESTAMP depending on when the suite runs, so nothing today can be
 	// allowed to feed UpcomingCount. The +2-day booked row is always future.
+	// The settled row stores 170001, never 170000, because 170000 IS FLOOR(0.85 ×
+	// 200000): with the split's own answer in the column, a stored figure and a
+	// re-derived figure are the same number and this test could not tell
+	// SUM(provider_kobo) from settledQ re-typing the 85% in SQL.
 	f.bookLocal(t, tz, "completed", 0, 9*60)
 	f.bookLocal(t, tz, "completed", 0, 14*60)
 	f.bookLocal(t, tz, "booked", 2, 9*60)
 	settledID, _ := f.bookLocal(t, tz, "completed", -1, 9*60)
-	f.escrow(t, settledID, "settled", 200000, 170000, 0, time.Now().UTC(), "telemedicine")
+	f.escrow(t, settledID, "settled", 200000, 170001, 0, time.Now().UTC(), "telemedicine")
+	// provider_kobo = 0 because nothing has been paid on this row yet, which is
+	// exactly what the escrowed leg projects instead of summing a stored column.
+	escrowedID, _ := f.bookLocal(t, tz, "completed", -2, 9*60)
+	f.escrow(t, escrowedID, "escrowed", 200000, 0, 2000, time.Time{}, "telemedicine")
 	for _, rating := range []int{4, 5, 5} {
 		if _, err := pool.Exec(ctx,
 			`INSERT INTO doctor_reviews (user_id, rating) VALUES ($1,$2)`, f.doctorUser, rating); err != nil {
@@ -1477,11 +1485,38 @@ func TestLiveDB_DashboardReportsSeededNumbers(t *testing.T) {
 	if len(res.TodaysAppointments) != 2 {
 		t.Errorf("queue rows = %d, want 2", len(res.TodaysAppointments))
 	}
-	if res.Metrics.Revenue.LifetimeKobo != 170000 {
-		t.Errorf("Revenue.LifetimeKobo = %d, want 170000", res.Metrics.Revenue.LifetimeKobo)
+	// Task 5 renders the day header from Metrics.Today, so the composition must carry
+	// the aggregate's local day — not "" and not a UTC day. The queue's own SlotDate
+	// is the same value produced by the same read, so equality pins both.
+	if !isoDay.MatchString(res.Metrics.Today) {
+		t.Errorf("Metrics.Today = %q, want YYYY-MM-DD", res.Metrics.Today)
 	}
-	if res.Metrics.Revenue.ConsultsThisMonth == 0 {
-		t.Error("Revenue.ConsultsThisMonth = 0, want the completed-this-month count")
+	if len(res.TodaysAppointments) > 0 && res.TodaysAppointments[0].SlotDate != res.Metrics.Today {
+		t.Errorf("queue SlotDate = %q but Metrics.Today = %q — one day, two answers",
+			res.TodaysAppointments[0].SlotDate, res.Metrics.Today)
+	}
+	if res.Metrics.Revenue.LifetimeKobo != 170001 {
+		t.Errorf("Revenue.LifetimeKobo = %d, want 170001", res.Metrics.Revenue.LifetimeKobo)
+	}
+	wantPending, err := pendingConsultKobo(200000, 2000)
+	if err != nil {
+		t.Fatalf("expected pending: %v", err)
+	}
+	if res.Metrics.Revenue.PendingKobo != wantPending {
+		t.Errorf("Revenue.PendingKobo = %d, want %d (ComputeLegs for the same row)",
+			res.Metrics.Revenue.PendingKobo, wantPending)
+	}
+	// Deterministic, unlike Task 2's fixture: this test's only settled row settles
+	// at now(), so it is always inside the current calendar month in the doctor's
+	// zone. Here ThisMonthKobo == LifetimeKobo is the EXPECTED result, not the FILTER
+	// failing — Task 2's …ConsultRevenue owns the prev-month exclusion, and its row
+	// settled forty days back is what proves that.
+	if res.Metrics.Revenue.ThisMonthKobo != 170001 {
+		t.Errorf("Revenue.ThisMonthKobo = %d, want 170001", res.Metrics.Revenue.ThisMonthKobo)
+	}
+	if res.Metrics.Revenue.ConsultsThisMonth < 2 {
+		t.Errorf("Revenue.ConsultsThisMonth = %d, want at least 2 (today's two completed rows)",
+			res.Metrics.Revenue.ConsultsThisMonth)
 	}
 	// 4,5,5 → avg 4.666 → 93.33 → 93. The scoping of the read is proven by the next
 	// test, which adds a review for a DIFFERENT doctor and expects nothing to move.
@@ -1503,7 +1538,7 @@ func TestLiveDB_DashboardReportsSeededNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if !strings.Contains(string(raw), `"todaysCount":2`) {
+	if !strings.Contains(string(raw), `"todaysCount":2,`) {
 		t.Errorf("payload missing todaysCount: %s", raw)
 	}
 	// The no-reviews case ships JSON null, not 0 — the client renders '—' from it.
@@ -1512,7 +1547,7 @@ func TestLiveDB_DashboardReportsSeededNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal bare: %v", err)
 	}
-	if !strings.Contains(string(braw), `"satisfactionPct":null`) {
+	if !strings.Contains(string(braw), `"satisfactionPct":null,`) {
 		t.Errorf("bare dashboard payload missing a null satisfactionPct: %s", braw)
 	}
 }
@@ -1545,6 +1580,29 @@ func TestLiveDB_DashboardSatisfactionIgnoresOtherDoctors(t *testing.T) {
 	}
 }
 
+// Spec D2a has to survive the composition, not only the repository call: 21 rows
+// today means the tile says 21 and the list shows 20. Task 1 proved this at
+// dashboardAggregates/todayQueue directly; this is the version that fails if
+// GetDashboard derives the count from the capped slice it just built.
+func TestLiveDB_DashboardComposedCountOutrunsTheCappedQueue(t *testing.T) {
+	pool := metricsDB(t)
+	f := newMetricsFixture(t, pool)
+	tz := defaultDoctorTimezone
+	for i := 0; i < dashboardQueueLimit+1; i++ {
+		f.bookLocal(t, tz, "completed", 0, 8*60+i)
+	}
+	res, err := metricsService(pool).GetDashboard(context.Background(), f.doctorUser)
+	if err != nil {
+		t.Fatalf("GetDashboard: %v", err)
+	}
+	if res.Metrics.TodaysCount != dashboardQueueLimit+1 {
+		t.Errorf("TodaysCount = %d, want %d", res.Metrics.TodaysCount, dashboardQueueLimit+1)
+	}
+	if len(res.TodaysAppointments) != dashboardQueueLimit {
+		t.Errorf("queue rows = %d, want %d", len(res.TodaysAppointments), dashboardQueueLimit)
+	}
+}
+
 func mustDashboard(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) *DashboardSummary {
 	t.Helper()
 	res, err := metricsService(pool).GetDashboard(ctx, userID)
@@ -1573,9 +1631,11 @@ In `backend/internal/doctor/handler_tail2.go`, replace **lines :480-488 — the 
 // DashboardSummary is the composite landing projection for GET /dashboard. Money
 // is int64 kobo and every field is scoped to the signed-in doctor.
 //
-// AppointmentCounts is the doctor_appointments status map, kept for
-// pendingRequests; the two appointment TILES read Metrics instead, because
-// doctor_appointments has no insert path (see dashboard_metrics.go).
+// AppointmentCounts is the booking-plane status map (appointmentStatusCounts,
+// with 'booked' renamed 'pending'), kept because pendingRequests renders it.
+// The two appointment TILES read Metrics instead: doctor_appointments, which
+// this response used to count, has no insert path at all — see
+// dashboard_metrics.go.
 //
 // Metrics is the projection this endpoint used to fake: the five tiles read the
 // booking plane (appointments), the money plane (settlements, ledger) and
@@ -1636,7 +1696,7 @@ func (s *Service) GetDashboard(ctx context.Context, userID string) (*DashboardSu
 	}
 	revenue, err := s.repo.consultRevenue(ctx, userID, tz)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("doctor: project dashboard consult revenue: %w", err)
 	}
 	// One count, two tiles: the queue list is capped, the number is not (spec D2a).
 	revenue.ConsultsThisMonth = agg.ConsultsThisMonth
@@ -2452,7 +2512,7 @@ follow-ups in the spec.
 
 ```bash
 cd /private/tmp/spot-doctor-metrics/backend && go build ./... && go vet ./internal/doctor/... ./internal/integrations/... && echo "go ok"
-cd /private/tmp/spot-doctor-metrics/backend && gofmt -l internal/doctor/ && echo "gofmt clean (nothing listed above)"
+cd /private/tmp/spot-doctor-metrics/backend && git diff --name-only origin/main...HEAD -- internal/doctor | grep '\.go$' | xargs gofmt -l; echo "gofmt: nothing listed above = every file THIS BRANCH touched is formatted"
 cd /private/tmp/spot-doctor-metrics/backend && go test ./internal/doctor/... -count=1 2>&1 | tail -8
 cd /private/tmp/spot-doctor-metrics && python3 -c "import yaml; yaml.safe_load(open('contracts/doctor.openapi.yaml')); print('openapi parses')"
 cd /private/tmp/spot-doctor-metrics && npx --yes @redocly/cli@1 lint contracts/doctor.openapi.yaml --config redocly.yaml --format=stylish; echo "redocly exit: $?"
@@ -2460,14 +2520,14 @@ cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && npx --max-old-spac
 cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && npm run test:doctor-mapping 2>&1 | tail -6
 ```
 
-Then the live-DB run against the dev database, with the DSN taken from `docs/maps/CI-ON-COWORK.md` (never printed):
+Then the live-DB run against the dev database, with the DSN taken from `docs/maps/CI-ON-COWORK.md` (never printed). Two traps already paid for here, so don't repay them: the DSN in that file is markdown-escaped, so the trailing backslash is not part of it — strip it and check the length (55 chars; a 56-char string is the escaped one and fails exactly like a stopped database). And check the database is actually listening before you read a red as behavioural: `lsof -nP -iTCP:54322 -sTCP:LISTEN`. A run whose summary is `PASS 1 / SKIP 0 / FAIL 11` with `connection refused` says Docker is down, not that the code is wrong — bring it up, or say in the report that the live gate did not run and leave the task unverified rather than claiming a pass.
 
 ```bash
 cd /private/tmp/spot-doctor-metrics/backend
 TEST_DATABASE_URL="<local dev DSN>" go test ./internal/doctor/ -run 'TestLiveDB_Dashboard' -count=1 -v 2>&1 | tail -30
 ```
 
-Expected: `go ok`, no `gofmt` output, `ok spotlight/backend/internal/doctor`, `openapi parses`, `redocly exit: 0`, `tsc exit: 0`, `# fail 0`, and **twelve** `--- PASS` lines for `TestLiveDB_Dashboard*` — the count the plan's own test blocks add up to (six from Task 1, three from Task 2 including the probe-error case its fix round added, three from Task 3). Any live-DB test that SKIPped is *not* a pass — record which ones and say so. If the run prints fewer than twelve, that is a missing test, not a smaller expectation: count the `func TestLiveDB_Dashboard` definitions before concluding (`grep -c '^func TestLiveDB_Dashboard' backend/internal/doctor/dashboard_metrics_live_db_test.go`).
+Expected: `go ok`, `xargs gofmt -l` printing nothing, `ok spotlight/backend/internal/doctor`, `openapi parses`, `redocly exit: 0`, `tsc exit: 0`, `# fail 0`, and **thirteen** `--- PASS` lines for `TestLiveDB_Dashboard*` — the count the plan's own test blocks add up to (six from Task 1, three from Task 2 including the probe-error case its fix round added, four from Task 3 including the composed count-vs-cap case its review round added). Any live-DB test that SKIPped is *not* a pass — record which ones and say so. If the run prints fewer than thirteen, that is a missing test, not a smaller expectation: count the `func TestLiveDB_Dashboard` definitions before concluding (`grep -c '^func TestLiveDB_Dashboard' backend/internal/doctor/dashboard_metrics_live_db_test.go`). Do not gate on repo-wide `gofmt -l internal/doctor/`: four files are unformatted on `origin/main` itself (`model.go`, `service_ops.go`, `repository_mdcn_review.go`, `mdcn_discoverability_live_db_test.go`), no CI lane runs gofmt as a command, and reformatting someone else's file is out of scope for this PR — the branch-scoped form above is the gate.
 
 - [ ] **Step 4: Prove the wire end to end without bouncing the shared container**
 
@@ -2515,36 +2575,37 @@ cd /private/tmp/spot-doctor-metrics && gh pr create --base main --head feat/doct
 
 Spec: `docs/superpowers/specs/2026-11-13-doctor-dashboard-metrics-design.md`. Plan: `docs/superpowers/plans/2026-11-13-doctor-dashboard-metrics.md`.
 
-## Six things this PR deliberately leaves open — accept or decline each
+## Seven things this PR deliberately leaves open — accept or decline each
 
 1. **Reject unknown zones at `PUT /schedule/timezone`.** `Service.SetTimezone` (`backend/internal/doctor/service_ops.go:360-366`) validates only the empty string, so any text lands in `doctor_profiles.timezone`. Before this PR that column was inert; now five date expressions interpolate it, and an unrecognised value is a Postgres 22023. This PR degrades on the *read* (`Repository.usableTimezone`), which protects the dashboard and nothing else. The honest fix is on the write path, and validating IANA names honestly needs a zone database this PR is not allowed to add.
-2. **Two zone columns, and #1008 landed the second one as a live read.** #1008's message claimed "PUT /schedule/timezone writes `doctor_profiles.timezone` while slot rendering reads `doctor_availability.timezone`". Its conclusion (two columns, no canonical store) is the one this PR takes for dashboard date math only, choosing `doctor_profiles.timezone` because it is the only column any screen is wired to set. Its evidence did not hold at the time — slot rendering was `telemedicine.GetAvailability` (`backend/internal/telemedicine/service_block13.go:36-64`), reading `doctor_availability_slots` and applying no timezone at all. #1008 then made the claim true on its own plane: `repository.go:220-221` now renders appointment slots with `AT TIME ZONE COALESCE(av.timezone, 'Africa/Lagos')`, and `GET /schedule` now returns the availability row itself (`ScheduleSettings.Schedule`, `handler_tail2.go:499`, carrying `Availability.Timezone` at `model.go:76`). So the same doctor can be dated today on the dashboard and yesterday in `GET /appointments`, and no screen writes the column the list reads. One thing did NOT change: `timezone.tsx:21` still seeds from the top-level `settings.timezone`, which the Go payload has never sent — #1008's zone arrives nested under `schedule`, and the client's `AvailabilitySchedule` (`src/types/doctor.ts:262-269`) does not declare it — so spec F5's live-mode no-op stands, and repairing that screen against the nested field would display a zone that `PUT /schedule/timezone` does not write. The fix is a canonical zone, not a third read.
+2. **Two zone columns, and #1008 landed the second one as a live read.** #1008's message claimed "PUT /schedule/timezone writes `doctor_profiles.timezone` while slot rendering reads `doctor_availability.timezone`". Its conclusion (two columns, no canonical store) is the one this PR takes for dashboard date math only, choosing `doctor_profiles.timezone` because it is the only column any screen is wired to set. Its evidence did not hold at the time — slot rendering was `telemedicine.GetAvailability` (`backend/internal/telemedicine/service_block13.go:36-64`), reading `doctor_availability_slots` and applying no timezone at all. #1008 then made the claim true on its own plane: `repository.go:220-221` now renders appointment slots with `AT TIME ZONE COALESCE(av.timezone, 'Africa/Lagos')`, and `GET /schedule` now returns the availability row itself (`ScheduleSettings`' `Schedule Availability` field, typed `Availability` and carrying `Availability.Timezone` at `model.go:76`). So the same doctor can be dated today on the dashboard and yesterday in `GET /appointments`, and no screen writes the column the list reads. One thing did NOT change: `timezone.tsx:21` still seeds from the top-level `settings.timezone`, which the Go payload has never sent — #1008's zone arrives nested under `schedule`, and the client's `AvailabilitySchedule` (`src/types/doctor.ts:262-269`) does not declare it — so spec F5's live-mode no-op stands, and repairing that screen against the nested field would display a zone that `PUT /schedule/timezone` does not write. The fix is a canonical zone, not a third read.
 3. **The booking surface and the dashboard now use different clocks.** The slot calendar (`telemedicine.GetAvailability`, `backend/internal/telemedicine/service_block13.go:36-64`) reads `doctor_availability_slots` with `slot_date >= CURRENT_DATE` — no `AT TIME ZONE` at all, so it is dated in the database server's zone — while #1008's appointments read (`repository.go:220-221`) is dated in `doctor_availability.timezone` and this PR's tiles in `doctor_profiles.timezone`. Three date expressions over one doctor's calendar, in three different sources of truth. For a doctor outside Africa/Lagos they can disagree about which day a slot is on. Out of the fence (spec D1 is the dashboard reads) but it is a user-visible consequence of merging this.
 4. **`QueueItemRow.tsx:24,44` has the same three-key `TYPE_ICON` and the same unguarded lookup as the row this PR fixes.** It was left alone because its prop is `ConsultationQueueItem` (the live waiting-room plane), not `appointments`, so an `in_person` value is not proven reachable there. Widening `ConsultType` to the four real `consultation_type` values (spec F4) is the fix that covers both.
 5. **Nothing in CI runs the doctor wire tests.** `Doctor CI`'s only mobile gate is `tsc --noEmit -p tsconfig.doctorcheck.json`, the root tsconfig excludes `**/__tests__/**`, and no RN feature's `test:*` script is CI-invoked. This PR adds no runner of its own: #1008 shipped `npm run test:doctor-mapping`, whose glob (`src/features/doctor/__tests__/*.test.ts`) already picks up this PR's `dashboardWire.test.ts` alongside batch 6's — that is how batch 6's broken wire stayed broken, and it is still how nobody notices a new one breaking. Wiring the script into the lane is a CI-behaviour change the repo has not chosen, so it is not taken here.
 6. **The revenue JOIN trusts a 1:1 nothing enforces.** `consultRevenue` joins `settlements` to `appointments` on `a.settlement_id = st.id`, so two appointment rows sharing one settlement would count that money twice. `appointments.settlement_id` has no UNIQUE constraint (`supabase/migrations/20260616280000_telemedicine.sql:32-34` — the only UNIQUE on the table is `idempotency_key`). It is unreachable today because the sole Go writer is the booking `INSERT` (`backend/internal/telemedicine/service.go:573`), which creates its own settlement, and no `UPDATE` in the repo moves the column — but the read is one backfill or admin repair away from a wrong money number. The in-repo precedent for the guard is `supabase/migrations/20260919000400_restaurant_payouts.sql:66-72`, which hit this same hazard and added partial UNIQUE indexes on `settlement_id`. A migration is out of this PR's fence — spec "Out of scope" line: "Any migration: everything reads existing tables and columns" — so the guard is named here rather than shipped.
+7. **Ten serialised statements per dashboard load, and a month bucket that can straddle midnight.** `GetDashboard` now issues `appointmentStatusCounts`, `unreadNotificationCount`, `ledger.GetBalance`, `GetProfile`, the `usableTimezone` probe, `dashboardAggregates`, `todayQueue`, `consultRevenue` (two queries internally) and `GetReputation` — ten statements, one after another, on the first screen every doctor opens. Nothing in the spec asks for concurrency and the fail-fast policy is easier to reason about serialised, so this is recorded as a decision rather than an accident; measuring it needs a load profile nobody has. The same family has a real edge: `Metrics.Today` comes from `dashboardAggregates`, while `consultRevenue` re-derives its own month bucket from `CURRENT_TIMESTAMP` inside its statement. A request that straddles the doctor's local midnight therefore reports one day and prices the money into the next — seconds of exposure once a day per doctor, but the numbers it returns are then internally inconsistent, and the fix is to thread `agg.Today` through that read exactly as it is already threaded through the queue. Left open because closing it changes a query signature this PR's tests pin.
 
 ## Two notes for anyone reading the money tests later
 
-- The escrowed fixture row deliberately carries `provider_kobo = 168300`, which production never writes (`Settle` fills that column in the same transaction that flips the status). It is there so that deleting `st.status = 'settled'` turns a test red; three money filters in this file were proven that way, by mutation, and the transcript is a comment on this PR.
+- Neither money fixture row holds a round number. The settled row stores `provider_kobo = 170001`, not `170000`, because `170000 IS FLOOR(0.85 × 200000)` — with a round value the test cannot tell "sum what `Settle` paid" from "re-derive the 85% in SQL", and the re-derivation is exactly the defect this tile is meant to fix. The escrowed row stores `168301`, one kobo above the `168300` the escrowed projection computes (`ComputeLegs(200000, fee 2000)`), for the mirror-image reason: paid and projected differ on both rows, so neither read can collapse into the other. Production never writes a non-zero `provider_kobo` on an unsettled row — `Settle` fills it in the same transaction that flips the status — so the fixture's value is deliberately unreal in one direction and deliberately off-by-one in the other. Three money predicates in this file were proven by deleting them, and the composed reads' two `SUM`s were re-proven the same way; both transcripts are comments on this PR.
 - The doctor app now has two fields labelled "pending": consult money escrowed but unsettled (this tile) and the wallet's pending payout (batch 6). Different payloads, different screens, nothing adds them. If that reads as confusing in the product, the fix is the tile's label, not the data.
 EOF
 )"
 ```
 
-- [ ] **Step 6b: Post the mutation transcript, so the money proof travels with the PR**
+- [ ] **Step 6b: Post the mutation transcripts, so the money proof travels with the PR**
 
-The transcript is the only artifact that shows the three SQL predicates in `consultRevenue` were tested by deleting them, and it lives in a git-ignored workspace. Check it carries no DSN before posting, and post the transcript rather than the fix reports — the reports speak in the plan's internal vocabulary ("the brief") a PR reader does not have:
+The transcripts are the only artifacts that show the SQL predicates behind the money were tested by deleting them, and they live in a git-ignored workspace. Check both carry no DSN before posting, and post the transcripts rather than the fix reports — the reports speak in the plan's internal vocabulary ("the brief") a PR reader does not have:
 
 ```bash
 cd /private/tmp/spot-doctor-metrics
-grep -c 'postgresql://' .superpowers/sdd/2026-11-13-doctor-dashboard-metrics/task-2-mutation.md
-{ printf '> Each SQL predicate in `consultRevenue` was checked by deleting it and re-running the live test. "the brief" below means the per-task instruction sheet derived from the plan.\n\n'; cat .superpowers/sdd/2026-11-13-doctor-dashboard-metrics/task-2-mutation.md; } > /tmp/pr-mutation-comment.md
+grep -c 'postgresql://' .superpowers/sdd/2026-11-13-doctor-dashboard-metrics/task-2-mutation.md .superpowers/sdd/2026-11-13-doctor-dashboard-metrics/task-3-mutation.md
+{ printf '> Each money predicate in `consultRevenue`/`settledQ`/`escrowedQ` was checked by deleting it and re-running the live test. Round 1 is Task 2 (the status and module filters); round 2 is Task 3 (both `SUM` aggregates, the composition, the `Metrics.Today` string and the ROUND rule). "the brief" below means the per-task instruction sheet derived from the plan.\n\n'; cat .superpowers/sdd/2026-11-13-doctor-dashboard-metrics/task-2-mutation.md; printf '\n---\n\n'; cat .superpowers/sdd/2026-11-13-doctor-dashboard-metrics/task-3-mutation.md; } > /tmp/pr-mutation-comment.md
 gh pr comment --body-file /tmp/pr-mutation-comment.md
 rm -f /tmp/pr-mutation-comment.md
 ```
 
-Expected: the `grep -c` prints `0` — if it prints anything else, stop and do not post. `gh pr comment` prints the new comment's URL; report it, since it is the citation for the money filters.
+Expected: the `grep -c` prints `0` for both files — if either line shows anything else, stop and do not post. `gh pr comment` prints the new comment's URL; report it, since it is the citation for the money filters.
 
 - [ ] **Step 7: Watch the lane this module owns**
 
