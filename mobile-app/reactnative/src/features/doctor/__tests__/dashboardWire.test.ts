@@ -40,7 +40,7 @@ const QUEUE_ROW = {
 };
 
 const FULL: DashboardWire = {
-  appointmentCounts: { pending: 3, completed: 9 },
+  appointmentCounts: { pending: 7, completed: 9 },   // 7, not 3: see the pendingRequests assert
   unreadNotifications: 2,
   walletBalanceKobo: 500000,
   currency: 'NGN',
@@ -67,10 +67,14 @@ test('every tile reads the wire, not a literal', () => {
   assert.equal(d.earnings.thisMonthKobo, 510000);
   assert.equal(d.earnings.consultsThisMonth, 12);
   assert.equal(d.todaysAppointments.length, 1);
+  assert.equal(d.todaysAppointments[0].id, 'a1');
+  assert.equal(d.todaysAppointments[0].patient.initials, 'TA');
   // The wallet is not consult revenue — the old code used one for both.
   assert.notEqual(d.earnings.lifetimeKobo, d.earnings.availableKobo);
-  // Untouched reads still feed their own tiles.
-  assert.equal(d.counts.pendingRequests, 3);
+  // Untouched reads still feed their own tiles. `pending` is 7 while
+  // todaysCount is 3 so this also pins WHICH field feeds which tile: with both
+  // at 3 the mapper could read either for either and stay green (T1).
+  assert.equal(d.counts.pendingRequests, 7);
   assert.equal(d.counts.unreadMessages, 2);
 });
 
@@ -96,6 +100,28 @@ test('a thin wire yields zeros and empty arrays, never undefined', () => {
   assert.deepEqual(d.alerts, []);
   assert.deepEqual(d.messages, []);
   assert.deepEqual(d.waitingRoom, []);
+  // The five `?? 0` fallbacks the block above did not reach: each of these is a
+  // mutant that stays green without it (`?? 0` -> `?? 1` on pendingRequests,
+  // unreadMessages, lifetimeKobo, thisMonthKobo, consultsThisMonth).
+  assert.equal(d.counts.pendingRequests, 0);
+  assert.equal(d.counts.unreadMessages, 0);
+  assert.equal(d.earnings.lifetimeKobo, 0);
+  assert.equal(d.earnings.thisMonthKobo, 0);
+  assert.equal(d.earnings.consultsThisMonth, 0);
+});
+
+test('the tile path keeps the passthrough, not just the exported helper', () => {
+  // mapDashboardWire has to route the queue through mapQueueAppointment. Mapping
+  // it with mapAppointmentWire directly compiles, leaves every other assertion in
+  // this file green, and puts the 'anything unrecognised is video' collapse back
+  // on the one screen that actually renders the queue (spec D8). The seam has to
+  // be pinned from the tile, because the tile is the production path.
+  const d = mapDashboardWire({
+    ...FULL,
+    todaysAppointments: [{ ...QUEUE_ROW, consultType: 'in_person' }],
+  });
+  assert.equal(d.todaysAppointments[0].consultType, 'in_person');
+  assert.equal(mapAppointmentWire({ ...QUEUE_ROW, consultType: 'in_person' }).consultType, 'video');
 });
 
 test('a queue row becomes the DoctorAppointment the row component expects', () => {
