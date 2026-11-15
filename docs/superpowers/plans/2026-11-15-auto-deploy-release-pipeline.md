@@ -2330,6 +2330,16 @@ Nothing reaches production until staging has been **probed** and is **serving th
 
 **Every job in this leg uses a plain `needs:`** — no `!cancelled()`. A failure here must cascade-skip everything downstream, because that is the mechanism that keeps a broken staging release from reaching production. The development leg opts out of skip-propagation precisely because it must not have that power.
 
+**`gates` belongs in EVERY job's `needs:` list, not only where it orders the chain.** The diagram above draws the ordering edges, and it is easy to read as the whole spec. It is not. Every one of these jobs reads `needs.gates.outputs.verdict` in its `if:` (and several read `sha` / `at_main_tip` / `fp_*`), and GitHub resolves `needs.X` **only for jobs in your own `needs:` list** — a `needs:` of just `migrate-staging` gives you `{migrate-staging: {outputs: {}, result: string}}`, with no `gates` key in it at all. The ordering ancestors of `gates` do not put it in scope transitively.
+
+On a runner that reference evaluates to empty, so `needs.gates.outputs.verdict == 'proceed'` is false on a fully green run and the staging and production legs **never execute** — the release reports success having deployed nothing past development. actionlint catches it, and catches it loudly:
+
+```
+property "gates" is not defined in object type {migrate-staging: {outputs: {}; result: string}} [expression]
+```
+
+That is why `deploy-staging` needs `[gates, migrate-staging]` rather than `[migrate-staging]`, and likewise `migrate-production` and `deploy-production`. The extra edge costs nothing — `gates` is already a transitive ancestor, so it cannot change the order or the skip behaviour — and it is the only spelling that both lints and works. Step 5 checks this mechanically; do not rely on having remembered all three.
+
 - [ ] **Step 1: Append the staging migrate + deploy + smoke jobs**
 
 ```yaml
@@ -2361,7 +2371,7 @@ Nothing reaches production until staging has been **probed** and is **serving th
 
   deploy-staging:
     name: deploy Staging (${{ matrix.service }})
-    needs: migrate-staging
+    needs: [gates, migrate-staging]
     if: needs.gates.outputs.verdict == 'proceed'
     runs-on: ubuntu-latest
     environment: staging
@@ -2468,7 +2478,7 @@ Nothing reaches production until staging has been **probed** and is **serving th
     # serving this commit, and that proof is the precondition for touching
     # production. A plain `needs:` means a red staging probe cascade-skips this job
     # and everything after it.
-    needs: smoke-staging
+    needs: [gates, smoke-staging]
     if: needs.gates.outputs.verdict == 'proceed'
     uses: ./.github/workflows/_reusable-db-apply.yml
     permissions:
@@ -2486,7 +2496,7 @@ Nothing reaches production until staging has been **probed** and is **serving th
 
   deploy-production:
     name: deploy Production (${{ matrix.service }})
-    needs: migrate-production
+    needs: [gates, migrate-production]
     if: needs.gates.outputs.verdict == 'proceed'
     runs-on: ubuntu-latest
     environment: production
@@ -2607,10 +2617,10 @@ want = {
     'deploy-development': ['gates'],
     'smoke-development': ['gates', 'deploy-development'],
     'migrate-staging': ['gates'],
-    'deploy-staging': ['migrate-staging'],
+    'deploy-staging': ['gates', 'migrate-staging'],
     'smoke-staging': ['gates', 'deploy-staging'],
-    'migrate-production': ['smoke-staging'],
-    'deploy-production': ['migrate-production'],
+    'migrate-production': ['gates', 'smoke-staging'],
+    'deploy-production': ['gates', 'migrate-production'],
     'smoke-production': ['gates', 'deploy-production'],
 }
 bad = []
@@ -2643,14 +2653,36 @@ If `yaml` is not installed locally, run the same check in CI instead — but do 
 
 - [ ] **Step 5: Verify the migration ordering is provable from the graph**
 
-Checklist item 4 is "migrations BEFORE traffic". Confirm no deploy job can start before its environment's migrate job:
+Checklist item 4 is "migrations BEFORE traffic". Confirm no deploy job can start before its environment's migrate job — and, in the same pass, that every job reading `needs.gates.outputs.*` actually declares `gates`:
 
 ```bash
 cd /private/tmp/spot-release
-grep -n "needs: migrate-staging\|needs: smoke-staging\|needs: migrate-production" .github/workflows/release.yml
+python3 - <<'PY'
+import yaml, sys
+jobs = yaml.safe_load(open('.github/workflows/release.yml'))['jobs']
+
+def needs(name):
+    v = jobs[name].get('needs', [])
+    return [v] if isinstance(v, str) else list(v)
+
+bad = []
+for a, b in [('deploy-staging', 'migrate-staging'),
+             ('migrate-production', 'smoke-staging'),
+             ('deploy-production', 'migrate-production')]:
+    if b not in needs(a):
+        bad.append(f"{a} does not need {b} — migration ordering is not provable")
+for name, body in jobs.items():
+    if 'needs.gates.outputs' in yaml.dump(body) and 'gates' not in needs(name):
+        bad.append(f"{name} reads needs.gates but does not declare needs: gates")
+if bad:
+    print("FAIL"); [print("  " + b) for b in bad]; sys.exit(1)
+print(f"ok — {len(jobs)} jobs: ordering provable, every needs.gates reader declares gates")
+PY
 ```
 
-Expected: exactly three lines — `deploy-staging` needs `migrate-staging`; `migrate-production` needs `smoke-staging`; `deploy-production` needs `migrate-production`. Fewer lines means an edge was dropped.
+Expected: `ok — 9 jobs: ordering provable, every needs.gates reader declares gates`.
+
+Do not "simplify" this back to a `grep -n "needs: migrate-staging" …`. It was one, and it silently matched **zero** lines the moment the lists became flow style — a grep that finds nothing here reads as "edge dropped", which is the opposite of the failure it is supposed to detect. Parse the YAML.
 
 - [ ] **Step 6: Commit**
 
