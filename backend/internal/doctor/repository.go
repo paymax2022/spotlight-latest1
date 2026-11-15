@@ -190,6 +190,27 @@ func (r *Repository) UpsertAvailability(ctx context.Context, userID string, in A
 	return r.GetAvailability(ctx, userID)
 }
 
+// SetAcceptsInstant writes the instant-consult column on its own.
+//
+// The availability screen's save is a full schedule write; the settings screen
+// flips only this one flag and has no schedule to send, so reusing
+// UpsertAvailability would blank the doctor's working hours. Every other column
+// on this row is NOT NULL with a default, so a targeted upsert is safe — and on
+// insert it carries the same duration, buffer and timezone the Service
+// synthesizes for a doctor who has never saved a schedule, so writing the flag
+// for the first time doesn't silently move the slot length those screens show.
+func (r *Repository) SetAcceptsInstant(ctx context.Context, userID string, instant bool) error {
+	const q = `
+		INSERT INTO doctor_availability
+			(user_id, accepts_instant, consult_duration_mins, buffer_mins, timezone)
+		VALUES ($1,$2,30,5,'Africa/Lagos')
+		ON CONFLICT (user_id) DO UPDATE SET
+			accepts_instant = EXCLUDED.accepts_instant,
+			updated_at = now()`
+	_, err := r.db.Exec(ctx, q, userID, instant)
+	return err
+}
+
 // appointmentColumns is the doctor's view of ONE booking row.
 //
 // A patient's BookAppointment (internal/telemedicine/service.go) writes exactly
