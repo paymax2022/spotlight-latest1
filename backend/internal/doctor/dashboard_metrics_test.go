@@ -1,9 +1,13 @@
 package doctor
 
 import (
+	"encoding/json"
 	"math"
+	"reflect"
 	"spotlight/backend/go-common/ptr"
 	"spotlight/backend/internal/finance/settlement"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -91,5 +95,156 @@ func TestDashboardSatisfactionPct(t *testing.T) {
 				t.Errorf("got %v, want %v", *got, *c.want)
 			}
 		})
+	}
+}
+
+// TestDashboardSummaryWirePaths pins the JSON PATH each tile reads, not just that a
+// key name appears somewhere in the payload. The defect this branch exists to kill
+// was a payload/key mismatch every gate could miss, and the live-DB suite's two JSON
+// assertions — strings.Contains(raw, `"todaysCount":2,`) at
+// dashboard_metrics_live_db_test.go:779 — still pass if TodaysCount moves to the top
+// level or if Metrics' tag is renamed. Either way dashboardWire.ts's
+// `wire.metrics ?? {}` reads an empty object again and every tile returns to a
+// literal 0 with all 13 live tests and all 48 node cases green. It runs here, with no
+// database, because the live file skips on every laptop.
+func TestDashboardSummaryWirePaths(t *testing.T) {
+	sat := 93.0
+	// Every sentinel is distinct, so two paths that trade places cannot both pass.
+	full := DashboardSummary{
+		AppointmentCounts:   map[string]int64{"pending": 4},
+		UnreadNotifications: 5,
+		WalletBalanceKobo:   96,
+		Currency:            "NGN",
+		Metrics: DashboardMetrics{
+			TodaysCount: 2, UpcomingCount: 3, SatisfactionPct: &sat, RatingCount: 6,
+			Revenue:  DashboardRevenue{PendingKobo: 7, LifetimeKobo: 8, ThisMonthKobo: 9, ConsultsThisMonth: 10},
+			Timezone: "Africa/Lagos", Today: "2026-11-13",
+		},
+		TodaysAppointments: []DashboardQueueAppointment{{
+			ID: "a1", Ref: "TM-9F2A41",
+			Patient:     DashboardQueuePatient{ID: "p1", Name: "Ada Obi", Age: 30, Gender: "female"},
+			ConsultType: "video", Status: "upcoming",
+			SlotDate: "2026-11-13", SlotTime: "09:00 AM",
+			FeeKobo: 200000, Reason: "headache", IsHMO: false, CreatedAt: "2026-11-01T00:00:00Z",
+		}},
+	}
+	raw, err := json.Marshal(full)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	cases := []struct {
+		path string
+		want any
+	}{
+		{"appointmentCounts.pending", 4.0},
+		{"unreadNotifications", 5.0},
+		{"walletBalanceKobo", 96.0},
+		{"currency", "NGN"},
+		{"metrics.todaysCount", 2.0},
+		{"metrics.upcomingCount", 3.0},
+		{"metrics.satisfactionPct", 93.0},
+		{"metrics.ratingCount", 6.0},
+		{"metrics.revenue.pendingKobo", 7.0},
+		{"metrics.revenue.lifetimeKobo", 8.0},
+		{"metrics.revenue.thisMonthKobo", 9.0},
+		{"metrics.revenue.consultsThisMonth", 10.0},
+		{"metrics.timezone", "Africa/Lagos"},
+		{"metrics.today", "2026-11-13"},
+		{"todaysAppointments.0.id", "a1"},
+		{"todaysAppointments.0.ref", "TM-9F2A41"},
+		{"todaysAppointments.0.patient.id", "p1"},
+		{"todaysAppointments.0.patient.name", "Ada Obi"},
+		{"todaysAppointments.0.patient.age", 30.0},
+		{"todaysAppointments.0.patient.gender", "female"},
+		{"todaysAppointments.0.consultType", "video"},
+		{"todaysAppointments.0.status", "upcoming"},
+		{"todaysAppointments.0.slotDate", "2026-11-13"},
+		{"todaysAppointments.0.slotTime", "09:00 AM"},
+		{"todaysAppointments.0.feeKobo", 200000.0},
+		{"todaysAppointments.0.reason", "headache"},
+		{"todaysAppointments.0.isHmo", false},
+		{"todaysAppointments.0.createdAt", "2026-11-01T00:00:00Z"},
+	}
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			got, ok := descendJSON(wire, c.path)
+			if !ok {
+				t.Fatalf("path %q absent from %s", c.path, raw)
+			}
+			if got != c.want {
+				t.Errorf("path %q = %#v, want %#v", c.path, got, c.want)
+			}
+		})
+	}
+
+	// A doctor with nothing scheduled must still receive every tile key: `?? 0` and
+	// `?? {}` cannot tell an absent key from a real zero, which is how the original
+	// blanks stayed invisible.
+	braw, err := json.Marshal(DashboardSummary{})
+	if err != nil {
+		t.Fatalf("marshal bare: %v", err)
+	}
+	var bare map[string]any
+	if err := json.Unmarshal(braw, &bare); err != nil {
+		t.Fatalf("unmarshal bare: %v", err)
+	}
+	for _, p := range []string{"metrics", "metrics.todaysCount", "metrics.satisfactionPct", "metrics.revenue.pendingKobo", "appointmentCounts", "todaysAppointments"} {
+		if _, ok := descendJSON(bare, p); !ok {
+			t.Errorf("a zero dashboard is missing %q: %s", p, braw)
+		}
+	}
+
+	// The same promise, held at the tag rather than re-derived from one payload: no
+	// field of these five types may grow an omitempty.
+	for _, typ := range []reflect.Type{
+		reflect.TypeOf(DashboardSummary{}),
+		reflect.TypeOf(DashboardMetrics{}),
+		reflect.TypeOf(DashboardRevenue{}),
+		reflect.TypeOf(DashboardQueueAppointment{}),
+		reflect.TypeOf(DashboardQueuePatient{}),
+	} {
+		assertNoOmitempty(t, typ)
+	}
+}
+
+// descendJSON walks a dotted path through an unmarshalled payload, accepting array
+// indices as segments: "todaysAppointments.0.patient.name".
+func descendJSON(root any, path string) (any, bool) {
+	cur := root
+	for _, seg := range strings.Split(path, ".") {
+		switch node := cur.(type) {
+		case map[string]any:
+			v, ok := node[seg]
+			if !ok {
+				return nil, false
+			}
+			cur = v
+		case []any:
+			i, err := strconv.Atoi(seg)
+			if err != nil || i < 0 || i >= len(node) {
+				return nil, false
+			}
+			cur = node[i]
+		default:
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+func assertNoOmitempty(t *testing.T, typ reflect.Type) {
+	t.Helper()
+	for i := 0; i < typ.NumField(); i++ {
+		tag := typ.Field(i).Tag.Get("json")
+		if !strings.Contains(tag, "omitempty") {
+			continue
+		}
+		t.Errorf("%s.%s carries omitempty in json tag %q — the client reads these keys through `?? 0`/`?? {}`, so a field Go omits for a zero value is indistinguishable from a real zero and the tile goes blank in silence",
+			typ.Name(), typ.Field(i).Name, tag)
 	}
 }
