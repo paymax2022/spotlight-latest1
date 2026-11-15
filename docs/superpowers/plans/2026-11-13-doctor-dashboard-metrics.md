@@ -2613,11 +2613,20 @@ const FALLBACK_ICON = CalendarDays;
 
 ```bash
 cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
-npx --max-old-space-size=4096 tsc --noEmit -p tsconfig.doctorcheck.json 2>&1 | tail -10; echo "tsc exit: $?"
-npm run test:doctor-mapping 2>&1 | tail -6
+NODE_OPTIONS=--max-old-space-size=4096 npx tsc --noEmit -p tsconfig.doctorcheck.json > /tmp/t6-tsc.txt 2>&1
+echo "tsc exit: $?"; wc -l < /tmp/t6-tsc.txt; cat /tmp/t6-tsc.txt
+npm run test:doctor-mapping > /tmp/t6-test.txt 2>&1
+echo "test exit: $?"; grep -E "^# (tests|pass|fail|skipped)" /tmp/t6-test.txt
 ```
 
-Expected: `tsc exit: 0` and `# fail 0`. The date-parsing branch is covered by `formatSlotDateLabel`'s spec; the icon fallback is a map lookup whose visible behaviour is confirmed in the browser pass (Task 8) — say so rather than claiming it is tested.
+Expected: `tsc exit: 0` with an empty output file, and `# fail 0` at `# tests 48`. Two traps this
+step used to walk into: `npx --max-old-space-size=4096 tsc` does not set the heap at all (npm
+swallows the flag before tsc sees it, so the run either dies with exit 134 or succeeds for the wrong
+reason), and `… 2>&1 | tail -10; echo "tsc exit: $?"` reports **`tail`'s** status, not tsc's — this
+harness runs zsh, which has no `PIPESTATUS` to rescue it. Capture to a file and read `$?` directly.
+The date-parsing branch is covered by `formatSlotDateLabel`'s spec; the icon fallback is a map
+lookup whose visible behaviour is confirmed in the browser pass (Task 8) — say so rather than
+claiming it is tested.
 
 - [ ] **Step 3: Commit**
 
@@ -2683,10 +2692,14 @@ import { useDoctorProfile, useEarnings, useNotifications, useSettings, useDashbo
 - [ ] **Step 2: Typecheck**
 
 ```bash
-cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && npx --max-old-space-size=4096 tsc --noEmit -p tsconfig.doctorcheck.json 2>&1 | tail -15; echo "tsc exit: $?"
+cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
+NODE_OPTIONS=--max-old-space-size=4096 npx tsc --noEmit -p tsconfig.doctorcheck.json > /tmp/t7-tsc.txt 2>&1
+echo "tsc exit: $?"; wc -l < /tmp/t7-tsc.txt; cat /tmp/t7-tsc.txt
 ```
 
-Expected: `tsc exit: 0`. A leftover `appointments`/`todays`/`ACTIVE_STATUSES` reference shows up here as `Cannot find name` — that is the check that the deletions were complete.
+Expected: `tsc exit: 0` and an empty output file. (`npx --max-old-space-size=4096 tsc` does not set
+the heap — npm eats the flag — and `… | tail -15; echo "tsc exit: $?"` prints `tail`'s status;
+zsh has no `PIPESTATUS`. Capture, then read `$?`.) A leftover `appointments`/`todays`/`ACTIVE_STATUSES` reference shows up here as `Cannot find name` — that is the check that the deletions were complete.
 
 - [ ] **Step 3: Confirm nothing else read the removed locals**
 
@@ -2877,9 +2890,15 @@ cd /private/tmp/spot-doctor-metrics && gh pr view --json number,headRefOid,merge
 
 ## Follow-ups this plan deliberately does not take on
 
-Recorded in the spec (F1–F4); each is its own change:
+The spec's own registry carries F1–F5 (this list said "F1–F4" until Task 4's review noticed the
+spec had grown an F5 — the timezone screen #1027 repairs); F6 and F7 were added by Task 5's review.
+Each is its own change:
 
 - **F1** — fold `ListAppointments`' SQL and `DashboardQueueAppointment`'s SQL into one const and switch the queue to `GET /appointments?scope=today&limit=20`, once the neighbour's appointment-plane branch has merged.
 - **F2** — the rest of `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md` is still unverified against live mode; only D1/D2/D13 are corrected here, because those are the ones this change makes true.
 - **F3** — `Available` is the whole `user_wallet`, so a doctor's own refunds sit inside it. Renaming the tile to "Wallet" is a product call.
 - **F4** — widen `ConsultType` to the four real `consultation_type` values and give `in_person` its own icon; touches the telemedicine vertical's shared type and every consumer.
+- **F5** — the timezone screen cannot save in live mode, so the zone D3 reads is usually the default. Spec F5, verbatim; PR #1027 (`feat/doctor-portal-remaining-gaps`, still OPEN at 2026-11-15) adds the missing `Timezone` field to `ScheduleSettings` and closes it. Not ours to fix here.
+- **F6** — `metrics.ratingCount` is typed in `DashboardMetricsWire` and read by nobody. The server always sends it (`required` in the contract, `RatingCount int64` in `dashboard_metrics.go`, set from `rep.ReviewCount`) and it is the only proof of the satisfaction percentage's size, but `DoctorDashboardData` has no field to carry it, so the tile can only ever say "96%". Task 5's review proved this by deleting the declaration — all nine tests stayed green. Spec §D's tile copy asks for the percentage alone, so dropping it is conformant today; adding a "of 24 reviews" subtitle needs the domain type widened.
+- **F7** — `metrics.timezone` and `metrics.today` are dropped the same way. The server computes the counts and the queue inside `doctor_availability.timezone` and returns the day it listed for, and that is exactly the midnight-boundary guarantee D2 relies on, but nothing carries it to the client. Task 6 is safe without it because each queue row's `slotDate` is the server's own string, copied and never recomputed; a future "Today, 13 Nov" heading would otherwise have to invent the day from the device clock.
+- **F8** — `src/features/doctor/components/QueueItemRow.tsx:24,44` has the same `Record<ConsultType, LucideIcon>` lookup with no fallback as the row Task 6 fixes. It is not a live crash yet because `/queue` reads `doctor_consult_queue`, the orphan table no booking path writes (the spec's out-of-scope list); it becomes one the moment that table is wired. Deliberately untouched: Task 6's brief is that one component, and widening it would let a fix ride along with an unverifiable claim.
