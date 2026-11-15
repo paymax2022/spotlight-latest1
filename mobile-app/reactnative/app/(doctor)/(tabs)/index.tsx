@@ -15,14 +15,12 @@ import { Typography } from '@/constants/tokens';
 import { shadow2 } from '@/constants/tokens';
 import SectionHeader from '@/components/SectionHeader';
 import { formatKobo } from '@/api/doctor.api';
-import { useDoctorProfile, useAppointments, useEarnings, useNotifications, useSettings, useDashboard, useAnnouncement, useSetPresence, useDismissAnnouncement } from '@/features/doctor/hooks';
+import { useDoctorProfile, useEarnings, useNotifications, useSettings, useDashboard, useAnnouncement, useSetPresence, useDismissAnnouncement } from '@/features/doctor/hooks';
 import { StatCard, AppointmentRow, StateView, AlertCard, AnnouncementBanner, SectionCard } from '@/features/doctor/components';
 import { DoctorAvatar } from '@/features/telemedicine/components';
 import { mapHeaderAvatar } from '@/features/doctor/mapping';
 import { DASHBOARD_ALERT_SEVERITY_RANK, PRESENCE_LABELS } from '@/features/doctor/constants';
 import type { DashboardAlert, DashboardAlertKind, DashboardAlertSeverity } from '@/types/doctor.batch1';
-
-const ACTIVE_STATUSES = ['upcoming', 'confirmed', 'in_progress'];
 
 // Each alert kind maps to an icon + the in-app route its CTA deep-links to.
 const ALERT_ICON: Record<DashboardAlertKind, LucideIcon> = {
@@ -57,7 +55,6 @@ const SEVERITY_TONE: Record<DashboardAlertSeverity, 'info' | 'warning' | 'critic
 
 export default function DoctorDashboardScreen() {
   const { data: profile, isLoading: profileLoading, isError: profileError, refetch: refetchProfile } = useDoctorProfile();
-  const { data: appointments = [] } = useAppointments();
   const { data: earnings } = useEarnings();
   const { data: notifications = [] } = useNotifications();
   const { data: settings } = useSettings();
@@ -68,7 +65,6 @@ export default function DoctorDashboardScreen() {
   const dismissAnnouncement = useDismissAnnouncement();
 
   const unread = notifications.filter((n) => !n.read).length;
-  const todays = appointments.filter((a) => ACTIVE_STATUSES.includes(a.status));
   // doctor_profiles.is_online is the real presence store: PUT /presence writes
   // it and GET /profile reads it back. `showOnlineStatus` is a *privacy* flag
   // (whether patients see the dot), so reading the switch off it left the
@@ -81,6 +77,7 @@ export default function DoctorDashboardScreen() {
     : PRESENCE_LABELS.offline;
 
   const counts = dashboard?.counts;
+  const queue = dashboard?.todaysAppointments ?? [];
   const alerts: DashboardAlert[] = [...(dashboard?.alerts ?? [])].sort(
     (a, b) => DASHBOARD_ALERT_SEVERITY_RANK[b.severity] - DASHBOARD_ALERT_SEVERITY_RANK[a.severity],
   );
@@ -176,12 +173,12 @@ export default function DoctorDashboardScreen() {
 
         {/* D1/D2/D12/D13 — Stats */}
         <View style={styles.statsRow}>
-          <StatCard icon={CalendarDays} label="Today's consults" value={String(counts?.todaysAppointments ?? todays.length)} iconColor={Colors.secondary} bgColor={Colors.iconBgBlue} />
+          <StatCard icon={CalendarDays} label="Today's consults" value={String(counts?.todaysAppointments ?? 0)} iconColor={Colors.secondary} bgColor={Colors.iconBgBlue} />
           <StatCard icon={CalendarClock} label="Upcoming" value={String(counts?.upcomingAppointments ?? 0)} iconColor={Colors.primary} bgColor={Colors.iconBgPurple} />
         </View>
         <View style={styles.statsRow}>
           <StatCard icon={Wallet} label="Available" value={formatKobo(dashboard?.earnings.availableKobo ?? earnings?.availableKobo ?? 0)} iconColor={Colors.teal} bgColor={Colors.iconBgTeal} />
-          <StatCard icon={Smile} label="Satisfaction" value={`${dashboard?.satisfactionPct ?? 0}%`} iconColor={Colors.secondary} bgColor={Colors.iconBgBlue} />
+          <StatCard icon={Smile} label="Satisfaction" value={dashboard?.satisfactionPct == null ? '—' : `${dashboard.satisfactionPct}%`} iconColor={Colors.secondary} bgColor={Colors.iconBgBlue} />
         </View>
 
         {/* D4 — Active consultation card */}
@@ -311,10 +308,10 @@ export default function DoctorDashboardScreen() {
         {/* Today's queue */}
         <SectionHeader title="Today's queue" actionLabel="See all" onAction={() => router.push('/(doctor)/(tabs)/appointments')} style={styles.sectionGap} />
         <View style={styles.list}>
-          {todays.length === 0 ? (
+          {queue.length === 0 ? (
             <StateView variant="empty" icon={CalendarDays} title="No consults scheduled" message="New bookings will appear here." />
           ) : (
-            todays.map((a) => (
+            queue.map((a) => (
               <AppointmentRow key={a.id} appointment={a} onPress={() => router.push(`/(doctor)/appointments/${a.id}`)} />
             ))
           )}
