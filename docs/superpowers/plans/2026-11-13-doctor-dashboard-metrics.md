@@ -2592,11 +2592,39 @@ It is covered by Step 9's typecheck and by Task 7's live screen run; do not desc
 spec as testing the api module.
 
 ---
-### Task 6: Today's queue rows render
+### Task 6: Today's queue rows render — a precondition, not a live-bug repair
 
-`AppointmentRow` crashes on an `in_person` booking (`TYPE_ICON[...]` is `undefined` → rendering it throws) and prints "Invalid Date" for a timestamp-shaped `slotDate` ([mobile-app/reactnative/src/features/doctor/components/AppointmentRow.tsx:18-25](../../mobile-app/reactnative/src/features/doctor/components/AppointmentRow.tsx#L18)).
+`AppointmentRow` looks `TYPE_ICON[appointment.consultType]` up with no fallback, and builds its date
+label inline as `new Date(`${slotDate}T00:00:00`)`. Both need fixing **before Task 7 rewires the
+screen**, and neither was producing a visible defect at the moment this task landed. Say it plainly
+rather than inheriting this step's first framing, which claimed the row "crashes" and "prints Invalid
+Date" on the shipped dashboard (Task 6 review finding T6-R1, confirmed by the controller):
 
-Why the type checker never saw this: `TYPE_ICON` is `Record<ConsultType, LucideIcon>` and `ConsultType` is `'video' | 'audio' | 'chat'` (`src/types/telemedicine.ts:3`), so the three-key map is *provably total* against a union that is smaller than reality — `appointments.consultation_type` is CHECK-constrained to `('video','audio','chat','in_person')` (`supabase/migrations/20260618040000_telemedicine_clinical.sql:10-12`), the table this dashboard now reads, and the queue passes `consultType` through verbatim (spec D8). `VetAppointmentRow.tsx:24` already carries the fourth key (`in_person: User`), which is the in-repo precedent for the fix shape. Task 5's mapping test therefore asserts the wire value survives; this task makes rendering it not throw.
+- **No route for `in_person` yet.** This component's only two production call sites —
+  `app/(doctor)/(tabs)/index.tsx:318` and `app/(doctor)/(tabs)/appointments.tsx:81` — both render
+  `useAppointments()` rows, and that path is `getAppointments()` → `mapAppointmentWire` →
+  `mapConsultType` (`src/features/telemedicine/mapping.ts:124-128`), which collapses every
+  unrecognised value to `'video'`. The `in_person` value that *would* throw lives in
+  `dashboard.todaysAppointments`, and at this commit no screen reads that array — Task 7's edit 5 is
+  what routes it here. So the throw is a code-path inference about the next task, not an observed
+  failure. It is still a real hazard: `BookAppointmentRequest.ConsultationType`
+  (`internal/telemedicine/model.go:229`) carries no `oneof` binding and `service.go:571` inserts the
+  value verbatim, so `in_person` bookings exist as soon as the queue is read from `appointments` —
+  and rendering `undefined` as a component element throws, taking the whole screen with it.
+- **No `Invalid Date` on either path.** The queue's date is produced as
+  `to_char(a.scheduled_at AT TIME ZONE $2, 'YYYY-MM-DD')` (`backend/internal/doctor/dashboard_metrics.go:218`),
+  so it is day-shaped by construction, and `formatSlotDateLabel`'s `slice(0, 10)` is defensive
+  robustness rather than a repair. It is still the right change: it is the single place the day
+  slicing is defined, and Task 5's spec pins it.
+
+Why the type checker never saw the map problem: `TYPE_ICON` is `Record<ConsultType, LucideIcon>` and
+`ConsultType` is `'video' | 'audio' | 'chat'` (`src/types/telemedicine.ts:3`), so the three-key map is
+*provably total* against a union smaller than reality — `appointments.consultation_type` is
+CHECK-constrained to `('video','audio','chat','in_person')`
+(`supabase/migrations/20260618040000_telemedicine_clinical.sql:10-12`), the table this dashboard now
+reads, and the queue passes `consultType` through verbatim (spec D8). `VetAppointmentRow.tsx:24`
+already carries the fourth key (`in_person: User`), which is the in-repo precedent for the fix shape.
+Task 5's mapping test asserts the wire value survives; this task makes rendering it not throw.
 
 **Files:**
 - Modify: `mobile-app/reactnative/src/features/doctor/components/AppointmentRow.tsx:3-4,18,24-25`
@@ -2621,10 +2649,11 @@ import type { DoctorAppointment } from '@/types/doctor';
 (replacing the existing `import type { DoctorAppointment, ConsultType } from '@/types/doctor';` — `ConsultType` is no longer referenced once the map is keyed by string.)
 
 ```tsx
-// Keyed by string, not ConsultType: the booking table allows in_person, which the
-// union does not have yet (follow-up F4). An unmapped type draws the neutral
-// calendar — `TYPE_ICON[x]` was undefined for it and rendering undefined throws,
-// which took the whole dashboard down.
+// Keyed by string, not ConsultType: appointments.consultation_type allows in_person,
+// which the union does not have yet (follow-up F4). `TYPE_ICON[x]` is undefined for an
+// unmapped type and rendering undefined throws, taking the whole screen with it. That
+// value reaches this row from the dashboard queue this PR wires up; it cannot arrive via
+// useAppointments(), whose mapConsultType collapses every unrecognised type to 'video'.
 const TYPE_ICON: Record<string, LucideIcon> = { video: Video, audio: Phone, chat: MessageCircle };
 const FALLBACK_ICON = CalendarDays;
 ```
@@ -2667,6 +2696,21 @@ comment); the form above exits 1 with no output. Also expect the positive grep �
 `grep -n "TYPE_ICON\|FALLBACK_ICON\|formatSlotDateLabel\|CalendarDays"` — to print the two imports,
 the `TYPE_ICON` declaration plus its comment, `FALLBACK_ICON`, and the two derived locals.
 
+**But do not mistake that negative grep for proof of the fallback** (T6-R2). Strip
+`?? FALLBACK_ICON` and it *still* exits 1, and `tsc` still exits 0: nothing in
+`tsconfig.json` or `tsconfig.doctorcheck.json` sets `noUncheckedIndexedAccess` (measured —
+`grep -rn noUncheckedIndexedAccess tsconfig*.json` finds no match), so indexing a
+`Record<string, LucideIcon>` is typed `LucideIcon` outright and the `??` is invisible to the checker.
+The assertion that actually discriminates is the exact-string positive one:
+
+```bash
+grep -n "TYPE_ICON\[appointment.consultType\] ?? FALLBACK_ICON" src/features/doctor/components/AppointmentRow.tsx; echo "exit: $?"
+```
+
+Measured: hits line 31, exit 0. Use *that* as the fallback's proof; the negative grep proves only
+that the old type usage and the inline date expression are gone. Neither proves the icon renders —
+that stays Task 8's browser pass.
+
 The date-parsing branch is covered by `formatSlotDateLabel`'s spec; the icon fallback is a map
 lookup whose visible behaviour is confirmed in the browser pass (Task 8) — say so rather than
 claiming it is tested.
@@ -2674,8 +2718,20 @@ claiming it is tested.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /private/tmp/spot-doctor-metrics && git add mobile-app/reactnative/src/features/doctor/components/AppointmentRow.tsx && git commit -m "fix(doctor): stop the queue row crashing on in_person and Invalid Date"
+cd /private/tmp/spot-doctor-metrics && git add mobile-app/reactnative/src/features/doctor/components/AppointmentRow.tsx && git commit -m "$(cat <<'MSG'
+fix(doctor): make the queue row safe to render from the dashboard aggregate
+
+An unmapped consult type made TYPE_ICON[x] undefined and rendering undefined
+throws; day-slice the label in one place instead of inlining new Date(...).
+Neither value has a route to this row until the screen reads the aggregate, so
+this is Task 7's precondition rather than a repair of an observed crash.
+MSG
+)"
 ```
+
+Landed on this branch as `952ae5b36` plus `d906d535a`: the first commit's subject and the comment it
+shipped both claimed the dashboard *had been* going down, which T6-R1 showed to be false, and the
+second corrected the reason in the code to name the actual route.
 
 ---
 
@@ -2887,7 +2943,7 @@ cd /private/tmp/spot-doctor-metrics && gh pr create --base main --head feat/doct
 - `GET /doctor/dashboard` gains `metrics` (todaysCount / upcomingCount / satisfactionPct+ratingCount / revenue / timezone / today) and `todaysAppointments[]`, typed in `contracts/doctor.openapi.yaml` in place of `Generic`.
 - Consult revenue is projected over `settlements`: settled rows sum `provider_kobo`, escrowed rows run through `settlement.ComputeLegs` so the pending figure is the arithmetic `Settle` actually pays by. `Available` stays the ledger wallet — two planes, labelled apart.
 - `satisfactionPct` is nullable end-to-end; the tile renders `—` instead of `0%` for a doctor with no reviews.
-- The mobile queue row stops crashing on an `in_person` booking and stops rendering "Invalid Date"; the tiles read the aggregate instead of a client-side status filter that also dropped completed consults from the day it was naming.
+- The mobile queue row is made safe to render from the aggregate: an unmapped consult type looked `TYPE_ICON[x]` up as `undefined`, which throws when rendered — `in_person` is creatable (no `oneof` binding, and the column's CHECK allows it) and the new queue passes it through verbatim, so the fallback had to land before the screen rewired. Day-slicing the label moves to one shared helper. Neither defect was visible on the old `useAppointments()` path, which collapses every unrecognised type to `'video'` and receives day-shaped dates from SQL; the tiles read the aggregate instead of a client-side status filter that also dropped completed consults from the day it was naming.
 
 ## Verification
 - `go build ./...`, `go vet ./internal/doctor/... ./internal/integrations/...`, `go test ./internal/doctor/...`
@@ -2955,7 +3011,7 @@ Each is its own change:
 - **F1** — fold `ListAppointments`' SQL and `DashboardQueueAppointment`'s SQL into one const and switch the queue to `GET /appointments?scope=today&limit=20`, once the neighbour's appointment-plane branch has merged.
 - **F2** — the rest of `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md` is still unverified against live mode; only D1/D2/D13 are corrected here, because those are the ones this change makes true.
 - **F3** — `Available` is the whole `user_wallet`, so a doctor's own refunds sit inside it. Renaming the tile to "Wallet" is a product call.
-- **F4** — widen `ConsultType` to the four real `consultation_type` values and give `in_person` its own icon; touches the telemedicine vertical's shared type and every consumer.
+- **F4** — widen `ConsultType` to the four real `consultation_type` values and give `in_person` its own icon; touches the telemedicine vertical's shared type and every consumer. Two things whoever picks this up should know, both learned in Task 6's review: keying `AppointmentRow`'s `TYPE_ICON` by `string` **removed the exhaustiveness error** that would otherwise have flagged the new member there (T6-R5), so restoring `Record<ConsultType, LucideIcon>` is part of this follow-up, not a later tidy — and `?? FALLBACK_ICON` never guards inherited keys, since `TYPE_ICON['constructor']` is truthy (T6-R4); the DB CHECK constraint is what makes that safe today, so do not present the fallback as input validation.
 - **F5** — the timezone screen cannot save in live mode, so the zone D3 reads is usually the default. Spec F5, verbatim; PR #1027 (`feat/doctor-portal-remaining-gaps`, still OPEN at 2026-11-15) adds the missing `Timezone` field to `ScheduleSettings` and closes it. Not ours to fix here.
 - **F6** — `metrics.ratingCount` is typed in `DashboardMetricsWire` and read by nobody. The server always sends it (`required` in the contract, `RatingCount int64` in `dashboard_metrics.go`, set from `rep.ReviewCount`) and it is the only proof of the satisfaction percentage's size, but `DoctorDashboardData` has no field to carry it, so the tile can only ever say "96%". Task 5's review proved this by deleting the declaration — all nine tests stayed green. Spec §D's tile copy asks for the percentage alone, so dropping it is conformant today; adding a "of 24 reviews" subtitle needs the domain type widened.
 - **F7** — `metrics.timezone` and `metrics.today` are dropped the same way. The server computes the counts and the queue inside `doctor_availability.timezone` and returns the day it listed for, and that is exactly the midnight-boundary guarantee D2 relies on, but nothing carries it to the client. Task 6 is safe without it because each queue row's `slotDate` is the server's own string, copied and never recomputed; a future "Today, 13 Nov" heading would otherwise have to invent the day from the device clock.

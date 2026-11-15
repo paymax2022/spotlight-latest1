@@ -85,6 +85,19 @@ Measured at `origin/main` = `effe1b355` on 2026-11-13.
   Separately, `new Date(\`${slotDate}T00:00:00\`)` yields "Invalid Date" whenever `slotDate`
   arrives as a full timestamp (which is what the current `Appointment.SlotDate *time.Time`
   serialises to).
+  > **Correction (2026-11-15, from Task 6's review — the defect above is stated as if
+  > observable, and neither half was.)** No value reached this component in a shape that could
+  > trigger either defect at spec-approval time. `*time.Time` does serialise to a full timestamp,
+  > but that is upstream of the RN mapper: `slotParts` (`src/features/telemedicine/mapping.ts:131-142`)
+  > already re-formats it to a `YYYY-MM-DD` `slotDate` before a `DoctorAppointment` is built, and the
+  > new queue path produces `to_char(..., 'YYYY-MM-DD')`
+  > (`backend/internal/doctor/dashboard_metrics.go:218`). Likewise `in_person` cannot arrive on the
+  > old path, because `mapConsultType` (`mapping.ts:124-128`) collapses every unrecognised type to
+  > `'video'` and no screen read `dashboard.todaysAppointments` until this PR rewired the queue.
+  > So both render defects are **preconditions this PR creates the route for**, not repairs of
+  > behaviour a doctor could see — the fixes stand, the motivating observations do not. Line 282's
+  > "cannot render Invalid Date for any shape the server sends" remains literally true, and is now
+  > the weaker claim: the server only ever sends one shape.
 - `EXPO_PUBLIC_DOCTOR_USE_MOCK` is `false` locally and `mockPolicy.ts` forces mockless in
   staging/production, so these tiles are live-mode behaviour, not a dev-only artefact.
   `mobile-app/reactnative/docs/QA_DOCTOR_BATCH1_REPORT.md` records D1 as PASS from the mock fixtures — a false
