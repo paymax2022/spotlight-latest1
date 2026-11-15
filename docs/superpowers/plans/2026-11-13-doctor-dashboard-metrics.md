@@ -2486,8 +2486,34 @@ MSG
 )"
 ```
 
----
+- [ ] **Step 11: Mutation evidence — prove the spec bites**
 
+Nine green tests do not prove the mapper is what makes them green. Break the mapper four
+ways, one at a time, and record which test goes red for each. Restore by writing the
+original bytes back (capture `sha256` of the file before you start and check it after),
+never `git checkout --` — this worktree is shared and that command would discard another
+session's uncommitted work. After the four mutations the file must hash back to the value
+it had when the commit landed, and `npm run test:doctor-mapping` must be back to
+`# pass 47` / `# fail 0`.
+
+| # | Mutation (in `dashboardWire.ts`) | The test that must go red |
+|---|---|---|
+| 1 | `mapQueueAppointment`: return `row` instead of `{ ...row, consultType: … }` | *in_person passes through rather than becoming a video consult* |
+| 2 | `mapDashboardWire`: `satisfactionPct: m.satisfactionPct ?? null` → `?? 0` | *no reviews is null, which the tile renders as an em dash* |
+| 3 | `mapDashboardWire`: `todaysAppointments: m.todaysCount ?? 0` → `todaysAppointments: 0` | *every tile reads the wire, not a literal* |
+| 4 | `formatSlotDateLabel`: drop the `.slice(0, 10)` | *the slot date label survives a full timestamp* |
+
+Mutation 1 is the one that matters most: it is the delegation seam, and if the spec stays
+green without the override then the *queue row and the appointments list are the same row*
+test is carrying the assertion instead — say which, rather than reporting a clean sweep.
+
+What this does **not** cover, recorded so the next reader does not over-claim it: the
+`getDashboard` delegation in `src/api/doctor.batch1.api.ts` has no node:test coverage (the
+api module pulls React Native in and the runner stubs only `constants/tokens` transitively).
+It is covered by Step 9's typecheck and by Task 7's live screen run; do not describe Step 2's
+spec as testing the api module.
+
+---
 ### Task 6: Today's queue rows render
 
 `AppointmentRow` crashes on an `in_person` booking (`TYPE_ICON[...]` is `undefined` → rendering it throws) and prints "Invalid Date" for a timestamp-shaped `slotDate` ([mobile-app/reactnative/src/features/doctor/components/AppointmentRow.tsx:18-25](../../mobile-app/reactnative/src/features/doctor/components/AppointmentRow.tsx#L18)).
