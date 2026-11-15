@@ -2023,7 +2023,7 @@ MSG
 
 ### Task 5: The client mapping — one pure module, all five tiles
 
-Today `getDashboard`'s live branch returns literal `0`s for the tiles and `earnings.lifetimeKobo = walletBalanceKobo` ([mobile-app/reactnative/src/api/doctor.batch1.api.ts:343-379](../../mobile-app/reactnative/src/api/doctor.batch1.api.ts#L343), post-#1008 line numbers). This moves the wire→domain translation into a pure module the same way `batch6Wire.ts` does, so it is testable without a device.
+Today `getDashboard`'s live branch returns literal `0`s for the tiles and `earnings.lifetimeKobo = walletBalanceKobo` ([mobile-app/reactnative/src/api/doctor.batch1.api.ts:342-379](../../mobile-app/reactnative/src/api/doctor.batch1.api.ts#L342), post-#1008 line numbers). This moves the wire→domain translation into a pure module the same way `batch6Wire.ts` does, so it is testable without a device.
 
 The queue rows are **not re-derived here**. #1008 landed `mapAppointmentWire` ([mobile-app/reactnative/src/features/doctor/mapping.ts:158](../../mobile-app/reactnative/src/features/doctor/mapping.ts#L158)), which already turns that same `patient` jsonb into this same `DoctorAppointment` — avatar rule, `booked` → `upcoming`, gender normalise, id-derived `ref` — with three spec files pinning all of it. Re-implementing any of that on the dashboard would give one patient different initials and a different circle colour depending on which screen they were opened from, and would have quietly kept a bug this task's first draft carried: its own gender lookup never lowercased, so `'Female'` mapped to `'other'`. So `mapQueueAppointment` delegates and overrides exactly one field, for the reason written into Step 4.
 
@@ -2052,7 +2052,13 @@ test -d /private/tmp/spot-doctor-metrics/mobile-app/reactnative/node_modules \
 cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && git status --short . | head
 ```
 
-Expected: `git status` shows only the files this task will create. The symlink must be invisible to git (the path is ignored); if it shows up, remove the symlink and stop — do not commit it.
+Expected: `?? mobile-app/reactnative/node_modules` and nothing else yet — and that line is
+correct, not a problem to fix. The symlink is **not** invisible to git: `.gitignore:21-22`
+ignore `node_modules/` *with a trailing slash*, which matches a directory, and a symlink is a
+file to git, so `git check-ignore -v mobile-app/reactnative/node_modules` exits 1. That is
+exactly why every commit step in this task names its paths explicitly — `git add -A` here would
+commit a symlink pointing at another machine's absolute path. Never stage it, and leave it in
+place: Tasks 6 and 7 typecheck against it too.
 
 - [ ] **Step 2: Write the failing spec**
 
@@ -2390,7 +2396,7 @@ cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
 node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "src/features/doctor/__tests__/dashboardWire.test.ts" 2>&1 | tail -20
 ```
 
-Expected: `# pass 9`, `# fail 0`.
+Expected: `# tests 9`, `# pass 9`, `# fail 0`, `# skipped 0`.
 
 - [ ] **Step 7: Prove the existing runner already covers the new file**
 
@@ -2401,11 +2407,17 @@ cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
 npm run test:doctor-mapping 2>&1 | grep -E "dashboardWire|batch6Wire|^# (pass|fail|skipped)"
 ```
 
-Expected: both `dashboardWire.test.ts` and `batch6Wire.test.ts` named as suites, `# fail 0`, `# skipped 0`. If `# skipped` is nonzero, say so — a skipped suite is not a passing one.
+Expected: both `dashboardWire.test.ts` and `batch6Wire.test.ts` named, `# fail 0`,
+`# skipped 0`. The counts are the falsifiable part: this runner measured **`# tests 38` /
+`# pass 38` / `# fail 0`** on this worktree before the task existed (measured at `ec3fcd715`,
+which is what "the glob already covers my new file" has to mean), so the amended run must land
+on `# tests 47` / `# pass 47`. 38 means the new spec was written and never run; anything else
+means the glob or the file name is wrong. If `# skipped` is nonzero, say so — a skipped suite
+is not a passing one.
 
 - [ ] **Step 8: Delegate the api module's live branch**
 
-In `mobile-app/reactnative/src/api/doctor.batch1.api.ts`, delete the local `interface DashboardWire { … }` block and its comment (post-#1008 lines 331-341), and replace the whole `getDashboard` function (lines 343-379, signature included) with:
+In `mobile-app/reactnative/src/api/doctor.batch1.api.ts`, delete the local `interface DashboardWire { … }` block and its comment (post-#1008 lines 331-340), and replace the whole `getDashboard` function (lines 342-379, signature included) with:
 
 ```ts
 export async function getDashboard(): Promise<DoctorDashboardData> {
@@ -2434,10 +2446,28 @@ Replace the stale comment above the function with:
 - [ ] **Step 9: Typecheck the doctor surface**
 
 ```bash
-cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative && npx --max-old-space-size=4096 tsc --noEmit -p tsconfig.doctorcheck.json 2>&1 | tail -20; echo "tsc exit: $?"
+cd /private/tmp/spot-doctor-metrics/mobile-app/reactnative
+NODE_OPTIONS=--max-old-space-size=4096 npx tsc --noEmit -p tsconfig.doctorcheck.json > /tmp/t5-tsc.txt 2>&1
+echo "tsc exit: $?"; cat /tmp/t5-tsc.txt
 ```
 
-Expected: no output, `tsc exit: 0`. `DEMO_DASHBOARD`'s `satisfactionPct: 96` still satisfies `number | null`. If the process dies with exit 134, that is a heap crash rather than a type error — retry with a larger `--max-old-space-size`.
+Two traps in the command that used to sit here. `npx --max-old-space-size=4096 tsc …` does not
+raise anyone's heap: npm swallows the flag (`npm warn Unknown cli config "--max-old-space-size"`)
+and Node starts with its default, so the guard only looked applied — the flag has to be in
+`NODE_OPTIONS`. And `… tsc … 2>&1 | tail -20; echo "tsc exit: $?"` prints **tail's** status, not
+the compiler's, so a red typecheck reported itself green; capture to a file and read `$?`
+unpiped.
+
+Expected: `tsc exit: 0` and an empty `/tmp/t5-tsc.txt`. Both measured here before the task: this
+same command on this worktree at `ec3fcd715` exits 0 with zero lines, so any line it prints now
+is this task's doing. The scope matters — `tsconfig.doctorcheck.json` `include`s
+`app/(doctor)/**/*`, so the screen that renders the tile is inside this check, and there are
+exactly four `satisfactionPct` readers in it: `src/types/doctor.batch1.ts:256` (the declaration
+Step 5 widens), `src/api/doctor.batch1.api.ts:328` (`DEMO_DASHBOARD`, whose `96` still satisfies
+`number | null`), `src/api/doctor.batch1.api.ts:377` (the literal Step 8 deletes) and
+`app/(doctor)/(tabs)/index.tsx:184` (`` value={`${dashboard?.satisfactionPct ?? 0}%`} `` —
+typechecks unchanged, and Task 7 gives it the em dash). If the process dies with exit 134 that is
+a heap crash, not a type error: raise `NODE_OPTIONS`, do not narrow the check.
 
 - [ ] **Step 10: Commit**
 
