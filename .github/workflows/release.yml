@@ -435,10 +435,13 @@ jobs:
             upload_path: backend
             root_flag: --path-as-root
             build_dir: backend
-          # production/frontend-web is in the matrix on purpose. It is not the cPanel instance
-          # that serves www.spotlightng.com; it is the BFF that eas.json:65 bakes into the
-          # shipped mobile build's EXPO_PUBLIC_API_BASE_URL and that frontend-admin's
-          # production WEB_API_BASE_URL points at, and nothing updated it before this file.
+          # production/frontend-web on Railway is NOT an orphan and NOT the same
+          # thing as www.spotlightng.com. The cPanel lane (sync-frontend-web.yml →
+          # paymax2022/spotlight-latest) serves the customer domain; this service is
+          # the BFF that mobile-app/reactnative/eas.json:65 bakes into the shipped
+          # build's EXPO_PUBLIC_API_BASE_URL (and production-apk inherits it at :72),
+          # and that frontend-admin's production WEB_API_BASE_URL also points at.
+          # Nothing in the release chain updated it before this file.
           - service: frontend-web
             upload_path: ''
             root_flag: ''
