@@ -91,7 +91,7 @@ Measured at `origin/main` = `effe1b355` on 2026-11-13.
   > but that is upstream of the RN mapper: `slotParts` (`src/features/telemedicine/mapping.ts:131-142`)
   > already re-formats it to a `YYYY-MM-DD` `slotDate` before a `DoctorAppointment` is built, and the
   > new queue path produces `to_char(..., 'YYYY-MM-DD')`
-  > (`backend/internal/doctor/dashboard_metrics.go:218`). Likewise `in_person` cannot arrive on the
+  > (`backend/internal/doctor/dashboard_metrics.go:231`). Likewise `in_person` cannot arrive on the
   > old path, because `mapConsultType` (`mapping.ts:124-128`) collapses every unrecognised type to
   > `'video'` and no screen read `dashboard.todaysAppointments` until this PR rewired the queue.
   > So both render defects are **preconditions this PR creates the route for**, not repairs of
@@ -202,7 +202,8 @@ follow-up F4, not this PR.
 **D9 — `patient.initials` / `avatarColor` are derived client-side.** They are presentation
 tokens (a `Colors` reference in the mock data), not booking facts, so they stay off the wire.
 The adapter derives initials from the first letters of the first and last name words and picks
-`avatarColor` from a fixed 5-entry palette indexed by a hash of the patient id, so a patient's
+`avatarColor` from a fixed 8-entry palette (`AVATAR_COLORS`, telemedicine/mapping.ts:34-37)
+indexed by a hash of the patient id, so a patient's
 avatar is stable across renders. `PatientSummary.age` and `.gender` come from `user_profiles`;
 an absent gender maps to `'other'`.
 

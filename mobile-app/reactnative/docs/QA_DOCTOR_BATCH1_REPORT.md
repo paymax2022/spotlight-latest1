@@ -19,6 +19,15 @@ doctor module. Navigation is sound: **no orphan routes, no dead links, no Expo R
 collisions.** The four new components are genuinely new and the screens reuse the shared
 component library well.
 
+> **What this headline is evidence of (read before the counts).** "73/73 covered" means each spec
+> entry has a full screen, a consolidated state, or a documented reuse, checked against the code,
+> the type-check and the module's tests. It is not an observation of live data: **no row anywhere in
+> this report was verified in a browser on a running app.** A `PASS — live mode` cell in Section D
+> means the screen is wired to the real endpoint and covered by the Go live-DB suite — which `SKIP`s
+> on any machine without `TEST_DATABASE_URL`, so its green is owed to CI, not to this document.
+> Section D's blockquote carries the per-row detail, and only D1, D2 and D13 were re-cited against
+> this branch.
+
 Defects are dominated by **one spec-level miss (E14 overbooking warning never wired into the
 UI)** plus minor reuse/consistency/a11y polish items. None are blockers.
 

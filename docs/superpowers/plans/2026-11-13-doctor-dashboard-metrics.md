@@ -848,7 +848,7 @@ Three things happen in this step, in this order.
 
 **1. Align the two stale timezone comments.** They are stale in the committed file only because the
 fix dispatch said "the rest of the file stays as committed", so this lifts that constraint rather
-than waiving the finding. Replace the `defaultDoctorTimezone` comment (`dashboard_metrics.go:27-29`)
+than waiving the finding. Replace the `defaultDoctorTimezone` comment (`dashboard_metrics.go:32-35`)
 with the plan's Task 1 text — it cites `doctor_profiles.timezone` at
 `20260625000000_doctor_module.sql:60` as the column the read uses and `:165` for the availability one
 (the file currently says `:164`, which is `emergency_enabled`), and it must not call
@@ -2620,12 +2620,12 @@ Date" on the shipped dashboard (Task 6 review finding T6-R1, confirmed by the co
   column's CHECK has always allowed it and the endpoint wrote `req.ConsultationType` verbatim until
   `3e061a53e` (2026-11-04) — at `aee407792` that line is `service.go:486` — so pre-existing rows can
   carry `in_person`, and the queue read passes them through unchanged
-  (`dashboard_metrics.go:216` → `dashboardWire.ts:90-93` → `index.tsx:315`). Rendering `undefined` as a
+  (`dashboard_metrics.go:229` → `dashboardWire.ts:90-93` → `index.tsx:315`). Rendering `undefined` as a
   component element throws, which is why the fallback had to land before the screen rewired. Task 8 must
   not write a QA step that says "book an in-person consult": the row is obtained from a legacy row or by
   hand-inserting SQL, and if neither is available the step is not runnable and says so.
 - **No `Invalid Date` on either path.** The queue's date is produced as
-  `to_char(a.scheduled_at AT TIME ZONE $2, 'YYYY-MM-DD')` (`backend/internal/doctor/dashboard_metrics.go:218`),
+  `to_char(a.scheduled_at AT TIME ZONE $2, 'YYYY-MM-DD')` (`backend/internal/doctor/dashboard_metrics.go:231`),
   so it is day-shaped by construction, and `formatSlotDateLabel`'s `slice(0, 10)` is defensive
   robustness rather than a repair. It is still the right change: it is the single place the day
   slicing is defined, and Task 5's spec pins it.
@@ -3079,7 +3079,7 @@ Each is its own change:
   `tsconfig.doctorcheck.json` typechecks it) with cases for `undefined`, `null`, `0` and `96`. That
   module is deliberately not created for the status quo: a test asserting the two branches this round
   chose not to separate would be structure built around a decision rather than a requirement.
-  T7-R2's truncation is the same family — the queue is `LIMIT 20` (`dashboard_metrics.go:230`,
+  T7-R2's truncation is the same family — the queue is `LIMIT 20` (`dashboard_metrics.go:243`,
   `dashboardQueueLimit = 20` at `:41`) under a header that says "Today's queue" with no "showing 20 of
   31" line, and its two protective live-DB tests (`dashboard_metrics_live_db_test.go:307,825`) **skip**
   without `TEST_DATABASE_URL`, which the review measured — so on any laptop clone that guard is silent.
@@ -3141,8 +3141,67 @@ Each is its own change:
   sets, which is the file's documented substitute (`handler_test.go:18-24`) — and the success path's
   status code and envelope with a real database have no gin-level test either. `TestLiveDB_Dashboard*`
   asserts on `json.Marshal(res)` (`dashboard_metrics_live_db_test.go:775,779,788`), which proves the keys
-  the mapper consumes but not what `c.JSON` puts on the wire. The CI `live-db` job re-runs the service
-  suite on a clean migrated schema (`ci.yml`'s `dbscope` keys it on `^backend/`, and five of this branch's
+  the mapper consumes but not what `c.JSON` puts on the wire — and, the whole-branch review measured
+  (S-1), not even the *path*: those two assertions are `strings.Contains` of a leaf, so renaming
+  `Metrics`' tag leaves `"todaysCount":2,` in the blob while `dashboardWire.ts`'s `wire.metrics ?? {}`
+  falls back to zeros and all 13 live tests stay green. That mechanism is now reproduced as a guard:
+  `TestDashboardSummaryWirePaths` (`dashboard_metrics_test.go`) walks the 28 dotted paths the client
+  reads and forbids `omitempty` on the five dashboard types. It needs no database, so it bites on a
+  laptop and not only in the `live-db` lane, and it is mutation-proven three ways — parent tag renamed
+  (10 path subtests plus 4 zero-dashboard keys go red, 14 assertions in all, while the old
+  `"todaysCount":2,` substring is still present in that same payload), `omitempty` added to
+  `UpcomingCount`, and the two count tags swapped. The CI `live-db` job re-runs the service
+  suite on a clean migrated schema (`ci.yml`'s `dbscope` keys it on `^backend/`, and six of this branch's
   files are under `backend/`), so the service half is gated in public; the gin-envelope half would need a
   helper this package does not have, and the same absence applies to `/vet/dashboard` and
   `/records/dashboard`, so writing it is a follow-up worth doing once across all three.
+- **F14** — drop `reason` from the dashboard queue payload. `AppointmentRow.tsx:31-56` renders name,
+  initials, avatarColor, `slotDate`, `slotTime`, status and the HMO badge — nothing else, so
+  `reason` (=`appointments.notes`, the patient's own words) travels to the device for up to 20
+  patients on every dashboard load unread. Unlike `ref`, `feeKobo`, `createdAt` and
+  `patient.{age,gender}` — which `mapAppointmentWire`'s shared `DoctorAppointment` type *requires*,
+  so dropping them would leave the mapper inventing values — `reason` is declared optional
+  (`types/doctor.ts`), so it is the one field that can genuinely go. It sits in
+  `contracts/doctor.openapi.yaml:138`'s `required` list, which makes the removal a contract change and
+  is the reason this is a follow-up rather than a last-minute edit; `dashboard_metrics.go:71-83` now
+  records why every field rides until then.
+- **F15** — `src/features/doctor/batch6Wire.ts:79-81` asserts that "the two earnings paths cannot
+  disagree about the same doctor's money". This branch added a third `lifetimeKobo`
+  (`dashboardWire.ts:130`, Σ settled consult legs) beside that file's ledger balance (`:88`), so the
+  invariant the comment states is what broke. No screen shows both numbers, and `dashboardWire.ts` now
+  names the difference at its own call site; the stale sentence is in a file outside this branch's
+  diff, so correcting it belongs here.
+- **F16** — a failed dashboard is indistinguishable from an empty one on screen. `GetDashboard` went
+  from three reads to six, so any one of `doctor_reviews`/`settlements`/`appointments`/
+  `doctor_profiles` failing returns 500, and `index.tsx:176-181,311-312` renders `0`, `0`, `—` and "No
+  consults scheduled" — while the only error surface on the screen (`:226-228`) is a `StateView` whose
+  message is about *alerts*. The server refuses to let a broken query look like a zero; the client
+  composition undoes that. Needs the same product answer F10 asks for (what does a tile say when it
+  does not know yet), so do the two together.
+- **F17** — a silently downgraded timezone is unknowable on screen. `usableTimezone`
+  (`dashboard_metrics.go:169`) falls back to `Africa/Lagos` on a Postgres `22023` with only a
+  `log.Printf`, the resolved zone ships as `metrics.timezone`, and `dashboardWire.ts:34` declares it
+  and reads it nowhere — as it does `metrics.today` (F7). So that doctor's day boundaries are priced in
+  Lagos with no signal, and the queue cannot be headed with the server's day. F5/#1027 makes this live
+  soon, because the zone this read uses is the one the settings screen currently cannot save.
+- **F18** — the settled-legs join has no 1:1 guard. `settledQ`/`escrowedQ`
+  `JOIN appointments a ON a.settlement_id = st.id` with no `DISTINCT` and no `GROUP BY st.id`; the
+  invariant holds only because the sole writer of `appointments.settlement_id` in the whole backend is
+  `telemedicine/service.go:573`, one fresh settlement per booking insert. A second writer would
+  double-count the same settlement once per appointment, silently.
+- **F19** — nothing pins the *composition's* day anchor. `todayQueue` takes `$3::date` from
+  `agg.Today` (`service_tail2.go:171-173`), which is correct, but the one assertion that looks like
+  proof (`dashboard_metrics_live_db_test.go:732`, `SlotDate != Metrics.Today`) is a tautology — the
+  WHERE clause forces the two to agree for every row it returns — and the two seeded-day tests use
+  Lagos slots at 08:00–14:00, where the local and UTC days coincide. Passing the wrong day into
+  `todayQueue` from `GetDashboard` is uncaught; the falsifier is a Karachi-vs-Lagos crossing fixture
+  that calls the service, not the repository.
+- **F20** — the two month figures ride different clocks. `consultsThisMonth` filters on the
+  **scheduled** month (`dashboard_metrics.go:197-198`) while `thisMonthKobo` filters on the **settled**
+  month (`:323-324`), so a consult completed last month and settled today is this month's money inside
+  a count that omits it. Latent: no tile renders either today.
+- **F21** — two money states sit outside both reads. `settlements.status` also allows `releasing` and
+  `disputed`, and neither appears in `settledQ` or `escrowedQ`. Measured safe for now — no writer sets
+  either for telemedicine (`grep -rn "StatusReleasing|StatusDisputed"` over `backend/` hits only
+  restaurant, transport, fractionalre and paystackcheckout readers) — so it errs low and never
+  double-counts, but it is unguarded against the day a consult can be disputed.
