@@ -480,9 +480,11 @@ type TaxVatReport struct {
 // DashboardSummary is the composite landing projection for GET /dashboard. Money
 // is int64 kobo and every field is scoped to the signed-in doctor.
 //
-// AppointmentCounts is the doctor_appointments status map, kept for
-// pendingRequests; the two appointment TILES read Metrics instead, because
-// doctor_appointments has no insert path (see dashboard_metrics.go).
+// AppointmentCounts is the booking-plane status map (appointmentStatusCounts,
+// with 'booked' renamed 'pending'), kept because pendingRequests renders it.
+// The two appointment TILES read Metrics instead: doctor_appointments, which
+// this response used to count, has no insert path at all — see
+// dashboard_metrics.go.
 //
 // Metrics is the projection this endpoint used to fake: the five tiles read the
 // booking plane (appointments), the money plane (settlements, ledger) and

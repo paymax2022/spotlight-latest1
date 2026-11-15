@@ -178,7 +178,7 @@ func (s *Service) GetDashboard(ctx context.Context, userID string) (*DashboardSu
 	}
 	revenue, err := s.repo.consultRevenue(ctx, userID, tz)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("doctor: project dashboard consult revenue: %w", err)
 	}
 	// One count, two tiles: the queue list is capped, the number is not (spec D2a).
 	revenue.ConsultsThisMonth = agg.ConsultsThisMonth

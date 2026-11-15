@@ -690,11 +690,19 @@ func TestLiveDB_DashboardReportsSeededNumbers(t *testing.T) {
 	// Today's rows are both 'completed': a row inside today may sit before or after
 	// CURRENT_TIMESTAMP depending on when the suite runs, so nothing today can be
 	// allowed to feed UpcomingCount. The +2-day booked row is always future.
+	// The settled row stores 170001, never 170000, because 170000 IS FLOOR(0.85 ×
+	// 200000): with the split's own answer in the column, a stored figure and a
+	// re-derived figure are the same number and this test could not tell
+	// SUM(provider_kobo) from settledQ re-typing the 85% in SQL.
 	f.bookLocal(t, tz, "completed", 0, 9*60)
 	f.bookLocal(t, tz, "completed", 0, 14*60)
 	f.bookLocal(t, tz, "booked", 2, 9*60)
 	settledID, _ := f.bookLocal(t, tz, "completed", -1, 9*60)
-	f.escrow(t, settledID, "settled", 200000, 170000, 0, time.Now().UTC(), "telemedicine")
+	f.escrow(t, settledID, "settled", 200000, 170001, 0, time.Now().UTC(), "telemedicine")
+	// provider_kobo = 0 because nothing has been paid on this row yet, which is
+	// exactly what the escrowed leg projects instead of summing a stored column.
+	escrowedID, _ := f.bookLocal(t, tz, "completed", -2, 9*60)
+	f.escrow(t, escrowedID, "escrowed", 200000, 0, 2000, time.Time{}, "telemedicine")
 	for _, rating := range []int{4, 5, 5} {
 		if _, err := pool.Exec(ctx,
 			`INSERT INTO doctor_reviews (user_id, rating) VALUES ($1,$2)`, f.doctorUser, rating); err != nil {
@@ -715,11 +723,38 @@ func TestLiveDB_DashboardReportsSeededNumbers(t *testing.T) {
 	if len(res.TodaysAppointments) != 2 {
 		t.Errorf("queue rows = %d, want 2", len(res.TodaysAppointments))
 	}
-	if res.Metrics.Revenue.LifetimeKobo != 170000 {
-		t.Errorf("Revenue.LifetimeKobo = %d, want 170000", res.Metrics.Revenue.LifetimeKobo)
+	// Task 5 renders the day header from Metrics.Today, so the composition must carry
+	// the aggregate's local day — not "" and not a UTC day. The queue's own SlotDate
+	// is the same value produced by the same read, so equality pins both.
+	if !isoDay.MatchString(res.Metrics.Today) {
+		t.Errorf("Metrics.Today = %q, want YYYY-MM-DD", res.Metrics.Today)
 	}
-	if res.Metrics.Revenue.ConsultsThisMonth == 0 {
-		t.Error("Revenue.ConsultsThisMonth = 0, want the completed-this-month count")
+	if len(res.TodaysAppointments) > 0 && res.TodaysAppointments[0].SlotDate != res.Metrics.Today {
+		t.Errorf("queue SlotDate = %q but Metrics.Today = %q — one day, two answers",
+			res.TodaysAppointments[0].SlotDate, res.Metrics.Today)
+	}
+	if res.Metrics.Revenue.LifetimeKobo != 170001 {
+		t.Errorf("Revenue.LifetimeKobo = %d, want 170001", res.Metrics.Revenue.LifetimeKobo)
+	}
+	wantPending, err := pendingConsultKobo(200000, 2000)
+	if err != nil {
+		t.Fatalf("expected pending: %v", err)
+	}
+	if res.Metrics.Revenue.PendingKobo != wantPending {
+		t.Errorf("Revenue.PendingKobo = %d, want %d (ComputeLegs for the same row)",
+			res.Metrics.Revenue.PendingKobo, wantPending)
+	}
+	// Deterministic, unlike Task 2's fixture: this test's only settled row settles
+	// at now(), so it is always inside the current calendar month in the doctor's
+	// zone. Here ThisMonthKobo == LifetimeKobo is the EXPECTED result, not the FILTER
+	// failing — Task 2's …ConsultRevenue owns the prev-month exclusion, and its row
+	// settled forty days back is what proves that.
+	if res.Metrics.Revenue.ThisMonthKobo != 170001 {
+		t.Errorf("Revenue.ThisMonthKobo = %d, want 170001", res.Metrics.Revenue.ThisMonthKobo)
+	}
+	if res.Metrics.Revenue.ConsultsThisMonth < 2 {
+		t.Errorf("Revenue.ConsultsThisMonth = %d, want at least 2 (today's two completed rows)",
+			res.Metrics.Revenue.ConsultsThisMonth)
 	}
 	// 4,5,5 → avg 4.666 → 93.33 → 93. The scoping of the read is proven by the next
 	// test, which adds a review for a DIFFERENT doctor and expects nothing to move.
@@ -741,7 +776,7 @@ func TestLiveDB_DashboardReportsSeededNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if !strings.Contains(string(raw), `"todaysCount":2`) {
+	if !strings.Contains(string(raw), `"todaysCount":2,`) {
 		t.Errorf("payload missing todaysCount: %s", raw)
 	}
 	// The no-reviews case ships JSON null, not 0 — the client renders '—' from it.
@@ -750,7 +785,7 @@ func TestLiveDB_DashboardReportsSeededNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal bare: %v", err)
 	}
-	if !strings.Contains(string(braw), `"satisfactionPct":null`) {
+	if !strings.Contains(string(braw), `"satisfactionPct":null,`) {
 		t.Errorf("bare dashboard payload missing a null satisfactionPct: %s", braw)
 	}
 }
@@ -780,6 +815,29 @@ func TestLiveDB_DashboardSatisfactionIgnoresOtherDoctors(t *testing.T) {
 	}
 	if res.Metrics.SatisfactionPct == nil || *res.Metrics.SatisfactionPct != 100 {
 		t.Errorf("SatisfactionPct = %v, want 100 (two 5-star reviews, no stranger's 1)", res.Metrics.SatisfactionPct)
+	}
+}
+
+// Spec D2a has to survive the composition, not only the repository call: 21 rows
+// today means the tile says 21 and the list shows 20. Task 1 proved this at
+// dashboardAggregates/todayQueue directly; this is the version that fails if
+// GetDashboard derives the count from the capped slice it just built.
+func TestLiveDB_DashboardComposedCountOutrunsTheCappedQueue(t *testing.T) {
+	pool := metricsDB(t)
+	f := newMetricsFixture(t, pool)
+	tz := defaultDoctorTimezone
+	for i := 0; i < dashboardQueueLimit+1; i++ {
+		f.bookLocal(t, tz, "completed", 0, 8*60+i)
+	}
+	res, err := metricsService(pool).GetDashboard(context.Background(), f.doctorUser)
+	if err != nil {
+		t.Fatalf("GetDashboard: %v", err)
+	}
+	if res.Metrics.TodaysCount != dashboardQueueLimit+1 {
+		t.Errorf("TodaysCount = %d, want %d", res.Metrics.TodaysCount, dashboardQueueLimit+1)
+	}
+	if len(res.TodaysAppointments) != dashboardQueueLimit {
+		t.Errorf("queue rows = %d, want %d", len(res.TodaysAppointments), dashboardQueueLimit)
 	}
 }
 

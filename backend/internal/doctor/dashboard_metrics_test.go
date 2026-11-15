@@ -64,6 +64,9 @@ func TestDashboardSatisfactionPct(t *testing.T) {
 		{"no reviews is nil", ReputationSummary{AverageRating: 0, ReviewCount: 0}, nil},
 		{"4.8 of 5 is 96", ReputationSummary{AverageRating: 4.8, ReviewCount: 24}, ptr.Of(96.0)},
 		{"4,5,5 rounds to 93", ReputationSummary{AverageRating: 4.6666666666666665, ReviewCount: 3}, ptr.Of(93.0)},
+		// 86.66 is the case that tells ROUND from TRUNC; every other row here is a
+		// number both would produce.
+		{"4,4,5 rounds up to 87", ReputationSummary{AverageRating: 13.0 / 3.0, ReviewCount: 3}, ptr.Of(87.0)},
 		{"perfect", ReputationSummary{AverageRating: 5, ReviewCount: 1}, ptr.Of(100.0)},
 		{"one star is not nil", ReputationSummary{AverageRating: 1, ReviewCount: 2}, ptr.Of(20.0)},
 		// The other half of the nil-vs-zero rule: reviews exist and every one is

@@ -105,13 +105,13 @@ type dashboardCounters struct {
 // anchored to Lagos). `GET /schedule` is not a read-back of this column: none of
 // ScheduleSettings' top-level fields carries a zone, and the one zone that
 // response does expose is the nested `schedule.timezone` — `doctor_availability`'s
-// column, not this one. Since #1008 that is not hypothetical: `Schedule`
-// (handler_tail2.go:499, model.go:76) is typed `Availability`, and the
-// appointments plane renders slots with `AT TIME ZONE COALESCE(av.timezone, …)`
-// (repository.go:220). So the same doctor's dashboard and appointment list can
-// price "today" against two different columns — spec F5 documents the screen
-// that fails to write this one. A doctor with no profile row at all is the default,
-// not an error.
+// column, not this one. Since #1008 that is not hypothetical: ScheduleSettings'
+// `Schedule Availability` field is typed `Availability`, whose `Timezone`
+// (model.go:76) is that column, and the appointments plane renders slots with
+// `AT TIME ZONE COALESCE(av.timezone, …)` (repository.go:220). So the same
+// doctor's dashboard and appointment list can price "today" against two different
+// columns — spec F5 documents the screen that fails to write this one. A doctor
+// with no profile row at all is the default, not an error.
 func (s *Service) dashboardTimezone(ctx context.Context, userID string) (string, error) {
 	p, err := s.repo.GetProfile(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
