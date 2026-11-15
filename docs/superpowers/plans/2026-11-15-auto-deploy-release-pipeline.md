@@ -100,7 +100,7 @@ echo "staging=$STAGING"
 echo "develop=$DEVELOP"
 ```
 
-Expected on 2026-11-15: `prod` = `973b010cc…`, `staging` = `2a82a62ef…`, `develop` = `da665dcd0…`. `develop` is printed for the record but is not tagged — it carries no production content and the spec's screening found nothing on it worth archiving.
+Expected on 2026-11-15: `prod` = `76f1a6103…`, `staging` = `2a82a62ef…`, `develop` = `da665dcd0…`. (`prod` was `973b010cc…` when this plan was written; PR #1033 merged into it at 19:39:59Z and `973b010cc` is the new tip's direct parent. Tag whatever resolves live — that is the whole point of the assertion.) `develop` is printed for the record but is not tagged — it carries no production content and the spec's screening found nothing on it worth archiving.
 
 - [ ] **Step 3: Assert both tips resolved before tagging anything**
 
@@ -251,12 +251,13 @@ Add a new section immediately before "## Reconciliation checklist". Anchor on th
 **older** than `main`'s. Screening every candidate file by file (spec:
 `docs/superpowers/specs/2026-11-15-auto-deploy-release-pipeline-design.md`,
 "Verified current state") found **no content on either branch that `main`
-lacks**. `git cherry` marks ten commits `+`, but a `+` means the *patch-id* was
-not found upstream — it does not mean the content is missing. Four are already on
+lacks**. `git cherry` marks eleven commits `+` (re-run 2026-11-15 after Task 1:
+seven on `prod`, four on `staging`), but a `+` means the *patch-id* was
+not found upstream — it does not mean the content is missing. Five are already on
 `main` in full; five are cases where `main` has moved ahead and merging would
 revert it; one resurrects a deliberately deleted workflow.
 
-The tips are preserved as tags `archive/prod-2026-11-15` (`973b010cc`) and
+The tips are preserved as tags `archive/prod-2026-11-15` (`76f1a6103`) and
 `archive/staging-2026-11-15` (`2a82a62ef`) so the branches can be reset without
 losing history.
 
@@ -270,9 +271,19 @@ losing history.
 | `2a82a62ef` promote #1014 to staging (2026-11-14) | Reverts 601 lines of `contracts/intake.openapi.yaml` + `contracts/openapi.yaml`. |
 | `6948a6c49` gated staging deploy lane (2026-11-04) | Re-creates `staging-frontend-web-deploy.yml`, which `b5bc4480f` deleted under the policy "deploy only to `main`, never staging" — two live writers for one service-environment pair. |
 
-The other five candidates (`548d07c4b`, `dae77e90b`, `5ab7c9cc0`, `75482a43a`,
-`95beea87f`) are already on `main` in full; `5ab7c9cc0` is the commit production
-was serving when this was screened.
+The other six candidates (`548d07c4b`, `dae77e90b`, `5ab7c9cc0`, `75482a43a`,
+`95beea87f`, `76f1a6103`) are already on `main` in content; `5ab7c9cc0` is the
+commit production was serving when this was first screened.
+
+`76f1a6103` (#1033, merged into `prod` 2026-11-15T19:39:59Z, *after* the original
+screening) is the archived `prod` tip and needs its own note, because it is the one
+candidate whose **commit graph** and **content** disagree. It is a forward port of
+four `frontend-admin` sidebar files taken from `main` commit `8ec1681f5`, which IS
+an ancestor of `origin/main`; all four blobs are byte-identical between
+`76f1a6103` and `origin/main` (verified with `git rev-parse <sha>:<path>` on both
+sides). So merging it would add nothing — but `git merge-base --is-ancestor
+76f1a6103 origin/main` says NO, because the port was re-committed on `prod` rather
+than cherry-picked with its patch-id intact. Do not read that NO as missing work.
 
 **The residual risk is semantic, not genealogical.** Git screening proves no
 *commit* is missing; it cannot prove that where `main` reimplemented something
