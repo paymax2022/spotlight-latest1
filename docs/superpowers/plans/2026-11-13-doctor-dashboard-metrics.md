@@ -2833,7 +2833,7 @@ follow-ups in the spec.
 
 ```bash
 cd /private/tmp/spot-doctor-metrics/backend && go build ./... && go vet ./internal/doctor/... ./internal/integrations/... && echo "go ok"
-cd /private/tmp/spot-doctor-metrics/backend && git diff --name-only origin/main...HEAD -- internal/doctor | grep '\.go$' | xargs gofmt -l; echo "gofmt: nothing listed above = every file THIS BRANCH touched is formatted"
+cd /private/tmp/spot-doctor-metrics/backend && git diff --relative --name-only origin/main...HEAD -- internal/doctor | grep '\.go$' | xargs -r gofmt -l; echo "gofmt: nothing listed above = every file THIS BRANCH touched is formatted"
 cd /private/tmp/spot-doctor-metrics/backend && go test ./internal/doctor/... -count=1 > /tmp/t8-gotest.txt 2>&1; echo "go test exit: $?"; tail -8 /tmp/t8-gotest.txt
 cd /private/tmp/spot-doctor-metrics && python3 -c "import yaml; yaml.safe_load(open('contracts/doctor.openapi.yaml')); print('openapi parses')"
 cd /private/tmp/spot-doctor-metrics && npx --yes @redocly/cli@1 lint contracts/doctor.openapi.yaml --config redocly.yaml --format=stylish; echo "redocly exit: $?"
@@ -2848,7 +2848,15 @@ cd /private/tmp/spot-doctor-metrics/backend
 TEST_DATABASE_URL="<local dev DSN>" go test ./internal/doctor/ -run 'TestLiveDB_Dashboard' -count=1 -v 2>&1 | tail -30
 ```
 
-Expected: `go ok`, `xargs gofmt -l` printing nothing, `ok spotlight/backend/internal/doctor`, `openapi parses`, `redocly exit: 0`, `tsc exit: 0`, `# fail 0`, and **thirteen** `--- PASS` lines for `TestLiveDB_Dashboard*` — the count the plan's own test blocks add up to (six from Task 1, three from Task 2 including the probe-error case its fix round added, four from Task 3 including the composed count-vs-cap case its review round added). Any live-DB test that SKIPped is *not* a pass — record which ones and say so. If the run prints fewer than thirteen, that is a missing test, not a smaller expectation: count the `func TestLiveDB_Dashboard` definitions before concluding (`grep -c '^func TestLiveDB_Dashboard' backend/internal/doctor/dashboard_metrics_live_db_test.go`). Do not gate on repo-wide `gofmt -l internal/doctor/`: four files are unformatted on `origin/main` itself (`model.go`, `service_ops.go`, `repository_mdcn_review.go`, `mdcn_discoverability_live_db_test.go`), no CI lane runs gofmt as a command, and reformatting someone else's file is out of scope for this PR — the branch-scoped form above is the gate.
+Expected: `go ok`, `xargs gofmt -l` printing nothing, `ok spotlight/backend/internal/doctor`, `openapi parses`, `redocly exit: 0`, `tsc exit: 0`, `# fail 0`, and **thirteen** `--- PASS` lines for `TestLiveDB_Dashboard*` — the count the plan's own test blocks add up to (six from Task 1, three from Task 2 including the probe-error case its fix round added, four from Task 3 including the composed count-vs-cap case its review round added). Any live-DB test that SKIPped is *not* a pass — record which ones and say so. If the run prints fewer than thirteen, that is a missing test, not a smaller expectation: count the `func TestLiveDB_Dashboard` definitions before concluding (`grep -c '^func TestLiveDB_Dashboard' backend/internal/doctor/dashboard_metrics_live_db_test.go`).
+The branch-scoped gofmt line needs `--relative`: `git diff --name-only` prints **repo-root**-relative
+paths whatever the cwd is, so without it `xargs gofmt -l` runs inside `backend/` against
+`backend/internal/…` and dies on every file with `lstat backend/internal/doctor/dashboard_metrics.go:
+no such file or directory` — rc 0 on an empty gofmt list, so the command reports a clean pass having
+formatted-checked nothing. Measured both ways: without `--relative` it prints five `lstat` errors,
+with it, nothing. `xargs -r` is also load-bearing — plain `xargs gofmt -l` with empty input runs
+`gofmt -l` with no arguments, which is not the check anyone intends.
+Do not gate on repo-wide `gofmt -l internal/doctor/`: four files are unformatted on `origin/main` itself (`model.go`, `service_ops.go`, `repository_mdcn_review.go`, `mdcn_discoverability_live_db_test.go`), no CI lane runs gofmt as a command, and reformatting someone else's file is out of scope for this PR — the branch-scoped form above is the gate.
 
 - [ ] **Step 4: Prove the wire end to end without bouncing the shared container**
 
