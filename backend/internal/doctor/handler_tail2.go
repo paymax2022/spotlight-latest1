@@ -188,7 +188,7 @@ func (h *Handler) GetDashboard(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.GetDashboard(c.Request.Context(), uid)
+	res, err := h.svc.GetDashboard(c.Request.Context(), uid, time.Now().UTC())
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -485,6 +485,12 @@ type DashboardSummary struct {
 	UnreadNotifications int64            `json:"unreadNotifications"`
 	WalletBalanceKobo   int64            `json:"walletBalanceKobo"`
 	Currency            string           `json:"currency"`
+	// The date tiles the landing screen renders beside the wallet balance. They
+	// were absent until now, which is why the client could only answer 0.
+	TodaysAppointments   int64  `json:"todaysAppointments"`
+	UpcomingAppointments int64  `json:"upcomingAppointments"`
+	TodayDate            string `json:"todayDate"`
+	SatisfactionPct      int    `json:"satisfactionPct"`
 }
 
 // ScheduleSettings is the composite projection for GET /schedule — it summarises

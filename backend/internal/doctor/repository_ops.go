@@ -455,6 +455,61 @@ func (r *Repository) ZoneApplies(ctx context.Context, zone string) (bool, error)
 	return false, err
 }
 
+// EffectiveTimezone is the single zone every date expression in this module
+// evaluates: the column the schedule screen writes (doctor_profiles.timezone,
+// gated by SetTimezone), or the module default when the doctor never picked one.
+//
+// A value Postgres cannot apply — a row that predates that gate — degrades to the
+// default instead of propagating, because it is evaluated inside the doctor's own
+// appointment list and the dashboard: a 22023 there is an unreadable portal, not a
+// bad zone the caller can still fix. Any other failure is ours and does propagate.
+func (r *Repository) EffectiveTimezone(ctx context.Context, userID string) (string, error) {
+	tz, err := r.GetTimezone(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	applies, err := r.ZoneApplies(ctx, tz)
+	if err != nil {
+		return "", err
+	}
+	if !applies {
+		return "Africa/Lagos", nil
+	}
+	return tz, nil
+}
+
+// DashboardDays is the date half of the landing projection: how many consults fall
+// on the doctor's own today, how many are still ahead, and the local date the
+// first number was counted against (the screens filter "Today's queue" by it, so
+// the list and the tile cannot drift to different days).
+type DashboardDays struct {
+	Today    int64  `json:"today"`
+	Upcoming int64  `json:"upcoming"`
+	Date     string `json:"date"`
+}
+
+// DashboardDayCounts counts the doctor's live bookings by day. `now` is the
+// caller's clock, not the database's: "today" is a boundary that has to be testable
+// without racing midnight. Cancelled and completed bookings are not consults.
+func (r *Repository) DashboardDayCounts(ctx context.Context, userID, zone string, now time.Time) (DashboardDays, error) {
+	const q = `
+		SELECT
+			COUNT(*) FILTER (
+			    WHERE to_char(a.scheduled_at AT TIME ZONE $2, 'YYYY-MM-DD')
+			          = to_char($3::timestamptz AT TIME ZONE $2, 'YYYY-MM-DD'))::bigint,
+			COUNT(*) FILTER (WHERE a.scheduled_at >= $3)::bigint,
+			to_char($3::timestamptz AT TIME ZONE $2, 'YYYY-MM-DD')
+		FROM appointments a
+		JOIN doctors d ON d.id = a.doctor_id
+		WHERE d.user_id = $1
+		  AND a.status NOT IN ('cancelled','completed')`
+	var out DashboardDays
+	if err := r.db.QueryRow(ctx, q, userID, zone, now).Scan(&out.Today, &out.Upcoming, &out.Date); err != nil {
+		return DashboardDays{}, err
+	}
+	return out, nil
+}
+
 // AppointmentReminderSettings projects the one reminder row the reminders screen
 // edits (reminder_type = 'appointment'). No row means the doctor never saved any:
 // answer the screen's defaults, with a non-nil offsets list the screen can filter.

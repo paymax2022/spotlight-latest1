@@ -200,10 +200,15 @@ func (r *Repository) UpsertAvailability(ctx context.Context, userID string, in A
 // is what makes `$1 = the signed-in doctor` a real scope.
 //
 // The slot is formatted here rather than left a timestamptz because both halves
-// are the DOCTOR'S local wall time (doctor_availability.timezone) while the
-// screens do `new Date(`${slotDate}T00:00:00`)` in the device's own zone: a full
-// timestamp would shift the day for a doctor travelling outside WAT, and a
-// client-side split of the UTC instant would too.
+// are the DOCTOR'S local wall time while the screens do
+// `new Date(`${slotDate}T00:00:00`)` in the device's own zone: a full timestamp
+// would shift the day for a doctor travelling outside WAT, and a client-side
+// split of the UTC instant would too.
+//
+// $2 is the zone, and it is the caller's job to hand in
+// EffectiveTimezone(userID) — one zone for the list, the dashboard's "today" and
+// the schedule screen. It used to read the legacy doctor_availability.timezone
+// off a join here, which let the tiles and this list name different days.
 const appointmentColumns = `
 		SELECT a.id,
 		       d.user_id,
@@ -217,8 +222,8 @@ const appointmentColumns = `
 		       ),
 		       a.consultation_type,
 		       CASE a.status WHEN 'booked' THEN 'upcoming' ELSE a.status END,
-		       to_char(a.scheduled_at AT TIME ZONE COALESCE(av.timezone, 'Africa/Lagos'), 'YYYY-MM-DD'),
-		       to_char(a.scheduled_at AT TIME ZONE COALESCE(av.timezone, 'Africa/Lagos'), 'HH12:MI AM'),
+		       to_char(a.scheduled_at AT TIME ZONE $2, 'YYYY-MM-DD'),
+		       to_char(a.scheduled_at AT TIME ZONE $2, 'HH12:MI AM'),
 		       a.fee_kobo,
 		       a.notes,
 		       false,
@@ -230,7 +235,6 @@ const appointmentColumns = `
 		FROM appointments a
 		JOIN doctors d            ON d.id = a.doctor_id
 		 LEFT JOIN user_profiles pu ON pu.id = a.patient_id
-		 LEFT JOIN doctor_availability av ON av.user_id = d.user_id
 		WHERE d.user_id = $1`
 
 // `is_hmo`/`hmo_provider` are answered constant because `appointments` records
@@ -240,13 +244,19 @@ const appointmentColumns = `
 // booking table has no updated_at column and the field is part of the shape the
 // screens already parse.
 
+// A doctor with no profile row still gets a list, so the zone is resolved before
+// the query and never read back off a joined row.
 func (r *Repository) ListAppointments(ctx context.Context, userID, status string) ([]Appointment, error) {
+	zone, err := r.EffectiveTimezone(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	q := appointmentColumns
-	args := []any{userID}
+	args := []any{userID, zone}
 	if status != "" {
 		// The tab filters in the UI's vocabulary (ConsultStatus), while the CASE
 		// above only rewrites it on the way out — so the predicate has to go back.
-		q += ` AND a.status = $2`
+		q += ` AND a.status = $3`
 		args = append(args, appointmentStatusForFilter(status))
 	}
 	q += ` ORDER BY a.scheduled_at DESC NULLS LAST, a.created_at DESC`
@@ -297,8 +307,12 @@ func appointmentStatusForWrite(status string) (string, error) {
 }
 
 func (r *Repository) GetAppointment(ctx context.Context, userID, id string) (*Appointment, error) {
-	const q = appointmentColumns + ` AND a.id = $2`
-	a, err := scanAppointment(r.db.QueryRow(ctx, q, userID, id))
+	zone, err := r.EffectiveTimezone(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	const q = appointmentColumns + ` AND a.id = $3`
+	a, err := scanAppointment(r.db.QueryRow(ctx, q, userID, zone, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

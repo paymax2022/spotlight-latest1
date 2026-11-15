@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -143,8 +144,27 @@ func (s *Service) GetTaxVatReport(ctx context.Context, userID string) (*TaxVatRe
 // GetDashboard composes the landing dashboard from existing scoped reads: the
 // appointment status counts, the unread-notification count, and the ledger wallet
 // balance (projected, never stored). No new table.
-func (s *Service) GetDashboard(ctx context.Context, userID string) (*DashboardSummary, error) {
+//
+// The two date tiles and satisfaction come from the same reads the other screens
+// already use — the bookings by day, doctor_reviews via the /reputation
+// aggregate — because the wire used to answer none of them and the client filled
+// the gap with a literal 0. `now` is the handler's clock so a "today" is testable
+// at the boundary; a doctor with no doctor_availability row still gets a dashboard,
+// counted in the default zone.
+func (s *Service) GetDashboard(ctx context.Context, userID string, now time.Time) (*DashboardSummary, error) {
 	counts, err := s.repo.appointmentStatusCounts(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	zone, err := s.repo.EffectiveTimezone(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	days, err := s.repo.DashboardDayCounts(ctx, userID, zone, now)
+	if err != nil {
+		return nil, err
+	}
+	rep, err := s.repo.GetReputation(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -156,11 +176,17 @@ func (s *Service) GetDashboard(ctx context.Context, userID string) (*DashboardSu
 	if err != nil {
 		return nil, fmt.Errorf("doctor: project dashboard wallet balance from ledger: %w", err)
 	}
+	// Ratings are 1..5, the tile is a percentage of the patients who were pleased.
+	satisfaction := int(math.Round(rep.AverageRating / 5 * 100))
 	return &DashboardSummary{
-		AppointmentCounts:   counts,
-		UnreadNotifications: unread,
-		WalletBalanceKobo:   balance,
-		Currency:            "NGN",
+		AppointmentCounts:    counts,
+		UnreadNotifications:  unread,
+		WalletBalanceKobo:    balance,
+		Currency:             "NGN",
+		TodaysAppointments:   days.Today,
+		UpcomingAppointments: days.Upcoming,
+		TodayDate:            days.Date,
+		SatisfactionPct:      satisfaction,
 	}, nil
 }
 

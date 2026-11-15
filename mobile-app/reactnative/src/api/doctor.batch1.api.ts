@@ -7,8 +7,8 @@
 // uploads → presigned R2 PUT; mutations pass the Idempotency-Key header below.
 
 import { Colors } from '@/constants/tokens';
-import { mapRequestWire, orNull } from '@/features/doctor/mapping';
-import type { AppointmentRequestWire } from '@/features/doctor/mapping';
+import { dashboardTilesFromWire, mapRequestWire, orNull } from '@/features/doctor/mapping';
+import type { AppointmentRequestWire, DashboardTilesWire } from '@/features/doctor/mapping';
 import {
   DEMO_APPOINTMENTS,
   DEMO_EARNINGS,
@@ -329,15 +329,21 @@ export const DEMO_DASHBOARD: DoctorDashboardData = {
 };
 
 // Live GET /dashboard returns the flat DashboardSummary projection
-// ({appointmentCounts, unreadNotifications, walletBalanceKobo, currency}) — not
+// ({appointmentCounts, unreadNotifications, walletBalanceKobo, currency,
+// todaysAppointments, upcomingAppointments, satisfactionPct, todayDate}) — not
 // the rich DoctorDashboardData the screens render. Normalize here: seed the
 // concrete tiles/lists from the wire and neutral-default the rest, so an empty
 // account shows zeroed tiles instead of crashing on missing `earnings`.
-interface DashboardWire {
-  appointmentCounts?:   Record<string, number>;
-  unreadNotifications?: number;
-  walletBalanceKobo?:   number;
-  currency?:            string;
+//
+// The four tile fields are the server's own counts, in the doctor's timezone
+// (internal/doctor DashboardDayCounts). They used to be literal `0`s here,
+// which is why three of the four tiles read zero on a real account — `0` is not
+// nullish, so the screen's `?? todays.length` fallback could never fire.
+interface DashboardWire extends DashboardTilesWire {
+  appointmentCounts?:    Record<string, number>;
+  unreadNotifications?:  number;
+  walletBalanceKobo?:    number;
+  currency?:             string;
 }
 
 export async function getDashboard(): Promise<DoctorDashboardData> {
@@ -346,12 +352,14 @@ export async function getDashboard(): Promise<DoctorDashboardData> {
   const balance = wire.walletBalanceKobo ?? 0;
   const counts = wire.appointmentCounts ?? {};
   const pending = counts.pending ?? 0;
+  const tiles = dashboardTilesFromWire(wire);
   return {
     presence: 'offline',
     acceptsInstant: false,
+    todayDate: tiles.todayDate,
     counts: {
-      todaysAppointments: 0,
-      upcomingAppointments: 0,
+      todaysAppointments: tiles.todaysAppointments,
+      upcomingAppointments: tiles.upcomingAppointments,
       pendingRequests: pending,
       waitingRoom: 0,
       followUpRequests: 0,
@@ -374,7 +382,7 @@ export async function getDashboard(): Promise<DoctorDashboardData> {
       consultsThisMonth: 0,
       payouts: [],
     },
-    satisfactionPct: 0,
+    satisfactionPct: tiles.satisfactionPct,
   };
 }
 
