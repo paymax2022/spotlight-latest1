@@ -252,3 +252,264 @@ jobs:
           EXPECT_FINGERPRINT: ${{ matrix.fingerprint }}
           TOUCHED: ${{ steps.touched.outputs.touched }}
         run: bash scripts/ci/railway-smoke.sh
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # THE STAGING → PRODUCTION LEG. The ordering is the contract: migrations before
+  # traffic in each environment, and NOTHING reaches production until staging has
+  # been probed and is serving this commit. `migrate-production` needs
+  # `smoke-staging`, not `deploy-staging` — a successful upload is not evidence the
+  # new bytes are being served.
+  #
+  # Every job here uses a plain `needs:` (no `!cancelled()`), so a red staging probe
+  # cascade-skips the entire production half. That skip-propagation is the mechanism
+  # that replaces the human who used to read the staging URL before typing DEPLOY.
+  # The development leg opts OUT of it above, because its two pre-existing failures
+  # must not halt every release.
+  #
+  # WHY `gates` IS IN EVERY `needs:` LIST BELOW. GitHub's `needs` context only
+  # exposes jobs named in the list, and these jobs read needs.gates.outputs.{verdict,
+  # sha,at_main_tip,fp_*} in their `if:` and their checkout ref. Declaring only the
+  # ordering job makes every one of those expressions resolve empty — actionlint
+  # v1.7.12 rejects it outright, and GitHub would skip the whole leg even on an all
+  # green run. The extra edge adds no ordering power (gates is already a transitive
+  # ancestor); it only makes the outputs readable.
+  # ─────────────────────────────────────────────────────────────────────────────
+  migrate-staging:
+    name: migrate staging database
+    needs: gates
+    if: needs.gates.outputs.verdict == 'proceed'
+    uses: ./.github/workflows/_reusable-db-apply.yml
+    permissions:
+      contents: read
+    # REQUIRED — a reusable workflow receives no caller secrets without it.
+    secrets: inherit
+    with:
+      target: staging
+      dry_run: false
+      include_all: false
+      # A ROLLBACK DOES NOT MIGRATE. `supabase db push --linked` against a remote
+      # that already holds newer versions aborts with "remote migration versions
+      # not found in local migrations directory" — the exact failure db-migrate.yml's
+      # stale-ref guard exists to prevent. So the apply no-ops when the target SHA
+      # is not main's tip, and the code is still rolled back.
+      #
+      # The no-op is an INPUT to a step inside a job that always runs, never a
+      # job-level `if:`. A skipped `needs:` dependency makes GitHub skip every job
+      # downstream of it — an if-skipped migrate would cancel the deploy after it,
+      # and a rollback would deploy nothing at all.
+      skip_apply: ${{ needs.gates.outputs.at_main_tip != 'true' }}
+      skip_reason: 'not main tip — an older supabase/migrations tree makes db push abort with remote-versions-not-found'
+
+  deploy-staging:
+    name: deploy Staging (${{ matrix.service }})
+    needs: [gates, migrate-staging]
+    if: needs.gates.outputs.verdict == 'proceed'
+    runs-on: ubuntu-latest
+    environment: staging
+    strategy:
+      # Unlike development, fail-fast is acceptable here — but it is still set false
+      # so one red service produces a complete picture instead of two cancelled
+      # legs and a guess about which one actually broke.
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            upload_path: backend
+            root_flag: --path-as-root
+            build_dir: backend
+          # Frontends: NO positional path, NO --path-as-root. This is the shape
+          # ci.yml's staging matrix already had right (ci.yml:622-637); the
+          # development and production matrices hardcoded the flag instead.
+          - service: frontend-web
+            upload_path: ''
+            root_flag: ''
+            build_dir: ''
+          - service: frontend-admin
+            upload_path: ''
+            root_flag: ''
+            build_dir: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gates.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+      - name: Deploy ${{ matrix.service }}
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          SERVICE: ${{ matrix.service }}
+          RAILWAY_ENV: staging
+          SHA: ${{ needs.gates.outputs.sha }}
+          UPLOAD_PATH: ${{ matrix.upload_path }}
+          ROOT_FLAG: ${{ matrix.root_flag }}
+          BUILD_DIR: ${{ matrix.build_dir }}
+        run: bash scripts/ci/railway-deploy.sh
+
+  smoke-staging:
+    name: smoke Staging
+    needs: [gates, deploy-staging]
+    if: needs.gates.outputs.verdict == 'proceed'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            require_readyz: 'true'
+            fingerprint: ''
+          - service: frontend-web
+            require_readyz: 'true'
+            fingerprint: ${{ needs.gates.outputs.fp_staging_frontend_web }}
+          - service: frontend-admin
+            require_readyz: 'true'
+            fingerprint: ${{ needs.gates.outputs.fp_staging_frontend_admin }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gates.outputs.sha }}
+      - name: Did this commit touch ${{ matrix.service }}?
+        id: touched
+        run: |
+          set -euo pipefail
+          case "${{ matrix.service }}" in
+            backend) dir=backend ;;
+            frontend-web) dir=frontend-web ;;
+            frontend-admin) dir=frontend-admin ;;
+          esac
+          if git rev-parse -q --verify "${{ needs.gates.outputs.sha }}~1" >/dev/null \
+             && git diff --quiet "${{ needs.gates.outputs.sha }}~1" "${{ needs.gates.outputs.sha }}" -- "$dir"; then
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          fi
+      # THIS JOB IS THE GATE ON PRODUCTION. `smoke-production`'s ancestors include
+      # it, so a staging probe that fails — wrong commit served, /readyz red, or a
+      # frontend that answers anything but 200 — cascade-skips the entire production
+      # leg. Do not weaken it to a warning.
+      - name: Probe ${{ matrix.service }}
+        env:
+          SERVICE: ${{ matrix.service }}
+          RAILWAY_ENV: staging
+          SHA: ${{ needs.gates.outputs.sha }}
+          REQUIRE_READYZ: ${{ matrix.require_readyz }}
+          EXPECT_FINGERPRINT: ${{ matrix.fingerprint }}
+          TOUCHED: ${{ steps.touched.outputs.touched }}
+        run: bash scripts/ci/railway-smoke.sh
+
+  migrate-production:
+    name: migrate production database
+    # `smoke-staging`, not `deploy-staging`: the probe is what proves staging is
+    # serving this commit, and that proof is the precondition for touching
+    # production. A plain `needs:` means a red staging probe cascade-skips this job
+    # and everything after it.
+    needs: [gates, smoke-staging]
+    if: needs.gates.outputs.verdict == 'proceed'
+    uses: ./.github/workflows/_reusable-db-apply.yml
+    permissions:
+      contents: read
+    secrets: inherit
+    with:
+      target: production
+      dry_run: false
+      # NEVER true for production. An unattended --include-all is how an old,
+      # superseded migration gets applied out of order. db-migrate.yml keeps the
+      # input for an operator who has decided to use it deliberately.
+      include_all: false
+      skip_apply: ${{ needs.gates.outputs.at_main_tip != 'true' }}
+      skip_reason: 'not main tip — an older supabase/migrations tree makes db push abort with remote-versions-not-found'
+
+  deploy-production:
+    name: deploy Production (${{ matrix.service }})
+    needs: [gates, migrate-production]
+    if: needs.gates.outputs.verdict == 'proceed'
+    runs-on: ubuntu-latest
+    environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            upload_path: backend
+            root_flag: --path-as-root
+            build_dir: backend
+          # production/frontend-web is in the matrix on purpose. It is not the cPanel instance
+          # that serves www.spotlightng.com; it is the BFF that eas.json:65 bakes into the
+          # shipped mobile build's EXPO_PUBLIC_API_BASE_URL and that frontend-admin's
+          # production WEB_API_BASE_URL points at, and nothing updated it before this file.
+          - service: frontend-web
+            upload_path: ''
+            root_flag: ''
+            build_dir: ''
+          - service: frontend-admin
+            upload_path: ''
+            root_flag: ''
+            build_dir: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gates.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+      - name: Deploy ${{ matrix.service }}
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          SERVICE: ${{ matrix.service }}
+          RAILWAY_ENV: production
+          SHA: ${{ needs.gates.outputs.sha }}
+          UPLOAD_PATH: ${{ matrix.upload_path }}
+          ROOT_FLAG: ${{ matrix.root_flag }}
+          BUILD_DIR: ${{ matrix.build_dir }}
+        run: bash scripts/ci/railway-deploy.sh
+
+  smoke-production:
+    name: smoke Production
+    needs: [gates, deploy-production]
+    if: needs.gates.outputs.verdict == 'proceed'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            require_readyz: 'true'
+            fingerprint: ''
+          - service: frontend-web
+            require_readyz: 'true'
+            fingerprint: ${{ needs.gates.outputs.fp_production_frontend_web }}
+          - service: frontend-admin
+            require_readyz: 'true'
+            fingerprint: ${{ needs.gates.outputs.fp_production_frontend_admin }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gates.outputs.sha }}
+      - name: Did this commit touch ${{ matrix.service }}?
+        id: touched
+        run: |
+          set -euo pipefail
+          case "${{ matrix.service }}" in
+            backend) dir=backend ;;
+            frontend-web) dir=frontend-web ;;
+            frontend-admin) dir=frontend-admin ;;
+          esac
+          if git rev-parse -q --verify "${{ needs.gates.outputs.sha }}~1" >/dev/null \
+             && git diff --quiet "${{ needs.gates.outputs.sha }}~1" "${{ needs.gates.outputs.sha }}" -- "$dir"; then
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Probe ${{ matrix.service }}
+        env:
+          SERVICE: ${{ matrix.service }}
+          RAILWAY_ENV: production
+          SHA: ${{ needs.gates.outputs.sha }}
+          REQUIRE_READYZ: ${{ matrix.require_readyz }}
+          EXPECT_FINGERPRINT: ${{ matrix.fingerprint }}
+          TOUCHED: ${{ steps.touched.outputs.touched }}
+        run: bash scripts/ci/railway-smoke.sh
