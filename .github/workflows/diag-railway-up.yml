@@ -1,49 +1,42 @@
-name: Diag - railway up pre-flight
+name: Diag - staging backend upload, CLI version as the last variable
 
-# STAGING ONLY. Replays release.yml's two unproven staging legs from CI. Production is untouched.
+# DIAGNOSTIC ONLY. Two uploads to staging `backend`, one read-only production call.
+# Nothing here writes to development or production.
 #
-# WHY THIS EXISTS
-# release.yml's `deploy Staging (*)` legs died ~400 ms into `railway up` with
-#   Failed to fetch: error decoding response body
-#     0: error decoding response body
-#     1: expected value at line 1 column 1
-# while `deploy Development (*)` succeeded in the same run, on the same runner
-# image, with the same CLI pin. `railway up` is not piped or swallowed by the
-# script, and no `Indexing...` line reaches the log — so the CLI failed on a
-# request that happens BEFORE it builds an archive. Development prints
-# `Indexing...` 146 ms after start, so ~400 ms with nothing printed is a
-# pre-flight failure, not an upload failure.
+# WHAT IS NOW SETTLED (all measured 2026-11-16, run 43904662033 unless noted)
+# Inside ONE job, 21 seconds apart, same runner, same pinned CLI 5.40.1, same
+# staging token, same checkout tree:
+#   `railway up --no-gitignore --service frontend-web --environment staging`
+#       (no positional path, no --path-as-root)  -> exit 0 in 15738 ms,
+#       deployment d5825eff, and 7f7efc20 from the identical leg at 16:04 reached
+#       SUCCESS with meta.configFile=/frontend-web/railway.json; staging
+#       frontend-web then served HTTP 200 with the "Loading Spotlight" literal.
+#   `railway up backend --path-as-root --no-gitignore --service backend
+#       --environment staging`                   -> exit 1 in 400 ms with
+#       Failed to fetch: error decoding response body / expected value at line 1
+#       column 1.
+# Run 43886555996 (14:31, push, ee58728e0) shows the SAME script and the SAME
+# `backend --path-as-root` shape passing as `deploy Development (backend)`.
+# Local CLI 5.71.0 runs that same shape against staging backend successfully at
+# 15:29 (d3bfd45e, SUCCESS, configFile=/railway.json).
 #
-# ELIMINATED BY DIRECT MEASUREMENT (2026-11-16, runs 43899596110 / 43901783148):
-#   * the credential — the same secret serves two read-only CI lanes that pass,
-#     and `railway status --environment staging --json` returned 40632 bytes of
-#     valid JSON from the runner;
-#   * the CLI version — the runner prints `railway 5.40.1`, the same build used
-#     in a local linux/x86_64 container;
-#   * the CI flag — CI=true in that container changes nothing;
-#   * service/environment resolution — a nonexistent service returns the clean
-#     `Service not found` in 260 ms against staging on the runner;
-#   * THE UPLOAD SHAPE AND SIZE — Probe 6 ran the staging frontends' exact
-#     pathless repo-root upload (211,130,595 bytes on disk, a 133,423,024-byte
-#     archive) from a GitHub runner and finished exit=0 in 16,055 ms, producing
-#     deployment e4670d96 which built to SUCCESS. A 6-byte archive succeeded
-#     against both staging and development.
-#   * the staging instance — a 1-file upload to staging `frontend-admin`
-#     succeeded (ca5f227a), as did development's (6f5f5666).
-#
-# So nothing about the runner, the shape, the tree or the credential explains the
-# 15:10 reds. What is left is that those legs ran inside a job declaring
-# `environment: staging`, and this job now declares it too. The two legs below
-# replay the real thing: the pathless frontend-web upload with a SHA-shaped
-# message and RAILWAY_HTTP_TIMEOUT=600, and the backend leg through
-# scripts/ci/railway-deploy.sh itself.
+# So the failure needs staging AND --path-as-root AND the pinned 5.40.1 at once.
+# The two candidate causes cannot be separated by reads; they can by one job that
+# runs the identical command under both CLI versions:
+#   A fails, B succeeds -> the CLI pin is the defect; bump it in release.yml.
+#   A fails, B fails    -> it is the staging backend service/environment, not the
+#                          CLI; the next probe is the service's rootDirectory.
+#   A succeeds          -> the window closed; nothing here is reproducible and the
+#                          chain should simply be re-run for real.
 #
 # SAFETY
-# Staging only. Both legs upload real archives, so they create real staging
-# deployments — which is what the release chain does on every push to main, and
-# staging is meant to hold main. Nothing here can reach production: production is
-# a different Railway environment that this workflow's token is not scoped to.
-# No secret value is ever printed; the token is masked and used from a 0600 file.
+# staging backend is currently serving d3bfd45e built from origin/main's backend/;
+# this branch's backend/ is byte-identical to origin/main (verified with
+# `git diff --stat origin/main HEAD -- backend/` -> empty), so a successful upload
+# here puts the same code on staging that the release chain intends to put there.
+# The production probe is `railway deployment list` - a read. It cannot deploy.
+# Tokens are masked with ::add-mask::, never printed (lengths only), and every CLI
+# reply is passed through the same redaction sed the deploy script uses.
 
 on:
   workflow_dispatch: {}
@@ -60,79 +53,90 @@ concurrency:
 
 jobs:
   probe:
-    name: staging legs, inside the staging environment
+    name: staging backend under two CLI versions
     runs-on: ubuntu-latest
-    # The release chain's deploy-staging job declares `environment: staging`.
-    # This job now does too, so the one input that differed between the red
-    # 15:10 legs and the green 15:56 probes is no longer a variable.
+    # Same environment declaration as release.yml's deploy-staging job.
     environment: staging
     env:
       PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
-      # Same value release.yml sets workflow-wide.
       RAILWAY_HTTP_TIMEOUT: '600'
     steps:
-      - name: Resolve the staging token without printing it
+      - name: Resolve both tokens without printing either
         env:
           TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          TOK_PRODUCTION: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
         run: |
           set -euo pipefail
-          if [ -z "$TOK_STAGING" ]; then echo "::error::RAILWAY_TOKEN_STAGING is empty"; exit 1; fi
-          echo "::add-mask::$TOK_STAGING"
-          printf '%s' "$TOK_STAGING" > /tmp/tok_STAGING
-          chmod 600 /tmp/tok_STAGING
-          echo "staging token length (never value): ${#TOK_STAGING}"
+          for pair in STAGING:"$TOK_STAGING" PRODUCTION:"$TOK_PRODUCTION"; do
+            name="${pair%%:*}"; value="${pair#*:}"
+            if [ -z "$value" ]; then echo "::error::RAILWAY_TOKEN_$name is empty"; exit 1; fi
+            echo "::add-mask::$value"
+            printf '%s' "$value" > "/tmp/tok_$name"
+            chmod 600 "/tmp/tok_$name"
+            echo "$name token length (never value): ${#value}"
+          done
 
       - name: Checkout the tree the release chain would upload
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Install the pinned Railway CLI
+      - name: Install the Railway CLI version release.yml pins
         run: |
           set -euo pipefail
           npm install --global @railway/cli@5.40.1
           railway --version
 
-      # release.yml's staging frontend legs: NO positional path, NO --path-as-root,
-      # because staging's frontend instances carry rootDirectory=frontend-web /
-      # frontend-admin, so the archive must be the whole repo. frontend-web had
-      # never completed a `railway up` from CI; five local attempts at 15:31-15:58
-      # all ended FAILED with no build, so the leg is unproven, not the shape.
-      - name: 'Leg 1 - frontend-web, pathless repo-root upload (exact release shape)'
+      - name: 'Probe A - staging backend, --path-as-root, on the pinned CLI'
         continue-on-error: true
         run: |
           set -uo pipefail
           export RAILWAY_TOKEN="$(cat /tmp/tok_STAGING)"
           SHA="$(git rev-parse HEAD)"
-          echo "uploading $GITHUB_WORKSPACE ($(du -sb --exclude=.git . | cut -f1) bytes) as $SHA"
+          echo "tree: $(du -sb --exclude=.git . | cut -f1) bytes, message $SHA"
           start=$(date +%s%3N)
-          railway up --no-gitignore \
-            --service frontend-web --environment staging --project "$PROJECT" \
-            --detach --message "$SHA" > /tmp/leg1.log 2>&1
+          railway up backend --path-as-root --no-gitignore \
+            --service backend --environment staging --project "$PROJECT" \
+            --detach --message "diagA-$SHA" > /tmp/a.log 2>&1
           echo "exit=$? elapsed_ms=$(( $(date +%s%3N) - start ))"
-          cat /tmp/leg1.log
+          sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' /tmp/a.log
 
-      - name: 'Leg 1 readback - did the deployment appear?'
+      - name: Install the latest Railway CLI
+        run: |
+          set -euo pipefail
+          npm install --global @railway/cli@latest
+          railway --version
+
+      - name: 'Probe B - the identical command, one variable changed: the CLI'
         continue-on-error: true
         run: |
           set -uo pipefail
           export RAILWAY_TOKEN="$(cat /tmp/tok_STAGING)"
-          sleep 20
-          railway deployment list --service frontend-web --environment staging \
-            --project "$PROJECT" --limit 3 --json \
-            | jq -r '.[] | "\(.createdAt) \(.id[0:8]) \(.status) \(.meta.cliMessage)"'
+          SHA="$(git rev-parse HEAD)"
+          start=$(date +%s%3N)
+          railway up backend --path-as-root --no-gitignore \
+            --service backend --environment staging --project "$PROJECT" \
+            --detach --message "diagB-$SHA" > /tmp/b.log 2>&1
+          echo "exit=$? elapsed_ms=$(( $(date +%s%3N) - start ))"
+          sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' /tmp/b.log
 
-      # The backend leg is the same script the chain runs, with the same inputs.
-      # release.yml supplies RAILWAY_PROJECT workflow-wide (release.yml:62-63);
-      # the script hard-requires it (railway-deploy.sh:58), so it must be here.
-      - name: 'Leg 2 - backend, the real scripts/ci/railway-deploy.sh'
+      - name: 'Probe C - the production token, read-only, no deploy'
         continue-on-error: true
-        env:
-          RAILWAY_TOKEN_FILE: /tmp/tok_STAGING
-          RAILWAY_PROJECT: ${{ env.PROJECT }}
+        run: |
+          set -uo pipefail
+          export RAILWAY_TOKEN="$(cat /tmp/tok_PRODUCTION)"
+          echo "--- production deployment list (read only) ---"
+          railway deployment list --service backend --environment production \
+            --project "$PROJECT" --limit 3 --json 2>&1 \
+            | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g' \
+            | jq -r 'if type=="array" then (.[] | "\(.createdAt) \(.id[0:8]) \(.status) cfg=\(.meta.configFile)") else . end' 2>&1 | head -6
+
+      - name: Read back what the two probes created on staging
+        if: always()
         run: |
           set -uo pipefail
           export RAILWAY_TOKEN="$(cat /tmp/tok_STAGING)"
-          export SERVICE=backend RAILWAY_ENV=staging SHA="$(git rev-parse HEAD)" \
-                 UPLOAD_PATH=backend ROOT_FLAG='--path-as-root' BUILD_DIR=backend ATTEMPTS=6
-          bash scripts/ci/railway-deploy.sh
+          sleep 15
+          railway deployment list --service backend --environment staging \
+            --project "$PROJECT" --limit 4 --json \
+            | jq -r '.[] | "\(.createdAt) \(.id[0:8]) \(.status) msg=\(.meta.cliMessage[0:18]) cfg=\(.meta.configFile)"'
