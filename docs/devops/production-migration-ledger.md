@@ -2976,3 +2976,175 @@ pushed on 2026-11-15 as draft PR #1028 for one reason: a gate no runner had read
 green, and `gh api …/commits/814f5d3e4/check-runs` → 422 "No commit found for SHA" is the evidence §16.3
 row 9 rested on until that run.*
 
+---
+
+## Post-cutover record — the Film Academy pricing schema reaches production (applied 2026-11-11 and 2026-11-15; written 2026-11-16)
+
+Not a plan task and not numbered as one: Tasks 1–16 never owned this, and no task's close-out
+mentions it. §5's rule binds — append-only, so the §3.5 measurement this supersedes is left exactly
+as Task 1 recorded it, including the row below that §3.5 uses as its illustration.
+
+It was looked for because `https://www.spotlightng.com/service-details/film-academy` served no
+pricing section while the same code on localhost served the whole ladder. That report had two
+independent production causes and only one of them is a migration: prod's Next runtime Supabase
+credential was failing **every** server-side read — anon-client ones too, so `/api/v1/contests`,
+`/api/v1/contests/<uuid>` and `/api/academy/apply` were all 500 for real visitors — and that is what
+hid the section, because `app/service-details/film-academy/page.tsx:306` is the `areas.length > 0`
+guard that wraps the whole `<section id="plan">` (`:176` carries the matching jump link, whose comment
+states the rule: "The pricing section only renders once areas are published"). The missing academy
+pricing schema was the *smaller* half: it kept `tuition` in the failed-read banner and made admin
+per-area price edits fail, but could not hide anything. `src/server/services/academy/pricing.ts`
+supplies the ladder in code — `attachPricingOptions` (`:105`) maps `ACADEMY_PRICING_STRUCTURE` (`:30-36`)
+and takes `stored.find((o) => o.key === def.key) ?? def` (`:126-127`), so an area whose option rows are
+missing is still priced at the approved ₦50k/80k/100k/150k/200k.
+
+The credential half has no run id. It was edited by hand in the runtime env on the cPanel box, and no
+workflow in this repo can reach that file — `deploy-cpanel.yml` has never carried its `CPANEL_SSH_*`
+secrets, and the `Production` GitHub environment holds only `SUPABASE_DB_PASSWORD`. That is recorded
+here because the page works and the ledger would otherwise imply a migration is why.
+
+### P.1 Production's state before the writes, read by the lane that wrote
+
+- **Probe:** `gh run view 42983104867 --log` → job `supabase db apply (scoped, production)`, step
+  `Prove the connection and read history state (read-only)`
+- **Observed:** `remote history rows: 663`, then `20271060000000: not recorded`,
+  `20271095000000: not recorded`, `20271095000001: not recorded`, `20271095000002: not recorded`.
+  The next read-only step, `Active interest-area count (read-only)`, printed
+  `active academy_interest_areas = 8`.
+- **Expected before running:** the versions the dispatch targeted absent from history — that is what
+  the dispatch existed for. Whether the list was three or four was not settled until the `VERSIONS:`
+  line in P.2 printed.
+- **Verdict:** pass
+- **Drift vs baseline:** the `663` is the same Remote count §3.5 carries, so §3.5's illustrative row
+  `` `20271060000000` | ` ` `` — the LOCAL-ONLY shape it warns about — is prod's state as of the
+  2026-11-07 run §3.5 measured on, and is no longer true from 2026-11-11. Read P.2, not §3.5, for the
+  current value.
+
+The 404 that started the hunt (`GET /rest/v1/academy_area_pricing_options` → `PGRST205`, table
+genuinely absent) is deliberately not cited as this ledger's before-state: it was a one-off curl
+against the live project with no run behind it. Four `not recorded` lines from a job that reads
+`supabase_migrations.schema_migrations` prove the same thing, reproducibly.
+
+### P.2 The scoped apply — four versions, one at a time (2026-11-11T07:56Z)
+
+- **Probe:** `gh run view 42983104867` — workflow `Ops DB Push (scoped)`, run number 6,
+  `workflow_dispatch`, created 2026-11-11T07:56:02Z, job `supabase db apply (scoped, production)`,
+  steps `Re-check every selected file is additive-only` → `Apply the selected versions one at a time`
+  → `Verify history rows and remaining pending`
+- **Observed:** `VERSIONS: 20271060000000 20271095000000 20271095000001 20271095000002` with
+  `CONFIRM: SCOPED`; four `additive: <file>` lines; four `== applying <version> ==` blocks each
+  ending `✓ applied + history recorded`; then `recorded:` × 4 and
+  `local migrations still without a history row: 83`.
+- **Expected before running:** **three** files — `20271060000000` plus the two label restatements.
+  That was the count the debugging session carried into its own summary, and it was wrong. The
+  dispatch list held four: `20271095000002_academy_pricing_selections.sql`, the per-area format map
+  the pricing accordion writes, belongs to the same change. Recording three would leave that
+  column's origin unexplained for the next reader of `academy_pricing_selections`.
+- **Verdict:** pass
+- **Drift vs baseline:** four versions move `not recorded` → `recorded`. The `83` is **not** §3.5's
+  `86` minus 4, and no arithmetic should be read into it: §3.5's 86 counts Remote-empty pipe rows in
+  `supabase migration list` output, while this step counts local versions with no history row via
+  `psql` over an explicit version array — two denominators §3.5 already warns are not
+  interchangeable (the same section documents a 749-vs-663 sweep that turns into a false all-green).
+  No post-write history total was printed, so `663 + 4 = 667` is arithmetic on this file, not a
+  measurement, and is not claimed.
+
+Three earlier dispatches of the same workflow did not write anything: run numbers 1 and 2
+(42981056816, 42981368514) failed inside ~20 seconds in `supabase db plan (scoped, production)`, and
+run 42981674376 failed with `::error::psql is not on this runner; refusing to start.` and
+`::error::the direct db host has no A record on this runner; nothing to dial.` — which is why the
+successful lane resolves prod through the session pooler (`Resolve the production DSN (session pooler;
+values never printed)`) rather than the direct host. The first two runs' failure text is not
+recoverable from `gh run view --log-failed`, so their cause is **not recorded here**; that is a gap,
+not a clean sweep.
+
+### P.3 The fifth academy pricing file landed four days later, by the full sweep
+
+- **Probe:** `gh run view 43755019295 --log` → `Ops DB Push (manual)` run number 37,
+  `workflow_dispatch` from `main`, created 2026-11-15T19:54:25Z, conclusion `success`, job
+  `supabase push (production)`, `MODE: push`, `CONFIRM: PUSH`, command `supabase db push --linked
+  --include-all`
+- **Observed:** 79 `Applying migration` lines. Seven are academy files, including
+  `20271095000003_academy_area_options.sql`, `20271089000000_academy_default_film_curriculum.sql`,
+  `20271090000000_academy_film_module_quizzes.sql`, `20271098000000_academy_exam_windows_and_curriculum_fill.sql`,
+  `20271200000061_academy_tmfa_curriculum.sql`, `20271300000010_academy_assistant_chatbot.sql` and
+  `20271400000200_academy_tmfa_curriculum.sql`. In the `supabase migration list --linked` table printed
+  immediately before the push, `20271095000003` shows a **Remote-empty** row — §3.5's LOCAL-ONLY class
+  again — and the same version shows Remote-filled in the identical table printed after it. Independently,
+  `20271060000000` already shows **Remote-filled** in the *before* column, which corroborates P.2 from a
+  different run four days later.
+- **Expected before running:** the `20271095000003` row to be empty, since the scoped lane at P.2
+  listed only `…000000/…09500000/…09500001/…09500002`.
+- **Verdict:** pass
+- **Drift vs baseline:** the pricing-schema class §3.5 illustrates is now closed for all five academy
+  pricing/selection files: four by P.2, the fifth here. The `--include-all` requirement §3.5 records
+  is demonstrated by this run rather than argued — `20271095000003` is back-dated below prod's max
+  applied version, so a plain `db push` would have skipped it.
+
+### P.4 Served-bytes verification, per §4's authority rule (2026-11-16)
+
+§4 says a lane's colour is not evidence of what the site serves, so the schema records above are
+worthless without this.
+
+```bash
+curl -s -o /tmp/fa.html -w '%{http_code} %{size_download}\n' \
+  https://www.spotlightng.com/service-details/film-academy
+# Occurrences, not lines: the page is one HTML line, so `grep -c` reports 1 for everything below.
+# The `_56W1uG_` prefix below is a CSS-modules build hash and will not survive the next build —
+# re-derive it (`grep -o '_[A-Za-z0-9]*_matrixArea' /tmp/fa.html | sort -u`) before trusting a zero.
+grep -o "could not be read right now" /tmp/fa.html | wc -l
+grep -o "price_ngn"                    /tmp/fa.html | wc -l
+grep -o "pricing_options"              /tmp/fa.html | wc -l
+grep -o "1 month - Boarding"           /tmp/fa.html | wc -l
+grep -o "_56W1uG_matrixArea"           /tmp/fa.html | wc -l
+curl -s -o /dev/null -w '%{http_code}\n' https://www.spotlightng.com/api/academy/apply
+curl -s -o /dev/null -w '%{http_code}\n' https://www.spotlightng.com/api/v1/contests
+```
+
+- **Observed:** the page is **200, 81,856 bytes**; the failed-read banner appears **0** times;
+  `price_ngn` appears **40** times and `pricing_options` **8** — five priced options on each of
+  **8** areas — with labels `Weekend (No Boarding)`, `Weekend (With Boarding)`,
+  `Week days (No Boarding)`, `Week days (Boarding)`, `1 month - Boarding`. Each label appears 12
+  times: eight per-area payloads, then the rendered accordion `<li>`, price-row `<dt>`, table
+  `<th>`, and one FAQ sentence. The rendered comparison table carries **8** area rows — Acting,
+  Cinematography, Editing, Film Directing, Producing, Production Design, Script Writing, Sound.
+  `/api/academy/apply` → **200** with `"batch_name":"Batch A - 2026"`; `/api/v1/contests` → **200**.
+- **Verdict:** pass — the section renders on production, and the routes that were 500 for visitors
+  answer 200.
+- **The limit of this read, stated so nobody over-reads it:** served bytes prove the section renders
+  and that neither academy read *errored*. They do **not** prove the `academy_area_pricing_options`
+  rows are what is being served, for two reasons this file should not let anyone forget:
+  1. **The prices and labels are not discriminators.** `ACADEMY_PRICING_STRUCTURE`
+     (`pricing.ts:31-35`) carries the same five prices *and byte-identical labels* to
+     `20271095000001` — `1 month - Boarding` is in both. So the label set cannot even establish which
+     migration is the latest one the DB reflects, let alone whether the DB was consulted. (The
+     original `20271060000000` seed did differ — `Weekend — Saturday & Sunday` with the boarding
+     detail in `note`, not `label` — but since the fallback matches the *restated* strings, that
+     difference is evidence about nothing.)
+  2. **Banner absence is weaker than "the read returned rows".** `catalogue.ts:115-117` appends
+     `tuition` to the banner only when PostgREST *errors* (`if (optionError) loadErrors.push('tuition')`),
+     and `page.tsx:231` is what prints it — `Some catalogue details ({loadErrors.join(', ')}) could not
+     be read right now`. A successful read of an empty table errors nowhere, prints no banner, and hands
+     `attachPricingOptions` zero stored rows — which renders the identical ladder. Zero banner
+     occurrences therefore rules out a failed read, not an empty one.
+
+  What does establish that the rows exist is the write evidence, not this read: P.2 and P.3 record the
+  applies landing, and `20271060000000` inserts the five rows per area in the same migration file that
+  creates the table — so the table's presence and its seed are one atomic event, and P.1 proved the
+  table was absent beforehand. The open inference is only that nothing deleted those rows afterwards;
+  no probe here reads the table directly. The app's own read goes through `createAdminClient()`
+  (`catalogue.ts:96`) with the service credential, which is not in this repo, and the publishable key
+  that is checked in does not authenticate against the production project.
+
+### P.5 What this section does not prove
+
+It does not prove the 83 local-without-history versions are harmless. That `83` is the residual the
+P.2 verify step printed *after* its own four applies, so it does not include them, and no task has
+enumerated the list. It does not prove prod's `academy_settings` row is what the admissions team
+wants, only that the read answers — a thrown settings read would have pushed `fees` into the same
+banner P.4 counts as zero. It does not record the credential change beyond the fact that it happened
+by hand: nobody has read the value, and the value should not be pasted into this file. And it does
+not close §16.3 row 12 — the acceptance matrix still wants prod to report `RELEASE_SHA` from
+`/api/v1/public/build` and the login chunk hrefs to match, which is a different surface than the one
+this section is about.
+
