@@ -140,12 +140,15 @@ per-format model (`AcademyPricingKey`, `max_students`, `training_schedule`,
 same mistake #1030 made is being repeated: **merging `prod` into `main`
 re-introduces the flat-capacity admin console.**
 
-The consequence for the first auto-release: production's admin Film Academy
-console is currently built from `prod`'s older model, and the first
-`release.yml` production leg deploys `main`'s composite-pricing version over it.
-That is the intended direction — `main` is ahead — but it changes a page someone
-else shipped this morning, so read the production `frontend-admin` chunk
-fingerprint before believing the deploy.
+The consequence for the first auto-release: the tree on `prod` still carries
+the older console, and the first `release.yml` production leg replaces
+whatever production is serving with `main`'s composite-pricing version. Which
+model production's admin console is on **right now** depends on its last
+promotion, and this file does not claim to know — no read of served bytes for
+`frontend-admin` production was taken during this re-screen. What is certain is
+the direction of the change: `main` is ahead, so the first release moves that
+page forward, and it changes a page someone else shipped this morning. Read the
+production `frontend-admin` chunk fingerprint before believing the deploy.
 
 It is therefore a **sixth** commit that must never be merged into `main`. It is
 recorded here instead of in the table above because that table's intro ("these
