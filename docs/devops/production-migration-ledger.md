@@ -39,9 +39,12 @@ one-off apply. Two consequences that this ledger's earlier rows did not have to 
 
 Plan: `docs/superpowers/plans/2026-11-12-staging-to-production-migration.md`
 Tasks 4, 11, 12 and 14 ship exactly this SHA; no later task re-picks it.
-(The plan file was not in the tree at `RELEASE_SHA`, and still is not on `origin/main`: Task 16 landed it on
-this branch, so reading this ledger from `main` will not resolve the path above. It resolves from
-`feat/prod-cutover` — see §16.3 row 15 for why that branch is not pushed.)
+The plan file was not in the tree at `RELEASE_SHA`, and it is on `origin/main` now: PR #1028's squash
+`2e200094b74450a40aa0a5bc276d666421fc848b` added it, `git log --format=%h --reverse … -- <path>` naming
+that commit as the only adder among its 16 files / 5,490 insertions. An earlier draft of this paragraph said
+the opposite — "still is not on `origin/main` … it resolves from `feat/prod-cutover`", with a pointer to
+"why that branch is not pushed" — and was falsified twice over by the merge it was written before: the
+branch *was* pushed (draft PR #1028) and *was* merged, so the path resolves from `main` for every reader.
 
 The rule applied: the newest `origin/main` SHA whose **`ci.yml`**
 (`CI — CLAUDE.md gates`) **and** `integration-verify.yml` (`integration-verify`)
@@ -2967,12 +2970,12 @@ items; and row 14 is a refusal that shipped on an artifact that was never rebuil
 | 5 | Staging reconciled to 0 pending before any prod write | **STATE VERIFIED / ORDERING NOT MET** | §5.4: `0 pending`, `recorded: 754`, `remote max applied: 20271410000000` — all real, and all of it **after** the prod writes, not before. Staging's nine applies land inside `43319774515` at 22:26:52–22:27:09Z on 2026-11-12 (§5.3); prod was already written twice that evening — `43301433055` at `20:33:13Z` and `43309595782` at `21:22:19Z` (§1.4, §2.5)  — 1h53m and 1h04m earlier respectively, so the write that moved prod to 670 is barely an hour ahead of staging's reconciliation, not ninety minutes. So the row's second clause fails: **prod migrations were applied against a staging schema that was not yet reconciled.** Reconciling staging first is what would have made prod's set derivable from staging's; that ordering was not honoured and cannot be repaired retroactively — it is a fact about the past, and the only forward-looking obligation it leaves is §16.2 item 2 (prove prod's own 0-pending on a fresh `mode=list`). |
 | 6 | Prod at 0 pending on a fresh `mode=list` table | **NOT DONE** | §16.2 item 2; §5.6's 88 is a 2026-11-07 capture |
 | 7 | `production-module-flags.env` committed: 45 lines, 36 `=true`, 9 `=false` | **VERIFIED** | `make flag-parity` → exit 0, `prod-flag-parity ✓ — 45 flags declared (36 on, 9 off)`; file is 90 physical lines, 45 of them assignments |
-| 8 | The cPanel runtime env carries those 45 keys, no `FEATURE_*` in the process env | **NOT DONE** | §16.2 item 6 — needs the lane dispatch and a probe re-read |
+| 8 | The cPanel runtime env carries those 45 keys, no `FEATURE_*` in the process env | **NOT DONE** | The lane has since dispatched and installed: destination PR #91 (`42789f45b`) → `Deploy to Namecheap cPanel (SSH)` run `43892014887` → the lane's own validator printed `flags: on=36 off=9 declared=45`, and six baseline-503 routes answer 401 (§Task 14 (partial), 2026-11-16). Two clauses still fail: the flip evidences 6 of the 45 names, not 45, and **no `FEATURE_*` in the process env** has never been read on the host. §16.2 item 6 stands until that env read exists. |
 | 9 | `make flag-parity` green **locally and in CI**, and proven to bite | **VERIFIED** | local: exit 0 + `test-prod-flag-parity.sh` → `PASS`; the bite is pinned by the red capture. **CI executed it on 2026-11-15 and it passed**: PR #1028's run `43698229085` (the PR was a draft at the time), job `132763388007` (`prod-flag-parity`, 11s), which runs the bite test before the check exactly as `ci.yml:136-147` specifies. Until that push no runner had read the job — `git ls-remote --heads origin` found no such ref, `gh api …/commits/814f5d3e4/check-runs` → 422 *No commit found*, and `git branch -r --contains 0a7f499dfc1e39a495e3e87896d49dc1b1afdbea` → **empty**. **After the merge** (2026-11-15, squash `2e200094b74450a40aa0a5bc276d666421fc848b`) the job is on `main`: `git show origin/main:.github/workflows/ci.yml` piped to `grep -c prod-flag-parity` → **7**. `git branch -r --contains 0a7f499dfc…` still prints only `origin/feat/prod-cutover`, because a squash copies the content without the ancestry. |
 | 10 | Money-path rulings recorded per name (both web planes + the Go route group) | **VERIFIED as a record** | rulings: §10.3 (the brief's three names, each with both-plane reads and a probe that would flip it, plus `FEATURE_UTILITY_CARD_LEDGER` — the money name the gate cannot see, added by the final review) and §10.4 (a fourth name the task found and overruled its own brief on). The reads those rulings rest on: §10.1 (HTTP probe table, 8 rows, with same-group controls) and §10.2 (the Railway env read). Read the verdict narrowly — "recorded" is not "decided": §10.4's ruling is explicitly *deferred to the user*, so one of the five money names is ruled-but-open, and §10.3's `FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED` stays off on a reasoning chain, not a green test. |
 | 11 | Nine missing backend flags set; five provider keys copied without printing a value | **NOT DONE** | Task 13; the copy step is operator-only by design (never print secret values) |
-| 12 | Prod Go reports its build id == `RELEASE_SHA` (the plan's row 12 names it `/public/build`; the route that answers is `/api/v1/public/build`); login chunk hrefs match | **NOT DONE** | §16.2 items 5 and 14 — measured *against*: prod reports `585bd2ca7…` |
-| 13 | Acceptance matrix committed with `scripts/flagprobe.sh`, no `=true` flag answering 503 on a real gated route | **NOT DONE** | §16.2 item 9. The second half is currently **false**, and the reason is the flag-file install, not the flags: `production-module-flags.env` declares `FEATURE_EVENTS_ENABLED` `:44`, `FEATURE_RESTAURANT_ENABLED` `:60`, `FEATURE_WALLET_ENABLED` `:70` and both referral names `:58-59` all `=true`, yet www still 503s all four routes on a 2026-11-14 re-probe — because the cPanel host has not been shown to carry the file (§16.2 item 6). See also the evidence-split paragraph in `docs/runbooks/referral-gate-parity.md`: `FEATURE_EVENTS_ENABLED` on the prod **backend** env was never read anywhere in this plan, so the backend half of that row cannot be closed from here. |
+| 12 | Prod Go reports its build id == `RELEASE_SHA` (the plan's row 12 names it `/public/build`; the route that answers is `/api/v1/public/build`); login chunk hrefs match | **NOT DONE** | §16.2 items 5 and 14 — measured *against*: prod reports `585bd2ca7…`. **Re-measured 2026-11-16: `/api/v1/public/build` → 200, `commit 5ab7c9cc0bf3d2b42aa43215fe5df9630dfbc421`, `source ldflags`, `started_at 2026-11-15T09:00:26Z`** (§Task 14 (partial)) — that is `fix(health): port the telemedicine intake fixes onto prod (#1025)`, so the row is now refuted by a *third* value rather than the second: prod's Go plane moves without this plan moving it, and Task 11's pin-and-promote still has to decide what to do about that. |
+| 13 | Acceptance matrix committed with `scripts/flagprobe.sh`, no `=true` flag answering 503 on a real gated route | **NOT DONE** | §16.2 item 9. **Both halves moved on 2026-11-16.** The second half is no longer **false**: the four names this cell listed as still 503-ing — `FEATURE_EVENTS_ENABLED` `:44`, `FEATURE_RESTAURANT_ENABLED` `:60`, `FEATURE_WALLET_ENABLED` `:70`, both referral names `:58-59` — flipped 503→401 once destination PR #91's lane installed the flag file, measured on six route paths in §Task 14 (partial). What still holds the row open is the first half: `scripts/flagprobe.sh` and the matrix themselves are uncommitted, and a six-route probe round is not the 45-name sweep, so the "no `=true` flag answering 503" clause is evidenced for 6 names and unmeasured for the other ~29 that have BFF routes (§7.4's ceiling). `docs/runbooks/referral-gate-parity.md:34-38` still prints the 2026-11-14 503 captures as its measured table and needs re-capture before it is cited again. `FEATURE_EVENTS_ENABLED` on the prod **backend** env was still never read anywhere in this plan, so the backend half of that row cannot be closed from here. |
 | 14 | Shipped AAB has zero `wnic…` / `frontend-web-staging…` strings; `build-aab.sh` refuses a prod build whose env declares staging | **HALF** | refusal: **done** (`f6e49a31c` → `e16da72be`, §15). AAB zero-strings: **not done** — no rebuild happened, because the env file it would read is still staging (§16.2 item 7) |
 | 15 | Four outdated docs corrected, still-open list named with owners | **docs SHIPPED / owners partial** | **seven paths, not four** — the brief's `Files:` list names four (`deployment-matrix.md`, `backup-restore-runbook.md`, `referral-gate-parity.md`, `staging-environment-setup.md`); `GO-LIVE-CHECKLIST.md` is the fifth, and it is the one Task 16's survey **added** to that list — the brief had raised it only in Step 1's prose ("should be marked historical"), not under `Files:`. Fix round 3 corrected this cell's earlier claim that the survey also added `backup-restore-runbook.md`: the brief already lists it, with the `:37` target quoted verbatim. `production-migration-ledger.md` is the sixth (its §9.6 mislabel), and the plan file is the seventh. An earlier draft of this cell said "six" and reached it by omitting the ledger itself. The corrections were branch-only until 2026-11-15: the operator authorised the merge, PR #1028 landed as squash `2e200094b74450a40aa0a5bc276d666421fc848b`, and `origin/main` — the copy a reader actually opens — now carries them. That squash also carried one `frontend-web/` path (`config/production-module-flags.env`), so the merge was a production release: `sync-frontend-web.yml` run `43732146898` and the destination `Deploy to Namecheap cPanel (SSH)` run `43732180593` both concluded `success`. The owner column is **not** complete and the row no longer claims it is. Re-read cell by cell: thirteen of fifteen point at someone — two key-holders (items 3 and 8), the two named `Production` reviewers (item 1), the user (item 7), and nine holders defined by a capability they hold ("the operator who can dispatch X", items 2, 4, 5, 6, 12, 14, 15, plus item 10's upload-credential holder and item 13's product owner) — while item 9 names a role only after stating outright that no human is recorded for it, and item 11 states outright that its owner is unverified. Naming a capability is not naming a person, so those thirteen are *reachable* owners rather than assigned ones; the two disclaiming rows are the ones that cannot even be reached. Scored honestly, row 15 is **three-quarters**: docs corrected and merged to `main`, still-open list named, owners named for thirteen of fifteen. |
 
@@ -3167,4 +3170,138 @@ by hand: nobody has read the value, and the value should not be pasted into this
 not close §16.3 row 12 — the acceptance matrix still wants prod to report `RELEASE_SHA` from
 `/api/v1/public/build` and the login chunk hrefs to match, which is a different surface than the one
 this section is about.
+
+## Task 14 (partial) — the crypto gate re-measured, and the probe that could not have failed (2026-11-16)
+
+**Why this section exists.** The cPanel flag-file install landed on the destination repo as PR #91
+(`42789f45b`), its `Deploy to Namecheap cPanel (SSH)` run `43892014887` concluded `success`, and the lane's
+own validator printed `flags: on=36 off=9 declared=45`. A probe round against production afterwards returned
+**401 on every route that had been a baseline 503** — the six paths §3.6, §8.5 and
+`docs/runbooks/referral-gate-parity.md:34-38` recorded as 503 on 2026-11-12/13/14 all answer 401 now. One
+extra route in that round was `GET /api/v1/crypto/balances` on `www.spotlightng.com`, and the plan's Task 14
+Step 2 had given that path a special meaning: *"If it answers 401, `FEATURE_CRYPTO_ENABLED` leaked into
+production and the ledger needs an entry explaining who set it."* Writing that entry would have been
+inventing a leak. The rule is wrong, crypto is dark on prod, and §10.3 already contained the correct probe —
+the plan step simply was not using it.
+
+**The 401 has two possible authors, and the response body says which one answered.** Both are unauthenticated
+rejections of the same request shape, and neither carries information about a module flag:
+
+| Probe (anonymous, 2026-11-16, prod www) | Baseline | Status now | Body | Who answered |
+|---|---|---|---|---|
+| `/api/v1/restaurant/00000000-…` | 503 §3.6 | 401 | `{"success":false,"error":"Unauthorized"}` | the BFF guard |
+| `/api/v1/referral/my-rewards` | 503 §3.6 | 401 | `{"success":false,"error":"Unauthorized"}` | the BFF guard |
+| `/api/v1/association/mine` | 503 §3.6 | 401 | `{"success":false,"error":"Unauthorized"}` | the BFF guard |
+| `/api/v1/wallet/balance` | 503 §8.5 | 401 | `{"success":false,"error":"Unauthorized"}` | the BFF guard |
+| `/api/v1/events` | 503 §8.5 | 401 | `{"success":false,"error":"Unauthorized"}` | the BFF guard |
+| `/api/v1/referrals/me/dashboard` | 503 runbook :34 | 401 | `{"success":false,"error":"Unauthorized"}` | the BFF guard |
+| `/api/v1/crypto/balances` | never probed | 401 | `{"success":false,"error":"Unauthorized"}` | the BFF guard |
+| **`/api/v1/crypto/definitely-not-a-leaf`** | — | **401** | `{"success":false,"error":"Unauthorized"}` | the BFF guard |
+| `/api/finance/events/00000000-…` | — | 401 | `{"error":"missing bearer token","success":false}` | **Go**, forwarded |
+
+The first body is `errorResponse('Unauthorized', 401)` (`frontend-web/src/lib/api/responses.ts:50`, shape at
+`:41`), reached because the crypto catch-all authenticates before it forwards: `app/api/v1/crypto/[...path]/route.ts:13`
+awaits `requireRequestUser`, which throws `UNAUTHORIZED` on a missing bearer token at
+`frontend-web/src/lib/auth/request.ts:14`, and the route's `catch` pipes that to `handleApiError`. Row 8 is
+the point made explicit: a path invented out of thin air under that prefix gets the same 401 as a real one,
+because the request never leaves the web tier. The last row's body is Gin's own auth middleware, which only
+appears when the BFF forwarded — i.e. when the upstream really was consulted.
+
+**The decisive probe is Go-direct, on the leaves `crypto.Register` actually mounts — on both hosts.**
+`backend/internal/crypto/handler.go:274-324` registers `assets`, `portfolio` and `eligibility` (among others);
+there is no `balances` leaf in that list, which is the first half of why the plan step failed. Same command
+against each API host, plus one invented leaf as the negative control:
+
+```bash
+for HOST in backend-production-1b33d backend-staging-new; do
+  for P in /api/v1/crypto/assets /api/v1/crypto/portfolio /api/v1/crypto/eligibility /api/v1/crypto/definitely-not-a-leaf; do
+    printf '%-22s %-38s ' "$HOST" "$P"
+    curl -s -o /tmp/b.txt -w "%{http_code} " --max-time 25 "https://$HOST.up.railway.app$P"
+    head -c 60 /tmp/b.txt; echo
+  done
+done
+```
+
+| Path | prod Go (2026-11-16) | staging Go (2026-11-16) |
+|---|---|---|
+| `/api/v1/crypto/assets` | **404** `No API route matches` | **401** `missing bearer token` |
+| `/api/v1/crypto/portfolio` | **404** `No API route matches` | **401** `missing bearer token` |
+| `/api/v1/crypto/eligibility` | **404** `No API route matches` | **401** `missing bearer token` |
+| `/api/v1/crypto/definitely-not-a-leaf` | 404 | 404 |
+
+Three rows of asymmetry, one row of agreement: the invented leaf 404s on both hosts, so the table cannot be
+read as "these paths never exist anywhere" — and on staging the same three leaves answer as authenticated
+routes. Prod's not-found handler is not evidence of an outage either: `…/healthz` returns
+`{"service":"backend","status":"ok"}` and `…/api/v1/public/build` returns **200** with
+`commit 5ab7c9cc0bf3d2b42aa43215fe5df9630dfbc421`, `source: ldflags`, `started_at 2026-11-15T09:00:26Z`
+(staging's own build: `2a82a62ef…`, started 2026-11-14T20:54:20Z).
+
+The build-lineage gap that asymmetry across two different binaries would otherwise leave open is closed in
+the tree, not inferred: `git cat-file -t 5ab7c9cc0…` → `commit` ("fix(health): port the telemedicine intake
+fixes onto prod (#1025)"), and `git show 5ab7c9cc0…:backend/internal/app/finance_routes.go | grep -c
+FeatureCryptoEnabled` → **1** — the gated mount exists in the very source prod was built from. So prod's 404
+is not "routes absent from this build"; it is `if cfg.FeatureCryptoEnabled` (`backend/internal/app/finance_routes.go:3638`)
+taking the `else` branch at `:3708` and never calling `crypto.Register(cryptoMember, cryptoAdmin, …)`
+(`:3656`). §10.3's 2026-11-13 pair (prod 404 / staging 401 on `assets`, `markets`, `portfolio`) reproduced on
+a different leaf set.
+
+**Verdict.** `FEATURE_CRYPTO_ENABLED` did not leak. No owner set anything, so the entry the plan asked for
+is not written. Two independent reads now agree on the same fact from opposite sides: §10.2's prod-backend
+env read recorded the name as explicitly present and `false` (line "prod backend: 135 keys, 54 boolean
+`FEATURE_*`… `FEATURE_CRYPTO_ENABLED=false` (explicitly present)"), and today's probe shows the consequence
+of that value — the group is unmounted. The web plane could not have leaked it either: zero case-insensitive
+`crypto` hits in `frontend-web/src/lib/feature-flags.ts`, so the name is not in the 45-name derived surface
+and can never appear in `.env.production.local` — which is §9.7's point, restated here because the plan step
+ignored it.
+The plan's Task 14 Step 2 is corrected in this same commit to run the Go-direct registered-leaf probe, carry
+the control, and state the "401 on www is the guard" rule. It is the third member of a family this ledger has
+now caught three times: a probe path guessed from a route's *name* rather than from its registration list —
+`/api/finance/crypto/...` (§10.3, corrected in review), `/api/v1/crypto/wallets` (called out in §10.3 as a
+tautology), and `/api/v1/crypto/balances` (this one, which got further because the BFF answered).
+
+**Two side measurements this section is responsible for.**
+
+1. **Prod Go reports `5ab7c9cc0bf3d2b42aa43215fe5df9630dfbc421`** (`/api/v1/public/build`, `source:
+   ldflags`, `started_at 2026-11-15T09:00:26Z`, uptime ≈ 30 h at read time). That is neither `RELEASE_SHA`
+   `c49b3956…` nor the `585bd2ca7…` recorded in §16.2 items 5/14, and it is the pre-consult-intake commit
+   another session shipped on 2026-11-15. §16.3 row 12 therefore stays **NOT DONE**, with a third value in
+   place of the second — the drift is not a single stale SHA but a moving prod head. Task 11's job is
+   unchanged in substance: prod must be brought to a SHA that carries the flag-file-aware build, and the
+   `#996`-drift decision (item 14) still gates it.
+2. **The flag-file mechanism is proven end to end for the probed names.** Six routes that were 503 at the
+   §3.6 / §8.5 / runbook baselines answer 401 now, and a 503 flips only if `envFlag()` reads a value that has
+   actually reached the prod runtime. §16.3 row 8's first clause ("the cPanel runtime env carries those 45
+   keys") is thereby evidenced for those six names — not for the other 39, and its second clause ("**no**
+   `FEATURE_*` in the process env") is still unmeasured, so row 8 stays **NOT DONE** rather than being
+   upgraded on six samples. Row 13's first half is likewise untouched: `scripts/flagprobe.sh` and the
+   acceptance matrix are still not committed, and this section is a probe round, not the matrix.
+
+**One thing the plan could not have known: `release.yml`, and where it leaves the push steps.** It landed on
+`main` as `ef97ec64b` ("every push to main releases itself") — `on: push: branches: [main]`, no `paths`
+filter, no environment approval, and the legs gates → migrate-staging → deploy-staging → smoke-staging →
+migrate-production → deploy-production → smoke-production. Measured on a docs-only merge: `479bcd10b`
+produced release run `43887543175` (push, 2026-11-16T14:36:47Z) — which finished with **zero jobs**,
+conclusion `cancelled` — and then `43893246842` (workflow_dispatch of the same SHA, 15:08:55Z), whose
+`release gate` job concluded `failure` after ten polls of "no .github/workflows/ci.yml run for this SHA yet",
+with all eight downstream jobs **skipped**, `migrate production database` and `deploy Production` among them.
+
+So the plan's conclusion survives, by a mechanism the plan did not have:
+
+- A **docs-only** push to `main` still releases nothing. `ci.yml:69-71` and `integration-verify.yml:15-17`
+  carry `paths-ignore: ['**.md','docs/**']` on push, so the SHA gets no CI run, and the gate classifies that
+  as `noop_docs_only` (`scripts/ci/release-gates.py:108-114`), which exits 0 (`:276`) while every deploy and
+  migrate job tests `needs.gates.outputs.verdict == 'proceed'` (`release.yml:163`, `:301`, `:435`, `:453`).
+  Task 14 Step 5's and Task 16 Step 2's reasoning was therefore right about the outcome and wrong about the
+  reason: the inertness comes from the release gate's classifier, not from `sync-frontend-web.yml`'s filter.
+- A **non-docs** push to `main` now self-releases: no dispatch, no typed `DEPLOY`, no promotion branch, no
+  human. That is the change that touches the remaining tasks. Task 11 and Task 13 assume the prod Go plane is
+  moved by an explicit promote, and Tasks 3, 6, 14 and 15 end in commits that mix paths; any one of those
+  commits that carries a single non-docs file rides straight to production, including its migration apply.
+  The `#996`-drift decision (§16.2 item 14) is therefore no longer a question the plan can defer past the
+  next code push, and each remaining push needs the operator's explicit word — this correction was delivered
+  as a PR rather than pushed for exactly that reason, even though it is docs-only and would have been inert.
+- The contrast case is the one to remember: `noop_docs_only` is valid **only** for a push
+  (`release-gates.py:115-119`), which is why dispatching the same docs-only SHA read as `failed` rather than
+  as a no-op. A red `release gate` on a docs SHA is not evidence that docs deploy something; it is the
+  classifier refusing to infer silence from an event that has no CI run by construction.
 

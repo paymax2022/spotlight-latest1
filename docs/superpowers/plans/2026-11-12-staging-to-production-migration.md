@@ -1370,10 +1370,21 @@ Expected: **401 Unauthorized** on all three (baseline: 503 on all three).
 - [ ] **Step 2: Money paths stay dark**
 
 ```bash
-/usr/bin/curl -s -o /tmp/b.txt -w "%{http_code} " --max-time 25 "https://www.spotlightng.com/api/v1/crypto/balances"; /usr/bin/head -c 60 /tmp/b.txt; echo
+# Prod's Go API host directly, on the paths crypto.Register actually mounts
+# (backend/internal/crypto/handler.go:274-324 — assets, portfolio, eligibility),
+# plus a control that proves the host and its not-found handler are both alive.
+for P in /api/v1/crypto/assets /api/v1/crypto/portfolio /api/v1/crypto/eligibility /api/v1/public/build; do
+  printf '%-32s ' "$P"
+  /usr/bin/curl -s -o /tmp/b.txt -w "%{http_code} " --max-time 25 "https://backend-production-1b33d.up.railway.app$P"
+  /usr/bin/head -c 70 /tmp/b.txt; echo
+done
 ```
 
-Expected: **503** or **404** — crypto must NOT be reachable, per Task 10. If it answers 401, `FEATURE_CRYPTO_ENABLED` leaked into production and the ledger needs an entry explaining who set it.
+Expected: the three crypto leaves **404 `No API route matches`** and the control **200**. Crypto is dark exactly when its group is unmounted, and the group is mounted only inside `if cfg.FeatureCryptoEnabled` (`backend/internal/app/finance_routes.go:3638-3656`, skip log at `:3708`), so 404-vs-401 on a *registered* leaf is the whole test. Re-measured 2026-11-16 unauthenticated: all three leaves → **404**, control → **200** with `commit` = `5ab7c9cc0…` → **crypto is not reachable on prod, as Task 10 ruled.** Ledger §10.3 already prescribed this probe and recorded the same 404/401 pair on 2026-11-13.
+
+**Do not probe the web host for this flag.** `https://www.spotlightng.com/api/v1/crypto/<anything>` answers **401** to an anonymous request whether or not the Go group exists: the catch-all proxy authenticates before it forwards — `app/api/v1/crypto/[...path]/route.ts:13` calls `requireRequestUser`, which throws `UNAUTHORIZED` at `src/lib/auth/request.ts:14` for a missing bearer token, and `handleApiError` maps that to `errorResponse('Unauthorized', 401)` at `src/lib/api/responses.ts:50`. The flag cannot "leak into production" through the web plane either: zero case-insensitive `crypto` hits in `src/lib/feature-flags.ts`, so `FEATURE_CRYPTO_ENABLED` is not in the 45-name surface and can never appear in `.env.production.local` (§9.7).
+
+An earlier draft of this step probed `www.spotlightng.com/api/v1/crypto/balances` and declared a 401 to mean "`FEATURE_CRYPTO_ENABLED` leaked into production and the ledger needs an entry explaining who set it." Two defects, the same class §10.3 already names for the `/api/finance/crypto` guess: `balances` is not in `crypto.Register`'s list, so the path 404s on prod Go regardless of the flag, and on www the guard answers before the proxy runs, so the 401 is a fact about `requireRequestUser` and carries no information about the gate. As written the assertion could not have failed for the right reason — it would have demanded a leak entry for a leak that had not happened. The 401 seen on 2026-11-16 during the post-lane probe round is that guard, not a gate.
 
 - [ ] **Step 3: Data plane — the two counts mean different things, so read them separately**
 
@@ -1405,7 +1416,7 @@ git commit -m "feat(scripts): probe module flags through their real gated routes
 git show --stat --format=%s HEAD | /usr/bin/head -5
 ```
 
-Expected: the stat lists **only** those two paths. Neither matches `sync-frontend-web.yml`'s `frontend-web/**` filter nor `db-migrate.yml`'s `supabase/migrations/**` filter, so this commit releases nothing by itself; Task 16 Step 2 pushes the doc set.
+Expected: the stat lists **only** those two paths — and note that from 2026-11-16 the answer to "does this release anything?" comes from a different place than the two filters this step used to cite. `release.yml` landed as `ef97ec64b` ("every push to main releases itself", `on: push: branches: [main]`, no `paths` filter, no approval), so a push to `main` now runs gates → migrate-staging → deploy-staging → smoke-staging → migrate-production → deploy-production → smoke-production. It stays inert for a **docs-only** commit because `ci.yml:69-71` and `integration-verify.yml:15-17` carry `paths-ignore: ['**.md','docs/**']`, which makes the gate classify the SHA `noop_docs_only` (`scripts/ci/release-gates.py:108-114`) and every deploy/migrate job tests `verdict == 'proceed'`. Measured on this exact commit's own SHA in the ledger's "Task 14 (partial)" section (2026-11-16). The consequence for the rest of this plan is the other half: **any push that is not docs-only self-releases production, migrations included.** Task 16 Step 2's command list is where to check it; measure before pushing, not after.
 
 ### Task 15: Reconcile the mobile production plane with the web plane
 
@@ -1573,9 +1584,12 @@ At minimum, from this session's measurements: `SPOTLIGHT/Banners/*` art — 9 of
 cd /Users/paymax/Documents/spotlight/main
 git -c credential.helper='!gh auth git-credential' push origin HEAD:refs/heads/main
 gh run list --repo paymax2022/spotlight-latest1 --workflow sync-frontend-web.yml --limit 2 --json headSha,status,conclusion
+gh run list --repo paymax2022/spotlight-latest1 --workflow release.yml --limit 2 --json headSha,status,conclusion,event,createdAt
 ```
 
-Expected: **no** sync run for a docs-only push (path-filtered to `frontend-web/**`), and no `DB Migrate` run (filtered to `supabase/migrations/**` + `db-migrate.yml` itself). If either appears, stop and read why before pushing anything else — and check `gh api repos/paymax2022/spotlight-latest1/actions/runs?status=waiting` for a parked prod approval that must be **declined**, not deferred.
+Expected, as re-measured 2026-11-16: **no** `sync-frontend-web.yml` run for a docs-only push (that lane really is filtered to `frontend-web/**`), and **yes** a `Release (main → development, staging, production)` run for every push to `main`, docs included — `release.yml` (`ef97ec64b`) has no `paths` filter at all. The push is still inert for a docs-only commit, but read the reason from the gate rather than from a filter: `ci.yml:69-71` and `integration-verify.yml:15-17` ignore `**.md` and `docs/**` on push, so the gate classifies the SHA `noop_docs_only` (`scripts/ci/release-gates.py:108-114`) and each deploy/migrate job requires `verdict == 'proceed'`. Observed on the docs-only merge `479bcd10b`: push run `43887543175` at 14:36:47Z ended with **zero jobs** and conclusion `cancelled`, and the re-dispatch `43893246842` at 15:08:55Z printed `### Release gate: **failed**` with all eight downstream jobs skipped — `noop_docs_only` is valid only for a push (`release-gates.py:115-119`), so a red gate on a docs SHA is the classifier refusing to infer silence from a dispatch, not evidence that docs deploy. What this step must now say plainly: **a non-docs push to `main` self-releases production, migrations included**, with no dispatch, no typed `DEPLOY`, no promotion branch and no approval.
+
+Before pushing, list what the commit touches (`git diff --name-only origin/main..HEAD`); if any path is not under `docs/` or a `.md`, treat the push as the release it is. Then read the run page rather than its colour: `gh run view <id> --json jobs`. Checking `gh api "repos/paymax2022/spotlight-latest1/actions/runs?status=waiting"` for a parked approval that must be **declined**, not deferred, is still the right reflex — quote the URL or zsh globs the `?` — but `release.yml` removed the approval from the automatic path, so what sits in `waiting` now is other workflows' dispatch gates.
 
 - [ ] **Step 3: Declare the migration done only against this checklist**
 
