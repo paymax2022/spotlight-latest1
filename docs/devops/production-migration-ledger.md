@@ -3001,7 +3001,13 @@ the cPanel lane and the mobile re-point. The removal is not a convenience — it
 paragraph's caution now reads differently: with no reviewer between a dispatch and the live production
 database, what protects prod is the per-lane additive-only guard, and `ops-db-push.yml mode=push` has none
 (§6.4). Item 14 — the `#996` drift — should still be settled before item 5, because promoting the pin is not
-a no-op on a production that is already ahead of it in seven commits.
+a no-op on a production that is already ahead of it; re-measured 2026-11-16 that lead is **8** commits, not
+the seven this row long stated, against a prod-serving SHA this plan did not choose (§6.7). Closing Task 6
+also surfaced a gap no acceptance row in this section names: prod's database holds **756** migration
+versions while the tree prod's Go binary was built from carries **643** of `main`'s files, so prod's schema
+is 113 migrations ahead of prod's code and every further whole-remote apply widens it (§6.7). That is the
+safe direction under additive-only — dark, not broken — but it is a real divergence between the two halves
+of "production", and this plan has no task that measures it, only Task 11, which would incidentally fix it.
 
 *No deployment approval, no `workflow_dispatch`, and no secret value appears anywhere in this section. The
 plan branch was pushed as draft PR #1028 on 2026-11-15 for one reason: a gate no runner had read could not be
@@ -3471,10 +3477,23 @@ exact shape the task's own hazard table exists to avoid.
 
 ### 6.2 What the release chain did instead, all day
 
-Every `release.yml` run on 2026-11-16 skipped `migrate production database`: `43877393067`
-(`2303984cf`, 13:36:28Z), `43886555996` (`ee58728e0`, 14:31:05Z — the push that *added*
-`20271500000000`), `43901034793` (`479bcd10b`, 15:51:49Z), `43905969462` and `43915347705`. In each,
-`deploy Staging (…)` failed and the prod jobs cascaded to `skipped` behind it.
+`release.yml` ran **12 times** on 2026-11-16, and `migrate production database` did not execute in any of
+them. Enumerated rather than characterised, because the first draft of this section said "in each,
+`deploy Staging (…)` failed" and that was wrong for two of the twelve:
+
+| cause | runs |
+|---|---|
+| gate `proceed`, then `deploy Staging (…)` red on all three services → `smoke Staging` and every prod job cascade-`skipped` | `43827942317` (`ef97ec64b`, 08:01:10Z), `43877393067` (`2303984cf`, 13:36:28Z), `43886390671` (`2303984cf`, dispatch 14:30:12Z), `43886555996` (`ee58728e0`, 14:31:05Z — the push that *added* `20271500000000`), `43901034793` (`479bcd10b`, dispatch 15:51:49Z), `43905969462` (`f90b3ef30`, dispatch 16:18:09Z), `43915347705` (`5c95fe376`, dispatch 17:09:24Z) |
+| gate verdict `noop_docs_only` → every deploy and migrate job `skipped` at the `verdict == 'proceed'` condition (§6.4's last bullet) | `43905831788` (`f90b3ef30`, 16:17:22Z), `43915306385` (`5c95fe376`, 17:09:08Z), `43918883292` (`b5cc95c72`, 17:29:17Z) |
+| gate verdict `failed` — its own reason line reads "no `ci.yml` run for this SHA, and this is a workflow_dispatch… Re-dispatch with `skip_gates=true`" | `43893246842` (`479bcd10b`, dispatch 15:08:55Z) |
+| run `cancelled`; the migrate job never materialised | `43887543175` (`479bcd10b`, push 14:36:47Z) |
+
+Two things fall out of doing it this way. The staging leg is not the only thing standing between a push and
+a production write — three of these were inert because the commit touched nothing deployable, and one was
+stopped by the CI-green gate itself. And two pairs above (`f90b3ef30`, `5c95fe376`) reach *opposite* verdicts
+on the *same* commit, push versus dispatch: the push earns `noop_docs_only`, the hand-dispatched retry of it
+fails the gate for lack of a `ci.yml` run. Same tree, different verdict, because the verdict depends on the
+event, not the content.
 
 Put 6.1 and 6.2 side by side and the sentence from the release-lane section needs correcting: prod was
 not in fact shielded by the red staging leg on 2026-11-16. **The automated door stayed shut and a manual
@@ -3588,16 +3607,12 @@ share a value; re-run both commands rather than assuming one implies the other. 
 5ab7c9cc0 origin/main` → `94ad08c05` (PR #791, 2026-11-09), which is where the prod-serving lineage and
 `main` last touched.
 
-Two things this does **not** say. It is not evidence that the release chain is silently deploying prod:
-the two most recent code pushes to `main` this plan looked at both got gate verdict **`proceed`** —
-`43877393067` (`2303984cf`) and `43886555996` (`ee58728e0`, the push that *added* `20271500000000`) — and
-both still skipped every prod job, because `deploy Staging` failed and the `needs:` cascade took
-`smoke-staging`, `migrate-production` and `deploy-production` with it (§6.2). The three runs after them —
-`43905831788` (`f90b3ef30`), `43915306385` (`5c95fe376`) and `43918883292` (`b5cc95c72`) — skipped for a
-*different* reason, the `noop_docs_only` verdict in §6.4's last bullet, and those three were in fact
-docs-only: 2, 2 and 2 files, all under `docs/`. So prod's Go plane has not been redeployed by the chain at
-all this week, and the reason changed halfway through the week — first a red staging leg, then nothing
-deployable arriving. Both are accidents of this week's traffic, not a design that protects production.
+Two things this does **not** say. It is not evidence that the release chain is silently deploying prod: §6.2
+enumerates all twelve 2026-11-16 runs and none of them executed a prod job, though for three different
+reasons — a red staging leg, a `noop_docs_only` verdict, and once the CI-green gate itself. So prod's Go
+plane has not been redeployed by the chain this week, and which of those three reasons applied changed
+mid-afternoon. None of them is a design that protects production; they are accidents of this week's traffic,
+and §6.4 says what removes the remaining protection.
 
 And it does not replace §16.2 item 5's acceptance read, which asks for `/api/v1/public/build` to return a
 chosen `RELEASE_SHA` plus matching login-page chunk hrefs; prod reporting a *third* SHA since that row was
