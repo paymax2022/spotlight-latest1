@@ -22,6 +22,8 @@
 #   ATTEMPTS         poll attempts, 15s apart (default 40 = 10 minutes)
 #   RAILWAY_HTTP_TIMEOUT  set by the caller; the CLI default of 90s truncates the
 #                    110 MB frontend-web upload
+#   RETRY_ATTEMPTS / RETRY_BASE_DELAY_S  passed to scripts/ci/with-retry.sh for
+#                    the upload call (defaults here: 4 attempts, 15s base)
 #
 # THE UPLOAD RULE (read before changing UPLOAD_PATH or ROOT_FLAG):
 #   The shape follows the service instance's Railway `rootDirectory`, which is NOT
@@ -86,11 +88,34 @@ if [ -n "$BUILD_DIR" ]; then
   echo "stamped $BUILD_DIR/BUILD_COMMIT"
 fi
 
+# The upload request itself is retried; the poll loop below is not the same thing.
+#
+# Measured 2026-11-16, run 43904662033: `railway up backend --path-as-root
+# --environment staging` died 400 ms in with
+#     Failed to fetch: error decoding response body
+#       0: error decoding response body
+#       1: expected value at line 1 column 1
+# — Railway's upload-initiate request answering with a non-JSON body. Twenty-one
+# seconds earlier the same job, same token, same pinned CLI, had completed a
+# staging upload in 15738 ms; run 43905428515 then replayed that exact failing
+# command and it exited 0 in 3611 ms on 5.40.1 and 3448 ms on 5.74.1. Nothing on
+# this side decides it, and no credential, flag, tree or service is at fault: the
+# single-shot call is. One blip reddens every staging leg, and because smoke-
+# staging is the gate on production it also blocks production — which is how a
+# transient became a three-hour credential hunt.
+#
+# A retried attempt can create a second deployment for the same SHA. That is inert:
+# both rows carry this commit as their message, the poll selects by meta.cliMessage,
+# and the later deployment becomes the serving one either way.
+#
 # $UPLOAD_PATH and $ROOT_FLAG are UNQUOTED ON PURPOSE: an empty value must vanish
 # from the argument list, not arrive as an empty-string argument (which the CLI
 # reads as a path of ""). See THE UPLOAD RULE above.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-4}"
+export RETRY_BASE_DELAY_S="${RETRY_BASE_DELAY_S:-15}"
 # shellcheck disable=SC2086
-railway up $UPLOAD_PATH $ROOT_FLAG --no-gitignore \
+bash "$SCRIPT_DIR/with-retry.sh" railway up $UPLOAD_PATH $ROOT_FLAG --no-gitignore \
   --service "$SERVICE" \
   --environment "$RAILWAY_ENV" \
   --project "$RAILWAY_PROJECT" \
