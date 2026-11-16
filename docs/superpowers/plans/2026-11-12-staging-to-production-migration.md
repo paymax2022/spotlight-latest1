@@ -577,6 +577,18 @@ Expected: `0`, and `recorded:` on that table's last line equals the repo's file 
 
 ### Task 6: Stage 3 — apply production's backlog in reviewable batches
 
+> **Disposition, 2026-11-16 — the backlog this task was sized for no longer exists, and Steps 1–4 are
+> superseded, not pending.** Prod reached `recorded: 756` against a tree of 756 files with **0 pending**
+> through two writes this task did not schedule: `ops-db-push.yml mode=push` on 2026-11-15T19:54Z (676→755)
+> and a `db-migrate.yml` dispatch with `dry_run: false` on 2026-11-16T15:20Z (755→756). Neither used the
+> scoped lane this task names as the only permitted prod writer, and neither was batched. Step 5's proof
+> was then run fresh and passes, on four reads — see the ledger's `## Stage 3`, §6.1 and §6.3. **Also
+> obsolete as written:** this task's "parks for review / budget a second reviewer approval" steps.
+> `Production`'s required reviewers were removed on 2026-11-15 (`db-migrate.yml:11-17`), the env now reads
+> `protection_rules: ["branch_policy"]`, and my `mode=list` dispatch of 2026-11-16 began in the same second
+> it was created. Do not read an unchecked Step 1–4 box as work left to do; do read §6.4 as the safety
+> change that came with this one closing.
+
 The only prod DB writer this plan uses is `ops-db-push-scoped.yml`: `environment: production-db-scoped` (no reviewers, deliberately — `Production`'s rule also gates `ops-db-rotate`, which rewrites the prod password), max 12 versions, re-greps the exact bytes for destructive shapes, and refuses the staging ref. It composes the session-pooler DSN because the direct host is IPv6-only.
 
 **Files:**
@@ -586,7 +598,7 @@ The only prod DB writer this plan uses is `ops-db-push-scoped.yml`: `environment
 - Consumes: `/tmp/pending.txt` filtered to `additive` + `above-max`, then `below-max`; `scripts/db/list-pending.sh`.
 - Produces: prod history == repo file count; per-batch post-check lines.
 
-- [ ] **Step 1: Build the batch plan, forward-dated files first**
+- [ ] **Step 1: Build the batch plan, forward-dated files first** — **SUPERSEDED** (0 pending; see the Disposition)
 
 ```bash
 cd /Users/paymax/Documents/spotlight/main
@@ -604,7 +616,7 @@ cat /tmp/batch_* /tmp/backdated_* | wc -l
 
 Verified on today's backlog: 6 `batch_` files (12,12,12,12,12,9) + 2 `backdated_` files (12,6) = **87 versions across 8 prod writes**, each list in ascending version order, and the final `wc -l` must equal the pending count from Task 5 Step 2 — if it does not, a file fell out of both greps and the batch plan is silently incomplete. Re-derive both lists from your own `/tmp/pending.txt`; if its `NON-ADDITIVE` count is above 0, those versions come out of the batches entirely and go to Task 2's stop-event path instead. The two prefixes are kept apart because the above-max set goes first and the back-dated set is reviewed separately: `--apply-one` takes the version by name, so back-dating is not an obstacle to applying — only a review requirement, because history order and execution order will differ.
 
-- [ ] **Step 2: Dry-run the first batch through the lane's own guard**
+- [ ] **Step 2: Dry-run the first batch through the lane's own guard** — **SUPERSEDED** (no batch to dry-run)
 
 ```bash
 gh workflow run ops-db-push-scoped.yml --repo paymax2022/spotlight-latest1 \
@@ -622,7 +634,7 @@ Three numbers appear here and they are not the same quantity — reading them as
 
 `M` exceeding `N` is normal and is not drift — the difference is this plan's own pending backlog. What *is* drift: **`N` above the parsed `recorded:` count**, because an applied version with no file in the tree never appears in the CLI table (0 blank-`Local` rows in the 2026-11-07 table, so the table cannot reveal one). Name any such version in the ledger and carry it into Task 3's rehearsal, which replays files and therefore cannot reproduce it. The lane exits 1 when `M < 100`, which means psql works while the CLI cannot book history — the "DDL applied with no history row" drift, and the reason `migration repair` gets proved read-only before this lane may write. Zero active `academy_interest_areas` triggers a warning only.
 
-- [ ] **Step 3: Apply the batch**
+- [ ] **Step 3: Apply the batch** — **SUPERSEDED**; prod was written whole-remote twice instead (§6.1), never in batches
 
 ```bash
 gh workflow run ops-db-push-scoped.yml --repo paymax2022/spotlight-latest1 \
@@ -632,7 +644,7 @@ gh run watch --repo paymax2022/spotlight-latest1 --exit-status <run-id>
 
 Expected: `== applying <version> ==` per file, then the `always()` post-check step's read-only assertions pass. A run that dies mid-batch leaves a half-applied set: re-run `mode=plan` on the same versions and read which are now `RECORDED on remote` before dispatching anything else. Never re-apply a version whose DDL already ran.
 
-- [ ] **Step 4: Repeat for every batch, ledger entry per batch**
+- [ ] **Step 4: Repeat for every batch, ledger entry per batch** — **SUPERSEDED** (there were no batches)
 
 Re-read the pending list between batches rather than trusting the earlier count:
 
@@ -641,7 +653,10 @@ gh run view <plan-run-for-next-batch> --repo paymax2022/spotlight-latest1 --log 
   | grep -E 'remote history rows|RECORDED|not recorded'
 ```
 
-- [ ] **Step 5: Prove prod reached 0 pending, then check RLS on prod itself**
+- [x] **Step 5: Prove prod reached 0 pending, then check RLS on prod itself** — **DONE 2026-11-16, ledger
+  `## Stage 3` §6.3.** `43916692518` produced the table, `list-pending.sh` printed
+  `remote max applied: 20271500000000 | recorded: 756` with `grep -c '^pending'` → **0**, and the prod
+  RLS predicate returned **0 rows**.
 
 Re-read from the remote rather than trusting the batch logs. **Use `ops-db-push.yml mode=list`, not the scoped lane**: the scoped workflow prints only its own `remote history rows` / per-version `RECORDED` lines and never the CLI table, so filtering its log for `Migration list (before)` yields an empty file — and an empty applied set is precisely what `list-pending.sh` refuses (exit 2, `refusing: remote version list is missing or empty`). If you see `0` from the `grep -c` below alongside that refusal, the read is empty, not clean.
 
@@ -649,7 +664,8 @@ Re-read from the remote rather than trusting the batch logs. **Use `ops-db-push.
 cd /Users/paymax/Documents/spotlight/main
 gh workflow run ops-db-push.yml --repo paymax2022/spotlight-latest1 \
   -f environment=production -f mode=list
-# parks for review: same reviewers as Task 2 Step 5 (18039055 / 59900242)
+# does NOT park: `Production`'s required reviewers were removed on 2026-11-15, so the run starts the
+# second it is created. (Historic note: this line used to name reviewers 18039055 / 59900242.)
 gh run watch --repo paymax2022/spotlight-latest1 --exit-status <new-run-id>
 gh run view <new-run-id> --repo paymax2022/spotlight-latest1 --log \
   | awk -F'\t' '$2 == "Migration list (before)"' > /tmp/prod_versions_final.txt
@@ -658,7 +674,11 @@ bash scripts/db/list-pending.sh --remote-table /tmp/prod_versions_final.txt \
   | grep -c '^pending' || true
 ```
 
-Expected: a table with a `recorded:` count equal to the release SHA's file count, and `0` pending. Budget a second reviewer approval for this read, and ask for both (this and Task 2 Step 5's opening read) in one request so the ladder does not stall twice.
+Expected: a table with a `recorded:` count equal to the release SHA's file count, and `0` pending.
+This step was written assuming the read needs a reviewer; measured 2026-11-16 it needs none, and the
+dispatch is the cheapest prod write-adjacent action in the repo — so verify `mode=list` before pressing it,
+because the same form with `mode=push` and `confirm=PUSH` applies to production with no gate and, unlike
+`db-migrate.yml`, no additive-only guard in the workflow at all (§6.4).
 
 Then confirm no table shipped unguarded, using the same predicate as `make rls-check` (read-only, through the scoped lane's connection shape):
 

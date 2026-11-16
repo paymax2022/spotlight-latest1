@@ -2936,8 +2936,8 @@ Two brief-level claims were **refuted rather than edited**, and are recorded so 
 
 | # | Open item | Who can close it | What closes it |
 |---|---|---|---|
-| 1 | **Two production writes are parked for approval, and a third run had not reached an environment job.** Re-read in this session on 2026-11-14: `43299354226` (`DB Migrate (Supabase db push)`, head `3654f6b3f`, created 2026-11-12T20:20:40Z) and `43299959109` (`Ops DB Push (manual)`, head `3654f6b3f`, 20:24:15Z) are both `status=waiting`, each carrying exactly one `pending_deployments` entry on environment `Production`. `43534854471` (`DB Migrate`, head `8ed8123de`, 2026-11-14T00:32:20Z) reads `status=pending` with **zero** `pending_deployments` entries — it has not reached an environment job; recorded as measured, with no reason claimed, because nothing here proves why. **Ownership of these run ids, stated exactly**: this row is the record of their *current* state, and after fix round 2 no other tracked file carries any of them — `git grep -l -F <id>` over the tree returns this ledger alone for all six ids named here and in §16.1 (`43299354226`, `43299959109`, `43534854471`, `43311344252`, `43301433055`, `43309595782`), because `deployment-matrix.md` and `staging-environment-setup.md` now point here instead of restating them (a fourth copy of a live fact is a fourth way to be stale). Inside this ledger the ids do recur, and unavoidably: §1.4, §2.3, §2.4, §2.5, §2.6, §3.4, the Stage 2 (Task 5) heading and §5.7 hold them as the historical record of writes that already happened, and §16.1/§16.3 cite them as the run a correction was measured against. Fix round 3 re-measured that list with `grep -n -F <id> docs/devops/production-migration-ledger.md` per id, because round 2's sentence named only §1.4, §2.5 and §16 and was an under-count. Those are citations of a past measurement, not a second live state — only this row may be re-read for what is parked **now**. Read against §1.4 and §2.5: prod has **already been written twice** by `ops-db-push-scoped.yml` — `43301433055` (`mode=apply`, two versions) and `43309595782` (`mode=apply`, one) — three migration versions in all (`20271408000000`, `20271409000000`, `20271410000000`); the runs that read 669 and 670 between them were `mode=plan` and wrote nothing. That lane is now measured rather than assumed ungated: `ops-db-push-scoped.yml:54` sets `environment: production-db-scoped`, that environment's `protection_rules` is **empty**, and its run `43311344252` completed with **zero** `pending_deployments` entries. So "nothing was deployed" is true of the two gated lanes named here and of nothing else. | the two `Production` reviewers — logins from `gh api repos/paymax2022/spotlight-latest1/actions/runs/43299354226/pending_deployments --jq '[.[].reviewers[].reviewer.login]'` (2 entries) and the rule type from `…/environments/Production --jq '[.protection_rules[].type]'` (includes `required_reviewers`) — **not this agent**. An earlier draft of this cell cited `environments/Production` for `pending_deployments`; that endpoint returns no such key, which is why the reviewers are read from the run. | a human decision to approve or decline each. `gh run approve` was never run here and is on this plan's forbidden list: approving a `Production` deployment on someone else's behalf is exactly the side effect the gate exists to prevent. |
-| 2 | **Prod `db push` has not happened** (Task 6). Prod's pending count is a 2026-11-07 capture (§5.6) and must be re-read, not quoted. | operator + the choice of which of the four gated routes ships first | a fresh `mode=list` table from `scripts/db/list-pending.sh` against prod at **0 pending**, in scoped batches, with a dump taken first (item 3). |
+| 1 | **Two production writes are parked for approval, and a third run had not reached an environment job.** Re-read in this session on 2026-11-14: `43299354226` (`DB Migrate (Supabase db push)`, head `3654f6b3f`, created 2026-11-12T20:20:40Z) and `43299959109` (`Ops DB Push (manual)`, head `3654f6b3f`, 20:24:15Z) are both `status=waiting`, each carrying exactly one `pending_deployments` entry on environment `Production`. `43534854471` (`DB Migrate`, head `8ed8123de`, 2026-11-14T00:32:20Z) reads `status=pending` with **zero** `pending_deployments` entries — it has not reached an environment job; recorded as measured, with no reason claimed, because nothing here proves why. **Ownership of these run ids, stated exactly**: this row is the record of their *current* state, and after fix round 2 no other tracked file carries any of them — `git grep -l -F <id>` over the tree returns this ledger alone for all six ids named here and in §16.1 (`43299354226`, `43299959109`, `43534854471`, `43311344252`, `43301433055`, `43309595782`), because `deployment-matrix.md` and `staging-environment-setup.md` now point here instead of restating them (a fourth copy of a live fact is a fourth way to be stale). Inside this ledger the ids do recur, and unavoidably: §1.4, §2.3, §2.4, §2.5, §2.6, §3.4, the Stage 2 (Task 5) heading and §5.7 hold them as the historical record of writes that already happened, and §16.1/§16.3 cite them as the run a correction was measured against. Fix round 3 re-measured that list with `grep -n -F <id> docs/devops/production-migration-ledger.md` per id, because round 2's sentence named only §1.4, §2.5 and §16 and was an under-count. Those are citations of a past measurement, not a second live state — only this row may be re-read for what is parked **now**. Read against §1.4 and §2.5: prod has **already been written twice** by `ops-db-push-scoped.yml` — `43301433055` (`mode=apply`, two versions) and `43309595782` (`mode=apply`, one) — three migration versions in all (`20271408000000`, `20271409000000`, `20271410000000`); the runs that read 669 and 670 between them were `mode=plan` and wrote nothing. That lane is now measured rather than assumed ungated: `ops-db-push-scoped.yml:54` sets `environment: production-db-scoped`, that environment's `protection_rules` is **empty**, and its run `43311344252` completed with **zero** `pending_deployments` entries. So "nothing was deployed" is true of the two gated lanes named here and of nothing else. | the two `Production` reviewers — logins from `gh api repos/paymax2022/spotlight-latest1/actions/runs/43299354226/pending_deployments --jq '[.[].reviewers[].reviewer.login]'` (2 entries) and the rule type from `…/environments/Production --jq '[.protection_rules[].type]'` (includes `required_reviewers`) — **not this agent**. An earlier draft of this cell cited `environments/Production` for `pending_deployments`; that endpoint returns no such key, which is why the reviewers are read from the run. | a human decision to approve or decline each. `gh run approve` was never run here and is on this plan's forbidden list: approving a `Production` deployment on someone else's behalf is exactly the side effect the gate exists to prevent. **This row is CLOSED as of 2026-11-16, and closed by the gate going away rather than by the queue being worked**: all three run ids above now read `completed` / `cancelled` with `pending_deployments` → `[]`, and `Production`'s `protection_rules` is `["branch_policy"]` with **zero** reviewers — the reviewers were removed on 2026-11-15, deliberately, per `db-migrate.yml:11-17`. "The two `Production` reviewers" no longer exist, so nothing in this repo parks for them any more. See `## Stage 3`, §6.4. It was closed by the gate being removed, not by anyone approving a run. |
+| 2 | **DONE, by a route this row did not name.** It read "Prod `db push` has not happened (Task 6). Prod's pending count is a 2026-11-07 capture (§5.6) and must be re-read, not quoted." Prod's pending count has now been re-read, and it is **0**: 756 applied against 756 files, max `20271500000000`. | closed — the writes happened through `ops-db-push.yml mode=push` (2026-11-15T19:54Z, 676→755) and a `db-migrate.yml` `dry_run=false` dispatch (2026-11-16T15:20Z, 755→756), **not** through the scoped batches this row assumed | the fresh `mode=list` table, the classifier on it, the classifier on a prod-direct `psql` read, and `make rls-check`'s predicate at 0 rows — all four in `## Stage 3`, §6.3. The row's "in scoped batches, with a dump taken first" clause is **not** met: there was no backlog left to batch, and the dump post-dates the last apply by 1h45m (§6.5) |
 | 3 | **No production dump exists** (Task 3). No in-repo route to make one either. | the `nmseefdlliejmdbxytej` key-holder | **Superseded for the dump itself, 2026-11-16 — see `## Backup`.** A prod dump now exists and is proven to restore (756 history rows, 1416 public tables, 1990 policies, `rls-check` predicate 0, ten exact row counts equal to live prod). The "no in-repo route" half is still true: `git grep -ln pg_dump -- ':!docs'` still returns nothing, so it stays a hand-run procedure and nothing prevents the next drift from being unrecoverable — which is the argument for a scheduled dump, not for this one. What is still owed is this row's own text: the runbook's restore rehearsal *against a dashboard backup id*, which only the key-holder can mint. |
 | 4 | **`Production` env's `SUPABASE_PROJECT_ID` may still hold the staging ref** `wnicsubiznmishkmunsv`. The env-scoped variables list is empty and the repo-scope variable exists, so this is unverifiable from a review session. | operator who can dispatch `ops-db-push.yml` | that lane's **link-step** log (`ops-db-push.yml:128-129` runs `supabase link --project-ref "$SUPABASE_PROJECT_ID"`). `ops-db-push-scoped.yml` refuses `wnicsubiznmishkmunsv` (`:101-104`), so its completed runs prove only the scoped env's ref. |
 | 5 | **Prod Go is not at `RELEASE_SHA`** (Tasks 11/12). It serves `585bd2ca7…` from a branch that is not an ancestor of `origin/main`. | operator who dispatches the backend deploy | `/api/v1/public/build` reading `c49b395643473ba6ff7a225d7a7a339a41eddfe6`, plus login-page chunk hrefs matching the build (verification is by served bytes, never run colour). |
@@ -2956,10 +2956,15 @@ Two brief-level claims were **refuted rather than edited**, and are recorded so 
 
 The brief's rule: "Every row is a command someone ran, with the value it returned written in the ledger
 beside it. No row may be closed on recollection, and the migration is not done while any row is
-unverified." Applying it literally gives **6 of 15 verified, 3 half-verified, 6 not done.** The three halves
-each fail a different way: row 5 is true about *what* and false about *when* (staging reconciled after the
-prod writes); row 15 shipped its docs on 2026-11-15 but still names owners for only thirteen of fifteen
-items; and row 14 is a refusal that shipped on an artifact that was never rebuilt.
+unverified." Re-counted on 2026-11-16 this gives **7 of 15 verified, 4 half-verified, 4 not done** — and
+the sentence had already fallen behind its own table once before today: `## Backup` turned row 3 into a
+half and nobody re-added the tally, so the "6 of 15 verified, 3 half-verified, 6 not done" printed here
+was really 6 / 4 / 5. The four halves each fail a different way: row 3 proves a restore into a *fresh*
+database but cannot roll prod in place, because only the key-holder can mint the dashboard backup; row 5
+is true about *what* and false about *when* (staging reconciled after the
+prod writes); row 14 is a refusal that shipped on an artifact that was never rebuilt; and row 15 shipped
+its docs on 2026-11-15 but still names owners for only thirteen of fifteen
+items. Row 6 left the not-done column today — see `## Stage 3`, §6.3.
 
 | # | "Done" means | Status 2026-11-14 | The value |
 |---|---|---|---|
@@ -2968,7 +2973,7 @@ items; and row 14 is a refusal that shipped on an artifact that was never rebuil
 | 3 | A prod dump exists **and** restores, `supabase_migrations` = baseline | **MET for the fresh-DB restore — the in-place half is still open** | `## Backup` (2026-11-16): 10,671,662-byte custom dump, `sha256 848855b4…`, kept at `~/Documents/spotlight/backups/`; restore lands **756 / 1416 / 1990 / 9 / 356** and `no_rls_minus_allowlist = 0`, each exactly equal to the live prod read, plus ten exact row counts. "Baseline" is **prod's count at dump time**, not this row's original `667`. Still open: Task 3 Step 1's dashboard/PITR backup id, which no agent can mint, and which is the only in-place prod rollback route |
 | 4 | Release SHA's migrations replay from zero on `postgis/postgis:17-3.4`, `rls-check` clean | **VERIFIED** | §Stage 1 |
 | 5 | Staging reconciled to 0 pending before any prod write | **STATE VERIFIED / ORDERING NOT MET** | §5.4: `0 pending`, `recorded: 754`, `remote max applied: 20271410000000` — all real, and all of it **after** the prod writes, not before. Staging's nine applies land inside `43319774515` at 22:26:52–22:27:09Z on 2026-11-12 (§5.3); prod was already written twice that evening — `43301433055` at `20:33:13Z` and `43309595782` at `21:22:19Z` (§1.4, §2.5)  — 1h53m and 1h04m earlier respectively, so the write that moved prod to 670 is barely an hour ahead of staging's reconciliation, not ninety minutes. So the row's second clause fails: **prod migrations were applied against a staging schema that was not yet reconciled.** Reconciling staging first is what would have made prod's set derivable from staging's; that ordering was not honoured and cannot be repaired retroactively — it is a fact about the past, and the only forward-looking obligation it leaves is §16.2 item 2 (prove prod's own 0-pending on a fresh `mode=list`). |
-| 6 | Prod at 0 pending on a fresh `mode=list` table | **NOT DONE** | §16.2 item 2; §5.6's 88 is a 2026-11-07 capture |
+| 6 | Prod at 0 pending on a fresh `mode=list` table | **VERIFIED (2026-11-16)** | `## Stage 3`, §6.3. Fresh dispatch `43916692518` (`ops-db-push.yml`, `environment=production`, `mode=list`, 17:16:48Z, wrote nothing — both mutating steps are `if:`-guarded off `mode`) → 760 `\|`-bearing log lines, **756** distinct `Remote` versions, max `20271500000000`, no local-only row. `scripts/db/list-pending.sh --remote-table` on it prints `-- remote max applied: 20271500000000 \| recorded: 756` and `grep -c '^pending'` → **0**, with `recorded: 756` equalling the tree's 756 files. Cross-read from prod's own pooler (`postgres.nmseefdlliejmdbxytej`) agrees set-for-set (`comm` → 0 / 0), which is also the only thing that attributes the lane's read to a plane at all, since the step prints `SUPABASE_PROJECT_ID: ***`. §5.6's 88 stays a 2026-11-07 capture — this row no longer rests on it |
 | 7 | `production-module-flags.env` committed: 45 lines, 36 `=true`, 9 `=false` | **VERIFIED** | `make flag-parity` → exit 0, `prod-flag-parity ✓ — 45 flags declared (36 on, 9 off)`; file is 90 physical lines, 45 of them assignments |
 | 8 | The cPanel runtime env carries those 45 keys, no `FEATURE_*` in the process env | **NOT DONE** | The lane has since dispatched and installed: destination PR #91 (`42789f45b`) → `Deploy to Namecheap cPanel (SSH)` run `43892014887` → the lane's own validator printed `flags: on=36 off=9 declared=45`, and six baseline-503 routes answer 401 (§Task 14 (partial), 2026-11-16). Two clauses still fail: the flip evidences 6 of the 45 names, not 45, and **no `FEATURE_*` in the process env** has never been read on the host. §16.2 item 6 stands until that env read exists. |
 | 9 | `make flag-parity` green **locally and in CI**, and proven to bite | **VERIFIED** | local: exit 0 + `test-prod-flag-parity.sh` → `PASS`; the bite is pinned by the red capture. **CI executed it on 2026-11-15 and it passed**: PR #1028's run `43698229085` (the PR was a draft at the time), job `132763388007` (`prod-flag-parity`, 11s), which runs the bite test before the check exactly as `ci.yml:136-147` specifies. Until that push no runner had read the job — `git ls-remote --heads origin` found no such ref, `gh api …/commits/814f5d3e4/check-runs` → 422 *No commit found*, and `git branch -r --contains 0a7f499dfc1e39a495e3e87896d49dc1b1afdbea` → **empty**. **After the merge** (2026-11-15, squash `2e200094b74450a40aa0a5bc276d666421fc848b`) the job is on `main`: `git show origin/main:.github/workflows/ci.yml` piped to `grep -c prod-flag-parity` → **7**. `git branch -r --contains 0a7f499dfc…` still prints only `origin/feat/prod-cutover`, because a squash copies the content without the ancestry. |
@@ -2981,16 +2986,21 @@ items; and row 14 is a refusal that shipped on an artifact that was never rebuil
 
 ### 16.4 What this plan does **not** claim
 
-It does not claim the staging→production migration is complete, or close. Six of fifteen acceptance rows
-verified, three half-verified, six not. What it did achieve: production's flag surface now has a committed
+It does not claim the staging→production migration is complete, or close. Seven of fifteen acceptance rows
+verified, four half-verified, four not. What it did achieve: production's flag surface now has a committed
 source of truth and a CI guard — a guard that passes in CI as well as locally (§16.3 row 9) — the
-reconciliation tooling exists and is tested, staging is at 0 pending, and the docs no longer describe
+reconciliation tooling exists and is tested, staging is at 0 pending, **prod is at 0 pending too (§6.3)**,
+and the docs no longer describe
 production wrongly — they landed on `origin/main` on 2026-11-15 as squash `2e200094b` (PR #1028), which is
-the copy a reader opens. These are prerequisites for the nine rows that are not yet closed, not substitutes
-for them. The plan's
-four operator-owned gates (parked approvals, prod `db push`, the
-cPanel lane, the mobile re-point) each require a decision this agent was not authorised to make on anyone's
-behalf, and item 14 — the `#996` drift — should be settled before item 5, because promoting the pin is not
+the copy a reader opens. These are prerequisites for the eight rows that are not yet closed, not substitutes
+for them. Two of this plan's
+four operator-owned gates have since closed from the other side: the
+parked approvals are gone (all three runs ended `cancelled`, and `Production`'s required reviewers were
+removed on 2026-11-15 — §6.4), and prod's `db push` has happened (§6.1). That leaves
+the cPanel lane and the mobile re-point. The removal is not a convenience — it is the reason the last
+paragraph's caution now reads differently: with no reviewer between a dispatch and the live production
+database, what protects prod is the per-lane additive-only guard, and `ops-db-push.yml mode=push` has none
+(§6.4). Item 14 — the `#996` drift — should still be settled before item 5, because promoting the pin is not
 a no-op on a production that is already ahead of it in seven commits.
 
 *No deployment approval, no `workflow_dispatch`, and no secret value appears anywhere in this section. The
@@ -3318,6 +3328,9 @@ So the plan's conclusion survives, by a mechanism the plan did not have:
   *is* being written automatically on every push, and production is shielded only because the staging deploy
   leg is red — `deploy-staging` failing cascade-skips `smoke-staging` (`needs: [gates, deploy-staging]`,
   `release.yml:377-379`), which skips `migrate-production` (`needs: [gates, smoke-staging]`, `:428-434`).
+  **Read "shielded" narrowly: it describes the chain, not the database.** The same afternoon a migration
+  reached prod with every prod job above it `skipped`, through a manual `db-migrate.yml` dispatch — see
+  `## Stage 3`, §6.1 and §6.2.
   That is a one-line-of-luck guarantee: the failure is Railway's upload-initiate decode error
   (`Failed to fetch: error decoding response body`, e.g. job `133390268421` at 15:10:07Z, with
   `RAILWAY_HTTP_TIMEOUT: 600` already set), which `docs/devops/deployment-matrix.md:323-332` and the project
@@ -3432,4 +3445,105 @@ same predicate, so the rehearsal and the CI gate are the one procedure, measured
 Supabase-compat target that also has the six platform roles, then compare `schema_migrations` to **756**.
 Rolling *production itself* back is a dashboard restore on `nmseefdlliejmdbxytej` and needs the key-holder —
 see Step 1, which is still open.
+
+## Stage 3 — production reached 0 pending, but not the way this task was written (Task 6, 2026-11-16)
+
+Task 6 was sized for a prod backlog of 87 versions (§5.6's 2026-11-07 capture: 88 pending, 89 files
+newer than prod). **There is no backlog.** Prod reached `recorded: 756` against a tree of 756 files with
+**0 pending**, and it got there through two writes this plan did not schedule — so this section records
+what happened rather than ticking the steps as if it had.
+
+### 6.1 The two writes that filled prod's history
+
+| when (UTC) | run | lane | inputs | what it did |
+|---|---|---|---|---|
+| 2026-11-15T19:54:32Z | `43755019295` | `ops-db-push.yml` (`Ops DB Push (manual)`) | `environment=production`, `mode=push`, `confirm=PUSH` → `supabase db push --linked --include-all` | job `supabase push (production)` **success**, and the log carries **79** `Applying migration …` lines (`20261030000500_user_profiles_phone_backfill.sql` … `20271411000000_reconcile_doctors_presence_backfill.sql`) — prod **676 → 755** (676 is arithmetic off today's 756, less this 79 and the 1 below, not a captured read) |
+| 2026-11-16T15:20:36Z | `43895117150` | `db-migrate.yml` (`DB Migrate (Supabase db push)`) | `target=production`, **`dry_run: false`**, `include_all: false`, head `479bcd10b` | log line `Applying migration 20271500000000_academy_acting_level_assessment.sql...` — prod **755 → 756** |
+
+Two sibling dispatches of the same workflow, `43893847812` (15:12:21Z) and `43896013708` (15:24:41Z),
+both print `dry_run: true` and applied nothing; they are named because a job called
+`supabase db push (production)` that ends `success` is not by itself evidence of a write — the input is.
+All three were dispatched by `specng-patrick`, the same account this session's `gh` uses.
+
+Neither write used `ops-db-push-scoped.yml`, which this task's opening sentence names as "the only prod
+DB writer this plan uses". Both used a **whole-remote** push, one of them with `--include-all` — the
+exact shape the task's own hazard table exists to avoid.
+
+### 6.2 What the release chain did instead, all day
+
+Every `release.yml` run on 2026-11-16 skipped `migrate production database`: `43877393067`
+(`2303984cf`, 13:36:28Z), `43886555996` (`ee58728e0`, 14:31:05Z — the push that *added*
+`20271500000000`), `43901034793` (`479bcd10b`, 15:51:49Z), `43905969462` and `43915347705`. In each,
+`deploy Staging (…)` failed and the prod jobs cascaded to `skipped` behind it.
+
+Put 6.1 and 6.2 side by side and the sentence from the release-lane section needs correcting: prod was
+not in fact shielded by the red staging leg on 2026-11-16. **The automated door stayed shut and a manual
+one was used 49 minutes after the migration landed on `main`.** The chain has still never shipped a
+migration to production end-to-end — that claim survives, but "so prod is protected" does not.
+
+### 6.3 Step 5's proof, run fresh — and it is now the only step with a verdict
+
+Three independent reads, all taken on 2026-11-16 after both writes:
+
+| the read | how it was taken | result |
+|---|---|---|
+| The lane's own `mode=list` table | `gh workflow run ops-db-push.yml -f environment=production -f mode=list` → run **`43916692518`**, created 17:16:48Z, job `supabase list (production)`, `completed/success`. Steps that ran: `Resolve target…`, `Enforce confirm…`, `Link project`, `Migration list (before)`. `Apply migrations (db push)` and `Repair migration history` are absent, both `if:`-guarded off `mode` — the run wrote nothing. | 760 log lines carry `\|`, **756** distinct `Remote` versions, max `20271500000000`, and no row is local-only |
+| The classifier on that table | `bash scripts/db/list-pending.sh --remote-table /tmp/prod_versions_final.txt` | `-- remote max applied: 20271500000000 \| recorded: 756`, exit 0; `… \| grep -c '^pending'` → **0**. `recorded: 756` equals the tree's own `ls supabase/migrations/*.sql \| wc -l` → **756** |
+| The classifier on prod read directly | `psql` over the session pooler (user `postgres.nmseefdlliejmdbxytej`) selecting `version` from `supabase_migrations.schema_migrations` → 756 lines → `list-pending.sh --remote` | the identical line: `remote max applied: 20271500000000 \| recorded: 756`. `comm -23` and `comm -13` between this set and the lane's table → **0 / 0** |
+| `make rls-check`'s predicate, on prod | the Step 5 SQL verbatim (`relrowsecurity = false`, `relname not in ('spatial_ref_sys')`) over the same pooler connection | **0 rows** |
+
+**One thing the lane's read cannot on its own prove, and the plan should stop pretending it can.** The
+`Migration list (before)` step prints `SUPABASE_PROJECT_ID: ***` — the secret is masked, so the run's own
+log never names the ref it linked, and §16.2 item 4's suspicion (that `Production`'s
+`SUPABASE_PROJECT_ID` may still hold the staging ref) survives this dispatch untouched. The attribution
+comes from the third row above, not the first: prod's own pooler connection — where the ref is in the
+username, not in a secret — agrees set-for-set with what the lane printed.
+
+### 6.4 The gate this task was built around no longer exists
+
+§16.2 item 1 recorded two prod writes parked on `Production`'s `required_reviewers` and told the reader
+the reviewers (ids `18039055` / `59900242`) own that queue. Re-read today:
+
+| measured on 2026-11-16 | value |
+|---|---|
+| `GET /repos/…/environments/Production` | `protection_rules` → **`["branch_policy"]`**, reviewers → **`[]`** (env id `19520517709`) |
+| the three runs item 1 called parked | `43299354226`, `43299959109`, `43534854471` → all `completed` / **`cancelled`**, each `pending_deployments` → `[]` |
+| why the reviewers are gone | `db-migrate.yml:11-17`, verbatim: "The reviewers were removed on **2026-11-15** as the whole point of the auto-release change (`docs/superpowers/specs/2026-11-15-auto-deploy-release-pipeline-design.md`), and a reviewer on `production` would silently re-gate every automatic production apply" |
+
+So every "this parks for a human, budget a second approval" instruction in this plan is now false —
+including Step 5's own "parks for review" comment and its closing sentence. My dispatch of
+`43916692518` did not park: `created_at` and `run_started_at` are both `17:16:48Z`. The consequences run
+in both directions and both belong in the ledger:
+
+- Rows previously blocked on "a Production reviewer must press approve" — item 1, and with it the
+  standing reason Task 6 could not be closed — are **no longer blocked**. They are waiting on a decision,
+  not on a permission.
+- A whole-remote `supabase db push` against the live production database is one `gh workflow run` plus one
+  typed word away from anyone who can dispatch a workflow, and **what stands between that and a destroyed
+  schema differs by lane**: `db-migrate.yml` still runs an `additive-only guard` job and a `refuse a stale
+  ref` job (today's write went through both, green), but `ops-db-push.yml mode=push` — the lane that did
+  the 676→755 sweep with `--include-all` — contains **no occurrence of the word `additive` at all**. Its
+  only protection is `confirm=PUSH`, a string the operator types into the dispatch form. Item 1's text —
+  "approving a `Production` deployment on someone else's behalf is exactly the side effect the gate exists
+  to prevent" — describes a gate that has since been removed, and the guard that remains is per-lane.
+
+### 6.5 Step-by-step disposition
+
+- **Steps 1–4 — NOT APPLICABLE, not skipped.** The batch plan split a pending list that is now empty;
+  `/tmp/pending.txt`'s 87 additive versions were applied by the two writes in 6.1, one of them with
+  `--include-all`. Running eight scoped batches today would apply zero versions. Recorded as superseded
+  so nobody reads the unchecked boxes as unfinished work.
+- **Step 5 — MET**, by 6.3.
+- **Ordering, stated plainly:** the pre-cutover dump in `## Backup` was written at 17:05:36Z UTC
+  (`18:05:36 +0100`), **1h45m after** the 15:20:36Z prod apply it was supposed to precede. For
+  `20271500000000` the dump is a post-hoc rescue, not a pre-flight safety net; the file is additive-only,
+  so nothing needs rolling back, but the plan's "with a dump taken first" clause (§16.2 item 2) did not
+  hold for the last version that reached production.
+
+### 6.6 What this section does not prove
+
+Not that prod's *data* matches staging's — 6.3 reads history rows and one RLS predicate. Not that either
+write in 6.1 was reviewed by anyone; neither was, and 6.4 explains why nothing stopped it. Not that the
+release chain can ship a migration to production at all: every prod migrate job this plan has observed
+was `skipped`, and the one version that reached prod today arrived there by hand.
 
