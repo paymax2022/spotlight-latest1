@@ -3367,6 +3367,78 @@ So the plan's conclusion survives, by a mechanism the plan did not have:
   as a no-op. A red `release gate` on a docs SHA is not evidence that docs deploy something; it is the
   classifier refusing to infer silence from an event that has no CI run by construction.
 
+### The whole matrix, on the probe the plan asked for (2026-11-16 23:41–23:47Z)
+
+Everything above this heading probed **eight hand-picked paths**. Task 14 Step 1 refuses that method — its
+first draft guessed URLs from flag names, reported every flag green, and proved nothing, because a guessed
+404 says as little about a gate as a 405 does. The step's deliverable is a probe that derives flag → route
+from the source. `scripts/flagprobe.sh` is that probe, committed here for the first time: the file did not
+exist anywhere on `main` (§16.2 item 9's whole claim), and `git ls-files | grep -i flagprobe` returning
+nothing was the reason that row could not be closed on intent.
+
+Run from a clean checkout at this branch's base, against production, read-only:
+
+```bash
+/bin/bash scripts/flagprobe.sh www.spotlightng.com frontend-web/config/production-module-flags.env
+```
+
+**84 lines over the 45 declared names — 67 lines from the 36 names declared `true`, 17 from the 9 declared
+`false`.** Class histogram: `401 ×41`, `405 ×25`, `503 ×7`, `404 ×1`, `NO-ROUTE-IN-app/api ×10`.
+
+| Verdict | Measured | Against the plan's rule |
+|---|---|---|
+| A `=true` flag answers **503** on some real gated route | **zero lines.** All 7 × 503 belong to four `=false` names: `FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED`, `FEATURE_FILM_ACADEMY_TOPICS_ENABLED`, `FEATURE_FINTECH_ADMIN_ENABLED`, `FEATURE_P2P_MARKET_ENABLED` | Pass condition is "not-503 anywhere". Baseline (2026-11-12) had **28 of 36** true flags 503-ing. That is the flip Tasks 8/12/13 exist to cause, now measured over the whole surface rather than six chosen paths |
+| A `=false` flag answers 503 (deliberately dark, Task 10) | 4 of 9 names carry ≥1 503 | Proven dark |
+| `=false` with routes but **no** 503 | `FEATURE_DOCTOR_ENABLED` (1 line, 405) and `FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED` (1 line, 405) | **Not a finding.** Both probes hit POST-only leaves, and Next answers 405 for a missing method *before* the handler's flag check can run. A GET probe cannot see these gates |
+| `NO-ROUTE-IN-app/api` | 10 lines — the 5 true names the plan names as inert (`estate`, `healthLab`, `healthPharmacy`, `healthVet`, `otpEmail`), the 2 bridge names the plan says are **not** inert but the probe still misses (`voteBridge`, `votesBridge`), and 3 false names (`filmAcademyPilotDelivery`, `checkoutTopupTier0`, `estateDualControl`) | Matches the plan's prediction exactly on both counts. The 5 inert are not to be reported as passing: their only reader is `isModuleVisible` (`frontend-web/src/server/modules/visibility.ts:59-66`), which has zero callers |
+| `NO-KEY-IN-CODE` | 0 lines | Every declared name resolves to a `feature-flags.ts` key — the parity guard (Task 9) is what keeps this column empty |
+
+Named flip probes, re-run in the same window: `/api/v1/restaurant/<uuid>`, `/api/v1/referral/my-rewards`,
+`/api/v1/association/mine` → **401 `{"success":false,"error":"Unauthorized"}` on all three** (baseline: 503
+×3). `/api/v2/votes/wallet` → **405**, not the 403 the plan expected while off: same POST-only blind spot as
+the two `=false` names above, so the bridge's own flip is unobservable from a GET.
+
+Step 4's runtime rows, measured in the same window:
+
+| Check | Expected | Measured |
+|---|---|---|
+| `POST /api/auth/login`, wrong credentials | 401, never 504 | **401** `{"error":"invalid credentials"}` — `GO_BACKEND_URL` is wired; the 2026-11-08/09 504 class is not present |
+| `/service-details/film-academy` | 0 "could not be read right now", `area-tab-0` present | **200**, 85,541 B, banner count **0**, `area-tab-0` ×1 |
+| `GET /api/academy/apply` | 200 | **200** with a non-empty `batches[]` — real prod rows through the BFF |
+| `GET /api/v1/contests` | 200 | **200 `[]`** — routing proven, data not: prod has zero contests, so this row proves the rail, not a populated module |
+| `/api/v1/public/build` == `RELEASE_SHA` | equal | **not equal** — prod Go reports `5ab7c9cc0…`. Item 5/14 stay open, operator-owned |
+| `/login` chunk hrefs == the build's | equal set | **not measured here**: the comparison needs the build's own `.next/server/app/login.html` href set, i.e. a local production build. Live page serves 10 distinct chunk hrefs; that number alone is not the acceptance test |
+
+**One new production fact, and the mistake that nearly hid it.** Probing the flag file's `FEATURE_DOCTOR_ENABLED=false`
+led to `if cfg.FeatureDoctorEnabled` (`backend/internal/app/finance_routes.go:3051`, group at `:3098`) — and
+`GET /api/v1/doctor/profile` on prod Go answers **404 `No API route matches`**, i.e. the provider console is
+**unmounted** on the live API, not merely guarded. Two things had to be true before that sentence was
+allowable, and the first probe round satisfied neither:
+- *The deployed binary must contain the group.* `5ab7c9cc0:backend/internal/app/finance_routes.go` carries
+  both the gate (`:2726` in that tree's numbering) and `docGroup := r.Group("/api/v1/doctor")` (`:2772`), so
+  the 404 is the flag and not a stale build.
+- *The 404 must be the unmounted shape, not the guarded one.* Control, same request shape, on the same host:
+  `/v1/referrals/me/dashboard` → **401 `missing bearer token`** (mounted, Gin's own auth answered).
+- And it is not a prod-only gap: `backend-staging-new` returns the identical pair — doctor **404**, referrals
+  **401**. The doctor console is dark on **both** API planes, so the web flag file's `=false` is faithful to
+  the Go runtime rather than masking a divergence, and Task 13 has no doctor parity item to carry.
+- **The wrong-path trap, recorded because this plan's own Step 2 failed the same way:** the first round probed
+  `/v1/doctor/appointments` and `/api/v1/wallet/balance` on the Go host, got 404s, and looked like proof.
+  Neither path is registered. The doctor group is `/api/v1/doctor` (not `/v1/…`), and the wallet balance leaf
+  is `GET /balance` under `finance := r.Group("/api/finance")` → `finance.Group("/wallet")`
+  (`finance_routes.go:335`, `:428`, `:430`), so the real path is **`/api/finance/wallet/balance`** — which was
+  then probed and answers **401 `missing bearer token`**, mounted and guarded, while `connect_routes.go:290,294`
+  mounts a *different* `/api/v1/wallet` group whose only GET leaves are `summary` and `history`. The invented
+  path and the real one differ by a prefix and returned opposite verdicts; only the source read told them
+  apart.
+
+**What this section does not claim.** It does not close §16.2 item 6: a not-503 answer proves the web tier no
+longer refuses, which is the *effect* the flags were installed for, but not that `.env.production.local` holds
+the 45 keys on the box, and not that no `FEATURE_*` sits in the Passenger process env (the precedence case —
+a process var outranks every file). Item 6's own cell names the two reads that would settle it. Nor does it
+close item 9 outright: the script lands on `main` only when this PR merges, and until then the honest state is
+"the probe exists on `feat/flagprobe-acceptance`, and merging it is not a docs-only push".
+
 ## Backup — the pre-cutover prod dump, taken and rehearsed (Task 3, 2026-11-16)
 
 `§16.2 item 3` said "no production dump exists, and no in-repo route to make one either". The route part is
