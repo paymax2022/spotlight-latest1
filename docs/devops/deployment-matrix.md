@@ -327,15 +327,34 @@ rather than reasoned about:
 - **F1 — wrong upload shape for development and production** (the section above).
   Fixed in `.github/workflows/release.yml` by giving `deploy-development` and
   `deploy-production` the app-folder shape and leaving it out of `deploy-staging`,
-  whose rows are the only correct ones.
+  whose rows are the only correct ones. **Verified from CI on 2026-11-16** — run
+  43905969462's three development legs (`--path-as-root`, CLI 5.40.1) all deployed green
+  and their smokes passed, where before the fix `frontend-admin`/`frontend-web` were
+  uploaded as the monorepo and the smoke died on `/admin/login answered 404`. F2 below
+  is the only remaining red in that run.
 - **F2 — `deploy Staging` legs died in under half a second** with
   `Failed to fetch: error decoding response body`, before any upload began, so
   `migrate-production` and `deploy-production` were skipped and **the chain could not
   deliver production at all**. All three legs (backend, frontend-web, frontend-admin)
   failed identically while the development legs of the same run succeeded, on the
   *same* pinned CLI (`@railway/cli@5.40.1`), the *same* command line and the *same*
-  service/environment IDs. Run 43827942317, jobs 133185143290 / 133185143410 /
-  133185143550.
+  service/environment IDs.
+
+  The clean specimen is **run 43905969462** — a release dispatched at main's own head
+  `f90b3ef30`, so nothing about it is instrumentation (jobs 133438116988 /
+  133438117010 / 133438117078):
+
+  | wall clock | what the same runner was doing |
+  |---|---|
+  | 16:23:12 | `migrate-staging` and all three **development** deploy legs start |
+  | 16:23:32 / :33 / :38 | all three **staging** legs print `UPLOAD_PATH` and die 452 ms, 1151 ms and 500 ms later on `expected value at line 1 column 1` |
+  | 16:24:01 / :34 / 16:25:15 | those same three development legs finish **green**, and their smokes pass at 16:25–16:26 |
+  | 16:34:46 / :52 | the identical single-shot `railway up` to staging succeeds in **2526 ms and 2554 ms** (run 43908996999, deployments `bb196119` / `5b468e3c`) |
+
+  So within one minute and one project the fault took out staging three-for-three while
+  development uploaded normally, and eleven minutes later staging accepted the same
+  command twice. An earlier occurrence with the same signature is run 43827942317
+  (jobs 133185143290 / 133185143410 / 133185143550).
 
   **Root cause, settled 2026-11-16 after ~4 h: Railway answered its own
   upload-initiate request with a non-JSON body, intermittently. Nothing in this
@@ -352,10 +371,14 @@ rather than reasoned about:
   | upload shape | staging `frontend-web`'s pathless repo-root upload succeeded from CI (`7f7efc20` SUCCESS, `configFile=/frontend-web/railway.json`, then HTTP 200 serving the `Loading Spotlight` literal) and staging `backend`'s `--path-as-root` succeeded minutes later |
   | tree size | 211,126,634-byte checkout / 133,423,024-byte archive uploaded fine; a 6-byte archive failed for its own unrelated reason |
   | `environment: staging` protection rules | none configured; a probe job declaring the same environment produced both outcomes |
-  | the staging instance/environment | three successes against it inside eleven minutes |
+  | concurrent requests | **exonerated by the same minute that produced the failure**: development's three legs called `railway up` at 16:23:25.2 / :25.6 / :26.9 — inside 1.7 s — and all three were accepted at once, while staging's three, equally concurrent seven seconds later, were all refused |
+  | request rate | staging accepted two uploads 3 s apart at 16:34:47 / :50 and refused the next one 62 s later; twelve refusals in 150 s follow two acceptances, which no per-minute quota fits |
+  | **what is NOT exonerated — the environment's connected git source** | `railway api serviceInstance(...) { source { repo } }` measured 2026-11-16: **staging** `backend`/`frontend-web`/`frontend-admin` all carry `source.repo = paymax2022/spotlight-latest1` (and `rootDirectory` `null`/`frontend-web`/`frontend-admin`); **development**'s three all return `source.repo = null`; **production**'s three return `source = null`. Every refusal observed in this incident is against a source-connected staging instance. This is an association, not a partition — staging also accepted at 16:04, 16:11, 16:15 and 16:34 — so it explains *where* the fault can land, not yet *why* |
 
-  Timing is the whole story: 400 ms, 3448 ms, 3611 ms, 15738 ms for the same call
-  shape across two hours. The draft of this section asserted the secret held "a stray
+  Timing is the whole story: 400 ms, 452 ms, 500 ms, 1151 ms, 2526 ms, 2554 ms, 3448 ms,
+  3611 ms and 15738 ms for the same call shape across three hours — sub-second when the
+  request is refused, seconds-to-minutes when it is accepted, because a refusal is an
+  immediate non-JSON answer rather than a timeout. The draft of this section asserted the secret held "a stray
   newline or a truncated paste". That was a guess, and reproducing each candidate
   corruption against the live staging environment with a known-good token disproves
   it — none of these shapes produces a decode error:
@@ -369,12 +392,24 @@ rather than reasoned about:
   | leading space | success — the CLI trims it |
 
   What the chain lacked was tolerance, not a credential. `railway up` was a
-  single-shot call under `set -e`, so one upstream blip reddens every staging leg —
+  single-shot call under `set -e`, so one upstream refusal reddens every staging leg —
   and because `smoke-staging` is the gate on production, it blocks production too.
   **#1044 routes the upload through the repo's existing `scripts/ci/with-retry.sh`**
   (4 attempts, 15 s base), the same answer already used for Docker Hub degradation,
   with `scripts/ci/test-railway-deploy-retry.sh` pinning both the retry and its
   bound against a stub CLI.
+
+  **Retry is necessary and, measured, NOT sufficient.** Run 43909191817 ran release.yml's
+  three staging legs from #1044's tree with the wrapper live: every leg exhausted all
+  four attempts — **twelve consecutive refusals between 16:35:47 and 16:38:15Z** — and all
+  three jobs still failed. Four attempts on a 15 s base cost 105-157 s of backoff
+  (`with-retry.sh` doubles 15 → 30 → 60 and adds up to half again), and the fault outlasted
+  the whole budget. The window is also narrow in wall-clock terms, not just wide: staging
+  `backend` accepted the identical upload at 16:34:50 and was refusing it 62 s later.
+  So #1044 removes a single-shot halt; it does not, on its own, make `push → production`
+  dependable, and it must not be merged on the claim that it does. The last two rows above
+  are the surviving discriminator — the environment's connected git source — and everything
+  else (token, CLI, shape, tree, concurrency, rate) is measured out.
 
 The second live hazard found while chasing F2 is not a chain defect but produces the
 same red: a concurrent session kept hand-running staging `frontend-web` with the
