@@ -123,10 +123,13 @@ jobs:
             | jq -r '.[] | "\(.createdAt) \(.id[0:8]) \(.status) \(.meta.cliMessage)"'
 
       # The backend leg is the same script the chain runs, with the same inputs.
+      # release.yml supplies RAILWAY_PROJECT workflow-wide (release.yml:62-63);
+      # the script hard-requires it (railway-deploy.sh:58), so it must be here.
       - name: 'Leg 2 - backend, the real scripts/ci/railway-deploy.sh'
         continue-on-error: true
         env:
           RAILWAY_TOKEN_FILE: /tmp/tok_STAGING
+          RAILWAY_PROJECT: ${{ env.PROJECT }}
         run: |
           set -uo pipefail
           export RAILWAY_TOKEN="$(cat /tmp/tok_STAGING)"
