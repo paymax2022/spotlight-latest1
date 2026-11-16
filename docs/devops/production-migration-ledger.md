@@ -2938,7 +2938,7 @@ Two brief-level claims were **refuted rather than edited**, and are recorded so 
 |---|---|---|---|
 | 1 | **Two production writes are parked for approval, and a third run had not reached an environment job.** Re-read in this session on 2026-11-14: `43299354226` (`DB Migrate (Supabase db push)`, head `3654f6b3f`, created 2026-11-12T20:20:40Z) and `43299959109` (`Ops DB Push (manual)`, head `3654f6b3f`, 20:24:15Z) are both `status=waiting`, each carrying exactly one `pending_deployments` entry on environment `Production`. `43534854471` (`DB Migrate`, head `8ed8123de`, 2026-11-14T00:32:20Z) reads `status=pending` with **zero** `pending_deployments` entries — it has not reached an environment job; recorded as measured, with no reason claimed, because nothing here proves why. **Ownership of these run ids, stated exactly**: this row is the record of their *current* state, and after fix round 2 no other tracked file carries any of them — `git grep -l -F <id>` over the tree returns this ledger alone for all six ids named here and in §16.1 (`43299354226`, `43299959109`, `43534854471`, `43311344252`, `43301433055`, `43309595782`), because `deployment-matrix.md` and `staging-environment-setup.md` now point here instead of restating them (a fourth copy of a live fact is a fourth way to be stale). Inside this ledger the ids do recur, and unavoidably: §1.4, §2.3, §2.4, §2.5, §2.6, §3.4, the Stage 2 (Task 5) heading and §5.7 hold them as the historical record of writes that already happened, and §16.1/§16.3 cite them as the run a correction was measured against. Fix round 3 re-measured that list with `grep -n -F <id> docs/devops/production-migration-ledger.md` per id, because round 2's sentence named only §1.4, §2.5 and §16 and was an under-count. Those are citations of a past measurement, not a second live state — only this row may be re-read for what is parked **now**. Read against §1.4 and §2.5: prod has **already been written twice** by `ops-db-push-scoped.yml` — `43301433055` (`mode=apply`, two versions) and `43309595782` (`mode=apply`, one) — three migration versions in all (`20271408000000`, `20271409000000`, `20271410000000`); the runs that read 669 and 670 between them were `mode=plan` and wrote nothing. That lane is now measured rather than assumed ungated: `ops-db-push-scoped.yml:54` sets `environment: production-db-scoped`, that environment's `protection_rules` is **empty**, and its run `43311344252` completed with **zero** `pending_deployments` entries. So "nothing was deployed" is true of the two gated lanes named here and of nothing else. | the two `Production` reviewers — logins from `gh api repos/paymax2022/spotlight-latest1/actions/runs/43299354226/pending_deployments --jq '[.[].reviewers[].reviewer.login]'` (2 entries) and the rule type from `…/environments/Production --jq '[.protection_rules[].type]'` (includes `required_reviewers`) — **not this agent**. An earlier draft of this cell cited `environments/Production` for `pending_deployments`; that endpoint returns no such key, which is why the reviewers are read from the run. | a human decision to approve or decline each. `gh run approve` was never run here and is on this plan's forbidden list: approving a `Production` deployment on someone else's behalf is exactly the side effect the gate exists to prevent. |
 | 2 | **Prod `db push` has not happened** (Task 6). Prod's pending count is a 2026-11-07 capture (§5.6) and must be re-read, not quoted. | operator + the choice of which of the four gated routes ships first | a fresh `mode=list` table from `scripts/db/list-pending.sh` against prod at **0 pending**, in scoped batches, with a dump taken first (item 3). |
-| 3 | **No production dump exists** (Task 3). No in-repo route to make one either. | the `nmseefdlliejmdbxytej` key-holder | the runbook's restore rehearsal, with `supabase_migrations` rows equal to the baseline. Unscheduled on purpose until someone owns the cadence (§16.1). |
+| 3 | **No production dump exists** (Task 3). No in-repo route to make one either. | the `nmseefdlliejmdbxytej` key-holder | **Superseded for the dump itself, 2026-11-16 — see `## Backup`.** A prod dump now exists and is proven to restore (756 history rows, 1416 public tables, 1990 policies, `rls-check` predicate 0, ten exact row counts equal to live prod). The "no in-repo route" half is still true: `git grep -ln pg_dump -- ':!docs'` still returns nothing, so it stays a hand-run procedure and nothing prevents the next drift from being unrecoverable — which is the argument for a scheduled dump, not for this one. What is still owed is this row's own text: the runbook's restore rehearsal *against a dashboard backup id*, which only the key-holder can mint. |
 | 4 | **`Production` env's `SUPABASE_PROJECT_ID` may still hold the staging ref** `wnicsubiznmishkmunsv`. The env-scoped variables list is empty and the repo-scope variable exists, so this is unverifiable from a review session. | operator who can dispatch `ops-db-push.yml` | that lane's **link-step** log (`ops-db-push.yml:128-129` runs `supabase link --project-ref "$SUPABASE_PROJECT_ID"`). `ops-db-push-scoped.yml` refuses `wnicsubiznmishkmunsv` (`:101-104`), so its completed runs prove only the scoped env's ref. |
 | 5 | **Prod Go is not at `RELEASE_SHA`** (Tasks 11/12). It serves `585bd2ca7…` from a branch that is not an ancestor of `origin/main`. | operator who dispatches the backend deploy | `/api/v1/public/build` reading `c49b395643473ba6ff7a225d7a7a339a41eddfe6`, plus login-page chunk hrefs matching the build (verification is by served bytes, never run colour). |
 | 6 | **The cPanel runtime env has not been reconciled** (Task 8 Steps 4-5). The flag file and the CI gate exist; the host has not been shown to carry the 45 keys with no `FEATURE_*` in the process env. | operator who can run the lane | a probe re-read after the lane dispatch. The commit that would install it, `5355d932581e…`, is un-pushed and lives only in `/private/tmp/t8-lane`. |
@@ -2965,7 +2965,7 @@ items; and row 14 is a refusal that shipped on an artifact that was never rebuil
 |---|---|---|---|
 | 1 | `RELEASE_SHA` pinned, read back at 40 hex | **VERIFIED** | `c49b395643473ba6ff7a225d7a7a339a41eddfe6`, 40 chars, `git cat-file -t` → `commit`, subject "fix(health): run the telemedicine intake after payment (#992)" |
 | 2 | `list-pending.sh` + its test committed, test prints `PASS` | **VERIFIED** | §2 |
-| 3 | A prod dump exists **and** restores, `supabase_migrations` = baseline | **NOT DONE** | §16.2 item 3; no dump, no in-repo `pg_dump` caller |
+| 3 | A prod dump exists **and** restores, `supabase_migrations` = baseline | **MET for the fresh-DB restore — the in-place half is still open** | `## Backup` (2026-11-16): 10,671,662-byte custom dump, `sha256 848855b4…`, kept at `~/Documents/spotlight/backups/`; restore lands **756 / 1416 / 1990 / 9 / 356** and `no_rls_minus_allowlist = 0`, each exactly equal to the live prod read, plus ten exact row counts. "Baseline" is **prod's count at dump time**, not this row's original `667`. Still open: Task 3 Step 1's dashboard/PITR backup id, which no agent can mint, and which is the only in-place prod rollback route |
 | 4 | Release SHA's migrations replay from zero on `postgis/postgis:17-3.4`, `rls-check` clean | **VERIFIED** | §Stage 1 |
 | 5 | Staging reconciled to 0 pending before any prod write | **STATE VERIFIED / ORDERING NOT MET** | §5.4: `0 pending`, `recorded: 754`, `remote max applied: 20271410000000` — all real, and all of it **after** the prod writes, not before. Staging's nine applies land inside `43319774515` at 22:26:52–22:27:09Z on 2026-11-12 (§5.3); prod was already written twice that evening — `43301433055` at `20:33:13Z` and `43309595782` at `21:22:19Z` (§1.4, §2.5)  — 1h53m and 1h04m earlier respectively, so the write that moved prod to 670 is barely an hour ahead of staging's reconciliation, not ninety minutes. So the row's second clause fails: **prod migrations were applied against a staging schema that was not yet reconciled.** Reconciling staging first is what would have made prod's set derivable from staging's; that ordering was not honoured and cannot be repaired retroactively — it is a fact about the past, and the only forward-looking obligation it leaves is §16.2 item 2 (prove prod's own 0-pending on a fresh `mode=list`). |
 | 6 | Prod at 0 pending on a fresh `mode=list` table | **NOT DONE** | §16.2 item 2; §5.6's 88 is a 2026-11-07 capture |
@@ -3323,15 +3323,113 @@ So the plan's conclusion survives, by a mechanism the plan did not have:
   `RAILWAY_HTTP_TIMEOUT: 600` already set), which `docs/devops/deployment-matrix.md:323-332` and the project
   note `railway-up-400ms-decode-error-is-theirs.md` both measure as transient and **theirs**, not a token or
   upload-shape fault — the same secret completed an upload in one job and hit it 21 s later in another.
-  Consequence for ordering, stated plainly: **the first green staging deploy leg releases the whole prod
-  backlog with no dump taken** — §16.2 item 3 records that no production dump exists and no in-repo
-  `pg_dump` caller either, and §5.6's **88** rows are a classification against a capture taken 2026-11-07
-  (`recorded: 663`) while prod has since moved to 670 history rows, so the set that would ride out on that
-  leg is not merely unbatched, it is unread. Task 3 is therefore not merely a plan step that is late; it is
-  the thing standing between the release lane and an unbatched prod `db push`, and it has to land before
-  anything that fixes the staging leg.
+  **And the first draft of this bullet overstated the blast radius, so it is corrected here rather than
+  quietly left.** It said the first green leg "releases the whole prod backlog" — but it had not measured
+  prod's pending set, and prod has no backlog. Measured 2026-11-16 through the session pooler:
+  `supabase_migrations.schema_migrations` holds **756** rows, every version numeric, max applied
+  `20271500000000`, and `information_schema.tables` where `table_schema='public'` counts **1416**.
+  `origin/main`'s tree (`f90b3ef30`) carries **756** `supabase/migrations/*.sql` files, and the two sets are
+  identical in both directions — `comm -23` (in tree, not applied) = **0**, `comm -13` (applied, not in tree)
+  = **0**. So `db push` against prod today is a no-op, and the real exposure is narrower and still live:
+  **the first green staging leg that rides a commit containing a new migration applies that migration to
+  prod with no dump taken.** §16.2 item 3 still holds exactly — no production dump exists and no in-repo
+  `pg_dump` caller does — so Task 3 is not guarding a backlog that does not exist; it is the one rollback
+  route for the next migration anyone lands. It still has to precede a staging-leg fix, for that reason and
+  not the one first written here.
+- **§5.6's prod figures are refuted by a fourth value, and this is the measurement the row was asking for.**
+  §5.6 recorded "prod moved to **670** history rows, max applied `20271410000000`" and §16.2 item 2 asked for
+  a fresh read; the live read today is **756** / `20271500000000`. §16.3 row 6 ("Prod at 0 pending on a fresh
+  `mode=list` table") therefore cannot be closed by this bullet: set-equality here is a re-derived sweep, and
+  Task 14 Step 3 forbids substituting one for the lane's table — `list-pending.sh` refuses an empty table
+  with exit 2 for the reason measured in Task 2 Step 5. What the sweep does establish is the *absence of a
+  backlog*, which is the fact that makes Task 6's batching question moot and Task 3's dump urgent.
 - The contrast case is the one to remember: `noop_docs_only` is valid **only** for a push
   (`release-gates.py:115-119`), which is why dispatching the same docs-only SHA read as `failed` rather than
   as a no-op. A red `release gate` on a docs SHA is not evidence that docs deploy something; it is the
   classifier refusing to infer silence from an event that has no CI run by construction.
+
+## Backup — the pre-cutover prod dump, taken and rehearsed (Task 3, 2026-11-16)
+
+`§16.2 item 3` said "no production dump exists, and no in-repo route to make one either". The route part is
+still true — nothing in `scripts/` calls `pg_dump` (`git grep -ln pg_dump -- ':!docs'` returns no matches), so
+this was done by hand, through the session pooler, from this machine. The "no dump exists" part is now closed
+for one date: a dump exists, and it is proven to restore.
+
+**Step 2 — the dump.** `pg_dump --format=custom` against `aws-0-eu-north-1.pooler.supabase.com:5432/postgres`
+(session port, `sslmode=require`) for `nmseefdlliejmdbxytej`. The DSN was read from `~/.supabase/prod_pooler_dsn`
+into a shell variable and mounted read-only into the client container; it was never printed, and the staged
+copy under `/tmp` was deleted after use.
+
+| measured | value |
+|---|---|
+| prod `server_version` | **17.6** — the laptop's `pg_dump`/`pg_restore` are **16.13** and refuse a 17 server, so both ran from `postgis/postgis:17-3.4` |
+| prod `pg_database_size` | **113 MB** (`public` 107 MB, `auth` 2848 kB, `storage` 600 kB, `realtime` 104 kB, `vault` 40 kB) |
+| dump bytes | **10,671,662** |
+| dump `sha256` | `848855b42a0f43e4811b5f81f6369a147dc5d8e96bc29f7282bf794255771137` |
+| kept at | `~/Documents/spotlight/backups/prod-pre-cutover-2026-11-16.dump` — outside every repo, deliberately: it holds real prod rows |
+| `pg_dump` exit | **0** |
+
+**Step 1 — the dashboard backup: NOT DONE.** `nmseefdlliejmdbxytej` has no PITR/backup id recorded here because
+this agent cannot mint one; the plan already said `gh` cannot and there is no CI path to it. It stays a
+human action, and it is the only route that rolls prod *in place* — what follows proves a restore into a
+*fresh* database, which is a rescue path, not a rollback of the live instance.
+
+**Step 3 — the rehearsal, and the one thing the plan's procedure does not cover.**
+Target: `prod-restore-rehearsal-n1046` (`postgis/postgis:17-3.4`, `127.0.0.1:55432`, started with
+`scripts/ci/start-postgres-service.sh`, reported `healthy`), `scripts/ci/supabase-compat-prelude.sql` applied,
+then `CREATE DATABASE rehearsal` and `pg_restore --no-owner --jobs=2` from the dump.
+
+The plan predicted two shapes would bite — `--create` colliding with a database already named `postgres`, and
+a fresh cluster missing the `auth`/`storage` schemas and the `anon`/`authenticated`/`service_role` roles. Both
+predictions held. It did not predict the third, and it is not cosmetic: **the prelude does not create the
+Supabase platform roles, and `postgis/postgis` cannot provide `supabase_vault`.** Against the prelude alone the
+restore exits **1** with **145** error lines. Classified:
+
+| failing object | lines | cause |
+|---|---|---|
+| role `dashboard_user` | 105 | not created by `supabase-compat-prelude.sql` (which makes only `anon`, `authenticated`, `service_role`, `postgres`) |
+| role `supabase_admin` | 17 | same |
+| role `supabase_auth_admin` / `supabase_storage_admin` / `supabase_realtime_admin` / `pgbouncer` | 4 / 3 / 1 / 1 | same |
+| `vault.secrets`, `vault.decrypted_secrets`, `supabase_vault` | 2 / 1 / 1 | extension absent from `postgis/postgis:17-3.4` |
+
+Adding the six roles prod actually has (`dashboard_user` NOLOGIN, `pgbouncer` LOGIN, `supabase_admin` LOGIN
+SUPERUSER BYPASSRLS, `supabase_auth_admin` LOGIN, `supabase_realtime_admin` NOLOGIN,
+`supabase_storage_admin` LOGIN — attribute set read from prod's `pg_roles`, not guessed) takes the same restore
+from **145 error lines to 4**, and every remaining line is the vault extension. Prod's `vault.secrets` holds
+**0 rows**, so the residual is a missing empty table owned by a Supabase-managed extension, not lost data.
+There is no single local image that removes it: prod has both `postgis` and `supabase_vault` installed
+(`pg_extension`: `btree_gist, pg_stat_statements, pg_trgm, pgcrypto, plpgsql, postgis, supabase_vault, uuid-ossp`),
+and `postgis/postgis` carries only the former. A faithful target is a real Supabase instance — which is the
+same reason Step 1's dashboard backup stays the in-place rollback route.
+
+**Counts, restored against prod, and they are the assertion** (`667` was the plan's expected history count, read
+2026-11-11; prod has been written since, so the pass condition is *equality with prod at dump time*, and that is
+how it was checked):
+
+| measure | prod (live, 2026-11-16) | rehearsal |
+|---|---|---|
+| `supabase_migrations.schema_migrations` rows | **756** | **756** |
+| `information_schema.tables` where `table_schema='public'` | **1416** | **1416** |
+| `pg_policies` rows | **1990** | **1990** |
+| `information_schema.views` in `public` | **9** | **9** |
+| `information_schema.triggers` | **356** | **356** |
+| `public` tables with `relrowsecurity = false` | **1** | **1** |
+| same, excluding `RLS_ALLOWLIST` (`spatial_ref_sys`) — the `make rls-check` gate | **0** | **0** |
+
+Data, not just schema: exact `count(*)` matches on `user_profiles` 17, `ledger_entries` 0, and on six of the
+largest tables — `spatial_ref_sys` 8500, `academy_question_items` 8804, `academy_learning_objectives` 1764,
+`mkt_categories` 84, `academy_mock_exam_instances` 57.
+
+**Step 4 — teardown, and the targets the rehearsal shares with Task 4.** `docker rm -f
+prod-restore-rehearsal-n1046` confirmed removed. `git show origin/main:Makefile` at `:91-116` prints
+`migrate-up` (loop over sorted `$(MIGRATIONS_DIR)/*.sql` with `ON_ERROR_STOP=1`), `pending-list`
+(`scripts/db/list-pending.sh`, the `--remote-table` form Task 14 Step 3 needs), `migrate-reset` (drop/recreate
+`public`, then `migrate-up` then `rls-check`) and `rls-check` (`relrowsecurity = false` minus
+`RLS_ALLOWLIST ?= 'spatial_ref_sys'`, `Makefile:28`). The query this section ran for the `no_rls` row is that
+same predicate, so the rehearsal and the CI gate are the one procedure, measured twice.
+
+**Rollback instruction, one line.** A fresh-database restore is proven: `pg_restore --no-owner --jobs=2` into a
+Supabase-compat target that also has the six platform roles, then compare `schema_migrations` to **756**.
+Rolling *production itself* back is a dashboard restore on `nmseefdlliejmdbxytej` and needs the key-holder —
+see Step 1, which is still open.
 

@@ -30,6 +30,7 @@ These are the numbers the plan closes. Re-measure each at Task 1; if a figure ha
 | Drift, prod backend → `origin/main` | **710 commits** total, **239** touching `backend/` | 0 |
 | Go API, staging | `886d857f19…`, started 2026-11-02, **224 commits** behind `origin/main` | same SHA as prod |
 | Prod schema | `supabase_migrations.schema_migrations` = **667** rows (read-only scoped run `42983741548`, 2026-11-11T08:01:35Z); `origin/main` carries **750** files in `supabase/migrations/`, every one named `20<12 digits>_…sql` → **≈83 pending**. Measured on the last captured table (2026-11-07, 663 applied) the classifier instead prints **87 pending = 69 above-max additive + 18 below-max additive + 0 NON-ADDITIVE** — the 4-version difference is the four days between the two reads, not two answers | 0 pending |
+| Prod schema, **re-read 2026-11-16** | Through the session pooler: `schema_migrations` = **756** rows (all versions numeric), max applied `20271500000000`, `information_schema.tables` where `table_schema='public'` = **1416**. `origin/main` (`f90b3ef30`) carries **756** `supabase/migrations/*.sql`, and `comm` in both directions prints **0 / 0** — identical sets, no drift either way | **0 pending**, so the rows above ("≈83 pending", "111 files newer than prod") are superseded, not refined |
 | Migrations added prod→main | **111** files under `supabase/migrations/` newer than prod's deployed state, against ≈83 unrecorded — the 28-file difference is **not yet explained** (already-applied academy-era files is the likely reading, not a proven one). Task 2 Step 6 produces the authoritative pending set, and the ledger must reconcile the two numbers before Phase 2 | — |
 | Prod web module flags | `www.spotlightng.com/api/v1/restaurant/<uuid>` → **503** "Restaurant delivery is not available."; `/api/v1/referral/my-rewards` family → **503** "Referrals are not available."; `/api/v1/association/mine` → **503** | **401** Unauthorized (gate passed, auth refused) |
 | Prod web runtime env | `spotlight-latest` `deploy-cpanel.yml` Finalize writes `.env.production.local` with exactly **4 keys**: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GO_BACKEND_URL` — **zero `FEATURE_*`** | 4 + the 36 reviewed flags |
@@ -319,7 +320,7 @@ awk -F'|' '/`20[0-9]{12}`[ ]*\|/ { v = $2; gsub(/[` ]/, "", v); if (v ~ /^20[0-9
 Two facts about these numbers, both measured on this project:
 
 - **The table cannot see an applied version whose file is gone.** Every row in the 2026-11-07 prod table has a filled `Local` cell — 663 applied + 86 local-only = the 749 lines carrying a version — and **0 rows with a blank `Local`**. So a version recorded in `supabase_migrations` but absent from the tree does not appear in this text at all, and the table alone cannot tell "none exist" from "the CLI hid them". The *only* detector is the comparison: psql `N` above the parsed `recorded:` count means `N − recorded` applied versions have no migration file, i.e. schema changes this repo does not describe. Record any such gap in the ledger and name it in Task 3's rehearsal, because a restore-and-replay of the tree will not reproduce them.
-- **These two figures agreed on the same date, and the plan's earlier ≈83 estimate came from a later one.** The lane's own comment (`ops-db-push-scoped.yml:165`) records prod reading `663 history rows`, and the parsed table from that run also yields 663 — no gap. The `667` in this plan comes from the 2026-11-11 prod dump restore, four days later. So prod's true current pending count is `files − 667` (≈83 on a 750-file tree), while the 87 measured below is what the stale table shows; a fresh `mode=list` run closes the difference. Do not read the two numbers as a contradiction — read them as two dates.
+- **These two figures agreed on the same date, and the plan's earlier ≈83 estimate came from a later one.** The lane's own comment (`ops-db-push-scoped.yml:165`) records prod reading `663 history rows`, and the parsed table from that run also yields 663 — no gap. The `667` in this plan comes from the 2026-11-11 prod dump restore, four days later. So prod's true current pending count is `files − 667` (≈83 on a 750-file tree), while the 87 measured below is what the stale table shows; a fresh `mode=list` run closes the difference. Do not read the two numbers as a contradiction — read them as two dates. **Re-read 2026-11-16 and the sentence is now obsolete:** prod is at **756** applied versions against a **756**-file tree with set-difference **0** in both directions, so `files − 667` describes a backlog that no longer exists. Prod has been written since this line was written — first by the two `ops-db-push-scoped` applies, then to 755 and 756 — and Task 6's remaining obligation is only the authoritative `mode=list` confirmation, not an 83-migration sweep.
 
 - [ ] **Step 6: Run the classifier against the live tree at the release SHA**
 
@@ -385,7 +386,7 @@ Expected: one commit, three paths. Verify the `Makefile` hunk only adds a target
 
 Do this in the Supabase dashboard (PITR/backup list) — there is no CI path to it, and `gh` cannot mint it. Record: backup id, start/finish time, size.
 
-- [ ] **Step 2: Take a logical dump through the session pooler**
+- [x] **Step 2: Take a logical dump through the session pooler**
 
 The direct host `db.nmseef….supabase.co` is AAAA-only and GitHub runners (and many local networks) have no IPv6 route; the pooler is the address that works (`ops-db-push-scoped.yml:86`). From a machine that holds the prod DB password:
 
@@ -397,7 +398,7 @@ ls -l /tmp/prod-pre-cutover.dump
 
 Expected: a non-zero-length file. **Never** commit or paste the DSN; keep it in a shell variable. If no local copy of the password exists, run the dump from `ops-db-push.yml`-equivalent CI context instead of asking anyone to paste it into chat.
 
-- [ ] **Step 3: Rehearse the restore into a throwaway database**
+- [x] **Step 3: Rehearse the restore into a throwaway database**
 
 Two shapes will bite if copied from a generic runbook. The dump is of Supabase's `postgres` database, so `pg_restore --create` tries to create a database named `postgres`, which already exists — make the target DB yourself and restore into it by name. And a fresh Postgres has no `auth`/`storage` schemas and no `anon`/`authenticated`/`service_role` roles, so the dump's GRANT/COMMENT statements abort the restore: run this repo's own Supabase-compat prelude first, the same one `integration-verify.yml` runs. Use the postgis image for the same reason Task 4 does.
 
@@ -416,11 +417,11 @@ psql "$R" -tAc 'select count(*) from supabase_migrations.schema_migrations;'
 psql "$R" -tAc "select count(*) from information_schema.tables where table_schema='public';"
 ```
 
-Expected: history count **667**, matching the baseline — that equality is the whole point of the rehearsal, because it proves the dump carries the migration ledger, which is what a rollback would have to reconcile against. Record the public-table count as the control Task 6's post-check compares to. A restore that lands fewer history rows is not a usable rollback: stop and fix the dump before Phase 2.
+Expected: history count **equal to prod's own live count at the moment the dump is taken** — re-measured 2026-11-16 as **756**, not the `667` this plan was written against, because prod has since been written to 755 and then 756 (see the ledger's release-lane section). Take the live count first (`select count(*) from supabase_migrations.schema_migrations` through the pooler), dump, restore, and compare the rehearsal against *that* number; `667` is a 2026-11-11 figure and must not be used as the pass condition. That equality is the whole point of the rehearsal, because it proves the dump carries the migration ledger, which is what a rollback would have to reconcile against. Record the public-table count as the control Task 6's post-check compares to — **1416** measured 2026-11-16. A restore that lands fewer history rows is not a usable rollback: stop and fix the dump before Phase 2.
 
 `pg_restore` reports non-fatal `ERROR:` lines for `ALTER TABLE … OWNER TO` when `--no-owner` is omitted and roles differ; read the exit status, not the noise, and re-run with the offending object named in the ledger if the exit is non-zero.
 
-- [ ] **Step 4: Tear the rehearsal down and read the targets Phase 2 will replay**
+- [x] **Step 4: Tear the rehearsal down and read the targets Phase 2 will replay**
 
 ```bash
 cd /Users/paymax/Documents/spotlight/main
@@ -430,7 +431,7 @@ git show origin/main:Makefile | sed -n '91,116p'
 
 Expected: the quoted `migrate-up` / `migrate-reset` / `rls-check` bodies are the exact commands Task 4 replays, so the local rehearsal and the CI lane are provably the same procedure.
 
-- [ ] **Step 5: Append `## Backup` to the ledger and commit**
+- [x] **Step 5: Append `## Backup` to the ledger and commit**
 
 Include: backup id, dump size, restore-rehearsal counts, teardown confirmation, and the one-line rollback instruction (`pg_restore` into a fresh DB is proven; in-place prod rollback needs the dashboard restore, which is a human action).
 
