@@ -1,0 +1,100 @@
+name: DIAG (read-only) — Railway credential path per environment
+
+# Temporary diagnostic branch only; never merge. No step here uploads a payload,
+# writes a variable or redeploys anything: the only `railway up` invocation passes
+# a path that does not exist, so the CLI aborts in filesystem indexing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Which GitHub environment (and matching RAILWAY_TOKEN_*) to exercise'
+        required: false
+        default: 'staging'
+        type: choice
+        options: [staging, development, production]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diag-railway-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      WHICH: ${{ inputs.environment }}
+      TOK_STG: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      TOK_DEV: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+      TOK_PROD: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - run: npm install --global @railway/cli@5.40.1
+
+      - name: Select the credential for the requested environment
+        run: |
+          set -euo pipefail
+          case "$WHICH" in
+            staging) tok="$TOK_STG" ;;
+            development) tok="$TOK_DEV" ;;
+            production) tok="$TOK_PROD" ;;
+            *) echo "::error::unknown environment"; exit 1 ;;
+          esac
+          printf '%s' "$tok" > "$RUNNER_TEMP/tok"
+          chmod 600 "$RUNNER_TEMP/tok"
+
+      - name: Identity of the credential this job actually sees (value never printed)
+        run: |
+          set -euo pipefail
+          tok="$(cat "$RUNNER_TEMP/tok")"
+          printf 'len=%s\n' "${#tok}"
+          printf 'leading5=%s\n' "${tok:0:5}"
+          printf 'has_whitespace_anywhere=%s\n' \
+            "$( [ "$(tr -d '[:space:]' < "$RUNNER_TEMP/tok")" = "$tok" ] && echo no || echo yes )"
+          printf 'sha256_16=%s\n' "$(sha256sum < "$RUNNER_TEMP/tok" | cut -c1-16)"
+          printf 'staging_and_development_identical=%s\n' \
+            "$( [ "$(printf '%s' "$TOK_STG" | sha256sum)" = "$(printf '%s' "$TOK_DEV" | sha256sum)" ] && echo yes || echo no )"
+          printf 'staging_and_production_identical=%s\n' \
+            "$( [ "$(printf '%s' "$TOK_STG" | sha256sum)" = "$(printf '%s' "$TOK_PROD" | sha256sum)" ] && echo yes || echo no )"
+
+      - name: READ-ONLY service list (proves auth and environment scope)
+        run: |
+          set -euo pipefail
+          RAILWAY_TOKEN="$(cat "$RUNNER_TEMP/tok")" railway service list \
+            --environment "$WHICH" --project "$RAILWAY_PROJECT" --json | head -c 300
+
+      - name: READ-ONLY up-flow preflight (path cannot exist, so nothing uploads)
+        run: |
+          set -euo pipefail
+          RAILWAY_TOKEN="$(cat "$RUNNER_TEMP/tok")" RAILWAY_HTTP_TIMEOUT=600 \
+          railway up ./definitely-not-a-directory --service frontend-web \
+            --environment "$WHICH" --project "$RAILWAY_PROJECT" \
+            --no-gitignore --detach --verbose --message diag 2>&1 | tail -25
+
+      - name: READ-ONLY up-flow preflight against the OTHER two environments
+        run: |
+          set -euo pipefail
+          tok="$(cat "$RUNNER_TEMP/tok")"
+          for e in development staging production; do
+            [ "$e" = "$WHICH" ] && continue
+            out="$(RAILWAY_TOKEN="$tok" RAILWAY_HTTP_TIMEOUT=600 \
+              railway up ./definitely-not-a-directory --service frontend-web \
+              --environment "$e" --project "$RAILWAY_PROJECT" \
+              --no-gitignore --detach --verbose --message diag 2>&1 | tail -3)"
+            printf '=== %s rc=%s :: %s\n' "$e" "$?" "$(printf '%s' "$out" | tr '\n' '|')"
+          done
+
+      - name: Clean up the temp credential
+        if: always()
+        run: rm -f "$RUNNER_TEMP/tok"
