@@ -3453,6 +3453,16 @@ a process var outranks every file). Item 6's own cell names the two reads that w
 close item 9 outright: the script lands on `main` only when this PR merges, and until then the honest state is
 "the probe exists on `feat/flagprobe-acceptance`, and merging it is not a docs-only push".
 
+**It is also a snapshot, and a release is in flight underneath it.** The build behind every code above is prod's
+own at 22:41–22:47Z: `/api/v1/public/build` answered `5ab7c9cc0…`, the tip of the `prod` promotion lineage —
+which is why the `== RELEASE_SHA` row reads *not equal*. Meanwhile another session merged PR #1044 at 22:40Z
+(`4d78ecf69`, riding out Railway's upload failure), and that SHA's release run `43972239504` was still inside
+its `release gate` job while this probe ran, with `integration-verify` unsettled. That commit changes
+`.github/workflows/ci.yml`, `scripts/ci/railway-deploy.sh` and `scripts/ci/test-railway-deploy-retry.sh`, so
+`noop_docs_only` does not apply to it: if its gate goes green, the run deploys development,
+staging **and production** by design. These numbers then describe the build this section measured, not the one
+prod serves an hour later — re-run the probe before citing them as current.
+
 ## Backup — the pre-cutover prod dump, taken and rehearsed (Task 3, 2026-11-16)
 
 `§16.2 item 3` said "no production dump exists, and no in-repo route to make one either". The route part is
