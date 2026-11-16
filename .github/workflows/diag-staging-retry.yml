@@ -1,0 +1,114 @@
+name: DIAG - staging legs with the retry fix
+
+# Merge-free proof for PR #1044. The stub test in that PR
+# (scripts/ci/test-railway-deploy-retry.sh) proves the wrapper retries when
+# `railway up` exits non-zero; it cannot prove the real fault is survivable.
+# Run 43905969462 is the counter-example this job exists to retire: at
+# 16:23:32/33/38Z its three staging legs each died ~0.5 s after printing
+# UPLOAD_PATH with `expected value at line 1 column 1`, while the SAME run's
+# development legs were uploading successfully in the same minute with the same
+# pinned CLI and the same project. Single-shot `railway up` therefore halted a
+# release on a request-level blip.
+#
+# This job runs release.yml's three staging legs verbatim - same matrix shapes,
+# same CLI pin, same environment, same RAILWAY_HTTP_TIMEOUT - but from PR
+# #1044's tree, where the upload call is wrapped in with-retry.sh. A green leg
+# means the chain would have rode the blip out.
+#
+# staging/development ONLY. This workflow never reads a production secret and
+# never passes --environment production; it is deleted with its branch once
+# #1044 lands.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diag-staging-retry
+  cancel-in-progress: false
+
+env:
+  # railway-deploy.sh hard-requires RAILWAY_PROJECT (`: "${RAILWAY_PROJECT:?}"`),
+  # which release.yml sets workflow-wide. Naming this PROJECT instead is the exact
+  # instrumentation mistake that made an earlier probe die before `railway up`.
+  RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+  # release.yml's workflow-wide value. The CLI's 90 s default truncates the
+  # ~110 MB frontend-web upload, so leaving it out would test the wrong thing.
+  RAILWAY_HTTP_TIMEOUT: '600'
+  # The tree under test: PR #1044's scripts/ci/railway-deploy.sh, not main's.
+  FIX_REF: fix/railway-up-transient-retry
+
+jobs:
+  leg:
+    name: staging ${{ matrix.service }} (with retry)
+    runs-on: ubuntu-latest
+    environment: staging
+    strategy:
+      fail-fast: false
+      matrix:
+        # Copied from release.yml's deploy-staging matrix.
+        include:
+          - service: backend
+            upload_path: backend
+            root_flag: --path-as-root
+            build_dir: backend
+          - service: frontend-web
+            upload_path: ''
+            root_flag: ''
+            build_dir: ''
+          - service: frontend-admin
+            upload_path: ''
+            root_flag: ''
+            build_dir: ''
+    steps:
+      - name: Resolve the staging token without printing it
+        env:
+          TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TOK_STAGING" ]; then echo "::error::RAILWAY_TOKEN_STAGING is empty"; exit 1; fi
+          echo "::add-mask::$TOK_STAGING"
+          echo "staging token length (never value): ${#TOK_STAGING}"
+
+      - name: Checkout the tree that carries the fix
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FIX_REF }}
+          fetch-depth: 1
+
+      - name: Show the call site actually under test
+        run: |
+          set -euo pipefail
+          echo "head: $(git rev-parse HEAD)"
+          echo "--- with-retry wrapper present at the railway up call site: ---"
+          grep -n -B2 -A8 'with-retry.sh" railway up' scripts/ci/railway-deploy.sh
+
+      - name: Install the same pinned Railway CLI as the release chain
+        run: |
+          set -euo pipefail
+          npm install --global @railway/cli@5.40.1
+          railway --version
+
+      - name: Deploy ${{ matrix.service }} (staging, real script, retry enabled)
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          SERVICE: ${{ matrix.service }}
+          RAILWAY_ENV: staging
+          UPLOAD_PATH: ${{ matrix.upload_path }}
+          ROOT_FLAG: ${{ matrix.root_flag }}
+          BUILD_DIR: ${{ matrix.build_dir }}
+        run: |
+          set -euo pipefail
+          # SHA doubles as the deployment --message that the script's poll matches
+          # on, so it must name the tree actually uploaded (this checkout), not
+          # the diag branch this workflow file lives on.
+          export SHA="$(git rev-parse HEAD)"
+          # Keep the upload attempt boundaries visible in the job log; the
+          # wrapper's own ::warning:: lines are what prove a retry fired.
+          export RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-4}"
+          export RETRY_BASE_DELAY_S="${RETRY_BASE_DELAY_S:-15}"
+          bash scripts/ci/railway-deploy.sh 2>&1 | tee /tmp/leg.log
+          echo "--- retry evidence ---"
+          grep -c 'with-retry' /tmp/leg.log || echo "0 wrapper warnings (first attempt succeeded)"
