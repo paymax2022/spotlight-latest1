@@ -203,6 +203,15 @@ jobs:
       # so it shares this runner rather than getting a lane of its own.
       - name: Test the release gate
         run: python3 scripts/ci/test-release-gates.py
+      # The release chain's upload step. Railway's upload-initiate request answered
+      # a non-JSON body on 2026-11-16 and halted all three staging legs of run
+      # 43886555996 — a blip on their side that reads as a broken chain on ours, and
+      # because smoke-staging gates production it blocks production too. The retry
+      # is the fix; this proves it bites against a stub CLI (and that its bound
+      # holds), so dropping it goes red here rather than on a release. No network:
+      # the stub is on PATH.
+      - name: Test the deploy upload retry
+        run: bash scripts/ci/test-railway-deploy-retry.sh
       # RN-PLANE-001: a store build bakes mobile-app/reactnative/.env.production,
       # which is gitignored and which eas.json cannot correct — the build scripts run
       # local Gradle, so the profile's env never applies. Found with that file naming
