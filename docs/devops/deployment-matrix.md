@@ -257,10 +257,63 @@ the pre-deploy fingerprint step and the post-deploy probe, so the two can never
 disagree about which host they mean. An unknown environment/service pair returns
 empty and the probe fails loudly rather than curling a guessed host.
 
+## Manual writers still in the tree — measured 2026-11-16
+
+`release.yml` is the only **automatic** writer. Checklist item 2 bans two live writers of one
+service-environment pair, and a dispatch is a writer a release cannot see, so Task 9's sweep read
+every command in `.github/workflows/` that can move a Railway service — `railway up`,
+`railway redeploy`, `scripts/ci/railway-deploy.sh`, and any third-party deploy action, with comments
+excluded. Three workflow files remain, in four distinct write paths. All are `workflow_dispatch`-only,
+so none of them violates the automatic-writer claim; two of them can still overwrite what a release
+shipped.
+
+| Lane | Pair it writes | How | Guard |
+| --- | --- | --- | --- |
+| `staging-module-flags.yml` → `set-flags`, `set-frontend-web-flags`, `rotate-admin-key`, `set-web-base-url`, `set-insurance-key` | staging `backend`, `frontend-web`, `frontend-admin` | `railway redeploy … --from-source` | job-level `if: inputs.confirm == 'SET'`, plus each job's own boolean |
+| `staging-module-flags.yml` → `fix-proxy`, `rotate-admin-key` | staging `frontend-web`, `frontend-admin` | `railway up --path-as-root` of an **`actions/checkout` of `ref: staging`** | same |
+| `prod-module-flags.yml` → `redeploy` | production `backend`, `frontend-admin`, `frontend-web` | `railway redeploy` **without** `--from-source` | `inputs.confirm == 'PRODUCTION-SET'` + `inputs.redeploy` |
+| `deploy-railway-action.yml` → `deploy` | any of 3 services × 3 environments | `uses: bervProject/railway-deploy@4a1cfdb…` (0.2.0-beta, SHA-pinned) | `confirm == 'DEPLOY'` + `vars.RAILWAY_ACTION_DEPLOY_ENABLED` (unset) + a gate step refusing any ref that is not the matching promotion branch |
+
+**What this change did to them.** `--from-source` is the load-bearing word: the CLI's own help says a
+plain redeploy re-runs "the existing build or image … as-is" and only `--from-source` "pull[s] the
+latest commit … from the configured source". Staging's three services are the only ones with a
+configured source ([above](#railway-git-sources--measured-2026-11-16)), and that source's branch is
+`main` — so those five redeploy steps pull the same tree `release.yml` uploads, but with the
+service's own `railway.json` build path, **no CI gate, no migration-first ordering and no smoke
+probe**. That was true before this PR and is true after; what is new is that the uploads and the
+pulls now have one owner to compare them against. `prod-module-flags.yml` states the rule the others
+should follow: no `--from-source` on production, ever, because it would build the connected branch
+into the environment that is supposed to hold a promoted release.
+
+**New hazard, dated 2026-11-16:** the two `railway up` steps check out `staging`, and this change
+froze that branch at `archive/staging-2026-11-15` (2026-11-02 code). Dispatching `fix-proxy`, or
+`rotate-admin-key` with its rebuild half, now **overwrites whatever the last release put on staging
+with a two-week-old tree** — silently, because the job is named for the variable it sets, not for
+the deploy it performs. Not fixed here: retargeting another lane's deploy source is a bigger
+decision than removing a manual gate, and those jobs do set variables nothing else can. The options
+are to point the uploads at `main`, to drop the rebuild halves now that `release.yml` owns staging,
+or to leave them and require the operator to re-run `release.yml`'s staging leg afterwards. Needs the
+user's word.
+
+`prod-module-flags.yml`'s restart is code-safe (no `--from-source`, and its
+`expected_build_commit` input exists to prove the same build came back) but that input **defaults to
+`585bd2ca7…`** — the build production served when the lane was written. Its
+"Read the production build identity BEFORE restarting" step exits 1 on a mismatch, so after the
+first automatic release the lane refuses to run until the operator passes the live SHA. Failing
+closed is right; the default is a trap, so pass the input explicitly.
+
+**Method note, because it changed the answer:** `grep -rln "railway up" .github/workflows/` lists
+`ci.yml` and `staging-inspect.yml`, which deploy nothing — the match is prose in `ci.yml`'s corrected
+header comment and in a `meta` description. Reading `run:` blocks instead of files gives the only
+defensible result: among workflows that fire on a push to `main`, **`release.yml` alone** issues a
+Railway write, at its three `Deploy <service>` steps. A textual grep is a lead, not a verdict.
+
 ## Reconciliation checklist (when adding a deploy path)
 
 1. Declare the service's row here FIRST, marking the old path's status.
-2. One path per service per environment — never two live writers.
+2. One path per service per environment — never two live writers. The dispatch-only exceptions, and
+   the one that can now overwrite a release with a frozen branch, are named in
+   [Manual writers still in the tree](#manual-writers-still-in-the-tree--measured-2026-11-16).
 3. The canary/probe contract is `/healthz` + `/readyz` (AUD-INFRA-007).
 4. Migrations are applied BEFORE traffic via the additive-only chain
    (AUD-INFRA-005 tracks automating this).
