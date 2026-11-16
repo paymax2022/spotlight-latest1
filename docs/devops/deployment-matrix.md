@@ -320,7 +320,7 @@ rather than reasoned about:
   found", because Railway looks for `frontend-*/` inside an archive that already *is*
   that folder. (`railway up .` with an explicit `.` fails the same way.)
 
-## Release chain, first full run 2026-11-16 — two defects and one operator exception
+## Release chain, first full run 2026-11-16 — two defects (both root-caused) and one operator exception
 
 `release.yml` (#1037) had never run end to end. Its first run on `ef97ec64b` produced:
 
@@ -328,7 +328,7 @@ rather than reasoned about:
   Fixed in `.github/workflows/release.yml` by giving `deploy-development` and
   `deploy-production` the app-folder shape and leaving it out of `deploy-staging`,
   whose rows are the only correct ones.
-- **F2 — every `deploy Staging` leg died in under half a second** with
+- **F2 — `deploy Staging` legs died in under half a second** with
   `Failed to fetch: error decoding response body`, before any upload began, so
   `migrate-production` and `deploy-production` were skipped and **the chain could not
   deliver production at all**. All three legs (backend, frontend-web, frontend-admin)
@@ -336,10 +336,29 @@ rather than reasoned about:
   *same* pinned CLI (`@railway/cli@5.40.1`), the *same* command line and the *same*
   service/environment IDs. Run 43827942317, jobs 133185143290 / 133185143410 /
   133185143550.
-  The draft of this section asserted the secret held "a stray newline or a truncated
-  paste". That was a guess, and reproducing each candidate corruption against the live
-  staging environment with a known-good token disproves it — none of these shapes
-  produces a decode error:
+
+  **Root cause, settled 2026-11-16 after ~4 h: Railway answered its own
+  upload-initiate request with a non-JSON body, intermittently. Nothing in this
+  repo, this credential or this CLI version decides it.** The failure is in the
+  pre-flight window — no `Indexing...` line, no archive, no deployment row — which
+  is what made it look like a bad token. It is not. Each candidate was measured:
+
+  | candidate | how it was exonerated |
+  |---|---|
+  | the secret's value | the **re-minted** token failed the same way at 16:12, 21 s after the same secret completed an upload in the **same job**; both red legs printed it masked at length 50 |
+  | token scope | two read-only CI lanes pass with it; `railway status --environment staging --json` returned 40,632 bytes of JSON from the runner; raw `curl` to the API answered `HTTP 200, 53 bytes` |
+  | CLI version | the identical failing command exited 0 in **3611 ms on 5.40.1** and **3448 ms on 5.74.1** in one job (run 43905428515); local 5.71.0 wrote staging `backend` `d3bfd45e` SUCCESS at 15:29 |
+  | `CI=true`, the runner image, linux/x86_64 | a container with all three present behaved identically to the runner |
+  | upload shape | staging `frontend-web`'s pathless repo-root upload succeeded from CI (`7f7efc20` SUCCESS, `configFile=/frontend-web/railway.json`, then HTTP 200 serving the `Loading Spotlight` literal) and staging `backend`'s `--path-as-root` succeeded minutes later |
+  | tree size | 211,126,634-byte checkout / 133,423,024-byte archive uploaded fine; a 6-byte archive failed for its own unrelated reason |
+  | `environment: staging` protection rules | none configured; a probe job declaring the same environment produced both outcomes |
+  | the staging instance/environment | three successes against it inside eleven minutes |
+
+  Timing is the whole story: 400 ms, 3448 ms, 3611 ms, 15738 ms for the same call
+  shape across two hours. The draft of this section asserted the secret held "a stray
+  newline or a truncated paste". That was a guess, and reproducing each candidate
+  corruption against the live staging environment with a known-good token disproves
+  it — none of these shapes produces a decode error:
 
   | defect introduced | CLI result |
   |---|---|
@@ -349,11 +368,22 @@ rather than reasoned about:
   | trailing newline | `Login state is corrupt. Please logout and login back in. Caused by: failed to parse header value` |
   | leading space | success — the CLI trims it |
 
-  So what GitHub held was a credential the Railway API answered with a non-JSON body.
-  The exact shape of the old value is unknown and is not worth guessing at again; the
-  actionable content is the signature table above, and the fact that the secret has
-  been replaced with a token whose behaviour is measured — see
-  "Railway project tokens: scope, minting, inventory".
+  What the chain lacked was tolerance, not a credential. `railway up` was a
+  single-shot call under `set -e`, so one upstream blip reddens every staging leg —
+  and because `smoke-staging` is the gate on production, it blocks production too.
+  **#1044 routes the upload through the repo's existing `scripts/ci/with-retry.sh`**
+  (4 attempts, 15 s base), the same answer already used for Docker Hub degradation,
+  with `scripts/ci/test-railway-deploy-retry.sh` pinning both the retry and its
+  bound against a stub CLI.
+
+The second live hazard found while chasing F2 is not a chain defect but produces the
+same red: a concurrent session kept hand-running staging `frontend-web` with the
+pre-#1040 app-folder shape at 15:39–15:58, which yields FAILED rows with
+`configFile=null` and no build (`23530ea0`, `60276288`, `70ff3429`, `74a561e3`). Those
+rows look identical to an F2 casualty in a deployment list. Nobody may hand-upload
+staging while the chain is live; if a staging leg is red, read `meta.configFile`
+first — `/frontend-web/railway.json` means the shape was right and the failure is
+elsewhere.
 
 Because F2 blocked `deploy-production`, production's two frontends were written by
 hand on 2026-11-16 from `ef97ec64b` (`origin/main`) —
@@ -361,9 +391,12 @@ hand on 2026-11-16 from `ef97ec64b` (`origin/main`) —
 uploaded as `railway up <folder> --path-as-root --no-gitignore --message main-<sha>-prod-*`
 from a worktree whose tracked `frontend-admin/` and `frontend-web/` trees diff empty
 against that commit. This is an **exception**, not a new path: it is the same manual
-write that checklist item 2 exists to forbid, and it stops being necessary the moment
-the staging token works. Read the probe contract below before believing either
-deployment.
+write that checklist item 2 exists to forbid. It stops being necessary when a
+push to main completes `deploy Production (*)`, which needs #1044 merged and has
+never yet been executed — `RAILWAY_TOKEN_PRODUCTION` is validated *read-only* from CI
+(run 43905428515 listed production's real deployment history in 628 ms), but the
+production upload itself has never run from CI. Read the probe contract below before
+believing either deployment.
 
 ## Railway project tokens: scope, minting, inventory — measured 2026-11-16
 
@@ -389,9 +422,15 @@ OAuth user session for `spec.ng@gmail.com`), both `projectTokenCreate` and
 `token` subcommand — so nothing in this repo, and nothing an agent holding the CLI
 session, can rotate or enumerate these credentials. Creating a token requires a
 logged-in web session on the project's Tokens page. That is the sense in which F2 was
-an operator action; the replacement that has now been made did **not** mint a new
-token, it installed the 2026-11-14 staging/production tokens into the two secrets
-after validating each one against its own environment.
+an operator action. The replacement made at 15:08Z on 2026-11-16 did **not** mint new
+tokens: it installed the 2026-11-14 staging/production values, read out of
+`backend/.env` and validated against their own environments, into
+`RAILWAY_TOKEN_STAGING` and `RAILWAY_TOKEN_PRODUCTION`. Between the delete and the
+create (15:08:11 → 15:08:31Z) both secrets were briefly absent; no deploy ran in that
+window. **Re-minting did not fix F2** — the staging legs failed again at 16:12 with
+these values in place, which is itself part of the exoneration above. Minting fresh
+tokens remains worth doing on its own merits (see the plaintext note below), not as a
+fix for a fault that is not in the credential.
 
 **Inventory** — `projectTokens(projectId: e7dca861-…, first: 50)`. `displayToken` is
 Railway's own masked preview (first 10 and last 4 characters), so these strings carry
@@ -402,8 +441,8 @@ no secret:
 | 2026-08-10 | `github-actions-development` | development | `0aba-****-9e10` | superseded 2026-11-14, still alive |
 | 2026-08-10 | `github-actions-production` | production | `0370-****-5c0c` | superseded 2026-11-14, still alive |
 | 2026-08-10 | `github-actions-staging` | **staging-Old** | `838e-****-7088` | bound to the environment retired 2026-11-16; can only ever fail |
-| 2026-11-14 | `development` | **staging** | `rlwy_proj_****xU87` | in `RAILWAY_TOKEN_STAGING` since 2026-11-16 13:48Z |
-| 2026-11-14 | `production` | production | `rlwy_proj_****keiY` | in `RAILWAY_TOKEN_PRODUCTION` since 2026-11-16 13:48Z |
+| 2026-11-14 | `development` | **staging** | `rlwy_proj_****xU87` | in `RAILWAY_TOKEN_STAGING` since 2026-11-16 15:08:31Z |
+| 2026-11-14 | `production` | production | `rlwy_proj_****keiY` | in `RAILWAY_TOKEN_PRODUCTION` since 2026-11-16 15:08:32Z |
 | 2026-11-14 | `development` | development | `rlwy_proj_****wtix` | in `RAILWAY_TOKEN_DEVELOPMENT` since 2026-11-14 |
 
 Read `environmentId`, never `name`: the 2026-11-14 token that serves staging is
