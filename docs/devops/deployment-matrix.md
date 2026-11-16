@@ -128,8 +128,11 @@ marks **eight** `+` commits on `prod`, not seven.
 Eleven are byte-identical between `d9a2ced41` and `origin/main` — the three
 assessment services under `frontend-web/src/server/services/academy/assessment/`
 and all eight `frontend-web/app/api/admin/academy/{exams,questions}…` routes —
-and both branches' `frontend-admin/app/admin/academy/film/page.tsx` carry the
-same eleven tabs, `assessment`, `bank` and `exams` included. The other three files
+and both branches' `frontend-admin/app/admin/academy/film/page.tsx` expose
+eleven tabs whose `key` values match across the two — a coincidence of count
+with the eleven identical files, because these are labels (`batches`,
+`applications`, `tuition`, `curriculum`, `progress`, `submissions`,
+`assessment`, `bank`, `exams`, `topics`, `settings`). The other three files
 (`film/page.tsx`, `frontend-admin/src/services/filmAcademyAdminService.ts`,
 `frontend-web/src/lib/feature-flags.ts`) differ, and in all three **`prod` is
 behind `main`**: `prod` still carries the flat `capacity` / `fee_frequency` /
