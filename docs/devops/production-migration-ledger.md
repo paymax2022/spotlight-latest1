@@ -3526,6 +3526,19 @@ in both directions and both belong in the ledger:
   only protection is `confirm=PUSH`, a string the operator types into the dispatch form. Item 1's text —
   "approving a `Production` deployment on someone else's behalf is exactly the side effect the gate exists
   to prevent" — describes a gate that has since been removed, and the guard that remains is per-lane.
+- **One exemption measured rather than assumed, because this ledger's own merges depend on it.**
+  `release.yml` triggers on `push: branches: [main]` with **no `paths:` filter**, so on its face even a
+  docs-only merge would reach `migrate production database` — whose `with:` block is `dry_run: false`,
+  `include_all: false` (`release.yml:440-446`). It does not, and the reason is in the gate, not the
+  trigger: `scripts/ci/release-gates.py:104-113` returns **`noop_docs_only`**, not `proceed`, when no
+  `CI` run exists for the SHA, because `ci.yml:69-71` carries `paths-ignore: ['**.md','docs/**']` on push
+  to main. Every deploy and migrate job is `if: needs.gates.outputs.verdict == 'proceed'`, so they all
+  skip. Measured on the merge that landed §Stage 2's docs (`b5cc95c72`, run `43918883292`, 17:29:17Z): the
+  run concludes **`success`** — which is why reading a release run's colour is not enough here — with the
+  gate `success` and all eight downstream jobs `skipped`, and its log prints
+  `### Release gate: **noop_docs_only**`. So a docs-only push is inert; **any push that touches code,
+  config, a workflow or a migration is not**, and once the staging leg goes green that push applies to
+  production automatically with no reviewer in front of it.
 
 ### 6.5 Step-by-step disposition
 
