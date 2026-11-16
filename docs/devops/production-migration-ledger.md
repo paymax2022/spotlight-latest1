@@ -3588,10 +3588,18 @@ share a value; re-run both commands rather than assuming one implies the other. 
 5ab7c9cc0 origin/main` → `94ad08c05` (PR #791, 2026-11-09), which is where the prod-serving lineage and
 `main` last touched.
 
-Two things this does **not** say. It is not evidence that the release chain is broken: every `main` push
-since `b5cc95c72`'s line has been docs-only, and §6.4's last bullet is why each one correctly skipped every
-deploy job — so prod has not been redeployed by the chain because nothing deployable has reached it. And it
-does not replace §16.2 item 5's acceptance read, which asks for `/api/v1/public/build` to return a chosen
-`RELEASE_SHA` plus matching login-page chunk hrefs; prod reporting a *third* SHA since that row was written
-is the point of item 5, not a refutation of it.
+Two things this does **not** say. It is not evidence that the release chain is silently deploying prod:
+the two most recent code pushes to `main` this plan looked at both got gate verdict **`proceed`** —
+`43877393067` (`2303984cf`) and `43886555996` (`ee58728e0`, the push that *added* `20271500000000`) — and
+both still skipped every prod job, because `deploy Staging` failed and the `needs:` cascade took
+`smoke-staging`, `migrate-production` and `deploy-production` with it (§6.2). The three runs after them —
+`43905831788` (`f90b3ef30`), `43915306385` (`5c95fe376`) and `43918883292` (`b5cc95c72`) — skipped for a
+*different* reason, the `noop_docs_only` verdict in §6.4's last bullet, and those three were in fact
+docs-only: 2, 2 and 2 files, all under `docs/`. So prod's Go plane has not been redeployed by the chain at
+all this week, and the reason changed halfway through the week — first a red staging leg, then nothing
+deployable arriving. Both are accidents of this week's traffic, not a design that protects production.
+
+And it does not replace §16.2 item 5's acceptance read, which asks for `/api/v1/public/build` to return a
+chosen `RELEASE_SHA` plus matching login-page chunk hrefs; prod reporting a *third* SHA since that row was
+written is the point of item 5, not a refutation of it.
 
