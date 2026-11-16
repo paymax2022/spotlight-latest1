@@ -11,14 +11,15 @@ file a docs PR to correct it rather than silently re-pointing a config.
 
 | Service | Production | Staging | Mechanism | Evidence |
 |---|---|---|---|---|
-| `frontend-web` (Next.js) | cPanel Passenger (`spotlightng.com`) | Railway (`frontend-web-staging-new`) | **Prod:** push to `main` here → `sync-frontend-web.yml` ("Spotlight Frontend Web Safe Merge", gated on `vars.SPOTLIGHT_FRONTEND_SYNC_ENABLED`) copies `frontend-web/` into `paymax2022/spotlight-latest` `main` → **that repo's** ungated `Deploy to Namecheap cPanel (SSH)` lane builds, rsyncs, purges `.next/server/route-cache` and restarts Passenger — so a `main` push IS a production release. This repo's own `deploy-cpanel.yml` stays inert (`vars.CPANEL_DEPLOY_ENABLED` unset, secrets absent) and is not the writer. **Staging:** Railway native git deploy from the `staging` branch | `sync-frontend-web.yml:48` (destination repo), `spotlight-latest` Deploy-to-cPanel runs green on every sync (latest 2026-11-11), `deploy-cpanel.yml` header, `frontend-web/server.js`, `frontend-web/railway.json`, `eas.json` staging API URL |
-| `backend` (Go API) | Railway `production` service `backend` (`backend-production-1b33d.up.railway.app`) | Railway `staging` service `backend` (`backend-staging-new.up.railway.app`) | `ci.yml`'s dispatch-only `deploy-{development,staging,production}` jobs `railway up` the folder — no push deploys it. GCP Cloud Run is the **intended** target of `.github/workflows/deploy.yml` (sha-tagged image → staging → 10% canary → human-gated promotion), but every one of its jobs is skipped while `vars.GCP_PROJECT_ID` is unset | live `GET /api/v1/public/health` 200 on both Railway hosts and `NXDOMAIN` for `api.spotlightng.com`; `deploy.yml:34` gate, 100/100 `skipped` runs in its history; `infra/terraform/cloud-run.tf`. **Serving binary measured 2026-11-14** — `curl -s https://backend-production-1b33d.up.railway.app/api/v1/public/build` → `{"commit":"585bd2ca7fab5c0a5adf9e67ab40b04068e9cee0","source":"ldflags","started_at":"2026-11-13T09:48:09Z"}` (staging, read the same minute, answers `2a82a62ef…` — the same commit as its `origin/staging` tip at that reading). `585bd2ca7…` is the tip of `origin/chore/promote-prod-module-readiness` (PR #996) and is **not an ancestor of `origin/main`** (`git merge-base --is-ancestor` → false); against the pin below it is 7 commits ahead-side / 713 behind (`git rev-list --count` both directions). **PENDING, NOT DONE — the release-SHA cutover:** nothing in this plan has deployed, dispatched or pushed this service. Bringing prod to `RELEASE_SHA c49b395643473ba6ff7a225d7a7a339a41eddfe6` is **Task 11**, still open, and ledger §10.6 requires re-reading `/api/v1/public/build` at execution time instead of quoting any figure stored in a doc — including the one above. |
-| Backend workers (asynq) | Render `spotlight-notification-worker` | Render | `render.yaml` worker service (AUD-INFRA-006). Not deployed by `release.yml` — see "notification-worker version state" below. | `render.yaml` |
+| `frontend-web` (Next.js) | cPanel Passenger (`spotlightng.com`) | Railway (`frontend-web-staging-new`) | **Prod:** push to `main` here → `sync-frontend-web.yml` ("Spotlight Frontend Web Safe Merge", gated on `vars.SPOTLIGHT_FRONTEND_SYNC_ENABLED`) copies `frontend-web/` into `paymax2022/spotlight-latest` `main` → **that repo's** ungated `Deploy to Namecheap cPanel (SSH)` lane builds, rsyncs, purges `.next/server/route-cache` and restarts Passenger — so a `main` push IS a production release. This repo's own `deploy-cpanel.yml` stays inert (`vars.CPANEL_DEPLOY_ENABLED` unset, secrets absent) and is not the writer. **Staging:** `release.yml`'s `deploy-staging` job (`railway up`). It is **not** a "Railway native git deploy from the `staging` branch" — that claim was wrong twice over, and [Railway git sources, measured 2026-11-16](#railway-git-sources--measured-2026-11-16) is the measurement that replaces it | `sync-frontend-web.yml:48` (destination repo), `spotlight-latest` Deploy-to-cPanel runs green on every sync (latest 2026-11-11), `deploy-cpanel.yml` header, `frontend-web/server.js`, `frontend-web/railway.json`, `eas.json` staging API URL |
+| `frontend-web` (Railway **production** BFF) | `release.yml`, on every push to `main` | production | `frontend-web-production-9259.up.railway.app` | **A different host from the cPanel row above, and not interchangeable with it.** `www.spotlightng.com` is served by the cPanel lane (`sync-frontend-web.yml` → `paymax2022/spotlight-latest` → that repo's ungated cPanel workflow); `deploy-cpanel.yml` in *this* repo is inert (0 successes in 843 runs, `vars.CPANEL_DEPLOY_ENABLED` unset). This Railway instance is the BFF that `mobile-app/reactnative/eas.json:65` bakes into the shipped build's `EXPO_PUBLIC_API_BASE_URL` (and `production-apk` inherits at `:72`), and that `frontend-admin`'s production `WEB_API_BASE_URL` points at. Before `release.yml` nothing in the repo updated it — its 2026-11-15 deployment was a hand-run `railway up`. Because a store build bakes the base URL at submission time, a stale host here cannot be re-pointed without a new submission. |
+| `backend` (Go API) | Railway `production` service `backend` (`backend-production-1b33d.up.railway.app`) | Railway `staging` service `backend` (`backend-staging-new.up.railway.app`) | `release.yml` on every push to `main` (Railway `railway up`, per environment). Migrations are applied to that environment first — `migrate-staging` before `deploy-staging`, `migrate-production` before `deploy-production`. `/api/v1/public/build` reports the served commit, stamped via `backend/BUILD_COMMIT` + `-ldflags`. GCP Cloud Run remains the **intended** target of `.github/workflows/deploy.yml` (sha-tagged image → staging → 10% canary → human-gated promotion), but every one of its jobs is skipped while `vars.GCP_PROJECT_ID` is unset | live `GET /api/v1/public/health` 200 on both Railway hosts and `NXDOMAIN` for `api.spotlightng.com`; `deploy.yml:34` gate, 100/100 `skipped` runs in its history; `infra/terraform/cloud-run.tf`. **Serving binary measured 2026-11-14** — `curl -s https://backend-production-1b33d.up.railway.app/api/v1/public/build` → `{"commit":"585bd2ca7fab5c0a5adf9e67ab40b04068e9cee0","source":"ldflags","started_at":"2026-11-13T09:48:09Z"}` (staging, read the same minute, answers `2a82a62ef…` — the same commit as its `origin/staging` tip at that reading). `585bd2ca7…` is the tip of `origin/chore/promote-prod-module-readiness` (PR #996) and is **not an ancestor of `origin/main`** (`git merge-base --is-ancestor` → false); against the pin below it is 7 commits ahead-side / 713 behind (`git rev-list --count` both directions). **PENDING, NOT DONE — the release-SHA cutover:** nothing in this plan has deployed, dispatched or pushed this service. Bringing prod to `RELEASE_SHA c49b395643473ba6ff7a225d7a7a339a41eddfe6` is **Task 11**, still open, and ledger §10.6 requires re-reading `/api/v1/public/build` at execution time instead of quoting any figure stored in a doc — including the one above. |
+| Backend workers (asynq) | Render `spotlight-notification-worker` | Render | `render.yaml` worker service (AUD-INFRA-006). **Not deployed by `release.yml`** — no matrix in it names `notification-worker`, on purpose. Production's consumer is Render's `spotlight-notification-worker`; a Railway production worker would put two consumers on one queue with the same `REDIS_URL` and double-deliver every push, email and SMS. See "`notification-worker` version state" below for the open question about which branch its Render blueprint tracks. | `render.yaml` |
 | `frontend-admin` (Next.js) | `admin.spotlightng.com` (cPanel) | Railway (`frontend-admin-staging-new`) | cPanel Passenger host; `frontend-admin/railway.json` for staging | `backend/internal/config/config.go` `ADMIN_APP_BASE_URL` default, `frontend-admin/railway.json` |
 | `mobile-app/reactnative` | EAS `production` profile | EAS `staging`/`preview` profiles | `eas build -p android --profile <p>`; store distribution out of band | `mobile-app/reactnative/eas.json` |
-| Postgres + GoTrue | Supabase cloud | Supabase cloud (shared project) | **`db-migrate.yml` is NOT dormant** (corrects the earlier "dormant by design (AUD-INFRA-005)" claim, which was false). Measured 2026-11-14: it triggers on `push` to `branches: [main, staging]` with paths `supabase/migrations/**` **and** its own file (`db-migrate.yml:40-43`), and its `apply` job runs when `(workflow_dispatch && target=='production') \|\| (push && ref=='refs/heads/main' && vars.DB_MIGRATE_ENABLED=='true')` (`:79-81`) under `environment: production` (`:83`), **which has required reviewers** — measured 2026-11-14: `gh api …/actions/runs/<parked run id>/pending_deployments` returns the deployment parked on environment `Production` with a populated `reviewers` array of two `User` entries and `wait_timer: 0` — the run ids themselves are held once, in ledger §16.2 item 1, which owns them. (An earlier draft of this cell called that fact "unconfirmed" because `…/environments/Production/deployment_protection_rules` reads `[]`; that endpoint lists *custom* protection rules such as wait timers, not required-reviewer rules, so `[]` is the expected answer and proves nothing. `pending_deployments[].reviewers` is the field to read, and it names who can approve.) Both switches are on today: `gh api …/actions/variables` → `DB_MIGRATE_ENABLED=true`, `DB_MIGRATE_STAGING_ENABLED=true`. So three lanes can write the DB — `db-migrate.yml` (gated by `Production`'s required reviewers, and one of its runs was parked when measured), `ops-db-push.yml` (manual, same gate, also parked at that reading) and `ops-db-push-scoped.yml` (`environment: production-db-scoped`, whose 2026-11-12 run was not parked at all, and it refuses the staging ref) — plus the bare `supabase db push` of the reconciliation runbook. `gh api …/actions/runs?status=waiting` and `status=pending` were both re-run on 2026-11-14: two writes sit parked on the `Production` gate and one further run had not reached an environment job. Their ids, heads and timestamps are recorded once — ledger §16.2 item 1 owns them, so this table deliberately does not repeat them (a fourth copy of a live run state is a fourth way to be stale). **Nothing in this plan approved, declined, dispatched or pushed any of them.** | `docs/devops/cloud-migration-reconciliation-runbook.md`; ledger §1.3-§1.4, §5.7, §16 |
+| Postgres + GoTrue | Supabase cloud | Supabase cloud (shared project) | **Superseded on 2026-11-16, by PR B:** `db-migrate.yml` is dispatch-only — its `push:` trigger is gone, and `release.yml`'s `migrate-staging` / `migrate-production` jobs are now the automatic applies, each ahead of its own environment's deploy, sharing `_reusable-db-apply.yml` with the manual lane. The rest of this cell is kept as the 2026-11-14 measurement it was, because the reviewer history and the lane census in it are what justify that single apply path; read it as history, not as today's triggers. **`db-migrate.yml` was NOT dormant then** (corrects the earlier "dormant by design (AUD-INFRA-005)" claim, which was false). Measured 2026-11-14: it then triggered on `push` to `branches: [main, staging]` with paths `supabase/migrations/**` **and** its own file (`db-migrate.yml:40-43`), and its `apply` job runs when `(workflow_dispatch && target=='production') \|\| (push && ref=='refs/heads/main' && vars.DB_MIGRATE_ENABLED=='true')` (`:79-81`) under `environment: production` (`:83`), **which has required reviewers** — measured 2026-11-14: `gh api …/actions/runs/<parked run id>/pending_deployments` returns the deployment parked on environment `Production` with a populated `reviewers` array of two `User` entries and `wait_timer: 0` — the run ids themselves are held once, in ledger §16.2 item 1, which owns them. (An earlier draft of this cell called that fact "unconfirmed" because `…/environments/Production/deployment_protection_rules` reads `[]`; that endpoint lists *custom* protection rules such as wait timers, not required-reviewer rules, so `[]` is the expected answer and proves nothing. `pending_deployments[].reviewers` is the field to read, and it names who can approve.) Both switches are on today: `gh api …/actions/variables` → `DB_MIGRATE_ENABLED=true`, `DB_MIGRATE_STAGING_ENABLED=true`. So three lanes could write the DB at that reading — `db-migrate.yml` (gated by `Production`'s required reviewers, and one of its runs was parked when measured), `ops-db-push.yml` (manual, same gate, also parked at that reading) and `ops-db-push-scoped.yml` (`environment: production-db-scoped`, whose 2026-11-12 run was not parked at all, and it refuses the staging ref) — plus the bare `supabase db push` of the reconciliation runbook. PR B adds a fourth, and it is the only automatic one: `release.yml`'s two migrate jobs → `_reusable-db-apply.yml`. The `Production` required reviewers that gated the first three were removed on 2026-11-15, so nothing in that census still parks a run — see `docs/launch/BRANCH-PROTECTION.md`. `gh api …/actions/runs?status=waiting` and `status=pending` were both re-run on 2026-11-14: two writes sit parked on the `Production` gate and one further run had not reached an environment job. Their ids, heads and timestamps are recorded once — ledger §16.2 item 1 owns them, so this table deliberately does not repeat them (a fourth copy of a live run state is a fourth way to be stale). **Nothing in this plan approved, declined, dispatched or pushed any of them.** | `docs/devops/cloud-migration-reconciliation-runbook.md`; ledger §1.3-§1.4, §5.7, §16 |
 | Redis / asynq broker | Render `spotlight-redis` | same | `render.yaml` service | `render.yaml` |
-| `release.yml` | **Pending — lands in PR B (`feat/release-yml-auto-deploy`)** | Every push to `main`, plus `workflow_dispatch` for rollback | development, staging, production (Railway) | Declared here FIRST per the checklist below. Until PR B merges this writer does not exist and no workflow deploys on a `main` push. |
+| `release.yml` | `on: push: branches: [main]` (plus `workflow_dispatch` for rollback) | development, staging, production — Railway, via `railway up` | `backend`, `frontend-web`, `frontend-admin` in each; migrations applied per environment before that environment's deploy | The ONLY automatic writer of any Railway environment. One brake: `vars.RAILWAY_DEPLOY_ENABLED`. No reviewer, no typed confirmation, no promotion branch. "Automatic" is scoped to this repo: the staging services still carry Railway repo connections, and [Railway git sources, measured 2026-11-16](#railway-git-sources--measured-2026-11-16) records what would make one of them a second writer — and that it is not the frozen promotion branches. |
 
 ## Non-authoritative / legacy configs
 
@@ -32,7 +33,7 @@ expecting a deploy effect, and do not delete them without checking this list:
 | `backend/railway.json`, `frontend-web/railway.json` | Railway hosts staging frontend-web; backend/admin Railway configs are leftovers from the Render→Railway→GCP drift. |
 | `backend/app.yaml`, `frontend-admin/app.yaml`, `mobile-app/reactnative/app.yaml` | cPanel Passenger manifests; only frontend-admin's is believed live. |
 | `deploy-gcp.sh`, `deploy-render.sh`, `deploy-mobile.sh` | Ad-hoc scripts predating the GitHub-Actions lanes; use the workflows instead. |
-| `.github/workflows/deploy-railway-action.yml` | Optional manual alternative to the `ci.yml` dispatch jobs, using the `bervProject/railway-deploy` action. Installed dark behind `vars.RAILWAY_ACTION_DEPLOY_ENABLED` (unset); enabling it creates a second Railway writer, so keep it off unless intentionally replacing the `ci.yml` path. |
+| `.github/workflows/deploy-railway-action.yml` | An **orphan**, not an alternative to anything. It is `workflow_dispatch`-only (inputs: `environment`, `service`, a typed `DEPLOY`) and calls the `bervProject/railway-deploy` action; `grep -rn "deploy-railway-action" .github/` matches only its own `name:` and `concurrency.group:` lines, so no workflow and no job needs it. `release.yml` does not use it — the chain deploys with `scripts/ci/railway-deploy.sh` (three call sites: development, staging, production). Dispatching it takes `confirm == 'DEPLOY'` **and** `vars.RAILWAY_DEPLOY_ENABLED == 'true'` **and** its own `vars.RAILWAY_ACTION_DEPLOY_ENABLED == 'true'` (the `deploy` job's `if:` — the last is unset, so the lane is dark), and even then its `Gate - promotion branch and valid target` step refuses a run unless each environment comes from `refs/heads/develop` / `staging` / `prod` — branches this file records as frozen, so a dispatch from `main` cannot pass its own gate. Creating a second writer therefore means re-targeting that gate, not just flipping the switch. |
 | `mobile-app/reactnative/vercel.json` | For the Expo **web export** preview, not native builds. |
 
 ## Promotion model
@@ -43,7 +44,8 @@ A push to `main` is the release. `release.yml` waits for that commit's CI to go
 green, then deploys development (non-blocking) and staging → production
 (sequential, each environment's database migrated before the code that needs it,
 nothing reaching production until staging has been probed and is serving the new
-commit). There is no `workflow_dispatch`, no typed `DEPLOY` confirmation, no
+commit). There is no `workflow_dispatch` **release** — the only dispatch left on
+this chain is the rollback below — no typed `DEPLOY` confirmation, no
 `develop` / `staging` / `prod` branch to merge into, and no GitHub Environment
 reviewer anywhere on the path — the `Production` environment's reviewers were
 removed on 2026-11-15 (~16:34Z).
@@ -68,7 +70,9 @@ so there is exactly one way each database gets written.
 `origin/prod` and `origin/staging` still point at commits whose file trees are
 **older** than `main`'s. Screening every candidate file by file (spec:
 `docs/superpowers/specs/2026-11-15-auto-deploy-release-pipeline-design.md`,
-"Verified current state") found **no content on either branch that `main`
+"Verified current state" — that path is on PR #1034's branch
+`feat/auto-release-pipeline` and is **not on `main` yet**, so it does not resolve
+from this branch until that PR merges) found **no content on either branch that `main`
 lacks**. `git cherry` marks eleven commits `+` (re-run 2026-11-15 after Task 1:
 seven on `prod`, four on `staging`), but a `+` means the *patch-id* was
 not found upstream — it does not mean the content is missing. Six are already on
@@ -148,6 +152,110 @@ Until this is checked, treat a new enqueue-shape change as **requiring a manual
 Render deploy of the worker** alongside the release.
 
 Record the finding here, with the date and the SHA, once it is checked.
+
+## Railway git sources — measured 2026-11-16
+
+Two rows of this file described the same staging services in incompatible ways: one
+said staging `frontend-web` is deployed by "Railway native git deploy from the
+`staging` branch", and elsewhere the repo asserted those services carry a git source
+on `main`. Both cannot be true, and neither was written as a measurement. This is
+the measurement, and it retires both claims.
+
+Read-only commands against project `e7dca861-3667-4d9a-8090-6d2f4d179ec2` with
+`railway` 5.71.0 (`development` `87489af5…`, `staging` `6b5f27a3…`, `production`
+`f84c4558…`): `service list --json`, `deployment list --json`, and `railway api`
+for `deploymentTriggers`.
+
+**1. Which services are repo-connected.** `service list` → `source.repo`:
+development's four app services and production's three both report `null` for every
+service; only staging's `backend`, `frontend-web` and `frontend-admin` report
+`paymax2022/spotlight-latest1` (`Redis` reports an image, not a repo). Production
+therefore cannot be webhook-deployed at all — the services `release.yml` writes have
+no git source attached to them.
+
+**2. What branch that source resolves to.** Not readable as a setting: `ServiceSource`
+exposes only `image` and `repo`, and `ServiceInstance` has no `autoDeploy` and no
+branch field in this API version. It *is* readable from what the connection built.
+Every staging deployment carrying git metadata — a build, as opposed to a `railway up`
+upload, which sets `commitHash: null` and puts the source SHA in `cliMessage` —
+reports `branch=main`. None has ever reported `staging`:
+
+- `2026-11-02T11:18:20Z` — backend, `frontend-web` and `frontend-admin` inside 100 ms
+  of each other, `branch=main sha=886d857f1`; then 11:19–11:23Z and 12:13:33/40Z, same
+  SHA. That commit's committer date is `2026-11-01T18:27:32Z`, so these follow a push
+  of main ~17 hours later rather than its merge.
+- `2026-11-02T15:56:15Z` — `frontend-web`, `branch=main sha=afc460777`, FAILED. That
+  commit's committer date is `15:47:50Z`, so the build started **8m25s after the
+  commit landed on main** — the timing signature of a push webhook, not a hand press.
+- `2026-11-15T09:55:37Z` — `frontend-web`, SUCCESS, `branch=main sha=f86f29979`
+  (#1026, on main since `08:54:25Z`). One service, an hour after the commit.
+- Everything from 2026-11-13 onward is a CLI upload: `commitHash: null`,
+  `cliMessage` holding a SHA or a sentence like `deploy frontend-admin from main
+  2394e8aa`, usually with `cliCaller: agent_unknown:shell:qoder`.
+
+So the connector's branch is `main`, and it has built `main` as recently as
+2026-11-15 — and once (11-02, `afc460777`) with a latency that only a push trigger
+explains.
+
+**3. Whether a trigger is armed today.** `deploymentTriggers(projectId,
+environmentId, serviceId)` returns **zero edges for every service in all three
+environments**, including the three repo-connected staging ones. The query is not
+silently inert: a deliberately bogus serviceId raises `INTERNAL_SERVER_ERROR` rather
+than an empty list, so the service record is consulted and the answer really is
+"none listed". Read that as *the public API lists no trigger*, not as proof Railway
+cannot deploy on push — `DeploymentTrigger` also carries `checkSuites` and
+`provider`, which look like CI-gated triggers rather than plain push webhooks, and
+the three later main pushes of 2026-11-15 (committer dates 15:50:49Z, 16:16:21Z,
+20:49:01Z) produced no staging build at all.
+
+**The consequence — what the two retired claims were actually about.**
+`release.yml` is the intended writer of staging, and nothing in this repo makes
+staging's git connections its co-writers. But the protection is not the branch
+freeze: **the connection points at `main`, so re-arming it would fire on exactly the
+pushes `release.yml` deploys**, making it a second live writer of `backend`,
+`frontend-web` and `frontend-admin` in staging — the scenario checklist item 2
+exists to forbid — with the same repo, the same `rootDirectory: frontend-web` and the
+same `configFile: /frontend-web/railway.json` (both read from a 2026-11-15 build's
+metadata). Two writers of one service-environment pair would race for "which build
+is current", and the chain's chunk fingerprint could then change, or fail to change,
+for a reason no commit caused.
+
+Un-freezing `develop` / `staging` / `prod` has nothing to do with it; this plan's
+draft asserted the connector "does not fire on `main`", and the metadata above
+disproves that. Removing a staging service's repo connection is an operator action in
+Railway's dashboard, outside this repo's blast radius, and **has not been done** —
+until it is, treat the staging connections as armed-but-unfired rather than absent,
+and treat a green `deploy-staging` as necessary evidence, not sufficient, for
+"staging is serving this commit" (the probe contract below is what closes that gap).
+
+## Probe contract
+
+A green deploy job is not evidence. Every stage reads back what the environment is
+actually serving (`scripts/ci/railway-smoke.sh`):
+
+| Service | Probe | Passes when |
+|---|---|---|
+| `backend` | `GET /api/v1/public/build`, polled 20×15s | `.commit` equals the released SHA. Also records `started_at` and `uptime_seconds`, so "a build exists" cannot pass for "the process restarted". |
+| `backend` | `GET /healthz` | 200. |
+| `backend` | `GET /readyz` | 200 in staging and production. In **development** it is recorded as a warning, not a failure — development's DB pool is unreachable today (503), a pre-existing condition no commit caused. |
+| `frontend-web` | `GET /` | 200, plus a chunk-fingerprint comparison. |
+| `frontend-admin` | `GET /admin/login` | 200, plus a chunk-fingerprint comparison. |
+
+The **chunk fingerprint** (`scripts/ci/frontend-fingerprint.sh`) is a digest of the
+served `/_next/static/chunks/` filenames. It exists because a frontend build echoes
+no commit anywhere — there is no `generateBuildId` in `frontend-web/next.config`,
+and the App Router HTML carries no `buildId` and no `_buildManifest.js` reference —
+so nothing else can distinguish "the new build is being served" from "the old bytes
+are still there". An unchanged fingerprint when the commit touched that service is
+a **warning**, never a failure: it can also mean the change was server-side only,
+or that an edge cache is still warm. It is loud because the cPanel lane once shipped
+a stale build for exactly this reason (Next 16's `.next/server/route-cache`
+survives `rm:false`).
+
+Host names live in exactly one file, `scripts/ci/railway-urls.sh`, sourced by both
+the pre-deploy fingerprint step and the post-deploy probe, so the two can never
+disagree about which host they mean. An unknown environment/service pair returns
+empty and the probe fails loudly rather than curling a guessed host.
 
 ## Reconciliation checklist (when adding a deploy path)
 

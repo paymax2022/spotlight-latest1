@@ -1074,6 +1074,28 @@ Expected in the ledger: one paragraph per name with the reason, which plane read
 
 ### Task 11: Bring the production Go API to the release SHA
 
+> **Mechanism superseded 2026-11-16 — read this before executing.** Steps 1-2 of
+> this task are written against the promotion-branch model: pushing
+> `RELEASE_SHA` to `refs/heads/prod` and dispatching `ci.yml` with
+> `deploy_environment=production, confirm_deploy=DEPLOY`. Neither works any more.
+> `ci.yml`'s three deploy jobs were deleted, `prod`/`staging`/`develop` are frozen
+> with their tips archived as `archive/prod-2026-11-15` and
+> `archive/staging-2026-11-15`, and the dispatch now fails on unknown inputs.
+>
+> What replaces it: `release.yml` deploys on every push to `main` — see
+> [docs/devops/deployment-matrix.md](../../devops/deployment-matrix.md)'s
+> `release.yml` row, its Promotion-model section, and the Probe contract. The goal
+> below is unchanged (`/api/v1/public/build` reporting `RELEASE_SHA` on both
+> backends), and the procedure that reaches it is now "get `RELEASE_SHA` onto
+> `main`" — which it already is: `git merge-base --is-ancestor c49b395643473ba6ff7a225d7a7a339a41eddfe6 origin/main`
+> exits 0, measured 2026-11-16. **Do not read that as Task 11 being closed.**
+> Production currently serves `585bd2ca7`, and `git rev-list --count 585bd2ca7
+> ^origin/main` is **7** — those seven commits exist only on the prod-serving side,
+> so the first `main` deploy replaces them with `main`'s version of the same area;
+> the matrix's `backend` row owns that comparison and its re-read requirement
+> (`/api/v1/public/build` at execution time, never a figure quoted from a doc).
+
+
 Production's API is 710 commits / 239 backend commits behind `main` and has not been redeployed since 2026-10-17; staging is 224 behind. Both must land on the same SHA or the two planes diverge again.
 
 **Files:**
@@ -1083,7 +1105,7 @@ Production's API is 710 commits / 239 backend commits behind `main` and has not 
 - Consumes: `RELEASE_SHA`, a green Phase 2/3 (prod schema reconciled, flags committed), `refs/heads/prod` pointing at `RELEASE_SHA`.
 - Produces: `GET /api/v1/public/build` reporting `RELEASE_SHA` on both prod and staging backends.
 
-- [ ] **Step 1: Move the `prod` branch pointer by plumbing, not by touching the dirty worktree**
+- [ ] **Step 1: Move the `prod` branch pointer by plumbing, not by touching the dirty worktree** *(retired — `prod` is frozen; see the banner)*
 
 `ci.yml:687` requires `github.ref == 'refs/heads/prod'`, plus `inputs.deploy_environment == 'production'`, `confirm_deploy == 'DEPLOY'`, `vars.RAILWAY_DEPLOY_ENABLED == 'true'` (it is) and every one of the 22 `needs` jobs non-failing.
 
@@ -1096,7 +1118,7 @@ git -c credential.helper='!gh auth git-credential' push origin "${RELEASE_SHA}:r
 
 Expected: the push updates `prod` and nothing else — `git rev-parse origin/prod` afterwards prints `RELEASE_SHA`. **There is no second push here:** do not push to `refs/heads/staging`. The repo's policy forbids staging-branch releases, staging's Railway git source tracks `main` rather than that branch, and an earlier draft of this step carried a `push … :refs/heads/staging || echo "SKIP"` line that a shell would have *executed* — `|| echo` skips the echo, not the push.
 
-- [ ] **Step 2: Dispatch the production deploy and watch it**
+- [ ] **Step 2: Dispatch the production deploy and watch it** *(retired — see the banner; `ci.yml` has no deploy job to dispatch and `Production` has no reviewers)*
 
 ```bash
 gh workflow run ci.yml --repo paymax2022/spotlight-latest1 --ref prod \
