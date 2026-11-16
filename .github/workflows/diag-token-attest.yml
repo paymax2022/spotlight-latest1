@@ -1,0 +1,105 @@
+name: DIAG - railway token binding attestation (read-only)
+
+# The one half of "a push to main can actually reach production" that has never
+# been measured without writing to production: what the three GitHub secrets
+# ARE. Re-minting them was done; staging and development have both been proven
+# by real accepted uploads. Production has only ever been written to by hand
+# from a laptop, so its token has never been exercised at all.
+#
+# This job asks Railway's own API what each token is bound to, using the
+# zero-argument `projectToken` query. For a project token it returns the token's
+# name, its project, and the environment it is pinned to; for a user token it
+# errors with "Project Token not found". Either answer is evidence, and neither
+# is a write:
+#
+#   projectId      == e7dca861-3667-4d9a-8090-6d2f4d179ec2  (the spotlight project)
+#   environmentId  == 6b5f27a3-... staging
+#                     87489af5-... development
+#                     f84c4558-... production
+#   createdAt      tells whether the secret holds the token minted today or a
+#                  stale one, which is the failure mode that hid this whole
+#                  incident (a 51-char corrupt copy sat in backend/.env).
+#
+# No `railway up`, no `railway deploy`, no variable writes, nothing that creates
+# a deployment, and production is never named on a mutating command because no
+# mutating command runs. Secrets are add-masked and each token is written to a
+# 0600 temp file; every line the CLI prints goes through a redactor, and only
+# name/project/environment/createdAt fields are requested — never `displayToken`.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [diag/token-attest]
+
+permissions:
+  contents: read
+
+jobs:
+  attest:
+    name: read-only token attestation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mask the three tokens, keep only lengths
+        env:
+          TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          TOK_DEVELOPMENT: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+          TOK_PRODUCTION: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+        run: |
+          set -euo pipefail
+          for pair in "staging:$TOK_STAGING" "development:$TOK_DEVELOPMENT" "production:$TOK_PRODUCTION"; do
+            n="${pair%%:*}"; v="${pair#*:}"
+            if [ -z "$v" ]; then echo "::error::RAILWAY_TOKEN_${n^^} is empty"; exit 1; fi
+            echo "::add-mask::$v"
+            printf '%s' "$v" > "/tmp/tok_$n"
+            chmod 600 "/tmp/tok_$n"
+            echo "$n token length (never value): ${#v}"
+          done
+
+      - name: Install the release chain's pinned CLI
+        run: |
+          set -euo pipefail
+          npm install --global @railway/cli@5.40.1
+          railway --version
+
+      - name: Ask Railway what each token is bound to
+        run: |
+          set -uo pipefail
+          redact() {
+            sed -E 's#eyJ[A-Za-z0-9._-]{10,}#<jwt-redacted>#g;
+                    s#(rlwy_[A-Za-z0-9_-]{4})[A-Za-z0-9_-]+#\1<redacted>#g;
+                    s#([Aa]uthorization[^:]*:).*#\1 <header-redacted>#g'
+          }
+          PROJECT=e7dca861-3667-4d9a-8090-6d2f4d179ec2
+          declare -A WANT_ENV=(
+            [staging]=6b5f27a3-a290-4574-a977-363eb21d43ad
+            [development]=87489af5-8543-4d17-8811-1241c8869430
+            [production]=f84c4558-8cbf-43e5-8e1b-f19ee3677133
+          )
+
+          for n in staging development production; do
+            echo "=== $n ==="
+            out=$(RAILWAY_TOKEN="$(cat "/tmp/tok_$n")" \
+              railway api 'query { projectToken { name projectId environmentId createdAt } }' \
+              --compact 2>&1)
+            printf '%s\n' "$out" | redact | head -c 900
+            echo
+            if printf '%s' "$out" | grep -q '"projectToken":null\|Project Token not found'; then
+              echo "-> $n: NOT a project token (or not bound to a project). Not usable for railway up."
+              continue
+            fi
+            got_proj=$(printf '%s' "$out" | python3 -c 'import sys,json;print((json.load(sys.stdin)["data"]["projectToken"]||{}).get("projectId",""))' 2>/dev/null || echo "")
+            got_env=$(printf '%s' "$out" | python3 -c 'import sys,json;print((json.load(sys.stdin)["data"]["projectToken"]||{}).get("environmentId",""))' 2>/dev/null || echo "")
+            got_nm=$(printf '%s' "$out" | python3 -c 'import sys,json;print((json.load(sys.stdin)["data"]["projectToken"]||{}).get("name",""))' 2>/dev/null || echo "")
+            got_ct=$(printf '%s' "$out" | python3 -c 'import sys,json;print((json.load(sys.stdin)["data"]["projectToken"]||{}).get("createdAt",""))' 2>/dev/null || echo "")
+            echo "-> $n: name=$got_nm created=$got_ct"
+            [ "$got_proj" = "$PROJECT" ] \
+              && echo "-> $n: project MATCHES the spotlight project" \
+              || echo "-> $n: project MISMATCH (got '$got_proj')"
+            [ "$got_env" = "${WANT_ENV[$n]}" ] \
+              && echo "-> $n: environment MATCHES $n ($got_env)" \
+              || echo "-> $n: environment NOT $n (got '$got_env', expected '${WANT_ENV[$n]}')"
+          done
+
+      - name: Delete the temp token files
+        if: always()
+        run: rm -f /tmp/tok_staging /tmp/tok_development /tmp/tok_production
