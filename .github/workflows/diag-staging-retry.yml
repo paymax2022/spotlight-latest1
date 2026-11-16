@@ -1,30 +1,44 @@
 name: DIAG - staging legs with the retry fix
 
-# Verdict of the run this file replaced (43909191817, 16:35:47-16:38:15Z): the
-# #1044 retry fired exactly as designed - three legs, four attempts each, 12
-# attempts spread over 150 s - and ALL TWELVE were refused. So "a short blip the
-# chain rides out" is falsified, and #1044 as written is not sufficient to make
-# a push reach production. What is left is to find out what the refusal IS.
+# Where the investigation stands when this file runs.
 #
-# Two facts narrow it hard:
-#   - 16:23:25Z: development's three legs called `railway up` within 1.7 s of
-#     each other and all three got `Indexing...` immediately (run 43905969462).
-#     Seven seconds later staging's three legs, same CLI, same project, equally
-#     concurrent, were all refused. So concurrency is exonerated and the
-#     discriminator is the ENVIRONMENT.
-#   - Measured through `railway api`: all three STAGING instances carry
-#     `source.repo = paymax2022/spotlight-latest1` (plus rootDirectory on the two
-#     frontends); every development instance has `source.repo = null`; production
-#     has `source = null` outright. Uploads are reliable where there is no
-#     connected source and flaky where there is one.
+# The proximate cause is settled: Railway answers its OWN `railway up`
+# upload-initiate request with a non-JSON body, so the CLI dies in ~0.5 s with
+# "error decoding response body / expected value at line 1 column 1" before it
+# even prints `Indexing...`. No deployment row is created, and nothing local
+# changes it.
 #
-# This job interleaves the identical upload call between development and staging,
-# one pair every ~12 s, with `--verbose`, so time is held constant across the two
-# environments and a refusal is captured with whatever the CLI reveals about it.
-# It stops as soon as it holds one refusal and one acceptance side by side.
+# What is NOT settled is what makes it answer that way. Exonerated by measurement
+# so far: token value/scope, CLI version (5.40.1 / 5.71.0 / 5.74.1), CI=true and
+# the runner image, upload shape, tree size, `environment: staging` protection
+# rules, and request *rate* (two accepted 3 s apart, then refused 62 s later).
 #
-# Never prints a token: both secrets are masked for the job and every line is
-# passed through a redactor before it reaches the log.
+# A mid-investigation hypothesis - "the staging instances' connected git source is
+# the discriminator" - was falsified by run 43910959092: staging accepted 12 of 12
+# uploads serially at 16:45:29-16:47:40, alongside development, same project, same
+# CLI. That run killed concurrency as a blanket excuse, but it only ever made
+# serial calls, so it could not test the other direction.
+#
+# What remains is the one shape that fits all 39 observations: a cap on how many
+# `railway up` calls are IN FLIGHT at once, answered with a garbage body rather
+# than a 429. 15 of 15 refusals came from jobs whose three matrix legs fired
+# within 5 s of each other; 24 of 24 acceptances came from serial calls or from the
+# first three slots of a six-way pile-up.
+#
+# This job tests exactly that, staging-only, with itself as the control:
+#   HALF S - six identical calls, one after another   (model predicts 6/6 accepted)
+#   HALF C - the same six calls within ~5 s           (model predicts a pile-up loss)
+# Serial runs first so the concurrent half's build queue cannot pollute the
+# control. Both halves are the same command, service, token and tree - only the
+# arrival pattern differs.
+#
+# Caveat recorded up front: the fault is time-boxed (12/12 refused at 16:35,
+# 12/12 accepted at 16:45), so "both halves accepted" means the window was shut
+# while this ran and is NOT evidence against the model. Only S-accepted plus
+# C-refused is decisive.
+#
+# Never prints a token: the secret is masked for the job and every line goes
+# through a redactor before it reaches the log. Production is never referenced.
 
 on:
   workflow_dispatch:
@@ -39,28 +53,27 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # railway-deploy.sh hard-requires RAILWAY_PROJECT (`: "${RAILWAY_PROJECT:?}"`),
+  # which release.yml sets workflow-wide. Naming this PROJECT instead is the exact
+  # instrumentation mistake that made an earlier probe die before `railway up`.
   RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
   RAILWAY_HTTP_TIMEOUT: '600'
 
 jobs:
   probe:
-    name: interleaved dev/staging upload probe
+    name: serial-vs-concurrent upload A/B (staging)
     runs-on: ubuntu-latest
     steps:
-      - name: Mask both tokens, keep only their lengths
+      - name: Mask the staging token, keep only its length
         env:
           TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
-          TOK_DEVELOPMENT: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
         run: |
           set -euo pipefail
-          for pair in "staging:$TOK_STAGING" "development:$TOK_DEVELOPMENT"; do
-            n="${pair%%:*}"; v="${pair#*:}"
-            if [ -z "$v" ]; then echo "::error::RAILWAY_TOKEN_${n^^} is empty"; exit 1; fi
-            echo "::add-mask::$v"
-            printf '%s' "$v" > "/tmp/tok_$n"
-            chmod 600 "/tmp/tok_$n"
-            echo "$n token length (never value): ${#v}"
-          done
+          if [ -z "$TOK_STAGING" ]; then echo "::error::RAILWAY_TOKEN_STAGING is empty"; exit 1; fi
+          echo "::add-mask::$TOK_STAGING"
+          printf '%s' "$TOK_STAGING" > /tmp/tok_staging
+          chmod 600 /tmp/tok_staging
+          echo "staging token length (never value): ${#TOK_STAGING}"
 
       - name: Checkout a real backend tree
         uses: actions/checkout@v4
@@ -73,41 +86,85 @@ jobs:
           npm install --global @railway/cli@5.40.1
           railway --version
 
-      - name: Interleave the same upload across both environments
+      - name: Six calls one at a time, then six at once
         run: |
           set -uo pipefail
           SHORT="$(git rev-parse --short HEAD)"
+          export RAILWAY_TOKEN="$(cat /tmp/tok_staging)"
+
+          # $1 = label, $2 = seconds to wait before firing. Every call appends one
+          # complete line to a shared table, because a shell glob over
+          # /tmp/"$1"*.txt inside a function mis-counted in the local dry run.
+          # `refused` is decided by the error text, not the exit code: a refusal
+          # returns in ~0.5 s before `Indexing...`, while an accepted upload takes
+          # seconds-to-minutes, so the duration column is itself evidence.
+          one() {
+            local label="$1" lead="$2" t0 rc dur verdict
+            sleep "$lead"
+            t0=$SECONDS
+            railway up backend --path-as-root --no-gitignore \
+              --service backend --environment staging --project "$RAILWAY_PROJECT" \
+              --detach --message "ab-$label-$SHORT" > "/tmp/$label.txt" 2>&1
+            rc=$?
+            dur=$((SECONDS - t0))
+            if grep -q 'error decoding response body' "/tmp/$label.txt"; then
+              verdict=refused
+            elif grep -q 'Indexing' "/tmp/$label.txt"; then
+              verdict=accepted
+            else
+              verdict="unknown-exit-$rc"
+            fi
+            printf '%s\t%s\t%s\t%ss\texit=%s\n' \
+              "$label" "$verdict" "$(date -u +%H:%M:%S)" "$dur" "$rc" >> /tmp/outcomes.tsv
+          }
+
+          refused_in() {
+            awk -v p="$1" 'substr($1,1,length(p))==p && $2=="refused" {n++} END {print n+0}' \
+              /tmp/outcomes.tsv
+          }
+
+          : > /tmp/outcomes.tsv
+          echo "=== HALF S (control): six identical calls, one after another ==="
+          for i in 1 2 3 4 5 6; do one "S$i" 0; sleep 6; done
+          S_REFUSE=$(refused_in S)
+          echo "serial refusals: ${S_REFUSE}/6"
+
+          echo "--- 60 s pause so nothing from the control is still in flight ---"
+          sleep 60
+
+          echo "=== HALF C (test): the same six calls fired within ~5 s ==="
+          for i in 1 2 3 4 5 6; do one "C$i" "$((i - 1))" & done
+          wait
+          C_REFUSE=$(refused_in C)
+          echo "concurrent refusals: ${C_REFUSE}/6"
+
+          echo "=== outcome table (label, verdict, utc clock, duration, exit) ==="
+          sort /tmp/outcomes.tsv | column -t
+
+          echo "=== verdict ==="
+          if [ "$S_REFUSE" -eq 0 ] && [ "$C_REFUSE" -gt 0 ]; then
+            echo "DECISIVE FOR THE IN-FLIGHT MODEL: serial accepted, concurrent refused."
+          elif [ "$S_REFUSE" -gt 0 ] && [ "$C_REFUSE" -gt 0 ]; then
+            echo "BOTH REFUSED: window open regardless of shape - arrival pattern is not it."
+          elif [ "$S_REFUSE" -eq 0 ] && [ "$C_REFUSE" -eq 0 ]; then
+            echo "INCONCLUSIVE: no refusals - the fault window was shut during this run."
+          else
+            echo "BACKWARDS: serial refused while concurrent was accepted. Model is wrong."
+          fi
+
+      - name: Show each refusal's raw tail (redacted)
+        if: always()
+        run: |
+          set -uo pipefail
           redact() {
             sed -E 's#eyJ[A-Za-z0-9._-]{10,}#<jwt-redacted>#g;
                     s#(rlwy_[A-Za-z0-9_-]{4})[A-Za-z0-9_-]+#\1<redacted>#g;
                     s#([Aa]uthorization[^:]*:).*#\1 <header-redacted>#g'
           }
-          got_refusal=0; got_accept=0
-          : > /tmp/table.tsv
-          for i in 1 2 3 4 5 6; do
-            for n in development staging; do
-              start=$(date +%H:%M:%S)
-              export RAILWAY_TOKEN="$(cat "/tmp/tok_$n")"
-              # Written to a file, not a command substitution: `out="$(cmd | head)"`
-              # reports head's status, which would record every refusal as exit 0.
-              railway up backend --path-as-root --no-gitignore \
-                --service backend --environment "$n" --project "$RAILWAY_PROJECT" \
-                --detach --verbose \
-                --message "vp-$i-$n-$SHORT" > /tmp/raw.txt 2>&1
-              rc=$?
-              out="$(redact < /tmp/raw.txt | head -c 1200)"
-              echo "=== pair $i / $n -> exit=$rc at $start ==="
-              printf '%s\n' "$out" | sed 's/^/    /'
-              printf '%s\t%s\t%s\t%s\n' "$i" "$n" "$start" "$rc" >> /tmp/table.tsv
-              if [ "$rc" -eq 0 ]; then got_accept=1; else got_refusal=1; fi
-              unset RAILWAY_TOKEN
-              sleep 6
-            done
-            if [ "$got_refusal" -eq 1 ] && [ "$got_accept" -eq 1 ]; then
-              echo "=== hold both outcomes: stopping early ==="
-              break
+          for f in /tmp/S*.txt /tmp/C*.txt; do
+            [ -f "$f" ] || continue
+            if grep -q 'error decoding response body' "$f"; then
+              echo "=== $(basename "$f" .txt) refused - last 15 lines ==="
+              tail -15 "$f" | redact
             fi
-            sleep 6
           done
-          echo "=== outcome table (pair, environment, clock, exit) ==="
-          column -t /tmp/table.tsv
