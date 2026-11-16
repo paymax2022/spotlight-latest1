@@ -21,6 +21,11 @@ name: DIAG - staging legs with the retry fix
 
 on:
   workflow_dispatch:
+  # workflow_dispatch alone never registers a file that is not on the default
+  # branch, so the push trigger on this throwaway branch is what makes the
+  # dispatch button exist. The branch is deleted with the fix's merge.
+  push:
+    branches: [diag/railway-up-probe]
 
 permissions:
   contents: read
