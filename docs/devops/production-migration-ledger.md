@@ -14,6 +14,25 @@ command that measured it, and what each later task found when it re-measured.
 > the command that re-reads it and the task that owns that re-read. Nothing in
 > this file is a guess. A probe that returned nothing says so.
 
+**How the production schema gets written, as of PR B (`release.yml`).** The `db push`
+applies recorded below were produced by `db-migrate.yml` firing on a push to `main` (or by
+an operator dispatch). From `release.yml` onward, an automatic production apply is
+`release.yml`'s `migrate-production` job — which runs *before* `deploy-production` and only
+after `smoke-staging` has confirmed staging is serving the new commit. Both routes call the
+same `_reusable-db-apply.yml`, so there is one apply path per database and one Supabase CLI
+pin (`2.114.0`) writing it; `db-migrate.yml` survives as the operator tool for a dry run or a
+one-off apply. Two consequences that this ledger's earlier rows did not have to care about:
+
+- **A rollback applies nothing.** `release.yml` passes `skip_apply` when the dispatched ref
+  is not `main`'s tip, and a `db push` of an older `supabase/migrations/` tree against a
+  remote holding newer versions aborts anyway. So the row-count deltas recorded below no
+  longer move backwards when a release is rolled back — read "deployed commit" and "applied
+  migrations" as two separate facts from here on.
+- **`--include-all` is staging-only, by construction.** `db-migrate.yml`'s production caller
+  hardcodes it off; an unattended `--include-all` against production is how a superseded
+  migration gets applied out of order. It remains available to an operator dispatch on
+  staging.
+
 ---
 
 ## 1. The pin, and how it was chosen

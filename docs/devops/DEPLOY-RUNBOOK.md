@@ -28,6 +28,10 @@ make verify           # build + vet + tsc(web+admin) + contract-check
 Do not promote on red. (In the authoring sandbox only structural review was possible — no Go
 toolchain — so the first real green must come from the dev container/CI.)
 
+Since 2026-11-15 "do not promote on red" is enforced rather than advised: `release.yml`'s
+`gates` job waits for this commit's CI to settle and refuses to deploy on red **or on
+timeout** — a run that never finished is not a pass.
+
 ## 2. Migrate
 
 Additive-only, forward-only (CLAUDE.md). 226 migrations in `supabase/migrations/` including
@@ -38,8 +42,14 @@ make migrate-up       # apply pending migrations to $DATABASE_URL
 # (make verify already runs migrate-reset to prove clean-apply + idempotency in CI)
 ```
 
-There are **no un-authored modules** — every feature module has its tables. "Migrate the full
-suite" = run the above against each environment's database in order: dev → staging → prod.
+There are **no un-authored modules** — every feature module has its tables. Since
+2026-11-15 you do not run these by hand for a normal release: `release.yml` applies
+pending migrations to each environment **before** that environment's deploy —
+`migrate-staging` before `deploy-staging`, `migrate-production` before
+`deploy-production` — through `_reusable-db-apply.yml`. The manual path still exists
+as `db-migrate.yml`, dispatch-only, for a one-off apply or a dry run; it shares that
+same apply path and the same Supabase CLI pin, so there is exactly one way each
+database gets written.
 
 ## 3. Build once, promote the same artifact
 
@@ -49,7 +59,11 @@ make docker-build SHA=$(git rev-parse --short HEAD)   # backend image tagged by 
 ```
 
 Promote the SAME image/bundle through staging → prod (build-once). The pipeline skeleton is
-`.github/workflows/deploy.yml`.
+`.github/workflows/deploy.yml` — that is the GCP/Cloud Run lane and is separate from the
+Railway chain. The production hosts this repo actually serves come from `release.yml`, which
+uploads the working tree per service with `railway up` (see
+`docs/devops/deployment-matrix.md` for which host serves what). Pushing to `main` is the
+release: there is no branch to merge into and no confirmation to type.
 
 ## 4. Configure each surface for the environment
 
@@ -119,9 +133,24 @@ console → ship the build. Shipping first leaves the newly registered surfaces 
 
 ## 6. Rollback
 
-Flags are the fast lever: turn a misbehaving module's `FEATURE_*` OFF (no redeploy needed for
-gating). For code: redeploy the previous build-once image. Migrations are additive/forward-only,
-so DB rollback is by compensating migration, never destructive `DROP`.
+**The brake is a variable, not a person.** Set `RAILWAY_DEPLOY_ENABLED` to anything other
+than `true` and `release.yml` stops at its first job — use that first when a bad commit is
+already on `main` and you want to stop the next push from releasing too.
+
+**Roll the code back** with a `workflow_dispatch` on `release.yml` carrying
+`ref=<prior main SHA>`. It re-runs the same chain against that commit. If that SHA is old
+enough that its check-runs are past retention, add `skip_gates=true` — that is the only way
+past the CI gate, so it is a deliberate, logged exception, not a convenience.
+
+**A rollback does not apply migrations.** An older `supabase/migrations/` tree against a
+remote that already holds newer versions makes `supabase db push` abort with "remote
+migration versions not found in local migrations directory", so the chain skips the apply
+instead of corrupting the schema. That is why migrations are additive-only: the deployed
+code goes back, the schema does not.
+
+Flags are still the fast lever: turn a misbehaving module's `FEATURE_*` OFF (no redeploy
+needed for gating). Migrations are additive/forward-only, so DB rollback is by compensating
+migration, never destructive `DROP`.
 
 ## Module enablement cheat-sheet (flag → surfaces)
 
