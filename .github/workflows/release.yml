@@ -113,6 +113,14 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "at_main_tip=$AT_TIP" >> "$GITHUB_OUTPUT"
 
+      # The budget is 75, not the 40 this plan first specified. The gate waits on the
+      # integration-verify RUN for this SHA, and measured over 1311 completed success
+      # runs of that workflow it takes a median 24 min on a push and up to 46 (52 across
+      # all events). 29 of those 309 push runs exceeded 40 min — so a 40-min budget would
+      # have timed out roughly one main push in eleven, and a timeout is a FAILURE, so
+      # that release would ship nothing. The number costs wall-clock only (concurrency
+      # queues the next release behind it either way); it buys the difference between a
+      # slow release and a false halt. Nothing observed took more than 52.
       - name: Wait for CI
         id: gate
         env:
@@ -123,7 +131,7 @@ jobs:
             --event "${{ github.event_name }}" \
             ${{ github.event_name == 'workflow_dispatch' && inputs.skip_gates == true && '--skip-gates' || '' }} \
             --repo "${{ github.repository }}" \
-            --budget-minutes 40
+            --budget-minutes 75
 
       # Captured HERE, before any deploy job runs, for two reasons:
       #   - a matrix job's outputs are unreliable (they come from whichever leg

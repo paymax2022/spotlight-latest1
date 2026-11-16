@@ -233,7 +233,8 @@ def main(argv=None):
     ap.add_argument("--event", required=True, choices=["push", "workflow_dispatch"])
     ap.add_argument("--skip-gates", action="store_true",
                     help="rollback only: assert CI was green when this SHA was main")
-    ap.add_argument("--budget-minutes", type=int, default=40)
+    # Matches release.yml's call, so a local run and the real gate cannot diverge.
+    ap.add_argument("--budget-minutes", type=int, default=75)
     ap.add_argument("--absence-budget-minutes", type=int, default=5)
     ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     args = ap.parse_args(argv)
