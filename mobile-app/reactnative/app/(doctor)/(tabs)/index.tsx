@@ -18,7 +18,7 @@ import { formatKobo } from '@/api/doctor.api';
 import { useDoctorProfile, useAppointments, useEarnings, useNotifications, useSettings, useDashboard, useAnnouncement, useSetPresence, useDismissAnnouncement } from '@/features/doctor/hooks';
 import { StatCard, AppointmentRow, StateView, AlertCard, AnnouncementBanner, SectionCard } from '@/features/doctor/components';
 import { DoctorAvatar } from '@/features/telemedicine/components';
-import { mapHeaderAvatar } from '@/features/doctor/mapping';
+import { isTodaySlot, mapHeaderAvatar } from '@/features/doctor/mapping';
 import { DASHBOARD_ALERT_SEVERITY_RANK, PRESENCE_LABELS } from '@/features/doctor/constants';
 import type { DashboardAlert, DashboardAlertKind, DashboardAlertSeverity } from '@/types/doctor.batch1';
 
@@ -68,7 +68,12 @@ export default function DoctorDashboardScreen() {
   const dismissAnnouncement = useDismissAnnouncement();
 
   const unread = notifications.filter((n) => !n.read).length;
-  const todays = appointments.filter((a) => ACTIVE_STATUSES.includes(a.status));
+  // Status alone put a booking three days out under "Today's queue". The day
+  // comes from the server's `todayDate` — already the doctor's own zone, which
+  // a device-time `new Date()` comparison would not be.
+  const todays = appointments.filter(
+    (a) => ACTIVE_STATUSES.includes(a.status) && isTodaySlot(a.slotDate, dashboard?.todayDate),
+  );
   // doctor_profiles.is_online is the real presence store: PUT /presence writes
   // it and GET /profile reads it back. `showOnlineStatus` is a *privacy* flag
   // (whether patients see the dot), so reading the switch off it left the

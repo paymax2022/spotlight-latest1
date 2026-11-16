@@ -20,9 +20,9 @@ export interface AnnouncementWire {
  * The latest platform announcement, or null when there is none.
  *
  * null, never undefined, is the contract: react-query rejects `undefined` query
- * data outright, and the backend answers `{"announcement": null}` for every
- * doctor because no announcement table is wired yet (service_tail2.go
- * GetLatestAnnouncement is a derived empty projection).
+ * data outright, and the backend answers `{"announcement": null}` for a doctor
+ * with no unread notice (service_tail2.go GetLatestAnnouncement projects the
+ * newest unread doctor_notifications row of type 'system').
  */
 export function mapAnnouncementWire(wire: AnnouncementWire): PlatformAnnouncement | null {
   return wire.announcement ?? null;
@@ -220,4 +220,53 @@ export function mapRequestWire(wire: AppointmentRequestWire): AppointmentRequest
     proposedSlotDate: str(wire.proposedSlotDate) || undefined,
     proposedSlotTime: str(wire.proposedSlotTime) || undefined,
   };
+}
+
+// ── The dashboard tiles ──────────────────────────────────────────────────────
+// GET /dashboard counts these itself (internal/doctor DashboardDayCounts and
+// GetReputation), in the DOCTOR'S timezone, so the client's job is to pass them
+// through rather than re-derive them from whatever the device clock says.
+
+/** The four dashboard fields Go answers beside `appointmentCounts`. */
+export interface DashboardTilesWire {
+  todaysAppointments?:   number | null;
+  upcomingAppointments?: number | null;
+  satisfactionPct?:      number | null;
+  todayDate?:            string | null;
+}
+
+export interface DashboardTiles {
+  todaysAppointments:   number;
+  upcomingAppointments: number;
+  satisfactionPct:      number;
+  todayDate:            string | undefined;
+}
+
+/**
+ * The tile numbers, with an absent field meaning zero consults.
+ *
+ * `num` is what keeps a JSON `null` out of `String(…)`, which would otherwise
+ * render the word "null" in the tile.
+ */
+export function dashboardTilesFromWire(wire: DashboardTilesWire): DashboardTiles {
+  return {
+    todaysAppointments:   num(wire.todaysAppointments),
+    upcomingAppointments: num(wire.upcomingAppointments),
+    satisfactionPct:      num(wire.satisfactionPct),
+    todayDate:            str(wire.todayDate) || undefined,
+  };
+}
+
+/**
+ * Whether a row belongs to the day the server counted, for "Today's queue".
+ *
+ * The comparison is on `slotDate`, which Go already formatted in the doctor's
+ * zone — parsing it into a device Date is what made a travelling doctor's list
+ * name the wrong day, and it is why there is no `new Date` here. With no
+ * server-named day (an older wire, or demo mode) the section stays
+ * status-filtered rather than going empty.
+ */
+export function isTodaySlot(slotDate?: string | null, todayDate?: string | null): boolean {
+  if (!todayDate) return true;
+  return str(slotDate) === todayDate;
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // repository_ops.go — pgx data access for the Wave 4 (operational) endpoint groups:
@@ -415,6 +416,118 @@ func (r *Repository) SetTimezone(ctx context.Context, userID, tz string) (*Profi
 		return nil, ErrNotFound
 	}
 	return r.GetProfile(ctx, userID)
+}
+
+// GetTimezone answers the zone PUT /schedule/timezone writes. A doctor with no
+// profile row, or an empty column, has never picked one: answer the default the
+// rest of the module already assumes rather than an empty string the schedule
+// screen refuses to save.
+func (r *Repository) GetTimezone(ctx context.Context, userID string) (string, error) {
+	var tz *string
+	err := r.db.QueryRow(ctx, `SELECT timezone FROM doctor_profiles WHERE user_id = $1`, userID).Scan(&tz)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return "Africa/Lagos", nil
+	case err != nil:
+		return "", err
+	}
+	if tz == nil || *tz == "" {
+		return "Africa/Lagos", nil
+	}
+	return *tz, nil
+}
+
+// ZoneApplies evaluates the zone exactly as the date expressions that read this
+// column do (now() AT TIME ZONE $1) — including fixed offsets and abbreviations,
+// which are legal here but absent from pg_timezone_names. Postgres answers 22023
+// for a zone it cannot apply, which is the caller's mistake; any other failure is
+// ours and must not be reported to the doctor as a bad zone.
+func (r *Repository) ZoneApplies(ctx context.Context, zone string) (bool, error) {
+	var at time.Time
+	err := r.db.QueryRow(ctx, `SELECT now() AT TIME ZONE $1::text`, zone).Scan(&at)
+	if err == nil {
+		return true, nil
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "22023" {
+		return false, nil
+	}
+	return false, err
+}
+
+// EffectiveTimezone is the single zone every date expression in this module
+// evaluates: the column the schedule screen writes (doctor_profiles.timezone,
+// gated by SetTimezone), or the module default when the doctor never picked one.
+//
+// A value Postgres cannot apply — a row that predates that gate — degrades to the
+// default instead of propagating, because it is evaluated inside the doctor's own
+// appointment list and the dashboard: a 22023 there is an unreadable portal, not a
+// bad zone the caller can still fix. Any other failure is ours and does propagate.
+func (r *Repository) EffectiveTimezone(ctx context.Context, userID string) (string, error) {
+	tz, err := r.GetTimezone(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	applies, err := r.ZoneApplies(ctx, tz)
+	if err != nil {
+		return "", err
+	}
+	if !applies {
+		return "Africa/Lagos", nil
+	}
+	return tz, nil
+}
+
+// DashboardDays is the date half of the landing projection: how many consults fall
+// on the doctor's own today, how many are still ahead, and the local date the
+// first number was counted against (the screens filter "Today's queue" by it, so
+// the list and the tile cannot drift to different days).
+type DashboardDays struct {
+	Today    int64  `json:"today"`
+	Upcoming int64  `json:"upcoming"`
+	Date     string `json:"date"`
+}
+
+// DashboardDayCounts counts the doctor's live bookings by day. `now` is the
+// caller's clock, not the database's: "today" is a boundary that has to be testable
+// without racing midnight. Cancelled and completed bookings are not consults.
+func (r *Repository) DashboardDayCounts(ctx context.Context, userID, zone string, now time.Time) (DashboardDays, error) {
+	const q = `
+		SELECT
+			COUNT(*) FILTER (
+			    WHERE to_char(a.scheduled_at AT TIME ZONE $2, 'YYYY-MM-DD')
+			          = to_char($3::timestamptz AT TIME ZONE $2, 'YYYY-MM-DD'))::bigint,
+			COUNT(*) FILTER (WHERE a.scheduled_at >= $3)::bigint,
+			to_char($3::timestamptz AT TIME ZONE $2, 'YYYY-MM-DD')
+		FROM appointments a
+		JOIN doctors d ON d.id = a.doctor_id
+		WHERE d.user_id = $1
+		  AND a.status NOT IN ('cancelled','completed')`
+	var out DashboardDays
+	if err := r.db.QueryRow(ctx, q, userID, zone, now).Scan(&out.Today, &out.Upcoming, &out.Date); err != nil {
+		return DashboardDays{}, err
+	}
+	return out, nil
+}
+
+// AppointmentReminderSettings projects the one reminder row the reminders screen
+// edits (reminder_type = 'appointment'). No row means the doctor never saved any:
+// answer the screen's defaults, with a non-nil offsets list the screen can filter.
+func (r *Repository) AppointmentReminderSettings(ctx context.Context, userID string) (ReminderSettings, error) {
+	const q = `
+		SELECT settings, enabled FROM doctor_reminders
+		WHERE user_id = $1 AND reminder_type = 'appointment'
+		ORDER BY updated_at DESC LIMIT 1`
+	var settings []byte
+	var enabled bool
+	err := r.db.QueryRow(ctx, q, userID).Scan(&settings, &enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DefaultReminderSettings(), nil
+	}
+	if err != nil {
+		return ReminderSettings{}, err
+	}
+	return decodeReminderSettings(settings, enabled), nil
 }
 
 func (r *Repository) ListConsultQueue(ctx context.Context, userID string) ([]ConsultQueueEntry, error) {

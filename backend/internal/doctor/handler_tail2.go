@@ -188,7 +188,7 @@ func (h *Handler) GetDashboard(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.GetDashboard(c.Request.Context(), uid)
+	res, err := h.svc.GetDashboard(c.Request.Context(), uid, time.Now().UTC())
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -485,6 +485,12 @@ type DashboardSummary struct {
 	UnreadNotifications int64            `json:"unreadNotifications"`
 	WalletBalanceKobo   int64            `json:"walletBalanceKobo"`
 	Currency            string           `json:"currency"`
+	// The date tiles the landing screen renders beside the wallet balance. They
+	// were absent until now, which is why the client could only answer 0.
+	TodaysAppointments   int64  `json:"todaysAppointments"`
+	UpcomingAppointments int64  `json:"upcomingAppointments"`
+	TodayDate            string `json:"todayDate"`
+	SatisfactionPct      int    `json:"satisfactionPct"`
 }
 
 // ScheduleSettings is the composite projection for GET /schedule — it summarises
@@ -502,8 +508,32 @@ type ScheduleSettings struct {
 
 	BlockedDates   []BlockedDate   `json:"blockedDates"`
 	RecurringRules []RecurringRule `json:"recurringRules"`
-	Reminders      []Reminder      `json:"reminders"`
-	Vacation       *Vacation       `json:"vacation,omitempty"`
+	// Reminders is the object reminders.tsx edits, not the row list
+	// GET /schedule/reminders still answers. The row behind it is
+	// doctor_reminders where reminder_type = 'appointment'.
+	Reminders ReminderSettings `json:"reminders"`
+	Vacation  *Vacation        `json:"vacation,omitempty"`
+	// Timezone is the doctor's stored zone (doctor_profiles.timezone), the column
+	// PUT /schedule/timezone writes.
+	Timezone string `json:"timezone"`
+}
+
+// SaveReminderSettingsResult is the reminders screen's save echo.
+type SaveReminderSettingsResult struct {
+	Reminders ReminderSettings `json:"reminders"`
+}
+
+// PlatformAnnouncement is the dashboard banner projection: one unread
+// doctor_notifications row of type 'system', presented the way the banner renders it.
+type PlatformAnnouncement struct {
+	ID          string  `json:"id"`
+	Tone        string  `json:"tone"`
+	Title       string  `json:"title"`
+	Body        string  `json:"body"`
+	PublishedAt string  `json:"publishedAt"`
+	Dismissible bool    `json:"dismissible"`
+	CTALabel    *string `json:"ctaLabel,omitempty"`
+	CTARoute    *string `json:"ctaRoute,omitempty"`
 }
 
 // AccountStatus is the derived account-state projection for GET /account/status.

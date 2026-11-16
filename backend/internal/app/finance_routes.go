@@ -86,6 +86,7 @@ import (
 	"spotlight/backend/internal/restaurant/taxonomy"
 	"spotlight/backend/internal/services"
 	staysreservation "spotlight/backend/internal/stays/reservation"
+	telemedannouncements "spotlight/backend/internal/telemedadmin/announcements"
 	telemedclaims "spotlight/backend/internal/telemedadmin/claims"
 	telemedcompliance "spotlight/backend/internal/telemedadmin/compliance"
 	telemedfinance "spotlight/backend/internal/telemedadmin/finance"
@@ -2328,8 +2329,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		teleAdmin.POST("/appointments/:id/reassign", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminReassignAppointment)
 		teleAdmin.POST("/doctors/:userId/verify", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminVerifyDoctor)
 		// Per-area admin consoles (onboarding, reviews, prescriptions, finance, claims,
-		// support, compliance). Each package mounts its own /<area>/... routes; reads need
-		// telemedicine.admin.view, mutations telemedicine.admin.manage.
+		// support, compliance, announcements). Each package mounts its own
+		// /<area>/... routes; reads need telemedicine.admin.view, mutations
+		// telemedicine.admin.manage.
 		teleView := middleware.RequirePermission(rbac, "telemedicine.admin.view")
 		teleManage := middleware.RequirePermission(rbac, "telemedicine.admin.manage")
 		telemedonboarding.Register(teleAdmin, pool, teleView, teleManage)
@@ -2339,6 +2341,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		telemedclaims.Register(teleAdmin, pool, teleView, teleManage)
 		telemedsupport.Register(teleAdmin, pool, teleView, teleManage)
 		telemedcompliance.Register(teleAdmin, pool, teleView, teleManage)
+		telemedannouncements.Register(teleAdmin, pool, teleView, teleManage)
 	}
 
 	if cfg.FeaturePharmacyEnabled {
