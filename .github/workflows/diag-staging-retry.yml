@@ -1,29 +1,33 @@
 name: DIAG - staging legs with the retry fix
 
-# Merge-free proof for PR #1044. The stub test in that PR
-# (scripts/ci/test-railway-deploy-retry.sh) proves the wrapper retries when
-# `railway up` exits non-zero; it cannot prove the real fault is survivable.
-# Run 43905969462 is the counter-example this job exists to retire: at
-# 16:23:32/33/38Z its three staging legs each died ~0.5 s after printing
-# UPLOAD_PATH with `expected value at line 1 column 1`, while the SAME run's
-# development legs were uploading successfully in the same minute with the same
-# pinned CLI and the same project. Single-shot `railway up` therefore halted a
-# release on a request-level blip.
+# Verdict of the run this file replaced (43909191817, 16:35:47-16:38:15Z): the
+# #1044 retry fired exactly as designed - three legs, four attempts each, 12
+# attempts spread over 150 s - and ALL TWELVE were refused. So "a short blip the
+# chain rides out" is falsified, and #1044 as written is not sufficient to make
+# a push reach production. What is left is to find out what the refusal IS.
 #
-# This job runs release.yml's three staging legs verbatim - same matrix shapes,
-# same CLI pin, same environment, same RAILWAY_HTTP_TIMEOUT - but from PR
-# #1044's tree, where the upload call is wrapped in with-retry.sh. A green leg
-# means the chain would have rode the blip out.
+# Two facts narrow it hard:
+#   - 16:23:25Z: development's three legs called `railway up` within 1.7 s of
+#     each other and all three got `Indexing...` immediately (run 43905969462).
+#     Seven seconds later staging's three legs, same CLI, same project, equally
+#     concurrent, were all refused. So concurrency is exonerated and the
+#     discriminator is the ENVIRONMENT.
+#   - Measured through `railway api`: all three STAGING instances carry
+#     `source.repo = paymax2022/spotlight-latest1` (plus rootDirectory on the two
+#     frontends); every development instance has `source.repo = null`; production
+#     has `source = null` outright. Uploads are reliable where there is no
+#     connected source and flaky where there is one.
 #
-# staging/development ONLY. This workflow never reads a production secret and
-# never passes --environment production; it is deleted with its branch once
-# #1044 lands.
+# This job interleaves the identical upload call between development and staging,
+# one pair every ~12 s, with `--verbose`, so time is held constant across the two
+# environments and a refusal is captured with whatever the CLI reveals about it.
+# It stops as soon as it holds one refusal and one acceptance side by side.
+#
+# Never prints a token: both secrets are masked for the job and every line is
+# passed through a redactor before it reaches the log.
 
 on:
   workflow_dispatch:
-  # workflow_dispatch alone never registers a file that is not on the default
-  # branch, so the push trigger on this throwaway branch is what makes the
-  # dispatch button exist. The branch is deleted with the fix's merge.
   push:
     branches: [diag/railway-up-probe]
 
@@ -35,85 +39,75 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # railway-deploy.sh hard-requires RAILWAY_PROJECT (`: "${RAILWAY_PROJECT:?}"`),
-  # which release.yml sets workflow-wide. Naming this PROJECT instead is the exact
-  # instrumentation mistake that made an earlier probe die before `railway up`.
   RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
-  # release.yml's workflow-wide value. The CLI's 90 s default truncates the
-  # ~110 MB frontend-web upload, so leaving it out would test the wrong thing.
   RAILWAY_HTTP_TIMEOUT: '600'
-  # The tree under test: PR #1044's scripts/ci/railway-deploy.sh, not main's.
-  FIX_REF: fix/railway-up-transient-retry
 
 jobs:
-  leg:
-    name: staging ${{ matrix.service }} (with retry)
+  probe:
+    name: interleaved dev/staging upload probe
     runs-on: ubuntu-latest
-    environment: staging
-    strategy:
-      fail-fast: false
-      matrix:
-        # Copied from release.yml's deploy-staging matrix.
-        include:
-          - service: backend
-            upload_path: backend
-            root_flag: --path-as-root
-            build_dir: backend
-          - service: frontend-web
-            upload_path: ''
-            root_flag: ''
-            build_dir: ''
-          - service: frontend-admin
-            upload_path: ''
-            root_flag: ''
-            build_dir: ''
     steps:
-      - name: Resolve the staging token without printing it
+      - name: Mask both tokens, keep only their lengths
         env:
           TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          TOK_DEVELOPMENT: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
         run: |
           set -euo pipefail
-          if [ -z "$TOK_STAGING" ]; then echo "::error::RAILWAY_TOKEN_STAGING is empty"; exit 1; fi
-          echo "::add-mask::$TOK_STAGING"
-          echo "staging token length (never value): ${#TOK_STAGING}"
+          for pair in "staging:$TOK_STAGING" "development:$TOK_DEVELOPMENT"; do
+            n="${pair%%:*}"; v="${pair#*:}"
+            if [ -z "$v" ]; then echo "::error::RAILWAY_TOKEN_${n^^} is empty"; exit 1; fi
+            echo "::add-mask::$v"
+            printf '%s' "$v" > "/tmp/tok_$n"
+            chmod 600 "/tmp/tok_$n"
+            echo "$n token length (never value): ${#v}"
+          done
 
-      - name: Checkout the tree that carries the fix
+      - name: Checkout a real backend tree
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.FIX_REF }}
           fetch-depth: 1
 
-      - name: Show the call site actually under test
-        run: |
-          set -euo pipefail
-          echo "head: $(git rev-parse HEAD)"
-          echo "--- with-retry wrapper present at the railway up call site: ---"
-          grep -n -B2 -A8 'with-retry.sh" railway up' scripts/ci/railway-deploy.sh
-
-      - name: Install the same pinned Railway CLI as the release chain
+      - name: Install the release chain's pinned CLI
         run: |
           set -euo pipefail
           npm install --global @railway/cli@5.40.1
           railway --version
 
-      - name: Deploy ${{ matrix.service }} (staging, real script, retry enabled)
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
-          SERVICE: ${{ matrix.service }}
-          RAILWAY_ENV: staging
-          UPLOAD_PATH: ${{ matrix.upload_path }}
-          ROOT_FLAG: ${{ matrix.root_flag }}
-          BUILD_DIR: ${{ matrix.build_dir }}
+      - name: Interleave the same upload across both environments
         run: |
-          set -euo pipefail
-          # SHA doubles as the deployment --message that the script's poll matches
-          # on, so it must name the tree actually uploaded (this checkout), not
-          # the diag branch this workflow file lives on.
-          export SHA="$(git rev-parse HEAD)"
-          # Keep the upload attempt boundaries visible in the job log; the
-          # wrapper's own ::warning:: lines are what prove a retry fired.
-          export RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-4}"
-          export RETRY_BASE_DELAY_S="${RETRY_BASE_DELAY_S:-15}"
-          bash scripts/ci/railway-deploy.sh 2>&1 | tee /tmp/leg.log
-          echo "--- retry evidence ---"
-          grep -c 'with-retry' /tmp/leg.log || echo "0 wrapper warnings (first attempt succeeded)"
+          set -uo pipefail
+          SHORT="$(git rev-parse --short HEAD)"
+          redact() {
+            sed -E 's#eyJ[A-Za-z0-9._-]{10,}#<jwt-redacted>#g;
+                    s#(rlwy_[A-Za-z0-9_-]{4})[A-Za-z0-9_-]+#\1<redacted>#g;
+                    s#([Aa]uthorization[^:]*:).*#\1 <header-redacted>#g'
+          }
+          got_refusal=0; got_accept=0
+          : > /tmp/table.tsv
+          for i in 1 2 3 4 5 6; do
+            for n in development staging; do
+              start=$(date +%H:%M:%S)
+              export RAILWAY_TOKEN="$(cat "/tmp/tok_$n")"
+              # Written to a file, not a command substitution: `out="$(cmd | head)"`
+              # reports head's status, which would record every refusal as exit 0.
+              railway up backend --path-as-root --no-gitignore \
+                --service backend --environment "$n" --project "$RAILWAY_PROJECT" \
+                --detach --verbose \
+                --message "vp-$i-$n-$SHORT" > /tmp/raw.txt 2>&1
+              rc=$?
+              out="$(redact < /tmp/raw.txt | head -c 1200)"
+              echo "=== pair $i / $n -> exit=$rc at $start ==="
+              printf '%s\n' "$out" | sed 's/^/    /'
+              printf '%s\t%s\t%s\t%s\n' "$i" "$n" "$start" "$rc" >> /tmp/table.tsv
+              if [ "$rc" -eq 0 ]; then got_accept=1; else got_refusal=1; fi
+              unset RAILWAY_TOKEN
+              sleep 6
+            done
+            if [ "$got_refusal" -eq 1 ] && [ "$got_accept" -eq 1 ]; then
+              echo "=== hold both outcomes: stopping early ==="
+              break
+            fi
+            sleep 6
+          done
+          echo "=== outcome table (pair, environment, clock, exit) ==="
+          column -t /tmp/table.tsv
