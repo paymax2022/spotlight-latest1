@@ -1115,6 +1115,15 @@ Expected in the ledger: one paragraph per name with the reason, which plane read
 > so the first `main` deploy replaces them with `main`'s version of the same area;
 > the matrix's `backend` row owns that comparison and its re-read requirement
 > (`/api/v1/public/build` at execution time, never a figure quoted from a doc).
+> **Re-read 2026-11-16, and the sentence above is already the stale value:** prod
+> reports `5ab7c9cc0bf3d2b42aa43215fe5df9630dfbc421` (`started_at 2026-11-15T09:00:26Z`),
+> which is **8** ahead / **756** behind `origin/main` and still not an ancestor of it, so
+> the promote-only set grew by one and prod's Go plane has been moved twice by hand since
+> this task was written. That read also exposed a second, larger fact this task never
+> stated: the tree prod's binary was built from carries **643** of `main`'s 756
+> `supabase/migrations/*.sql`, while prod's database holds all **756** — so prod's schema is
+> 113 migrations ahead of prod's code, today's own apply included, and every whole-remote
+> `db push` widens that gap while Task 11 stays open. Ledger `## Stage 3`, §6.7.
 
 
 Production's API is 710 commits / 239 backend commits behind `main` and has not been redeployed since 2026-10-17; staging is 224 behind. Both must land on the same SHA or the two planes diverge again.

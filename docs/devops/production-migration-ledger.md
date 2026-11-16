@@ -3569,18 +3569,24 @@ inferred. Re-read 2026-11-16 while checking whether the auto-release chain had q
 |---|---|
 | `curl https://www.spotlightng.com/api/v1/public/build` | `commit 5ab7c9cc0bf3d2b42aa43215fe5df9630dfbc421`, `source: ldflags`, `started_at 2026-11-15T09:00:26Z` — that is `fix(health): port the telemedicine intake fixes onto prod (#1025)`, the tip of the `prod` promotion lineage |
 | `git merge-base --is-ancestor 5ab7c9cc0 origin/main` | **not an ancestor**; `git rev-list --count origin/main..5ab7c9cc0` → **8** ahead, `…5ab7c9cc0..origin/main` → **756** behind |
-| migration files in *that commit's* tree | `git ls-tree 5ab7c9cc0 supabase/migrations/ \| wc -l` → **643**, newest `20271410000000_module_registry_add_ungated_surfaces.sql` |
-| migration files on `origin/main` | **756** |
+| migration files in *that commit's* tree | `git ls-tree -r --name-only 5ab7c9cc0 supabase/migrations/ \| grep -c '\.sql$'` → **643**, newest `20271410000000_module_registry_add_ungated_surfaces.sql` |
+| migration files on `origin/main` | the same command against `origin/main` → **756** |
 | set difference | `comm -13` → **113** files on main that are absent from prod's code tree; `comm -23` → **0**, so the prod tree is a strict subset — it is old, not divergent |
 | prod's applied history (§6.3) | **756** versions |
 
 So prod's database carries 756 applied versions while the Go binary serving prod was compiled from a tree
 holding 643 of them, and `20271500000000_academy_acting_level_assessment.sql` — the version applied to prod
-at 15:20:36Z today — is **not in that tree** (`git ls-tree 5ab7c9cc0 -- supabase/migrations/20271500000000_…`
-→ 0 rows). This is the safe direction of the two the additive-only rule permits: nothing deployed reads a
+at 15:20:36Z today — is **not in that tree** (`git ls-tree -r --name-only 5ab7c9cc0 supabase/migrations/ \| grep -c 20271500000000`
+→ 0). This is the safe direction of the two the additive-only rule permits: nothing deployed reads a
 table it does not know about, so the migration is dark rather than breaking. What it means operationally is
 that **113 migrations' worth of shipped capability is live in prod's schema and absent from prod's backend**,
 and each further whole-remote apply widens that gap while this plan's Task 11 stays open.
+
+**Two 756s appear above and neither was derived from the other.** `origin/main`'s migration-file count and
+the `git rev-list --count 5ab7c9cc0..origin/main` commit gap are independent measurements that happen to
+share a value; re-run both commands rather than assuming one implies the other. `git merge-base
+5ab7c9cc0 origin/main` → `94ad08c05` (PR #791, 2026-11-09), which is where the prod-serving lineage and
+`main` last touched.
 
 Two things this does **not** say. It is not evidence that the release chain is broken: every `main` push
 since `b5cc95c72`'s line has been docs-only, and §6.4's last bullet is why each one correctly skipped every
