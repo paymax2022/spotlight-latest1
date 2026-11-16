@@ -3367,7 +3367,12 @@ So the plan's conclusion survives, by a mechanism the plan did not have:
   as a no-op. A red `release gate` on a docs SHA is not evidence that docs deploy something; it is the
   classifier refusing to infer silence from an event that has no CI run by construction.
 
-### The whole matrix, on the probe the plan asked for (2026-11-16 23:41–23:47Z)
+### The whole matrix, on the probe the plan asked for (2026-11-16 22:41–22:47Z)
+
+The window is UTC and the box runs `+01:00`; the Step-4 page read carries the local mtime `23:46:05` at the
+85,541 B recorded below, and this branch's two commits are `23:51:49`/`23:52:22` local. An earlier draft of
+this heading stamped the local clock with a `Z`, which would have dated the matrix 40 minutes after the
+commits that describe it.
 
 Everything above this heading probed **eight hand-picked paths**. Task 14 Step 1 refuses that method — its
 first draft guessed URLs from flag names, reported every flag green, and proved nothing, because a guessed
