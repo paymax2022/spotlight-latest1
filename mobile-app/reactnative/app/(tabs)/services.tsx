@@ -169,7 +169,12 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Spacing.sm },
   title:  { ...Typography.headlineMd, color: Colors.onSurface },
 
-  chips:        { flexGrow: 0, marginBottom: Spacing.sm },
+  // flexShrink: 0 is load-bearing, not decoration. This row sits in a column whose
+  // total content height exceeds the viewport (the banded grid below it), so a shrinkable
+  // child gets squeezed: flexGrow alone left flex-shrink at react-native-web's default 1
+  // and the row collapsed from 30px to ~6px. A horizontal ScrollView is overflow-y:hidden,
+  // so the chips were sliced to their padding and every category label vanished.
+  chips:        { flexGrow: 0, flexShrink: 0, marginBottom: Spacing.sm },
   chipsContent: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.sm },
   chip: {
     paddingHorizontal: Spacing.md,
