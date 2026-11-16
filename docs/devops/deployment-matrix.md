@@ -394,10 +394,13 @@ rather than reasoned about:
   What the chain lacked was tolerance, not a credential. `railway up` was a
   single-shot call under `set -e`, so one upstream refusal reddens every staging leg —
   and because `smoke-staging` is the gate on production, it blocks production too.
-  **#1044 routes the upload through the repo's existing `scripts/ci/with-retry.sh`**
-  (4 attempts, 15 s base), the same answer already used for Docker Hub degradation,
-  with `scripts/ci/test-railway-deploy-retry.sh` pinning both the retry and its
-  bound against a stub CLI.
+  **#1044 routes the upload through the repo's existing `scripts/ci/with-retry.sh`**,
+  the same answer already used for Docker Hub degradation, with
+  `scripts/ci/test-railway-deploy-retry.sh` pinning both the retry and its bound
+  against a stub CLI. Its budget is not arbitrary: the deploy script now defaults the
+  upload call to **9 attempts from a 60 s base**, which is 900 s of guaranteed sleep
+  before it gives up, and the test recomputes that sum from the script's own defaults
+  and fails if it drops below the 883 s the fault was measured at.
 
   **Retry is necessary and, measured, NOT sufficient.** Run 43909191817 ran release.yml's
   three staging legs from #1044's tree with the wrapper live: every leg exhausted all
@@ -415,9 +418,10 @@ rather than reasoned about:
   continuously from 16:23:32 to at least 16:38:15 — a stretch of fifteen minutes — while
   the entire 16:45-17:03 sample accepted everything.** A four-attempt, 105-157 s budget is
   therefore known, from this incident's own data, to be smaller than the shortest window it
-  has to survive. Sizing `RETRY_ATTEMPTS` / `RETRY_BASE_DELAY_S` to clear ~20 minutes would
-  have ridden out every window observed so far, and that is still not a proof: the fault is
-  upstream, unbounded by anything in this repo, and the definitive fix is Railway's.
+  has to survive, and #1044 has been resized to 900 s of guaranteed backoff to clear it —
+  by 17 s. That margin is stated rather than smoothed over: it covers the one window this
+  incident measured, and a window two minutes longer still halts the chain. Nothing about
+  the fault is bounded by anything in this repo, and the definitive fix is Railway's.
   `max-parallel: 1` is dropped as a remedy — it was the mitigation the concurrency model
   implied, and the model failed its test — not because serializing legs is harmful, but
   because nothing measured says it would have helped.
