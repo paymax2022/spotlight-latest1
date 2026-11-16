@@ -373,7 +373,7 @@ rather than reasoned about:
   | `environment: staging` protection rules | none configured; a probe job declaring the same environment produced both outcomes |
   | connected git source | proposed mid-investigation and **not supported**: staging's three instances do carry `source.repo = paymax2022/spotlight-latest1` (measured with `railway api serviceInstance(...) { source { repo } }`) while development's return `null` and production's return no `source` at all — but staging then accepted six consecutive uploads at 16:45-16:47 with development in the same loop, so the source is not what refuses it |
   | request rate | staging accepted two uploads 3 s apart at 16:34:47 / :50 and refused the next one 62 s later, which no per-minute quota fits |
-  | **what is NOT exonerated — the number of uploads in flight at once** | Every refusal in this incident (15 of them: three at 16:23:32-:38 and twelve at 16:35:47-16:38:15) came from a job whose **three matrix legs fired within 5 s of each other**. Every acceptance (24, including `railway up --verbose` 12-for-12 in run 43910959092 at 16:45:29-16:47:40) came from calls made **one at a time**, or from the first three of a six-way pile-up. In run 43905969462 the chain had six legs uploading inside 12 s: development's three started at :25.2 / :25.6 / :26.9 and took the slots; staging's three arrived at :32 / :32 / :37 and were refused. One model — a cap of roughly three simultaneous upload-initiates per project, answered with a non-JSON body instead of a 429 — fits all 39 observations; "the environment" was a side effect of which legs won the race |
+  | in-flight concurrency (a pile-up of upload-initiates) | **tested and not supported.** Run 43913775480 made the identical staging `backend` call twelve times inside one job, so the fault window cannot differ between halves: six strictly one after another (17:01:06-:52, 3-4 s each) and six fired within 5 s of each other (17:03:02-:07, 4 s each). **All twelve were accepted.** A cap of ~3 would have refused three of the six. Pile-up shape only *looks* predictive, because every CI leg in this repo piles up by construction — three matrix legs launched together — so a time-boxed fault that hits CI will always arrive wrapped in concurrency |
 
   Timing is the whole story: 400 ms, 452 ms, 500 ms, 1151 ms, 2526 ms, 2554 ms, 3448 ms,
   3611 ms and 15738 ms for the same call shape across three hours — sub-second when the
@@ -407,12 +407,20 @@ rather than reasoned about:
   the whole budget. The window is also narrow in wall-clock terms, not just wide: staging
   `backend` accepted the identical upload at 16:34:50 and was refusing it 62 s later.
   So #1044 removes a single-shot halt; it does not, on its own, make `push → production`
-  dependable, and it must not be merged on the claim that it does. The last two rows above
-  name the surviving candidate — how many `railway up` calls are in flight at once — and
-  the test that follows from it is small and safe: run each deploy matrix one service at a
-  time (`max-parallel: 1`, costing the chain a few minutes) alongside the retry. Everything
-  else — token, CLI version, upload shape, tree size, protection rules, request rate,
-  connected source — is measured out.
+  dependable, and it must not be merged on the claim that it does. Every structural
+  candidate is now measured out — token, CLI version, upload shape, tree size, protection
+  rules, request rate, connected source, and as of run 43913775480 the arrival pattern of
+  the calls themselves. What is left is a fault on Railway's side with no predicate this
+  repo can observe and only one measured bound on its duration: **refusals ran
+  continuously from 16:23:32 to at least 16:38:15 — a stretch of fifteen minutes — while
+  the entire 16:45-17:03 sample accepted everything.** A four-attempt, 105-157 s budget is
+  therefore known, from this incident's own data, to be smaller than the shortest window it
+  has to survive. Sizing `RETRY_ATTEMPTS` / `RETRY_BASE_DELAY_S` to clear ~20 minutes would
+  have ridden out every window observed so far, and that is still not a proof: the fault is
+  upstream, unbounded by anything in this repo, and the definitive fix is Railway's.
+  `max-parallel: 1` is dropped as a remedy — it was the mitigation the concurrency model
+  implied, and the model failed its test — not because serializing legs is harmful, but
+  because nothing measured says it would have helped.
 
 The second live hazard found while chasing F2 is not a chain defect but produces the
 same red: a concurrent session kept hand-running staging `frontend-web` with the
@@ -452,23 +460,43 @@ and vice versa:
 
 This is why the retired `staging-Old` row below matters, and why a token that "works
 locally" proves nothing about CI unless it is the *same value* and the *same
-environment*.
+environment*. These three are the **2026-11-14** values, measured before today's
+re-mint; `…wtix` is still what `RAILWAY_TOKEN_DEVELOPMENT` holds, while staging and
+production have since moved to fresh tokens whose binding is proven in the table below.
 
-**Minting and listing tokens is dashboard-only.** With the CLI's own credential (an
-OAuth user session for `spec.ng@gmail.com`), both `projectTokenCreate` and
-`apiTokens` answer `Not Authorized` / `INTERNAL_SERVER_ERROR`, and `railway` has no
+**Minting and revoking tokens is dashboard-only; listing is not.** With the CLI's own
+credential (an OAuth user session for `spec.ng@gmail.com`), both `projectTokenCreate`
+and `apiTokens` answer `Not Authorized` / `INTERNAL_SERVER_ERROR`, and `railway` has no
 `token` subcommand — so nothing in this repo, and nothing an agent holding the CLI
-session, can rotate or enumerate these credentials. Creating a token requires a
-logged-in web session on the project's Tokens page. That is the sense in which F2 was
-an operator action. The replacement made at 15:08Z on 2026-11-16 did **not** mint new
-tokens: it installed the 2026-11-14 staging/production values, read out of
-`backend/.env` and validated against their own environments, into
-`RAILWAY_TOKEN_STAGING` and `RAILWAY_TOKEN_PRODUCTION`. Between the delete and the
-create (15:08:11 → 15:08:31Z) both secrets were briefly absent; no deploy ran in that
-window. **Re-minting did not fix F2** — the staging legs failed again at 16:12 with
-these values in place, which is itself part of the exoneration above. Minting fresh
-tokens remains worth doing on its own merits (see the plaintext note below), not as a
-fix for a fault that is not in the credential.
+session, can rotate these credentials. Creating or revoking one requires a logged-in
+web session on the project's Tokens page. That is the sense in which F2 was an operator
+action. Read-only enumeration *is* available to the same session through
+`projectTokens(projectId:, first:)` — which is how the inventory below was taken, and
+how the count of live credentials is auditable without a dashboard visit.
+
+**Correction, measured 2026-11-16 at 17:06Z:** an earlier draft of
+this section recorded the 15:08Z secret replacement as installing the *2026-11-14*
+values. It did not. `projectToken` was queried from CI with each of the three secrets
+as `RAILWAY_TOKEN`, and Railway answered directly — no upload, no deploy, no variable
+write, and `displayToken` deliberately left out of the document:
+
+| secret | token `name` | `projectId` | `environmentId` | `createdAt` |
+|---|---|---|---|---|
+| `RAILWAY_TOKEN_STAGING` | `staging` | `e7dca861-…` | `6b5f27a3-…` = **staging** | **2026-11-16 15:00:11Z** |
+| `RAILWAY_TOKEN_DEVELOPMENT` | `development` | `e7dca861-…` | `87489af5-…` = **development** | 2026-11-14 19:42:54Z |
+| `RAILWAY_TOKEN_PRODUCTION` | `production` | `e7dca861-…` | `f84c4558-…` = **production** | **2026-11-16 15:04:37Z** |
+
+So staging and production really were re-minted today and really do carry today's
+values, each pinned to the environment its variable is named after. Production's
+secret is now known-good *without* a production write — which is the most that could
+be proven short of the thing itself. **Re-minting still did not fix F2**: the staging
+legs failed again at 16:12 with these exact values in place, part of the exoneration
+above. Fresh tokens remain worth doing on their own merits (see the plaintext note
+below), not as a fix for a fault that is not in the credential. The 15:08Z secret
+replacement is still worth recording as an incident of its own: deleting and re-adding
+left both secrets absent for twenty seconds (15:08:11 → 15:08:31Z). No deploy ran in
+that window, so nothing failed for that reason — but a chain that had run then would
+have died on an empty token, not on F2.
 
 **Inventory** — `projectTokens(projectId: e7dca861-…, first: 50)`. `displayToken` is
 Railway's own masked preview (first 10 and last 4 characters), so these strings carry
@@ -479,13 +507,19 @@ no secret:
 | 2026-08-10 | `github-actions-development` | development | `0aba-****-9e10` | superseded 2026-11-14, still alive |
 | 2026-08-10 | `github-actions-production` | production | `0370-****-5c0c` | superseded 2026-11-14, still alive |
 | 2026-08-10 | `github-actions-staging` | **staging-Old** | `838e-****-7088` | bound to the environment retired 2026-11-16; can only ever fail |
-| 2026-11-14 | `development` | **staging** | `rlwy_proj_****xU87` | in `RAILWAY_TOKEN_STAGING` since 2026-11-16 15:08:31Z |
-| 2026-11-14 | `production` | production | `rlwy_proj_****keiY` | in `RAILWAY_TOKEN_PRODUCTION` since 2026-11-16 15:08:32Z |
 | 2026-11-14 | `development` | development | `rlwy_proj_****wtix` | in `RAILWAY_TOKEN_DEVELOPMENT` since 2026-11-14 |
+| **2026-11-16 15:00:11** | `staging` | staging | `rlwy_proj_****FCjl` | **in `RAILWAY_TOKEN_STAGING`** — today's re-mint |
+| **2026-11-16 15:04:37** | `production` | production | `rlwy_proj_****zr4I` | **in `RAILWAY_TOKEN_PRODUCTION`** — today's re-mint |
 
-Read `environmentId`, never `name`: the 2026-11-14 token that serves staging is
-*labeled* `development`. Revoking the three superseded 2026-08-10 tokens is a
-dashboard action and has **not** been done, so six project tokens are currently live.
+Two things changed with the re-mint. Both 2026-11-14 project tokens were revoked —
+including `…xU87`, confusingly *named* `development` while bound to the staging
+environment — so they no longer appear in this list, and their replacements carry
+names that agree with their `environmentId`. **The doctrine still holds: read `environmentId`,
+never `name`** — that mislabeled token is exactly the failure it guards against, and it
+sat in CI for two days doing its job correctly while its label said something else.
+Revoking the three superseded 2026-08-10 tokens remains a dashboard action and has
+**not** been done, so six project tokens are live: three in use and three dead weight,
+one of which can only ever fail because its environment no longer exists.
 
 **The plaintext values sit in `backend/.env`, and were never committed.** The
 2026-11-14 values were pasted there at `STAGING_RAILWAY_TOKEN`,
@@ -493,10 +527,16 @@ dashboard action and has **not** been done, so six project tokens are currently 
 are themselves mis-typed, and the development value has a doubled leading character
 (51 chars where the working format is 50), which is why that particular copy fails.
 `.gitignore:11` ignores `.env`, `git ls-files backend/.env` does not list it, and
-`git cat-file -e origin/main:backend/.env` fails, so the tokens are not in history —
-but they are live credentials in a plaintext file on a laptop, and minting fresh
-tokens in the dashboard remains the cleaner end state for that reason, not because CI
-needs new values.
+`git cat-file -e origin/main:backend/.env` fails, so the tokens are not in history.
+Today's re-mint shrinks the exposure but does not close it: both 2026-11-14 copies in
+that file (`…xU87` for staging, `…keiY` for production) have been **revoked** and no
+longer appear in the inventory above, so those two lines no longer buy an attacker
+anything. The development copy is different — the
+corruption is a single doubled leading character, which anyone holding the file can
+undo by hand, so `…wtix` must still be treated as disclosed. Revoking it and deleting
+all three lines from the file is the remaining work; CI needs no new value to do it,
+because revoking development's token and minting one replacement is one dashboard
+action plus one `gh secret put`.
 
 ## Probe contract
 
