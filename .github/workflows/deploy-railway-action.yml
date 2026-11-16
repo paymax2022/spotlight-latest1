@@ -9,12 +9,20 @@ name: deploy-railway-action
 # --environment, --message, or a source path. That shapes this workflow:
 #
 #   * Root upload. A `uses:` container action always runs with /github/workspace
-#     as the repo root. Six of the nine service instances have rootDirectory
+#     as the repo root. Seven of the nine service instances have rootDirectory
 #     unset (development: all three; production: all three; staging: backend),
 #     so a plain root upload would build the ROOT Dockerfile — the Go backend —
 #     into a frontend service. "Re-root the workspace" copies the selected
 #     service directory over the workspace root first, reproducing the
 #     --path-as-root behavior release.yml relies on for `backend`.
+#     CAVEAT (measured 2026-11-16, see docs/devops/deployment-matrix.md): re-rooting
+#     is correct for the seven rootDirectory-unset instances and WRONG for staging's
+#     two frontends, whose rootDirectory is already 'frontend-web'/'frontend-admin' —
+#     uploading a re-rooted folder there makes Railway look for `frontend-*/` inside an
+#     archive that already is it and indexing dies with "prefix not found". This lane
+#     re-roots unconditionally, so as written it cannot deploy a frontend to staging;
+#     it stays dark (RAILWAY_ACTION_DEPLOY_ENABLED unset) and its branch gate is
+#     frozen, so nothing exercises that today.
 #   * Environment targeting. The action cannot pass --environment. The Railway
 #     CLI inside it resolves the project and environment FROM THE PROJECT TOKEN
 #     (RAILWAY_TOKEN), so each environment keeps using its existing secret.

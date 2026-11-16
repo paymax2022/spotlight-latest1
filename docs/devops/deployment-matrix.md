@@ -285,6 +285,77 @@ until it is, treat the staging connections as armed-but-unfired rather than abse
 and treat a green `deploy-staging` as necessary evidence, not sufficient, for
 "staging is serving this commit" (the probe contract below is what closes that gap).
 
+## `rootDirectory` is per environment — measured 2026-11-16
+
+THE UPLOAD RULE in `scripts/ci/railway-deploy.sh` used to assert that "both frontends
+carry a Railway `rootDirectory` of their own folder", and `release.yml`'s three deploy
+matrices were written to match. That is true of **staging only**. Measured with
+`railway api` on
+`serviceInstance(serviceId:"…", environmentId:"…"){ rootDirectory }`:
+
+| service | development | staging | production |
+|---|---|---|---|
+| `frontend-web` | `None` | `'frontend-web'` | `None` |
+| `frontend-admin` | `None` | `'frontend-admin'` | `None` |
+| `backend` | `None` | `None` | `None` |
+
+`railway up` ships the archive it is pointed at, and Railway then resolves the
+service's `rootDirectory` **inside that archive**. The two upload shapes are therefore
+forced, not stylistic:
+
+- `rootDirectory` set → upload from the repo root, no positional path and no
+  `--path-as-root`. **staging**.
+- `rootDirectory: None` → the archive root must BE the app folder, i.e.
+  `railway up frontend-web --path-as-root`. **development and production**.
+
+Both failure modes have now been seen on real hosts, which is why this is recorded
+rather than reasoned about:
+
+- **repo root into development** — the deploy reported SUCCESS, and `smoke Development`
+  then failed with `/admin/login` answering 404: the service had built the monorepo
+  root, which serves neither app. Re-uploading the *same commit* as
+  `railway up frontend-admin --path-as-root` returned `http=200` on the same host with
+  fingerprint `c9bd85cf9936f65e`. A successful upload is not a correct upload.
+- **app folder into staging** — dies client-side during indexing with "prefix not
+  found", because Railway looks for `frontend-*/` inside an archive that already *is*
+  that folder. (`railway up .` with an explicit `.` fails the same way.)
+
+## Release chain, first full run 2026-11-16 — two defects and one operator exception
+
+`release.yml` (#1037) had never run end to end. Its first run on `ef97ec64b` produced:
+
+- **F1 — wrong upload shape for development and production** (the section above).
+  Fixed in `.github/workflows/release.yml` by giving `deploy-development` and
+  `deploy-production` the app-folder shape and leaving it out of `deploy-staging`,
+  whose rows are the only correct ones.
+- **F2 — every `deploy Staging` leg dies in under half a second** with
+  `Failed to fetch: error decoding response body`, before any upload begins, so
+  `migrate-production` and `deploy-production` are skipped and **the chain cannot
+  deliver production at all**. All three legs (backend, frontend-web, frontend-admin)
+  fail identically while the development legs of the same run succeed. The variable
+  was isolated by holding everything else constant: the *same* pinned CLI
+  (`@railway/cli@5.40.1`), the *same* command line, the *same* service/environment IDs,
+  run locally — staging credentials succeed, and a deliberately bogus token fails with
+  a clean `Unauthorized` rather than this decode error. So the failure is specific to
+  the `RAILWAY_TOKEN_STAGING` value GitHub Actions holds, not to the CLI pin or the
+  shape. The log shows that secret expanding to `***`, so it is set and non-empty —
+  read this as a **malformed** value (a stray newline or a truncated paste is the
+  likely shape of it) rather than a missing one. Run 43827942317, jobs 133185143290 /
+  133185143410 / 133185143550. **Re-minting that secret is an operator action, not a
+  repo change.** Until it is replaced, `deploy-staging` is the choke point of the whole
+  release chain, and `RAILWAY_TOKEN_PRODUCTION` has never been exercised by CI (that
+  leg was skipped) and should be re-minted in the same pass.
+
+Because F2 blocked `deploy-production`, production's two frontends were written by
+hand on 2026-11-16 from `ef97ec64b` (`origin/main`) —
+`frontend-admin` deployment `616bd93b`, `frontend-web` deployment `ea71b561`, each
+uploaded as `railway up <folder> --path-as-root --no-gitignore --message main-<sha>-prod-*`
+from a worktree whose tracked `frontend-admin/` and `frontend-web/` trees diff empty
+against that commit. This is an **exception**, not a new path: it is the same manual
+write that checklist item 2 exists to forbid, and it stops being necessary the moment
+the staging token works. Read the probe contract below before believing either
+deployment.
+
 ## Probe contract
 
 A green deploy job is not evidence. Every stage reads back what the environment is

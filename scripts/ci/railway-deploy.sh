@@ -24,28 +24,30 @@
 #                    110 MB frontend-web upload
 #
 # THE UPLOAD RULE (read before changing UPLOAD_PATH or ROOT_FLAG):
-#   backend            -> UPLOAD_PATH=backend        ROOT_FLAG=--path-as-root
-#                         Railway builds backend/Dockerfile from the directory
-#                         `railway up` uploads, so the upload root must BE backend/.
-#   frontend-web       -> UPLOAD_PATH=''             ROOT_FLAG=''
-#   frontend-admin     -> UPLOAD_PATH=''             ROOT_FLAG=''
-#                         Both frontends carry a Railway `rootDirectory` of their
-#                         own folder, so they must be uploaded from the REPO ROOT
-#                         with NO positional path at all:
-#                           - `railway up .` dies client-side with "prefix not
-#                             found" during indexing (a CLI bug with an explicit
-#                             `.` when rootDirectory is set);
-#                           - `frontend-web --path-as-root` makes Railway look for
-#                             `frontend-*/` inside an archive that already IS that
-#                             folder.
-#                         Only the staging matrix in the old ci.yml got this right
-#                         (ci.yml:622-637). ci.yml:563, ci.yml:790 and
-#                         development-deploy.yml:98 all hardcoded --path-as-root
-#                         for every service, which is why development's
-#                         frontend-web deployment failed on 2026-11-13. Those three
-#                         jobs and that file are now deleted — read their text at
-#                         6199a6b57. The citations above are deliberately
-#                         historical, not pointers into the current tree.
+#   The shape follows the service instance's Railway `rootDirectory`, which is NOT
+#   the same in every environment. Measured 2026-11-16 with `railway api`
+#   serviceInstance(serviceId, environmentId){ rootDirectory }:
+#       staging      frontend-web -> 'frontend-web'   frontend-admin -> 'frontend-admin'
+#       development  frontend-web -> None             frontend-admin -> None
+#       production   frontend-web -> None             frontend-admin -> None
+#       backend      None in all three
+#   Railway resolves that directory INSIDE the archive `railway up` ships, so:
+#     rootDirectory SET  -> UPLOAD_PATH=''  ROOT_FLAG=''    (archive = repo root)
+#     rootDirectory None -> UPLOAD_PATH=<folder>  ROOT_FLAG=--path-as-root
+#                           (archive root must BE the app folder; same as backend,
+#                           whose Dockerfile it has to find)
+#   Getting this backwards fails in two different, now-observed ways:
+#     - repo root where the instance has no rootDirectory builds the MONOREPO. The
+#       upload reports SUCCESS and the app then 404s everything: development's
+#       smoke failed with "/admin/login answered 404" on 2026-11-16, and the same
+#       commit re-uploaded with --path-as-root returned 200 on that same host.
+#     - app folder where the instance HAS a rootDirectory dies client-side during
+#       indexing with "prefix not found" (Railway looks for `frontend-*/` inside an
+#       archive that already is that folder). `railway up .` dies the same way when
+#       rootDirectory is set — a CLI bug with an explicit `.`.
+#   release.yml's three matrices carry the per-environment values; this script only
+#   receives them. The old ci.yml and development-deploy.yml jobs cited here are
+#   deleted — read their text at 6199a6b57.
 
 set -euo pipefail
 
