@@ -3287,8 +3287,16 @@ with all eight downstream jobs **skipped**, `migrate production database` and `d
 
 So the plan's conclusion survives, by a mechanism the plan did not have:
 
-- A **docs-only** push to `main` still releases nothing. `ci.yml:69-71` and `integration-verify.yml:15-17`
-  carry `paths-ignore: ['**.md','docs/**']` on push, so the SHA gets no CI run, and the gate classifies that
+- A **docs-only** push to `main` still releases nothing — **now measured, not inferred.** PR #1043 squash-merged
+  at 16:17:18Z as `f90b3ef3043d5620ea5d25109baa1a3fd649c996` (2 files, both under `docs/`), which produced push
+  run `43905831788`. Its `release gate` job concluded `success` and printed `### Release gate:
+  **noop_docs_only**` after ten polls of "no .github/workflows/ci.yml run for this SHA yet" (`+0s` … `+281s`,
+  the 5-minute `--absence-budget-minutes` default); all eight downstream jobs — `migrate staging database`,
+  `deploy Staging`, `smoke Staging`, `deploy Development`, `smoke Development`, `migrate production database`,
+  `deploy Production`, `smoke Production` — concluded **skipped**. The separate
+  `Deploy to Namecheap cPanel (SSH)` run for the same SHA, `43905831719`, was also `skipped`.
+  The mechanism is `ci.yml:69-71` and `integration-verify.yml:15-17`: both carry
+  `paths-ignore: ['**.md','docs/**']` on push, so the SHA gets no CI run at all, and the gate classifies that
   as `noop_docs_only` (`scripts/ci/release-gates.py:108-114`), which exits 0 (`:276`) while every deploy and
   migrate job tests `needs.gates.outputs.verdict == 'proceed'` (`release.yml:163`, `:301`, `:435`, `:453`).
   Task 14 Step 5's and Task 16 Step 2's reasoning was therefore right about the outcome and wrong about the
@@ -3299,7 +3307,8 @@ So the plan's conclusion survives, by a mechanism the plan did not have:
   commits that carries a single non-docs file rides straight to production, including its migration apply.
   The `#996`-drift decision (§16.2 item 14) is therefore no longer a question the plan can defer past the
   next code push, and each remaining push needs the operator's explicit word — this correction was delivered
-  as a PR rather than pushed for exactly that reason, even though it is docs-only and would have been inert.
+  as a PR rather than pushed for that reason, and #1043's merge then confirmed the prediction held: the
+  docs-only push it produced wrote nothing and deployed nothing.
 - The contrast case is the one to remember: `noop_docs_only` is valid **only** for a push
   (`release-gates.py:115-119`), which is why dispatching the same docs-only SHA read as `failed` rather than
   as a no-op. A red `release gate` on a docs SHA is not evidence that docs deploy something; it is the
