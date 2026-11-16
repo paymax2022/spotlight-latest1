@@ -114,13 +114,17 @@ jobs:
           echo "at_main_tip=$AT_TIP" >> "$GITHUB_OUTPUT"
 
       # The budget is 75, not the 40 this plan first specified. The gate waits on the
-      # integration-verify RUN for this SHA, and measured over 1311 completed success
-      # runs of that workflow it takes a median 24 min on a push and up to 46 (52 across
-      # all events). 29 of those 309 push runs exceeded 40 min — so a 40-min budget would
-      # have timed out roughly one main push in eleven, and a timeout is a FAILURE, so
-      # that release would ship nothing. The number costs wall-clock only (concurrency
-      # queues the next release behind it either way); it buys the difference between a
-      # slow release and a false halt. Nothing observed took more than 52.
+      # integration-verify RUN for this SHA, so the budget has to exceed how long a GREEN
+      # run of that workflow takes. Measured over the 309 integration-verify runs with
+      # event=push, branch=main and conclusion=success: p50 24.1 min, p90 40.6, worst
+      # 46.1 — and 31 of them, 1 in 10, ran past 40 min. A timeout is a FAILURE that
+      # deploys nothing, so 40 would have halted about one main push in ten and made it
+      # look like CI's own fault. The measurement trap: over ALL completed push runs
+      # (901, so failures and cancels included, and those settle fast) the median is only
+      # 8.7 min, which would have justified 40. Size it on the green runs, not the mix.
+      # 75 is 1.6x the worst green run ever observed here. On wall clock, queue included,
+      # 1 of those 309 waited past 75; the fail-closed timeout is the right answer for
+      # that tail — nothing ships, and the operator re-dispatches.
       - name: Wait for CI
         id: gate
         env:
