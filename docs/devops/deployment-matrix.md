@@ -328,23 +328,32 @@ rather than reasoned about:
   Fixed in `.github/workflows/release.yml` by giving `deploy-development` and
   `deploy-production` the app-folder shape and leaving it out of `deploy-staging`,
   whose rows are the only correct ones.
-- **F2 — every `deploy Staging` leg dies in under half a second** with
-  `Failed to fetch: error decoding response body`, before any upload begins, so
-  `migrate-production` and `deploy-production` are skipped and **the chain cannot
+- **F2 — every `deploy Staging` leg died in under half a second** with
+  `Failed to fetch: error decoding response body`, before any upload began, so
+  `migrate-production` and `deploy-production` were skipped and **the chain could not
   deliver production at all**. All three legs (backend, frontend-web, frontend-admin)
-  fail identically while the development legs of the same run succeed. The variable
-  was isolated by holding everything else constant: the *same* pinned CLI
-  (`@railway/cli@5.40.1`), the *same* command line, the *same* service/environment IDs,
-  run locally — staging credentials succeed, and a deliberately bogus token fails with
-  a clean `Unauthorized` rather than this decode error. So the failure is specific to
-  the `RAILWAY_TOKEN_STAGING` value GitHub Actions holds, not to the CLI pin or the
-  shape. The log shows that secret expanding to `***`, so it is set and non-empty —
-  read this as a **malformed** value (a stray newline or a truncated paste is the
-  likely shape of it) rather than a missing one. Run 43827942317, jobs 133185143290 /
-  133185143410 / 133185143550. **Re-minting that secret is an operator action, not a
-  repo change.** Until it is replaced, `deploy-staging` is the choke point of the whole
-  release chain, and `RAILWAY_TOKEN_PRODUCTION` has never been exercised by CI (that
-  leg was skipped) and should be re-minted in the same pass.
+  failed identically while the development legs of the same run succeeded, on the
+  *same* pinned CLI (`@railway/cli@5.40.1`), the *same* command line and the *same*
+  service/environment IDs. Run 43827942317, jobs 133185143290 / 133185143410 /
+  133185143550.
+  The draft of this section asserted the secret held "a stray newline or a truncated
+  paste". That was a guess, and reproducing each candidate corruption against the live
+  staging environment with a known-good token disproves it — none of these shapes
+  produces a decode error:
+
+  | defect introduced | CLI result |
+  |---|---|
+  | none (valid token, correct environment) | success |
+  | valid token, **wrong environment** | `Unauthorized. … valid and has access to the resource you're trying to use` |
+  | one extra leading character | `Unauthorized. …` (same message) |
+  | trailing newline | `Login state is corrupt. Please logout and login back in. Caused by: failed to parse header value` |
+  | leading space | success — the CLI trims it |
+
+  So what GitHub held was a credential the Railway API answered with a non-JSON body.
+  The exact shape of the old value is unknown and is not worth guessing at again; the
+  actionable content is the signature table above, and the fact that the secret has
+  been replaced with a token whose behaviour is measured — see
+  "Railway project tokens: scope, minting, inventory".
 
 Because F2 blocked `deploy-production`, production's two frontends were written by
 hand on 2026-11-16 from `ef97ec64b` (`origin/main`) —
@@ -355,6 +364,62 @@ against that commit. This is an **exception**, not a new path: it is the same ma
 write that checklist item 2 exists to forbid, and it stops being necessary the moment
 the staging token works. Read the probe contract below before believing either
 deployment.
+
+## Railway project tokens: scope, minting, inventory — measured 2026-11-16
+
+**A project token is scoped to exactly one environment.** Each recoverable CI token
+was run against all three environments with
+`railway service list --environment <env> --project e7dca861-… --json`, and the
+result is a clean diagonal — a staging token is refused in development and production,
+and vice versa:
+
+| preview (last 4) | minted for | development | staging | production |
+|---|---|---|---|---|
+| `…xU87` | staging | Unauthorized | **OK (4 services)** | Unauthorized |
+| `…keiY` | production | Unauthorized | Unauthorized | **OK (4 services)** |
+| `…wtix` | development | *not testable — the only on-disk copy of this value is corrupted; the secret works, because development's deploy legs succeed* | — | — |
+
+This is why the retired `staging-Old` row below matters, and why a token that "works
+locally" proves nothing about CI unless it is the *same value* and the *same
+environment*.
+
+**Minting and listing tokens is dashboard-only.** With the CLI's own credential (an
+OAuth user session for `spec.ng@gmail.com`), both `projectTokenCreate` and
+`apiTokens` answer `Not Authorized` / `INTERNAL_SERVER_ERROR`, and `railway` has no
+`token` subcommand — so nothing in this repo, and nothing an agent holding the CLI
+session, can rotate or enumerate these credentials. Creating a token requires a
+logged-in web session on the project's Tokens page. That is the sense in which F2 was
+an operator action; the replacement that has now been made did **not** mint a new
+token, it installed the 2026-11-14 staging/production tokens into the two secrets
+after validating each one against its own environment.
+
+**Inventory** — `projectTokens(projectId: e7dca861-…, first: 50)`. `displayToken` is
+Railway's own masked preview (first 10 and last 4 characters), so these strings carry
+no secret:
+
+| created | token `name` | environment it is bound to | preview | status |
+|---|---|---|---|---|
+| 2026-08-10 | `github-actions-development` | development | `0aba-****-9e10` | superseded 2026-11-14, still alive |
+| 2026-08-10 | `github-actions-production` | production | `0370-****-5c0c` | superseded 2026-11-14, still alive |
+| 2026-08-10 | `github-actions-staging` | **staging-Old** | `838e-****-7088` | bound to the environment retired 2026-11-16; can only ever fail |
+| 2026-11-14 | `development` | **staging** | `rlwy_proj_****xU87` | in `RAILWAY_TOKEN_STAGING` since 2026-11-16 13:48Z |
+| 2026-11-14 | `production` | production | `rlwy_proj_****keiY` | in `RAILWAY_TOKEN_PRODUCTION` since 2026-11-16 13:48Z |
+| 2026-11-14 | `development` | development | `rlwy_proj_****wtix` | in `RAILWAY_TOKEN_DEVELOPMENT` since 2026-11-14 |
+
+Read `environmentId`, never `name`: the 2026-11-14 token that serves staging is
+*labeled* `development`. Revoking the three superseded 2026-08-10 tokens is a
+dashboard action and has **not** been done, so six project tokens are currently live.
+
+**The plaintext values sit in `backend/.env`, and were never committed.** The
+2026-11-14 values were pasted there at `STAGING_RAILWAY_TOKEN`,
+`DEVELOPMENT_RAILWAY_TOKEN` and `RPRODUCTION_AILWAY_TOKEN` — the second two key names
+are themselves mis-typed, and the development value has a doubled leading character
+(51 chars where the working format is 50), which is why that particular copy fails.
+`.gitignore:11` ignores `.env`, `git ls-files backend/.env` does not list it, and
+`git cat-file -e origin/main:backend/.env` fails, so the tokens are not in history —
+but they are live credentials in a plaintext file on a laptop, and minting fresh
+tokens in the dashboard remains the cleaner end state for that reason, not because CI
+needs new values.
 
 ## Probe contract
 
