@@ -1,58 +1,49 @@
 name: Diag - railway up pre-flight
 
-# DIAGNOSTIC ONLY. Writes nothing to any environment that takes production traffic.
+# STAGING ONLY. Replays release.yml's two unproven staging legs from CI. Production is untouched.
 #
 # WHY THIS EXISTS
-# release.yml's `deploy Staging (*)` legs die 384 ms into `railway up` with
+# release.yml's `deploy Staging (*)` legs died ~400 ms into `railway up` with
 #   Failed to fetch: error decoding response body
 #     0: error decoding response body
 #     1: expected value at line 1 column 1
-# while `deploy Development (*)` succeeds in the same run, on the same runner
+# while `deploy Development (*)` succeeded in the same run, on the same runner
 # image, with the same CLI pin. `railway up` is not piped or swallowed by the
-# script, and no `Indexing...` line reaches the log — so the CLI fails on a
-# request that happens BEFORE it builds an archive.
+# script, and no `Indexing...` line reaches the log — so the CLI failed on a
+# request that happens BEFORE it builds an archive. Development prints
+# `Indexing...` 146 ms after start, so ~400 ms with nothing printed is a
+# pre-flight failure, not an upload failure.
 #
-# Measured facts already established (2026-11-16):
-#   * the credential — the same secret value serves two READ-ONLY lanes in CI
-#     (Staging inspect, Ops - list Railway variable names) that pass;
-#   * the CLI version — `railway --version` on the runner prints 5.40.1 (run
-#     43899596110), the same build used in a local linux/x86_64 container;
+# ELIMINATED BY DIRECT MEASUREMENT (2026-11-16, runs 43899596110 / 43901783148):
+#   * the credential — the same secret serves two read-only CI lanes that pass,
+#     and `railway status --environment staging --json` returned 40632 bytes of
+#     valid JSON from the runner;
+#   * the CLI version — the runner prints `railway 5.40.1`, the same build used
+#     in a local linux/x86_64 container;
 #   * the CI flag — CI=true in that container changes nothing;
-#   * the runner's egress for reads — `railway status --environment staging
-#     --json` returned 40632 bytes of valid JSON from the runner;
-#   * service resolution on the runner — a nonexistent service name returns the
-#     clean `Service not found` in 260 ms, so the environment lookup and the
-#     service lookup are both healthy against staging.
+#   * service/environment resolution — a nonexistent service returns the clean
+#     `Service not found` in 260 ms against staging on the runner;
+#   * THE UPLOAD SHAPE AND SIZE — Probe 6 ran the staging frontends' exact
+#     pathless repo-root upload (211,130,595 bytes on disk, a 133,423,024-byte
+#     archive) from a GitHub runner and finished exit=0 in 16,055 ms, producing
+#     deployment e4670d96 which built to SUCCESS. A 6-byte archive succeeded
+#     against both staging and development.
+#   * the staging instance — a 1-file upload to staging `frontend-admin`
+#     succeeded (ca5f227a), as did development's (6f5f5666).
 #
-# That leaves exactly two untested variables, and the probes below separate them:
-#   A. the ENVIRONMENT/INSTANCE (staging vs development) for the request that
-#      runs after service resolution;
-#   B. the UPLOAD TREE. The staging legs pass no positional path, so they upload
-#      the repository root: 201.3 MB over 11,267 files. The dev and prod legs
-#      pass `frontend-web` / `frontend-admin` + `--path-as-root`: 110.3 MB and
-#      7.8 MB. Probes 4/5 upload one 6-byte file; Probe 6 uploads the real
-#      checkout with the real (pathless) shape.
-#
-# Reading the matrix:
-#   4 fails, 5 passes -> the staging instance/environment breaks that request,
-#                        independent of tree size and of the runner in general.
-#   4 passes, 6 fails -> the tree/size decides it; the fix is to stop uploading
-#                        the repo root (per-environment upload shape, like dev/prod).
-#   4 passes, 6 passes-> nothing here reproduces it; the difference is in the
-#                        release job's own inputs, not the runner.
+# So nothing about the runner, the shape, the tree or the credential explains the
+# 15:10 reds. What is left is that those legs ran inside a job declaring
+# `environment: staging`, and this job now declares it too. The two legs below
+# replay the real thing: the pathless frontend-web upload with a SHA-shaped
+# message and RAILWAY_HTTP_TIMEOUT=600, and the backend leg through
+# scripts/ci/railway-deploy.sh itself.
 #
 # SAFETY
-# Probes 1/2 name a service that does not exist, so `up` stops at service
-# resolution BEFORE it indexes or uploads (measured: no deployment is created).
-# Probes 4/5/6 use a real service and therefore DO create a deployment attempt.
-# 4 and 5 upload a single 6-byte file, so their build cannot succeed and they can
-# never become the serving deployment (five of these already ran on staging
-# frontend-admin on 2026-11-16; none took traffic). Probe 6 uploads the real
-# checkout to staging `frontend-admin`, where a build is legitimate: if it
-# succeeds it becomes staging's admin deployment, which is what the release chain
-# intends anyway, and it never touches production. No secret value is ever
-# printed: tokens are masked and every reply is shown as a byte count plus a
-# schema-shaped prefix.
+# Staging only. Both legs upload real archives, so they create real staging
+# deployments — which is what the release chain does on every push to main, and
+# staging is meant to hold main. Nothing here can reach production: production is
+# a different Railway environment that this workflow's token is not scoped to.
+# No secret value is ever printed; the token is masked and used from a 0600 file.
 
 on:
   workflow_dispatch: {}
@@ -69,52 +60,32 @@ concurrency:
 
 jobs:
   probe:
-    name: pre-flight probes
+    name: staging legs, inside the staging environment
     runs-on: ubuntu-latest
+    # The release chain's deploy-staging job declares `environment: staging`.
+    # This job now does too, so the one input that differed between the red
+    # 15:10 legs and the green 15:56 probes is no longer a variable.
+    environment: staging
     env:
       PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
-      API: https://backboard.railway.app/graphql/v2
+      # Same value release.yml sets workflow-wide.
+      RAILWAY_HTTP_TIMEOUT: '600'
     steps:
-      - name: Resolve tokens without printing them
+      - name: Resolve the staging token without printing it
         env:
           TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
-          TOK_DEVELOPMENT: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
         run: |
           set -euo pipefail
-          len_staging=0; len_development=0
-          for pair in "STAGING:$TOK_STAGING" "DEVELOPMENT:$TOK_DEVELOPMENT"; do
-            name="${pair%%:*}"; val="${pair#*:}"
-            if [ -z "$val" ]; then
-              echo "::error::RAILWAY_TOKEN_${name} is empty"
-              exit 1
-            fi
-            echo "::add-mask::$val"
-            printf '%s' "$val" > "/tmp/tok_$name"
-            eval "len_${name,,}=\${#val}"
-          done
-          chmod 600 /tmp/tok_STAGING /tmp/tok_DEVELOPMENT
-          echo "token lengths (never values): staging=$len_staging development=$len_development"
+          if [ -z "$TOK_STAGING" ]; then echo "::error::RAILWAY_TOKEN_STAGING is empty"; exit 1; fi
+          echo "::add-mask::$TOK_STAGING"
+          printf '%s' "$TOK_STAGING" > /tmp/tok_STAGING
+          chmod 600 /tmp/tok_STAGING
+          echo "staging token length (never value): ${#TOK_STAGING}"
 
-      - name: Checkout the real tree (Probe 6 uploads this)
+      - name: Checkout the tree the release chain would upload
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
-      - name: Runner facts that could matter
-        run: |
-          set -uo pipefail
-          uname -a
-          echo "node: $(node --version)"
-          echo "curl: $(curl --version | head -1)"
-          echo "HOME=$HOME  .railway dir: $([ -d "$HOME/.railway" ] && echo present || echo absent)"
-          echo "--- proxy-ish env (names only) ---"
-          env | grep -iE 'proxy|no_proxy|http_' | cut -d= -f1 | sort || echo "(none)"
-          echo "--- railway-ish env (names only) ---"
-          env | grep -E '^RAILWAY[A-Z_]*' | cut -d= -f1 | sort || echo "(none)"
-          echo "--- what a repo-root upload would contain ---"
-          echo "checkout bytes (du, no .git): $(du -sb --exclude=.git . | cut -f1)"
-          echo "file count: $(find . -path ./.git -prune -o -type f -print | wc -l)"
-          echo "frontend-web subdir bytes: $(du -sb frontend-web | cut -f1)"
 
       - name: Install the pinned Railway CLI
         run: |
@@ -122,99 +93,43 @@ jobs:
           npm install --global @railway/cli@5.40.1
           railway --version
 
-      - name: 'Probe 1 - staging pre-flight with a nonexistent service (zero write)'
+      # release.yml's staging frontend legs: NO positional path, NO --path-as-root,
+      # because staging's frontend instances carry rootDirectory=frontend-web /
+      # frontend-admin, so the archive must be the whole repo. frontend-web had
+      # never completed a `railway up` from CI; five local attempts at 15:31-15:58
+      # all ended FAILED with no build, so the leg is unproven, not the shape.
+      - name: 'Leg 1 - frontend-web, pathless repo-root upload (exact release shape)'
         continue-on-error: true
         run: |
           set -uo pipefail
           export RAILWAY_TOKEN="$(cat /tmp/tok_STAGING)"
-          echo "--- staging / nonexistent service ---"
-          railway up --verbose --no-gitignore \
-            --service definitely-not-a-service-xyz \
-            --environment staging --project "$PROJECT" \
-            --detach --message diag-preflight-staging > /tmp/p1.log 2>&1
-          echo "exit=$?"
-          sed -n '1,60p' /tmp/p1.log
+          SHA="$(git rev-parse HEAD)"
+          echo "uploading $GITHUB_WORKSPACE ($(du -sb --exclude=.git . | cut -f1) bytes) as $SHA"
+          start=$(date +%s%3N)
+          railway up --no-gitignore \
+            --service frontend-web --environment staging --project "$PROJECT" \
+            --detach --message "$SHA" > /tmp/leg1.log 2>&1
+          echo "exit=$? elapsed_ms=$(( $(date +%s%3N) - start ))"
+          cat /tmp/leg1.log
 
-      - name: 'Probe 2 - development pre-flight with the same shape (control)'
-        continue-on-error: true
-        run: |
-          set -uo pipefail
-          export RAILWAY_TOKEN="$(cat /tmp/tok_DEVELOPMENT)"
-          echo "--- development / nonexistent service ---"
-          railway up --verbose --no-gitignore \
-            --service definitely-not-a-service-xyz \
-            --environment development --project "$PROJECT" \
-            --detach --message diag-preflight-development > /tmp/p2.log 2>&1
-          echo "exit=$?"
-          sed -n '1,60p' /tmp/p2.log
-
-      - name: 'Probe 3 - raw API reply from the runner (transport)'
-        continue-on-error: true
-        run: |
-          set -uo pipefail
-          body='{"query":"query { __schema { queryType { name } } }"}'
-          code="$(curl -sS -o /tmp/raw.json -w '%{http_code}' -m 60 \
-            -X POST "$API" \
-            -H "Authorization: Bearer $(cat /tmp/tok_STAGING)" \
-            -H 'Content-Type: application/json' \
-            --data "$body" || echo 000)"
-          echo "staging token -> HTTP $code, bytes $(wc -c </tmp/raw.json)"
-          head -c 120 /tmp/raw.json; echo
-          echo "--- same request with no Authorization header (baseline) ---"
-          code="$(curl -sS -o /tmp/raw2.json -w '%{http_code}' -m 60 -X POST "$API" \
-            -H 'Content-Type: application/json' --data "$body" || echo 000)"
-          echo "anonymous -> HTTP $code, bytes $(wc -c </tmp/raw2.json)"
-          head -c 120 /tmp/raw2.json; echo
-
-      - name: 'Probe 4 - staging, real service, 1-file archive (variable A)'
+      - name: 'Leg 1 readback - did the deployment appear?'
         continue-on-error: true
         run: |
           set -uo pipefail
           export RAILWAY_TOKEN="$(cat /tmp/tok_STAGING)"
-          rm -rf /tmp/onesvc && mkdir -p /tmp/onesvc && printf 'probe\n' > /tmp/onesvc/probe.txt
-          cd /tmp/onesvc
-          echo "cwd: $(pwd)  bytes: $(du -sb . | cut -f1)"
-          start=$(date +%s%3N)
-          RUST_LOG=debug railway up --verbose --no-gitignore \
-            --service frontend-admin --environment staging --project "$PROJECT" \
-            --detach --message "diag-tiny-${GITHUB_RUN_ID}" > /tmp/p4.log 2>&1
-          rc=$?
-          echo "exit=$rc elapsed_ms=$(( $(date +%s%3N) - start ))"
-          sed -n '1,80p' /tmp/p4.log
-          echo "...(tail)..."
-          tail -n 40 /tmp/p4.log
+          sleep 20
+          railway deployment list --service frontend-web --environment staging \
+            --project "$PROJECT" --limit 3 --json \
+            | jq -r '.[] | "\(.createdAt) \(.id[0:8]) \(.status) \(.meta.cliMessage)"'
 
-      - name: 'Probe 5 - development, real service, 1-file archive (variable A control)'
+      # The backend leg is the same script the chain runs, with the same inputs.
+      - name: 'Leg 2 - backend, the real scripts/ci/railway-deploy.sh'
         continue-on-error: true
-        run: |
-          set -uo pipefail
-          export RAILWAY_TOKEN="$(cat /tmp/tok_DEVELOPMENT)"
-          rm -rf /tmp/onesvc2 && mkdir -p /tmp/onesvc2 && printf 'probe\n' > /tmp/onesvc2/probe.txt
-          cd /tmp/onesvc2
-          echo "cwd: $(pwd)  bytes: $(du -sb . | cut -f1)"
-          start=$(date +%s%3N)
-          RUST_LOG=debug railway up --verbose --no-gitignore \
-            --service frontend-admin --environment development --project "$PROJECT" \
-            --detach --message "diag-tiny-dev-${GITHUB_RUN_ID}" > /tmp/p5.log 2>&1
-          rc=$?
-          echo "exit=$rc elapsed_ms=$(( $(date +%s%3N) - start ))"
-          sed -n '1,80p' /tmp/p5.log
-          echo "...(tail)..."
-          tail -n 40 /tmp/p5.log
-
-      - name: 'Probe 6 - staging, real service, FULL repo root (variable B, exact release shape)'
-        continue-on-error: true
+        env:
+          RAILWAY_TOKEN_FILE: /tmp/tok_STAGING
         run: |
           set -uo pipefail
           export RAILWAY_TOKEN="$(cat /tmp/tok_STAGING)"
-          cd "$GITHUB_WORKSPACE"
-          echo "cwd: $(pwd)  bytes(no .git): $(du -sb --exclude=.git . | cut -f1)"
-          start=$(date +%s%3N)
-          railway up --verbose --no-gitignore \
-            --service frontend-admin --environment staging --project "$PROJECT" \
-            --detach --message "diag-tree-${GITHUB_RUN_ID}" > /tmp/p6.log 2>&1
-          rc=$?
-          echo "exit=$rc elapsed_ms=$(( $(date +%s%3N) - start ))"
-          sed -n '1,80p' /tmp/p6.log
-          echo "...(tail)..."
-          tail -n 40 /tmp/p6.log
+          export SERVICE=backend RAILWAY_ENV=staging SHA="$(git rev-parse HEAD)" \
+                 UPLOAD_PATH=backend ROOT_FLAG='--path-as-root' BUILD_DIR=backend ATTEMPTS=6
+          bash scripts/ci/railway-deploy.sh
