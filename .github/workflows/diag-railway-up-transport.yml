@@ -1,0 +1,103 @@
+name: Diag — railway up transport (staging)
+
+# Dispatch-only, read-mostly diagnostic. Exists to answer one question that the
+# release chain's failures cannot: `railway up` in a GitHub runner dies at its
+# first fetch with "Failed to fetch: error decoding response body", while the
+# SAME secret answers `railway domain list` with live staging domains, and the
+# identical `railway up` command reaches Indexing/Uploading from an operator
+# laptop. This workflow probes each component boundary in that order so the
+# failing boundary is named by evidence rather than by hypothesis.
+#
+# It is dispatched with --ref on this branch, so it needs no merge to run.
+# Nothing here touches production.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'BUILD_COMMIT + deployment message to stamp (a released SHA)'
+        default: 'ee58728e0b644263562c8a524cff2dfe849bbefc'
+        type: string
+
+env:
+  RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+  RAILWAY_HTTP_TIMEOUT: 600
+
+jobs:
+  probe:
+    name: probe the upload boundary (staging)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Boundary A — auth mode with the Actions secret
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: |
+          set -uo pipefail
+          echo "token length: ${#RAILWAY_TOKEN}  (value never printed)"
+          echo "first byte class: $(printf '%s' "$RAILWAY_TOKEN" | cut -c1-3 | sed 's/[A-Za-z0-9]/X/g')"
+          railway whoami 2>&1 | sed 's/^/    /' || echo "    whoami rc=$?"
+
+      - name: Boundary B — read path (known to work)
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: |
+          set -uo pipefail
+          railway domain list --service backend --environment staging \
+            --project "$RAILWAY_PROJECT" 2>&1 | sed 's/^/    /' || true
+
+      - name: Boundary C — raw HTTP to the API, body class not content
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: |
+          set -uo pipefail
+          for url in https://api.railway.com/graphql https://api.railway.com/ ; do
+            code=$(curl -sS -o /tmp/body.bin -w '%{http_code} %{content_type} %{size_download}' \
+              -m 30 -X POST "$url" \
+              -H "Authorization: Bearer $RAILWAY_TOKEN" \
+              -H 'Content-Type: application/json' \
+              --data '{"query":"{ me { id } }"}' 2>&1)
+            echo "    $url -> $code"
+            echo "    body starts: $(head -c 90 /tmp/body.bin | tr -d '\0' | tr '\n' ' ')"
+          done
+
+      - name: Boundary D — the failing command, verbose
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: |
+          set -uo pipefail
+          printf '%s' "${{ inputs.sha }}" > backend/BUILD_COMMIT
+          echo "=== railway up backend --path-as-root ... --verbose --detach ==="
+          railway up backend --path-as-root --no-gitignore \
+            --service backend --environment staging \
+            --project "$RAILWAY_PROJECT" --detach --verbose \
+            --message "${{ inputs.sha }}" 2>&1 | sed 's/^/    /'
+          echo "rc=$?"
+
+      - name: Boundary E — same command, latest CLI (transport changed since 5.40?)
+        if: always()
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: |
+          set -uo pipefail
+          npm install --global @railway/cli@latest >/dev/null 2>&1
+          railway --version
+          railway up backend --path-as-root --no-gitignore \
+            --service backend --environment staging \
+            --project "$RAILWAY_PROJECT" --detach \
+            --message "${{ inputs.sha }}" 2>&1 | sed 's/^/    /'
+
+      - name: Read back staging backend deployments
+        if: always()
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: |
+          set -uo pipefail
+          railway deployment list --service backend --environment staging \
+            --project "$RAILWAY_PROJECT" --limit 6 --json 2>/dev/null \
+            | jq -r '.[] | "     \(.id[0:8]) \(.status) \(.createdAt) | msg=\(.meta.cliMessage // "-")"' \
+            || echo "     (could not read deployment list)"
