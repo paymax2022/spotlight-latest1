@@ -3276,15 +3276,32 @@ tautology), and `/api/v1/crypto/balances` (this one, which got further because t
    upgraded on six samples. Row 13's first half is likewise untouched: `scripts/flagprobe.sh` and the
    acceptance matrix are still not committed, and this section is a probe round, not the matrix.
 
-**One thing the plan could not have known, and it changes every remaining push step.** `release.yml` landed
-on `main` as `ef97ec64b` ("every push to main releases itself") and triggers on `on: push: branches: [main]`
-with **no `paths` filter and no approval**: gates → migrate-staging → deploy-staging → smoke-staging →
-**migrate-production** → deploy-production → smoke-production. Measured on a docs-only merge:
-`479bcd10b` produced release run `43887543175` (push, 2026-11-16T14:36:47Z, conclusion `cancelled`) and then
-`43893246842` (workflow_dispatch of the same SHA, `pending` at 15:08:55Z). So Task 14 Step 5's and Task 16
-Step 2's premise — a docs-only push matches no filter and therefore releases nothing — is false from that
-commit onward; it survives only for `sync-frontend-web.yml`, which really is filtered to `frontend-web/**`.
-Every remaining task that ends in a push to `main` now ends in a production database apply and a production
-redeploy, so those steps need the operator's explicit word, not a plan checkbox. This commit is deliberately
-delivered as a PR rather than pushed for that reason.
+**One thing the plan could not have known: `release.yml`, and where it leaves the push steps.** It landed on
+`main` as `ef97ec64b` ("every push to main releases itself") — `on: push: branches: [main]`, no `paths`
+filter, no environment approval, and the legs gates → migrate-staging → deploy-staging → smoke-staging →
+migrate-production → deploy-production → smoke-production. Measured on a docs-only merge: `479bcd10b`
+produced release run `43887543175` (push, 2026-11-16T14:36:47Z) — which finished with **zero jobs**,
+conclusion `cancelled` — and then `43893246842` (workflow_dispatch of the same SHA, 15:08:55Z), whose
+`release gate` job concluded `failure` after ten polls of "no .github/workflows/ci.yml run for this SHA yet",
+with all eight downstream jobs **skipped**, `migrate production database` and `deploy Production` among them.
+
+So the plan's conclusion survives, by a mechanism the plan did not have:
+
+- A **docs-only** push to `main` still releases nothing. `ci.yml:69-71` and `integration-verify.yml:15-17`
+  carry `paths-ignore: ['**.md','docs/**']` on push, so the SHA gets no CI run, and the gate classifies that
+  as `noop_docs_only` (`scripts/ci/release-gates.py:108-114`), which exits 0 (`:276`) while every deploy and
+  migrate job tests `needs.gates.outputs.verdict == 'proceed'` (`release.yml:163`, `:301`, `:435`, `:453`).
+  Task 14 Step 5's and Task 16 Step 2's reasoning was therefore right about the outcome and wrong about the
+  reason: the inertness comes from the release gate's classifier, not from `sync-frontend-web.yml`'s filter.
+- A **non-docs** push to `main` now self-releases: no dispatch, no typed `DEPLOY`, no promotion branch, no
+  human. That is the change that touches the remaining tasks. Task 11 and Task 13 assume the prod Go plane is
+  moved by an explicit promote, and Tasks 3, 6, 14 and 15 end in commits that mix paths; any one of those
+  commits that carries a single non-docs file rides straight to production, including its migration apply.
+  The `#996`-drift decision (§16.2 item 14) is therefore no longer a question the plan can defer past the
+  next code push, and each remaining push needs the operator's explicit word — this correction was delivered
+  as a PR rather than pushed for exactly that reason, even though it is docs-only and would have been inert.
+- The contrast case is the one to remember: `noop_docs_only` is valid **only** for a push
+  (`release-gates.py:115-119`), which is why dispatching the same docs-only SHA read as `failed` rather than
+  as a no-op. A red `release gate` on a docs SHA is not evidence that docs deploy something; it is the
+  classifier refusing to infer silence from an event that has no CI run by construction.
 
