@@ -3398,6 +3398,15 @@ Named flip probes, re-run in the same window: `/api/v1/restaurant/<uuid>`, `/api
 ×3). `/api/v2/votes/wallet` → **405**, not the 403 the plan expected while off: same POST-only blind spot as
 the two `=false` names above, so the bridge's own flip is unobservable from a GET.
 
+**Both branches of the probe are exercised by the real run, and one of them only by the wrapper case.** Zero
+`route.ts` files name `utilityBillsGoProxy` (`grep -rlE "featureFlags\.utilityBillsGoProxy|requireFeature\('utilityBillsGoProxy'" frontend-web/app/api | grep -c '/route.ts$'` → 0);
+the flag's only source reader under `app/api` is the wrapper `app/api/v1/utility/_utils.ts`. All three lines
+the probe produced for `FEATURE_UTILITY_BILLS_GO_PROXY_ENABLED` (`beneficiaries/<uuid>` 405, `beneficiaries`
+401, `billers` 401) therefore came from the wrapper-following loop — the shape whose absence made an earlier
+draft report a live flag as "no route". The refusal branch is proven separately: a file containing one
+invented name prints `NO-KEY-IN-CODE` for it and exits 0, so an unmapped flag is reported, never silently
+skipped.
+
 Step 4's runtime rows, measured in the same window:
 
 | Check | Expected | Measured |
