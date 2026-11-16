@@ -1,0 +1,150 @@
+name: Diag - railway up pre-flight
+
+# DIAGNOSTIC ONLY. Writes nothing to any environment that takes traffic.
+#
+# WHY THIS EXISTS
+# release.yml's `deploy Staging (*)` legs die ~0.5 s into `railway up` with
+#   Failed to fetch: error decoding response body
+#     0: error decoding response body
+#     1: expected value at line 1 column 1
+# while `deploy Development (*)` succeeds in the same run, on the same runner
+# image, with the same CLI pin. What has already been eliminated by direct
+# experiment (2026-11-16):
+#   * the credential — the same secret value serves two READ-ONLY lanes in CI
+#     (Staging inspect, Ops - list Railway variable names) that pass;
+#   * the CLI version — @railway/cli@5.40.1 in a linux/x86_64 container reaches
+#     `Indexing... Uploading...` against staging with this token;
+#   * the CI flag — adding CI=true to that container changes nothing;
+#   * the upload shape — a no-positional-path upload (what staging uses) works
+#     from both macOS and that Linux container;
+#   * the service tree — the same pre-flight from a full repo checkout on Linux
+#     returns the clean `Service not found`, so the request before indexing is
+#     healthy off-GitHub.
+# That leaves the GitHub runner itself. The probes below separate "the request
+# that resolves the service" from "the request that opens the upload", and pin
+# what the runner's egress actually returns from the Railway API.
+#
+# SAFETY
+# Probe 1/2 name a service that does not exist, so `up` stops at service
+# resolution BEFORE it indexes or uploads (measured: no deployment is created).
+# Probe 4 uses a real service and therefore DOES create a deployment; it is
+# limited to `frontend-admin` in `staging`, whose build fails on a one-line
+# archive, so it can never become the serving deployment. Everything else here
+# is read-only. No value is ever printed: the tokens are masked, and the curl
+# probe prints a byte count and the first bytes of a schema reply.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - diag/railway-up-probe
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diag-railway-up
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: pre-flight probes
+    runs-on: ubuntu-latest
+    env:
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      API: https://backboard.railway.app/graphql/v2
+    steps:
+      - name: Resolve tokens without printing them
+        env:
+          TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          TOK_DEVELOPMENT: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+        run: |
+          set -euo pipefail
+          for pair in "STAGING:$TOK_STAGING" "DEVELOPMENT:$TOK_DEVELOPMENT"; do
+            name="${pair%%:*}"; val="${pair#*:}"
+            if [ -z "$val" ]; then
+              echo "::error::RAILWAY_TOKEN_${name} is empty"
+              exit 1
+            fi
+            echo "::add-mask::$val"
+            printf 'RAILWAY_TOKEN_%s_LEN=%s\n' "$name" "${#val}" >> "$GITHUB_ENV"
+            printf '%s' "$val" > "/tmp/tok_$name"
+          done
+          chmod 600 /tmp/tok_STAGING /tmp/tok_DEVELOPMENT
+          echo "token lengths (never values): staging=$RAILWAY_TOKEN_STAGING_LEN development=$RAILWAY_TOKEN_DEVELOPMENT_LEN"
+
+      - name: Runner facts that could matter
+        run: |
+          set -uo pipefail
+          uname -a
+          echo "node: $(node --version)"
+          echo "curl: $(curl --version | head -1)"
+          echo "HOME=$HOME  .railway dir: $([ -d "$HOME/.railway" ] && echo present || echo absent)"
+          echo "--- proxy-ish env (names only) ---"
+          env | grep -iE 'proxy|no_proxy|http_' | cut -d= -f1 | sort || echo "(none)"
+          echo "--- railway-ish env (names only) ---"
+          env | grep -E '^RAILWAY[A-Z_]*' | cut -d= -f1 | sort || echo "(none)"
+
+      - name: Install the pinned Railway CLI
+        run: |
+          set -euo pipefail
+          npm install --global @railway/cli@5.40.1
+          railway --version
+
+      - name: Read-only auth proof (status)
+        run: |
+          set -uo pipefail
+          export RAILWAY_TOKEN="$(cat /tmp/tok_STAGING)"
+          out="$(railway status --project "$PROJECT" --environment staging --json 2>&1)"
+          echo "staging status bytes: $(printf '%s' "$out" | wc -c)"
+          printf '%s' "$out" | head -c 80
+          echo
+          echo "rc=$?"
+
+      - name: 'Probe 1 - staging pre-flight with a nonexistent service (zero write)'
+        run: |
+          set -uo pipefail
+          export RAILWAY_TOKEN="$(cat /tmp/tok_STAGING)"
+          echo "--- staging / nonexistent service ---"
+          railway up --verbose --no-gitignore \
+            --service definitely-not-a-service-xyz \
+            --environment staging --project "$PROJECT" \
+            --detach --message diag-preflight-staging 2>&1 | tail -25
+      - name: 'Probe 2 - development pre-flight with the same shape (control)'
+        run: |
+          set -uo pipefail
+          export RAILWAY_TOKEN="$(cat /tmp/tok_DEVELOPMENT)"
+          echo "--- development / nonexistent service ---"
+          railway up --verbose --no-gitignore \
+            --service definitely-not-a-service-xyz \
+            --environment development --project "$PROJECT" \
+            --detach --message diag-preflight-development 2>&1 | tail -25
+
+      - name: 'Probe 3 - raw API reply from the runner (transport)'
+        run: |
+          set -uo pipefail
+          body='{"query":"query { __schema { queryType { name } } }"}'
+          for tok in STAGING; do
+            code="$(curl -sS -o /tmp/raw.json -w '%{http_code}' -m 60 \
+              -X POST "$API" \
+              -H "Authorization: Bearer $(cat /tmp/tok_$tok)" \
+              -H 'Content-Type: application/json' \
+              --data "$body" || echo 000)"
+            echo "$tok -> HTTP $code, bytes $(wc -c </tmp/raw.json)"
+            head -c 120 /tmp/raw.json; echo
+          done
+          echo "--- same request with no Authorization header (baseline) ---"
+          code="$(curl -sS -o /tmp/raw2.json -w '%{http_code}' -m 60 -X POST "$API" \
+            -H 'Content-Type: application/json' --data "$body" || echo 000)"
+          echo "anonymous -> HTTP $code, bytes $(wc -c </tmp/raw2.json)"
+          head -c 120 /tmp/raw2.json; echo
+
+      - name: 'Probe 4 - real service, one-line archive (contained, build cannot succeed)'
+        run: |
+          set -uo pipefail
+          export RAILWAY_TOKEN="$(cat /tmp/tok_STAGING)"
+          mkdir -p /tmp/onesvc && printf 'probe\n' > /tmp/onesvc/probe.txt
+          cd /tmp/onesvc
+          railway up --verbose --no-gitignore \
+            --service frontend-admin --environment staging --project "$PROJECT" \
+            --detach --message "diag-upload-${GITHUB_RUN_ID}" 2>&1 | tail -25
