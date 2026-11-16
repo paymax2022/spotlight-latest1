@@ -49,7 +49,8 @@ branch *was* pushed (draft PR #1028) and *was* merged, so the path resolves from
 The rule applied: the newest `origin/main` SHA whose **`ci.yml`**
 (`CI — CLAUDE.md gates`) **and** `integration-verify.yml` (`integration-verify`)
 runs both concluded `success`. `CI (Zero-Billing Optimized)` (`ci-optimized.yml`)
-is recorded too, but it is not the deciding lane.
+is recorded too, but it is not the deciding lane. (That sentence is about *this* rule for choosing a
+`RELEASE_SHA`; it says nothing about which checks block a merge, and the two are not the same set — §6.8.)
 
 Lanes were read per SHA with:
 
@@ -2939,7 +2940,7 @@ Two brief-level claims were **refuted rather than edited**, and are recorded so 
 | 1 | **Two production writes are parked for approval, and a third run had not reached an environment job.** Re-read in this session on 2026-11-14: `43299354226` (`DB Migrate (Supabase db push)`, head `3654f6b3f`, created 2026-11-12T20:20:40Z) and `43299959109` (`Ops DB Push (manual)`, head `3654f6b3f`, 20:24:15Z) are both `status=waiting`, each carrying exactly one `pending_deployments` entry on environment `Production`. `43534854471` (`DB Migrate`, head `8ed8123de`, 2026-11-14T00:32:20Z) reads `status=pending` with **zero** `pending_deployments` entries — it has not reached an environment job; recorded as measured, with no reason claimed, because nothing here proves why. **Ownership of these run ids, stated exactly**: this row is the record of their *current* state, and after fix round 2 no other tracked file carries any of them — `git grep -l -F <id>` over the tree returns this ledger alone for all six ids named here and in §16.1 (`43299354226`, `43299959109`, `43534854471`, `43311344252`, `43301433055`, `43309595782`), because `deployment-matrix.md` and `staging-environment-setup.md` now point here instead of restating them (a fourth copy of a live fact is a fourth way to be stale). Inside this ledger the ids do recur, and unavoidably: §1.4, §2.3, §2.4, §2.5, §2.6, §3.4, the Stage 2 (Task 5) heading and §5.7 hold them as the historical record of writes that already happened, and §16.1/§16.3 cite them as the run a correction was measured against. Fix round 3 re-measured that list with `grep -n -F <id> docs/devops/production-migration-ledger.md` per id, because round 2's sentence named only §1.4, §2.5 and §16 and was an under-count. Those are citations of a past measurement, not a second live state — only this row may be re-read for what is parked **now**. Read against §1.4 and §2.5: prod has **already been written twice** by `ops-db-push-scoped.yml` — `43301433055` (`mode=apply`, two versions) and `43309595782` (`mode=apply`, one) — three migration versions in all (`20271408000000`, `20271409000000`, `20271410000000`); the runs that read 669 and 670 between them were `mode=plan` and wrote nothing. That lane is now measured rather than assumed ungated: `ops-db-push-scoped.yml:54` sets `environment: production-db-scoped`, that environment's `protection_rules` is **empty**, and its run `43311344252` completed with **zero** `pending_deployments` entries. So "nothing was deployed" is true of the two gated lanes named here and of nothing else. | the two `Production` reviewers — logins from `gh api repos/paymax2022/spotlight-latest1/actions/runs/43299354226/pending_deployments --jq '[.[].reviewers[].reviewer.login]'` (2 entries) and the rule type from `…/environments/Production --jq '[.protection_rules[].type]'` (includes `required_reviewers`) — **not this agent**. An earlier draft of this cell cited `environments/Production` for `pending_deployments`; that endpoint returns no such key, which is why the reviewers are read from the run. | a human decision to approve or decline each. `gh run approve` was never run here and is on this plan's forbidden list: approving a `Production` deployment on someone else's behalf is exactly the side effect the gate exists to prevent. **This row is CLOSED as of 2026-11-16, and closed by the gate going away rather than by the queue being worked**: all three run ids above now read `completed` / `cancelled` with `pending_deployments` → `[]`, and `Production`'s `protection_rules` is `["branch_policy"]` with **zero** reviewers — the reviewers were removed on 2026-11-15, deliberately, per `db-migrate.yml:11-17`. "The two `Production` reviewers" no longer exist, so nothing in this repo parks for them any more. See `## Stage 3`, §6.4. It was closed by the gate being removed, not by anyone approving a run. |
 | 2 | **DONE, by a route this row did not name.** It read "Prod `db push` has not happened (Task 6). Prod's pending count is a 2026-11-07 capture (§5.6) and must be re-read, not quoted." Prod's pending count has now been re-read, and it is **0**: 756 applied against 756 files, max `20271500000000`. | closed — the writes happened through `ops-db-push.yml mode=push` (2026-11-15T19:54Z, 676→755) and a `db-migrate.yml` `dry_run=false` dispatch (2026-11-16T15:20Z, 755→756), **not** through the scoped batches this row assumed | the fresh `mode=list` table, the classifier on it, the classifier on a prod-direct `psql` read, and `make rls-check`'s predicate at 0 rows — all four in `## Stage 3`, §6.3. The row's "in scoped batches, with a dump taken first" clause is **not** met: there was no backlog left to batch, and the dump post-dates the last apply by 1h45m (§6.5) |
 | 3 | **No production dump exists** (Task 3). No in-repo route to make one either. | the `nmseefdlliejmdbxytej` key-holder | **Superseded for the dump itself, 2026-11-16 — see `## Backup`.** A prod dump now exists and is proven to restore (756 history rows, 1416 public tables, 1990 policies, `rls-check` predicate 0, ten exact row counts equal to live prod). The "no in-repo route" half is still true: `git grep -ln pg_dump -- ':!docs'` still returns nothing, so it stays a hand-run procedure and nothing prevents the next drift from being unrecoverable — which is the argument for a scheduled dump, not for this one. What is still owed is this row's own text: the runbook's restore rehearsal *against a dashboard backup id*, which only the key-holder can mint. |
-| 4 | **`Production` env's `SUPABASE_PROJECT_ID` may still hold the staging ref** `wnicsubiznmishkmunsv`. The env-scoped variables list is empty and the repo-scope variable exists, so this is unverifiable from a review session. | operator who can dispatch `ops-db-push.yml` | that lane's **link-step** log (`ops-db-push.yml:128-129` runs `supabase link --project-ref "$SUPABASE_PROJECT_ID"`). `ops-db-push-scoped.yml` refuses `wnicsubiznmishkmunsv` (`:101-104`), so its completed runs prove only the scoped env's ref. |
+| 4 | **CLOSED 2026-11-16, and without touching production.** It read: **`Production` env's `SUPABASE_PROJECT_ID` may still hold the staging ref** `wnicsubiznmishkmunsv`. The env-scoped variables list is empty and the repo-scope variable exists, so this is unverifiable from a review session — the second half of that sentence is what was wrong. | **closed from a retained log** — no new dispatch needed | `_reusable-db-apply.yml:60` binds `environment: ${{ inputs.target }}`, `:63` resolves the ref from that scope, and `:132-139` refuses unless it differs from `$STAGING_PROJECT_ID`. Run `43895117150` (today's `target=production` apply) printed `Production project ref is distinct from staging.` to stdout, and the branch is not vacuous: `Production` overrides only `SUPABASE_DB_PASSWORD`, so `SUPABASE_STAGING_PROJECT_ID` resolved non-empty from repo scope. Read with §6.1 (the only writer that could have applied `20271500000000`) and §6.3 (prod's own pooler DSN holding it), the linked project can only be prod's — an outcome inference, not a read of the masked value. Full chain in §6.8. |
 | 5 | **Prod Go is not at `RELEASE_SHA`** (Tasks 11/12). It serves `585bd2ca7…` from a branch that is not an ancestor of `origin/main`. **Re-read 2026-11-16 and it has moved again without this plan moving it:** `/api/v1/public/build` now reports `5ab7c9cc0bf3d2b42aa43215fe5df9630dfbc421` (`source: ldflags`, `started_at 2026-11-15T09:00:26Z`) — the tip of the `prod` promotion lineage, likewise **not** an ancestor of `origin/main`, 8 ahead / 756 behind, and its tree carries only **643** of main's 756 migration files while prod's database holds all 756 (§6.7). So this row is now stated against a *third* value, which is the row's whole point: prod's Go plane is being moved by hand, outside this plan. | operator who dispatches the backend deploy | `/api/v1/public/build` reading `c49b395643473ba6ff7a225d7a7a339a41eddfe6`, plus login-page chunk hrefs matching the build (verification is by served bytes, never run colour). **Re-read the endpoint before quoting any value into that acceptance test** — it has changed twice since this row was written. |
 | 6 | **The cPanel runtime env has not been reconciled** (Task 8 Steps 4-5). The flag file and the CI gate exist; the host has not been shown to carry the 45 keys with no `FEATURE_*` in the process env. | operator who can run the lane | a probe re-read after the lane dispatch. The commit that would install it, `5355d932581e…`, is un-pushed and lives only in `/private/tmp/t8-lane`. |
 | 7 | **The mobile prod plane is still wired to staging** (Task 15 Step 2, deliberately escalated). main's gitignored `mobile-app/reactnative/.env.production` (11,725 B, mtime Nov 3 22:25) declares `EXPO_PUBLIC_APP_ENV=staging` at `:24`, carries `wnic` ×4 and `nmseef` ×0, and **8 key lines** hold a staging ref: `EXPO_PUBLIC_API_BASE_URL` (:21), `EXPO_PUBLIC_SITE_URL` (:23), `EXPO_PUBLIC_APP_ENV` (:24), `EXPO_PUBLIC_SUPABASE_URL` (:25), `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL` (:29), `SUPABASE_URL` (:126), `DATABASE_URL` (:145), `SUPABASE_JWKS_URL` (:231). Its own header (`:2`–`:5`) calls it a "STAGING env TEMPLATE / Copy to `.env.staging`", which is the root cause of the fork. | the user — it changes what a store build talks to, and the standing rule forbids correcting it unprompted | the re-point **plus** a real `EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL` **plus** a rebuild **plus** the artifact re-grep. **The acceptance grep is necessary, not sufficient.** It must be `grep -ic wnic` → 0 **and** `EXPO_PUBLIC_APP_ENV` reading `production`, NOT `grep -icE 'wnic\|staging'`: nine comment lines (`:2`, `:4`, `:5`, `:6`, `:8`, `:10`, `:16`, `:17`, `:112`) use the word "staging" descriptively, so the combined pattern can never reach 0 without rewriting prose. Clearing that grep only satisfies the plane guard — `build-apk.sh` then refuses on an empty `EXPO_PUBLIC_API_BASE_URL` (`:185-188`), a loopback host baked into it (`LOOPBACK_RE` `:231`, refusal `:248`) — **caveat: `ALLOW_LOOPBACK_CONFIG=1` downgrades that one refusal to a warning (`:243-246`), so the gate is conditional on an env var a caller can set**, a shadow `.env.production.local` / `.env.local` re-declaring `API_BASE_URL` / `SUPABASE_URL` / `APP_ENV` (`:198-208`), and any `*_USE_MOCK` not set to `false` (`:211+`); `build-aab.sh` carries the same chain. The re-point is done when the script exits 0 on its own gates, not when the grep goes quiet. |
@@ -2992,8 +2993,9 @@ source of truth and a CI guard — a guard that passes in CI as well as locally 
 reconciliation tooling exists and is tested, staging is at 0 pending, **prod is at 0 pending too (§6.3)**,
 and the docs no longer describe
 production wrongly — they landed on `origin/main` on 2026-11-15 as squash `2e200094b` (PR #1028), which is
-the copy a reader opens. These are prerequisites for the eight rows that are not yet closed, not substitutes
-for them. Two of this plan's
+the copy a reader opens. These are prerequisites for the seven open items in §16.2 that are not yet closed —
+not §16.3's fifteen checklist rows, whose count is seven verified for a different reason — not substitutes
+for them (§16.2 row 4 closed itself on 2026-11-16 from a log this session already held — §6.8). Two of this plan's
 four operator-owned gates have since closed from the other side: the
 parked approvals are gone (all three runs ended `cancelled`, and `Production`'s required reviewers were
 removed on 2026-11-15 — §6.4), and prod's `db push` has happened (§6.1). That leaves
@@ -3617,4 +3619,60 @@ and §6.4 says what removes the remaining protection.
 And it does not replace §16.2 item 5's acceptance read, which asks for `/api/v1/public/build` to return a
 chosen `RELEASE_SHA` plus matching login-page chunk hrefs; prod reporting a *third* SHA since that row was
 written is the point of item 5, not a refutation of it.
+
+## 6.8 What blocks a merge is not what blocks a deploy — and row 4 closes itself
+
+Learned while landing this section's own evidence (PR #1048, squash `22f82de18`, 2026-11-16T22:21:57Z), and
+none of it is derivable from reading either workflow alone.
+
+**The two gates read different, non-overlapping name sets.** Live branch protection on `main`
+(`gh api repos/…/branches/main/protection`) requires exactly five contexts — `backend`, `frontend-web`,
+`frontend-admin`, `migrations`, `secrets-scan`. `.github/required-checks.txt` lists nine, and **none of the
+five is among them**: `backend (go build + vet) / verify`, `frontend-admin (type-check) / typecheck`,
+`frontend-web (regression + money + contract + tsc + lint) / verify`, `hygiene (client secrets + live-DB test
+gate + migration versions)`, `migrations (additive-only guard) / guard`, `mobile (whole-app tsc) / typecheck`,
+`openapi (validate all contracts) / validate`, `which modules changed`, `workflows (actionlint)`. Those nine
+are `ci.yml`'s decorated job names (`ci.yml:93,101,119,126,130,134,167,232,486`), and `ci-optimized.yml`
+contains no `name:` override at all (`grep -c '^    name: '` → 0), so its five job ids
+(`ci-optimized.yml:16,35,54,72,137`) are the only things that can satisfy the five contexts protection
+actually enforces. `scripts/ci/test-changed-modules.py:109-126` asserts that each name in
+`required-checks.txt` "still exists as a job in `ci.yml`" — a true and useful assertion about the deploy
+gate that structurally cannot notice the divergence, because it never looks at the protection API.
+
+So `release-gates.py:51` waits on the nine deep names, while GitHub waits on the five shallow ones. Reading
+that as a consequence of the two lists, not as an event observed this session: a `main`-bound PR can be
+merged with `openapi … / validate`, `mobile … / typecheck` or `hygiene (…)` red, because none of those is a
+required context — and `release.yml`'s gate would still refuse to deploy on the same red, because all three
+are in `required-checks.txt`. The deploy gate is strictly deeper than the merge gate; nothing in either file
+says so, and the file that reads like the contract for both is the one protection does not use.
+
+**A cancelled `ci-optimized` run blocks a docs merge while every lane that tests code is green.** Observed
+on `9b5ddc73d`: `ci.yml`'s run `43926226680` concluded `success`, yet `gh pr view` read `BLOCKED` because
+`migrations` was `cancelled`. The cancellation was run `43926226658` (`CI (Zero-Billing Optimized)`), dead
+3m1s into its `migrations` job — its other four jobs had already concluded `success`, which is why exactly
+one required name went dark instead of five. `gh run rerun 43926226658` re-reported it green inside about
+four minutes and the PR went `CLEAN`. That is the whole remedy, and it is safe here specifically because
+`ci-optimized.yml` carries no `railway`, `deploy`, `secrets.` or `environment:` reference in its 200 lines.
+Note also what that job does *not* do on a docs diff: `ci-optimized.yml:145-172` computes
+`changed_migrations.txt` and gates its validate step on `changed == 'true'` (`:172`), so with no `.sql` in the diff the
+required `migrations` check passes having read no migration at all — the same all-skip shape §16.3 warns
+about elsewhere.
+
+**§16.2 row 4 closes without a new dispatch,** by the writer's own guard. `_reusable-db-apply.yml:60` binds
+`environment: ${{ inputs.target }}` and `:63` resolves `SUPABASE_PROJECT_ID` from that scope; `:132-139`
+then refuses to run unless `$SUPABASE_PROJECT_ID` differs from `$STAGING_PROJECT_ID`. In run `43895117150`
+— today's `target=production` apply — the step's stdout is `Production project ref is distinct from
+staging.`, and the branch is not vacuous: `Production` overrides only `SUPABASE_DB_PASSWORD`
+(`gh api …/environments/Production/secrets`), so `SUPABASE_STAGING_PROJECT_ID` resolved from repo scope,
+where it exists alongside `SUPABASE_PROJECT_ID`. `≠ staging` is still not `= nmseef…` on its own, but
+combined with §6.1 (the only writer that could have applied `20271500000000`, since the 11-15 `mode=push`
+stopped at 755) and §6.3 (prod's own pooler DSN read holding 756 with that version), the ref that run
+linked can only be the project prod's database belongs to. This is an outcome inference from a retained log,
+not a read of the masked value, and it should be re-derived that way if the secret is ever re-pointed.
+
+**This merge is itself a fourth instance of the inertness §6.4 measures.** Release run `43969361088` at
+`22f82de18` logged verdict `noop_docs_only`, its gate `success`, and all eight remaining jobs —
+`migrate staging`, both `deploy Development`/`Staging` legs, `smoke Development`/`Staging`, `migrate
+production database`, `deploy Production`, `smoke Production` — `skipped`. The PR that documents "a docs-only
+push releases nothing" released nothing.
 
