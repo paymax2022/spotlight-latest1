@@ -176,16 +176,25 @@ jobs:
             upload_path: backend
             root_flag: --path-as-root
             build_dir: backend
-          # The frontends carry a Railway rootDirectory, so they upload from the
-          # repo root with NO positional path and NO --path-as-root. See THE UPLOAD
-          # RULE in scripts/ci/railway-deploy.sh.
+          # The upload shape follows the service's Railway `rootDirectory`, which
+          # is NOT the same in every environment — measured 2026-11-16 with
+          # `railway api` `serviceInstance(serviceId, environmentId){rootDirectory}`:
+          #   staging    frontend-web/frontend-admin -> 'frontend-web'/'frontend-admin'
+          #   development+production                 -> None for both frontends
+          # Only staging strips the folder out of the archive, so only staging
+          # uploads from the repo root. Here the archive root must BE the app
+          # folder, exactly as for backend. The proof: this leg's first run
+          # uploaded the repo root to development, the deploy reported SUCCESS,
+          # and smoke Development then failed with "/admin/login answered 404" —
+          # a monorepo-root build that serves neither frontend. Re-uploading the
+          # same commit with --path-as-root returned HTTP 200 on the same host.
           - service: frontend-web
-            upload_path: ''
-            root_flag: ''
+            upload_path: frontend-web
+            root_flag: --path-as-root
             build_dir: ''
           - service: frontend-admin
-            upload_path: ''
-            root_flag: ''
+            upload_path: frontend-admin
+            root_flag: --path-as-root
             build_dir: ''
     steps:
       - uses: actions/checkout@v4
@@ -329,9 +338,14 @@ jobs:
             upload_path: backend
             root_flag: --path-as-root
             build_dir: backend
-          # Frontends: NO positional path, NO --path-as-root. This is the shape
-          # ci.yml's staging matrix already had right (ci.yml:622-637); the
-          # development and production matrices hardcoded the flag instead.
+          # Frontends: NO positional path, NO --path-as-root — the only
+          # environment where that is correct. staging's two frontend instances
+          # carry `rootDirectory: frontend-web` / `frontend-admin` (measured
+          # 2026-11-16), which the services' own git-source builds need, so Railway
+          # strips that prefix and the archive must be the whole repo. Uploading an
+          # app folder here would make it look for `frontend-*/` inside an archive
+          # that already IS that folder. development and production have
+          # `rootDirectory: None` and take the opposite shape.
           - service: frontend-web
             upload_path: ''
             root_flag: ''
@@ -454,13 +468,19 @@ jobs:
           # build's EXPO_PUBLIC_API_BASE_URL (and production-apk inherits it at :72),
           # and that frontend-admin's production WEB_API_BASE_URL also points at.
           # Nothing in the release chain updated it before this file.
+          #
+          # Upload shape: production's frontend instances report
+          # `rootDirectory: None` (measured 2026-11-16), unlike staging's, so the
+          # archive root must BE the app folder — the same rule as backend, and the
+          # same correction made to deploy-development above. A repo-root upload
+          # here builds the monorepo and serves neither app.
           - service: frontend-web
-            upload_path: ''
-            root_flag: ''
+            upload_path: frontend-web
+            root_flag: --path-as-root
             build_dir: ''
           - service: frontend-admin
-            upload_path: ''
-            root_flag: ''
+            upload_path: frontend-admin
+            root_flag: --path-as-root
             build_dir: ''
     steps:
       - uses: actions/checkout@v4
