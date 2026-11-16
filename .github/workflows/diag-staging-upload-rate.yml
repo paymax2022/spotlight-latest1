@@ -1,0 +1,177 @@
+name: DIAG - can staging take spaced uploads but not bunched ones?
+
+# What is already settled, so this lane does not re-litigate it.
+#
+# T1 "a transient Railway blip" (#1044's premise) is DEAD. Run 43909191817
+# (16:35:47-16:38:15Z) pushed all three staging legs through with-retry.sh and
+# Railway refused 12/12 attempts, each inside ~0.7 s of its call, over a 150 s
+# window. A deterministic refusal at the upload-initiate request is not something
+# a retry rides out — and 12 requests instead of 3 is a bigger burst, not a
+# smaller one. Merging #1044 would not have released anything.
+#
+# T2 "the GitHub `environment:` declaration is the discriminator" is DEAD before
+# being tested. Both lanes read `secrets.RAILWAY_TOKEN_STAGING`, both printed
+# token length 50, and `staging`/`development` each carry ZERO environment-scoped
+# secrets and ZERO variables (listed directly, twice) — so declaring an
+# environment cannot hand the job a different credential, and a declaration has no
+# other effect on an outbound HTTPS request.
+#
+# T3 "the staging instances refuse uploads because they carry a connected repo" is
+# DEAD: run 43910959092 made SIX staging uploads (and six development ones) about
+# 6-12 s apart from a job that declared no environment, and all twelve reached
+# `Indexing...`. Staging takes uploads.
+#
+# What survives is one thing the three datasets share: acceptance tracks how
+# bunched the creation requests are, not which environment, token, CLI, tree or
+# job declaration is in play.
+#
+#   16:23  release.yml 43905969462 — development's 3 legs inside 1.7 s accepted;
+#          staging's 3 legs seven seconds later ALL refused (staging had also just
+#          taken the 16:15 diag replays).
+#   16:35  diag 43909191817 — 3 concurrent staging legs, retried 4x each: 12/12
+#          refused (a self-sustaining burst: each leg's retry reloaded the window
+#          the others were trying to clear).
+#   16:45  diag 43910959092 — 12 uploads at one per ~6-12 s: 12/12 accepted.
+#
+# So the question this lane answers, with staging as both subject and victim:
+#
+#   serial   3 staging uploads, 20 s apart          -> if 3/3 accepted, spacing
+#                                                     IS the lever.
+#   burst    3 staging uploads at the same instant   -> if <3 accepted, bunching
+#                                                     IS the failure.
+#   serial2  repeat of serial, after the burst       -> if 3/3 again, the burst
+#                                                     failure was the bunching and
+#                                                     not the clock.
+#
+# serial green + burst red is exactly release.yml's shape today: three deploy jobs
+# per environment, no `max-parallel` on any matrix, and `deploy-staging` not gated
+# behind `deploy-development`, so six uploads fire inside a couple of seconds and
+# whichever half of them lands second is refused. The fix that measurement
+# licenses is `max-parallel: 1` plus spacing — not a retry.
+#
+# The probe never fails the release chain's own scripts: it calls the refused
+# argv directly, from a checkout of the same tree, with the same CLI pin.
+# Staging and development only. No production secret is read and production is
+# never passed as an environment. No token is ever printed.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [diag/staging-upload-rate]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diag-staging-upload-rate
+  cancel-in-progress: false
+
+env:
+  RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+  RAILWAY_HTTP_TIMEOUT: '600'
+  # The tree the refused legs uploaded, so archive content is held constant.
+  FIX_REF: f7d1ac277206ce4e7d68628f42fd4d66b3169580
+
+jobs:
+  serial:
+    name: serial - three uploads 20s apart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FIX_REF }}
+          path: tree
+          fetch-depth: 1
+      - name: Install the release chain's pinned CLI
+        run: |
+          set -euo pipefail
+          npm install --global @railway/cli@5.40.1
+          railway --version
+      - name: Serial staging uploads
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: bash "$GITHUB_WORKSPACE/.github/workflows/scripts/diag-rate-arm.sh" serial
+
+  burst:
+    name: burst - three uploads at the same instant
+    needs: serial
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FIX_REF }}
+          path: tree
+          fetch-depth: 1
+      - name: Install the release chain's pinned CLI
+        run: |
+          set -euo pipefail
+          npm install --global @railway/cli@5.40.1
+          railway --version
+      - name: Burst staging uploads
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: bash "$GITHUB_WORKSPACE/.github/workflows/scripts/diag-rate-arm.sh" burst
+
+  serial2:
+    name: serial2 - repeat of serial after the burst
+    needs: burst
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FIX_REF }}
+          path: tree
+          fetch-depth: 1
+      - name: Install the release chain's pinned CLI
+        run: |
+          set -euo pipefail
+          npm install --global @railway/cli@5.40.1
+          railway --version
+      - name: Serial staging uploads, again
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: bash "$GITHUB_WORKSPACE/.github/workflows/scripts/diag-rate-arm.sh" serial2
+
+  verdict:
+    name: rate-limit verdict
+    needs: [serial, burst, serial2]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read the three arms
+        run: |
+          set -euo pipefail
+          S='${{ needs.serial.result }}'
+          B='${{ needs.burst.result }}'
+          R='${{ needs.serial2.result }}'
+          {
+            echo "## Spacing verdict"
+            echo ""
+            echo "| arm | spacing | result |"
+            echo "|---|---|---|"
+            echo "| serial | 20 s | $S |"
+            echo "| burst | 0 s (simultaneous) | $B |"
+            echo "| serial2 | 20 s, after the burst | $R |"
+            echo ""
+            if [ "$S" = success ] && [ "$B" != success ] && [ "$R" = success ]; then
+              echo '**Bunching is the fault.** serial and serial2 got all three through and the simultaneous triple did not: give release.yml `max-parallel: 1` on the deploy matrices and stop letting `deploy-staging` race `deploy-development`. A retry is the wrong tool and, at 12 requests, made it worse.'
+            elif [ "$S" = success ] && [ "$B" = success ] && [ "$R" = success ]; then
+              echo '**Spacing is not the lever either** — nine accepted in a row today. The refusals must be time-bound to something outside this project (a Railway-side window); read the burst rows for an HTTP status and escalate to Railway rather than changing our chain.'
+            elif [ "$S" != success ] || [ "$R" != success ]; then
+              echo '**Staging is refusing spaced uploads too.** This is no longer a shape our CI can fix by re-ordering: get the `--verbose` bodies out of the serial arms and take them to Railway.'
+            else
+              echo '**Mixed.** Read the per-call rows in each job before concluding; the pattern is not one of the three expected shapes.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "serial=$S burst=$B serial2=$R"
