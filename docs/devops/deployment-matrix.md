@@ -362,7 +362,7 @@ rather than reasoned about:
   pre-flight window — no `Indexing...` line, no archive, no deployment row — which
   is what made it look like a bad token. It is not. Each candidate was measured:
 
-  | candidate | how it was exonerated |
+  | candidate | what measuring it showed |
   |---|---|
   | the secret's value | the **re-minted** token failed the same way at 16:12, 21 s after the same secret completed an upload in the **same job**; both red legs printed it masked at length 50 |
   | token scope | two read-only CI lanes pass with it; `railway status --environment staging --json` returned 40,632 bytes of JSON from the runner; raw `curl` to the API answered `HTTP 200, 53 bytes` |
@@ -371,9 +371,9 @@ rather than reasoned about:
   | upload shape | staging `frontend-web`'s pathless repo-root upload succeeded from CI (`7f7efc20` SUCCESS, `configFile=/frontend-web/railway.json`, then HTTP 200 serving the `Loading Spotlight` literal) and staging `backend`'s `--path-as-root` succeeded minutes later |
   | tree size | 211,126,634-byte checkout / 133,423,024-byte archive uploaded fine; a 6-byte archive failed for its own unrelated reason |
   | `environment: staging` protection rules | none configured; a probe job declaring the same environment produced both outcomes |
-  | concurrent requests | **exonerated by the same minute that produced the failure**: development's three legs called `railway up` at 16:23:25.2 / :25.6 / :26.9 — inside 1.7 s — and all three were accepted at once, while staging's three, equally concurrent seven seconds later, were all refused |
-  | request rate | staging accepted two uploads 3 s apart at 16:34:47 / :50 and refused the next one 62 s later; twelve refusals in 150 s follow two acceptances, which no per-minute quota fits |
-  | **what is NOT exonerated — the environment's connected git source** | `railway api serviceInstance(...) { source { repo } }` measured 2026-11-16: **staging** `backend`/`frontend-web`/`frontend-admin` all carry `source.repo = paymax2022/spotlight-latest1` (and `rootDirectory` `null`/`frontend-web`/`frontend-admin`); **development**'s three all return `source.repo = null`; **production**'s three return `source = null`. Every refusal observed in this incident is against a source-connected staging instance. This is an association, not a partition — staging also accepted at 16:04, 16:11, 16:15 and 16:34 — so it explains *where* the fault can land, not yet *why* |
+  | connected git source | proposed mid-investigation and **not supported**: staging's three instances do carry `source.repo = paymax2022/spotlight-latest1` (measured with `railway api serviceInstance(...) { source { repo } }`) while development's return `null` and production's return no `source` at all — but staging then accepted six consecutive uploads at 16:45-16:47 with development in the same loop, so the source is not what refuses it |
+  | request rate | staging accepted two uploads 3 s apart at 16:34:47 / :50 and refused the next one 62 s later, which no per-minute quota fits |
+  | **what is NOT exonerated — the number of uploads in flight at once** | Every refusal in this incident (15 of them: three at 16:23:32-:38 and twelve at 16:35:47-16:38:15) came from a job whose **three matrix legs fired within 5 s of each other**. Every acceptance (24, including `railway up --verbose` 12-for-12 in run 43910959092 at 16:45:29-16:47:40) came from calls made **one at a time**, or from the first three of a six-way pile-up. In run 43905969462 the chain had six legs uploading inside 12 s: development's three started at :25.2 / :25.6 / :26.9 and took the slots; staging's three arrived at :32 / :32 / :37 and were refused. One model — a cap of roughly three simultaneous upload-initiates per project, answered with a non-JSON body instead of a 429 — fits all 39 observations; "the environment" was a side effect of which legs won the race |
 
   Timing is the whole story: 400 ms, 452 ms, 500 ms, 1151 ms, 2526 ms, 2554 ms, 3448 ms,
   3611 ms and 15738 ms for the same call shape across three hours — sub-second when the
@@ -408,8 +408,11 @@ rather than reasoned about:
   `backend` accepted the identical upload at 16:34:50 and was refusing it 62 s later.
   So #1044 removes a single-shot halt; it does not, on its own, make `push → production`
   dependable, and it must not be merged on the claim that it does. The last two rows above
-  are the surviving discriminator — the environment's connected git source — and everything
-  else (token, CLI, shape, tree, concurrency, rate) is measured out.
+  name the surviving candidate — how many `railway up` calls are in flight at once — and
+  the test that follows from it is small and safe: run each deploy matrix one service at a
+  time (`max-parallel: 1`, costing the chain a few minutes) alongside the retry. Everything
+  else — token, CLI version, upload shape, tree size, protection rules, request rate,
+  connected source — is measured out.
 
 The second live hazard found while chasing F2 is not a chain defect but produces the
 same red: a concurrent session kept hand-running staging `frontend-web` with the
