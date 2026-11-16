@@ -929,7 +929,8 @@ def wait(sha, required, event, budget_s, absence_budget_s,
         # Strictly greater, not >=: with >= the loop times out on the iteration
         # where elapsed first EQUALS the budget, having slept one time fewer than
         # the test pins. Overshoot is bounded by one POLL_SECONDS (30s) on a
-        # 40-minute budget.
+        # 75-minute budget (amended 2026-11-16 from 40 — see the Task 9 entry in
+        # "Deliberate corrections made during review").
         if elapsed > budget_s:
             return Verdict("timeout",
                            f"CI did not settle within {budget_s // 60} minutes "
@@ -954,7 +955,7 @@ def main(argv=None):
     ap.add_argument("--event", required=True, choices=["push", "workflow_dispatch"])
     ap.add_argument("--skip-gates", action="store_true",
                     help="rollback only: assert CI was green when this SHA was main")
-    ap.add_argument("--budget-minutes", type=int, default=40)
+    ap.add_argument("--budget-minutes", type=int, default=75)
     ap.add_argument("--absence-budget-minutes", type=int, default=5)
     ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     args = ap.parse_args(argv)
@@ -1099,7 +1100,7 @@ to a deterministic timeout.
 Three verdicts are worth calling out because each one is a real state on this
 repo and each one is easy to get wrong:
 - noop_docs_only: both CI lanes carry paths-ignore ['**.md','docs/**'], so a
-  docs-only main push produces zero check-runs. That is not a 40-minute timeout.
+  docs-only main push produces zero check-runs. That is not a 75-minute timeout.
 - superseded: both lanes use cancel-in-progress on a per-ref group, so a newer
   main commit cancels this one. Not a failure, and it must not deploy.
 - a dispatch with no CI run at all fails loudly rather than reading as
@@ -2112,7 +2113,7 @@ jobs:
             --event "${{ github.event_name }}" \
             ${{ github.event_name == 'workflow_dispatch' && inputs.skip_gates == true && '--skip-gates' || '' }} \
             --repo "${{ github.repository }}" \
-            --budget-minutes 40
+            --budget-minutes 75
 
       # Captured HERE, before any deploy job runs, for two reasons:
       #   - a matrix job's outputs are unreliable (they come from whichever leg
@@ -3236,7 +3237,7 @@ Removes every manual step from the release path. A push to `main` now deploys de
 Implements `docs/superpowers/specs/2026-11-15-auto-deploy-release-pipeline-design.md` (#1034), Phase 1. Phase 0 (archive tags + do-not-merge record) is in the preceding PR.
 
 **What replaces the human who used to type `DEPLOY`:**
-- `gates` refuses to deploy until this commit's CI is provably green. It waits on the nine required-check **names** *and* on the `integration-verify` **workflow run** — that workflow produces no check-run of its own name, so waiting on a name would hang for 40 minutes. `--paginate` is mandatory: `6199a6b57` returns 50 check-runs and an unpaged read is a false all-green.
+- `gates` refuses to deploy until this commit's CI is provably green. It waits on the nine required-check **names** *and* on the `integration-verify` **workflow run** — that workflow produces no check-run of its own name, so waiting on a name would hang for 75 minutes. `--paginate` is mandatory: `6199a6b57` returns 50 check-runs and an unpaged read is a false all-green.
 - A **timeout is a failure**, not a pass.
 - Every stage reads back what the environment is actually serving (`/api/v1/public/build` for the backend, a `/_next/static/chunks/` fingerprint for the frontends — a frontend build echoes no commit anywhere, so nothing else can prove the bytes changed).
 
@@ -3413,5 +3414,7 @@ No spec requirement is left without a task.
 1. Task 5's `smoke-development` matrix originally gave the `backend` entry a populated `fingerprint` that the backend branch of `railway-smoke.sh` never reads, and its `touched` step used `git diff A~1 A` unguarded, which aborts on a root commit.
 2. Task 5 Step 8 originally ran `bash -n f1 f2 f3 f4`, which syntax-checks **only `f1`** — bash takes the first non-option argument as the script and the rest become positional parameters — so its "scripts parse" was not evidence. Rewritten to the `for f in …; do bash -n "$f"; done` loop that Steps 6 and Task 9 already used.
 3. Tasks 3 and 7 both edit `.github/workflows/ci.yml` in the same branch, and Task 7's steps cited pristine `6199a6b57` line numbers. Task 3 inserts 6 lines at `:188`, so Task 7's literal `sed -i '' '486,$d'` would have started at old-`:480` — inside the `workflow-lint` job — and truncated a required check. Task 7 Steps 1-3 now derive the span from content anchors (`grep` for `^  deploy-development:`, then `awk` back to the comment above it), assert the expected post-Task-3 numbers (811 lines, `:495`/`:586`/`:727`, 491 after the delete), and warn that `$START` must be live in the same shell as the `sed`.
-4. Task 3's literal `wait()` failed Task 3's literal test. The loop read `clock()` twice per iteration — once inside the `classify` call for `absence_settled`, once for `elapsed` — and the test's `_Clock(step)` advances a fixed step per *call*, so simulated time ran at double speed and a 120s budget with a 30s step slept once where the test pins four sleeps. Caught by the Task 3 implementer at the red-green gate, verified by hand here, and fixed in the plan text: one `now = clock()` per iteration feeding both uses, and `elapsed > budget_s` rather than `>=` (with `>=` the loop exits on the iteration where elapsed first equals the budget, one sleep short). Signature, verdict set, log format and reason strings are unchanged; with a real monotonic clock the two reads were microseconds apart, so production behaviour is materially identical and the overshoot is bounded by one `POLL_SECONDS` on a 40-minute budget.
+4. Task 3's literal `wait()` failed Task 3's literal test. The loop read `clock()` twice per iteration — once inside the `classify` call for `absence_settled`, once for `elapsed` — and the test's `_Clock(step)` advances a fixed step per *call*, so simulated time ran at double speed and a 120s budget with a 30s step slept once where the test pins four sleeps. Caught by the Task 3 implementer at the red-green gate, verified by hand here, and fixed in the plan text: one `now = clock()` per iteration feeding both uses, and `elapsed > budget_s` rather than `>=` (with `>=` the loop exits on the iteration where elapsed first equals the budget, one sleep short). Signature, verdict set, log format and reason strings are unchanged; with a real monotonic clock the two reads were microseconds apart, so production behaviour is materially identical and the overshoot is bounded by one `POLL_SECONDS` on a 75-minute budget.
 5. Task 3 Step 5's live probe expected "≥ 50 check-runs", which is a property of the specific commit `6199a6b57`, not of the script. `origin/main` moved to `e92e1058d` mid-task and returned 43. Reworded to say the point is that the count exceeds one page, which is what proves the pagination walk.
+6. **The 40-minute gate budget is shorter than the CI it waits for, so this was a bug, not a tuning.** Found at Task 9 Step 2 by measuring the thing the number is supposed to bound. The gate waits on the `integration-verify` **run** for the released SHA, so the right population is that workflow's green main pushes: 309 runs with `event=push`, `branch=main`, `conclusion=success`, measured on `run_started_at`→`updated_at` — p50 24.1, p90 40.6, p99 43.4, worst **46.1** minutes, and **31 of 309 (1 in 10) past 40**. A `timeout` verdict exits 1 and every deploy job is gated on `needs.gates.outputs.verdict == 'proceed'`, so on those pushes the release would have deployed nothing while the red `gates` check read like CI's own fault. Raised to **75 minutes** wherever the number is executable (`--budget-minutes 75` in Task 6's `release.yml` literal, `default=75` in Task 3's `main()`, and the prose that quotes it). Keeping 40 and making `timeout` non-fatal is worse: it would deploy on an unsettled verdict.
+7. **Two measurement traps in that finding, both of which produced a wrong number before they were caught.** (a) *Conditioning*: over all 901 completed push runs of `integration-verify` — failures and cancels included, and those settle fast — the median is 8.7 min, which makes 40 look safe. A budget sizes the wait for a run that goes green, so it must be conditioned on `conclusion=success`; the first citation in this repo's own workflow comment mixed the two populations and said "29 of 309", which is neither figure (31 of 309 for green, 32 of 901 for the whole mix). (b) *Span definition*: `run_started_at`→`updated_at` is execution; `created_at`→`updated_at` includes queue, and on that span the worst of the 309 is **85.5** min. So 75 is an empirical bound, not a guarantee — deliberately so, because a fail-closed timeout on the ~1-in-300 tail is the safe direction (nothing ships, operator re-dispatches) and a budget tuned to cover every observed minute would let a hung CI hold the `release-main` concurrency slot for over an hour. Any future re-sizing must state which span it measured.

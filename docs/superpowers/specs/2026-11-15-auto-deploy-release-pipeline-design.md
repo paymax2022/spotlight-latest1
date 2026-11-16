@@ -105,7 +105,7 @@ Worker and web service share one compiled contract: `backend/cmd/notification-wo
 
 **`ci.yml` concurrency can kill a deploy mid-upload.** `concurrency: group: ci-${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: true`. Any deploy that lives inside `ci.yml` on `main` is cancellable by the next push. The new chain must not be. `integration-verify.yml` uses the same shape (`integ-${{ github.ref }}`, cancel in progress).
 
-**Both CI lanes skip docs-only `main` pushes.** `ci.yml` and `integration-verify.yml` each declare `push: branches: [main]` with `paths-ignore: ['**.md', 'docs/**']`. So a docs-only commit produces no check-runs at all — which a naive "wait for green" gate would read as a 40-minute timeout.
+**Both CI lanes skip docs-only `main` pushes.** `ci.yml` and `integration-verify.yml` each declare `push: branches: [main]` with `paths-ignore: ['**.md', 'docs/**']`. So a docs-only commit produces no check-runs at all — which a naive "wait for green" gate would read as a full-budget timeout (75 minutes as amended below; 40 as first written).
 
 **`ci.yml`'s header comment is stale and asserts a mechanism that does not exist.** It says "Railway performs native GitHub deployments from these branches after its per-environment branch mapping is configured: develop -> Development, staging -> Staging, prod -> Production." No such mapping is configured: every service in every environment reports `source: null` (measured 2026-11-15), so a branch push cannot deploy anything and `railway up` is the only route. The comment must be corrected when the deploy jobs move out, or the next reader will believe a push deploys.
 
@@ -191,7 +191,24 @@ on:
 
 The development leg (`deploy-development`, `smoke-development`) leaves `gates` side by side with the staging leg, runs concurrently, and appears in no production job's `needs` — Decision F. Nothing reaches production until `smoke-staging` is green.
 
-**`gates`** polls for up to 40 minutes and requires two things, each by the mechanism that actually reports it:
+**`gates`** polls for up to 75 minutes and requires two things, each by the mechanism that actually reports it:
+
+> **Amended 2026-11-16, during Task 9: 40 minutes → 75.** The budget has to exceed the duration of the
+> run the gate waits for, and it did not. Sized on the population the gate actually faces — the 309
+> `integration-verify` runs with `event=push`, `branch=main`, `conclusion=success` — the execution span
+> (`run_started_at`→`updated_at`) is p50 24.1 min, p90 40.6, p99 43.4, worst 46.1, and **31 of the 309
+> (1 in 10) ran past 40 minutes**. A timeout is a failure that deploys nothing, so the number written
+> here would have halted roughly one main push in ten and made it look like CI's fault. 75 is 1.6× the
+> worst green run ever observed on this repo.
+>
+> Two things about the measurement, because both nearly got it wrong. First, the population: over **all**
+> 901 completed push runs of that workflow — failures and cancels included, and those settle fast — the
+> median is only 8.7 min, which would have made 40 look generous. A budget sizes the wait for a *green*
+> run, so it must be conditioned on success. Second, the tail: on wall clock (`created_at`→`updated_at`,
+> queue included) the worst of those 309 is 85.5 min, so 75 is a bound, not a guarantee. One run in ~300
+> hitting a fail-closed timeout is the acceptable direction — nothing ships and the operator re-dispatches
+> — and it is why this number is not tuned to cover every observed minute. The spec's reasoning for
+> bounding the wait at all stands unchanged.
 
 1. Every check-run name in `.github/required-checks.txt` reaches `completed/success` — read from `GET repos/{o}/{r}/commits/{sha}/check-runs` **with `--paginate`** (an unpaged call produces a false all-green; this repo returns 50 check-runs for one commit).
 2. The `integration-verify` **workflow run** for that SHA reaches `completed/success` — read from `GET repos/{o}/{r}/actions/runs?head_sha={sha}`, filtered to that workflow and to `event == "push"`. It has no single check-run name to wait on (Decision C).
@@ -200,7 +217,7 @@ What `gates` deliberately does **not** wait on, and why: the full per-SHA run ce
 
 Three outcomes it must distinguish, all of which are real on this repo:
 
-- **Timeout is a failure, not a pass.** At 40 minutes the job exits non-zero, the summary lists every check that had not settled, and nothing is deployed anywhere. A release that cannot confirm CI is green does not get the benefit of the doubt.
+- **Timeout is a failure, not a pass.** At the budget (75 minutes, amended from 40 — see above) the job exits non-zero, the summary lists every check that had not settled, and nothing is deployed anywhere. A release that cannot confirm CI is green does not get the benefit of the doubt.
 - **No checks at all means a docs-only commit.** `ci.yml` and `integration-verify.yml` both carry `push: branches: [main]` with `paths-ignore: ['**.md', 'docs/**']`, so a docs-only push to `main` produces *zero* check-runs. `gates` therefore first waits, bounded at 5 minutes, for a `ci.yml` run to appear for the SHA (`actions/runs?head_sha=`). If none appears, the commit was filtered out and there is nothing to build: the chain concludes successfully as a no-op with a summary line saying so, and deploys nothing. `release.yml` deliberately does **not** duplicate the `paths-ignore` list — two hand-synced copies of a filter is the drift hazard `ci.yml`'s own header was rewritten to remove, so `ci.yml`'s filter stays the single source of truth and `gates` reads its consequence.
 - **A cancelled check means this release was superseded.** Both lanes use `cancel-in-progress: true` on a per-ref group (`ci-${{ github.workflow }}-${{ github.ref }}`, `integ-${{ github.ref }}`), so a second commit landing on `main` cancels the first commit's CI. If `gates` sees `cancelled` for a required name it exits without deploying, and the summary says which newer run superseded it. Deploying the older commit would race the newer release; waiting would hang until timeout.
 
@@ -267,7 +284,7 @@ Production `frontend-web` is probed like the others now that Decision E puts it 
 - A failed Railway deploy leaves the previous deployment serving. Observed, not assumed: development `frontend-web`'s latest deployment is FAILED (2026-11-13) and `https://frontend-web-development.up.railway.app/` still answers HTTP 200.
 - **A failed development deploy does not stop anything** (Decision F). It fails the workflow conclusion and the job summary says so, but the staging→production leg has already been running concurrently and completes on its own merits. This is the deliberate cost of removing approvals: a release can be green in production while the run is red in development, so the run page must be read, not just its overall colour.
 - **Rollback:** `workflow_dispatch` with `ref=<prior SHA>`, plus `skip_gates: true` if that SHA's check-runs are past retention. Because migrations stay additive-only / expand-first, re-deploying an older commit is safe: the older code reads a newer-but-compatible schema. A rollback re-runs the same chain and smokes in the same order, with **one deliberate exception — it does not apply migrations** *(added during plan-writing: the original wording said a rollback migrates too, and that cannot work)*. A rollback checks out an *older* `supabase/migrations/` directory, and `supabase db push --linked` against a remote that already holds newer versions aborts with "remote migration versions not found in local migrations directory" — the exact failure `db-migrate.yml`'s stale-ref guard exists to prevent, and the reason that guard *fails* a dispatch rather than skipping it. Additive-only is what makes skipping safe: the newer schema already satisfies the older code, the same property the rollback relies on. So `gates` resolves whether the target SHA is `main`'s tip and the apply step no-ops with a notice when it is not. The no-op lives *inside* the migrate job rather than in its `if:`, because a skipped `needs:` dependency makes GitHub skip every job downstream of it — a rollback would then deploy nothing at all.
-- The 40-minute gate budget bounds how long a release can hang waiting for CI before it reports failure rather than parking silently.
+- The 75-minute gate budget (amended 2026-11-16 from 40, which was shorter than the CI it waits for) bounds how long a release can hang waiting for CI before it reports failure rather than parking silently.
 
 ## Removed vs kept
 
