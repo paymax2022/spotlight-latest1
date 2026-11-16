@@ -148,6 +148,29 @@ else
   check "pathless shape: the stub recorded argv" "recorded" "missing"
 fi
 
+# --- 4. The default budget is long enough for the fault it claims to ride out. --
+# Cases 1-3 pass RETRY_* explicitly, so nothing above pins what CI actually gets:
+# release.yml sets no RETRY_*, and the script's own defaults govern the release
+# chain. This is a fitness function, not a restatement of the constants — it replays
+# with-retry.sh's rule (double, cap 120 s, jitter excluded because jitter is the best
+# case) against the measured fault: refusals ran continuously for 883 s on
+# 2026-11-16, so a budget whose GUARANTEED sleep is shorter than that is retrying for
+# less time than the fault lasts.
+attempts=$(sed -nE 's/.*RETRY_ATTEMPTS:-([0-9]+).*/\1/p' "$script" | head -1)
+base=$(sed -nE 's/.*RETRY_BASE_DELAY_S:-([0-9]+).*/\1/p' "$script" | head -1)
+if [ -z "$attempts" ] || [ -z "$base" ]; then
+  check "default budget is readable from the script" "readable" "missing"
+else
+  delay="$base"; backoff=0
+  for ((i = 1; i < attempts; i++)); do
+    backoff=$((backoff + delay))
+    delay=$(( delay * 2 > 120 ? 120 : delay * 2 ))
+  done
+  echo "--- defaults replayed: $attempts attempts, ${base}s base -> ${backoff}s guaranteed ---"
+  [ "$backoff" -ge 883 ] && enough=yes || enough=no
+  check "default budget covers the measured 883 s fault window" "yes" "$enough"
+fi
+
 echo
 if [ "$failures" -eq 0 ]; then
   echo "ok — the deploy upload retries a transient Railway failure and still stops"

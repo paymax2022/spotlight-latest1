@@ -23,7 +23,9 @@
 #   RAILWAY_HTTP_TIMEOUT  set by the caller; the CLI default of 90s truncates the
 #                    110 MB frontend-web upload
 #   RETRY_ATTEMPTS / RETRY_BASE_DELAY_S  passed to scripts/ci/with-retry.sh for
-#                    the upload call (defaults here: 4 attempts, 15s base)
+#                    the upload call (defaults here: 9 attempts, 60s base = 900 s
+#                    of guaranteed backoff, sized to the measured fault window —
+#                    see THE UPLOAD BUDGET below)
 #
 # THE UPLOAD RULE (read before changing UPLOAD_PATH or ROOT_FLAG):
 #   The shape follows the service instance's Railway `rootDirectory`, which is NOT
@@ -108,12 +110,23 @@ fi
 # both rows carry this commit as their message, the poll selects by meta.cliMessage,
 # and the later deployment becomes the serving one either way.
 #
+# THE UPLOAD BUDGET (read before changing RETRY_*): it is set from the measured fault,
+# not from feeling. Run 43909191817 put four attempts on a 15 s base against the live
+# fault and lost 12-for-12: refusals ran continuously from 16:23:32 to at least 16:38:15Z, which is 883 s — longer than
+# the entire 105-157 s of backoff that budget can produce. Retrying a fault for less
+# time than the fault lasts is not tolerance, it is a slower halt. With-retry doubles
+# and caps at 120 s, so 9 attempts from a 60 s base is 60 + 7*120 = 900 s of
+# guaranteed sleep (1350 s with jitter), which clears the longest window observed and
+# costs a genuinely broken leg up to ~15 minutes before it reports red. Nothing here
+# claims that is sufficient: the fault is upstream and unbounded, and a longer window
+# than this still halts.
+#
 # $UPLOAD_PATH and $ROOT_FLAG are UNQUOTED ON PURPOSE: an empty value must vanish
 # from the argument list, not arrive as an empty-string argument (which the CLI
 # reads as a path of ""). See THE UPLOAD RULE above.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-4}"
-export RETRY_BASE_DELAY_S="${RETRY_BASE_DELAY_S:-15}"
+export RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-9}"
+export RETRY_BASE_DELAY_S="${RETRY_BASE_DELAY_S:-60}"
 # shellcheck disable=SC2086
 bash "$SCRIPT_DIR/with-retry.sh" railway up $UPLOAD_PATH $ROOT_FLAG --no-gitignore \
   --service "$SERVICE" \
