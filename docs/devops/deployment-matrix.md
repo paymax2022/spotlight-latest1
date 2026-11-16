@@ -114,6 +114,57 @@ differently, it covers every edge case the promotion-branch version did. That
 risk is retired by the probe contract in the checklist below — staging smoke
 before production — not by more archaeology.
 
+### `prod` advanced again on 2026-11-16 — re-screened
+
+Everything above is the 2026-11-15 screening, left as recorded. It is now
+superseded on three points, measured live:
+
+`d9a2ced41` (#1039, "port the assessment plane (question bank, review, exams) to
+prod") merged into `prod` at 2026-11-16T07:02:14Z, so `origin/prod`'s tip is no
+longer the archived `76f1a6103`. `git cherry -v origin/main origin/prod` now
+marks **eight** `+` commits on `prod`, not seven.
+
+**Does production hold code `main` cannot deploy? No.** #1039 touches 14 files.
+Eleven are byte-identical between `d9a2ced41` and `origin/main` — the three
+assessment services under `frontend-web/src/server/services/academy/assessment/`
+and all eight `frontend-web/app/api/admin/academy/{exams,questions}…` routes —
+and both branches' `frontend-admin/app/admin/academy/film/page.tsx` carry the
+same eleven tabs, `assessment`, `bank` and `exams` included. The other three files
+(`film/page.tsx`, `frontend-admin/src/services/filmAcademyAdminService.ts`,
+`frontend-web/src/lib/feature-flags.ts`) differ, and in all three **`prod` is
+behind `main`**: `prod` still carries the flat `capacity` / `fee_frequency` /
+`installments_count` batch model that `main` replaced with the composite
+per-format model (`AcademyPricingKey`, `max_students`, `training_schedule`,
+`duration_weeks`), and its `feature-flags.ts` is an older revision (1 insertion,
+19 deletions against `main`). So the section's central claim survives — but the
+same mistake #1030 made is being repeated: **merging `prod` into `main`
+re-introduces the flat-capacity admin console.**
+
+The consequence for the first auto-release: production's admin Film Academy
+console is currently built from `prod`'s older model, and the first
+`release.yml` production leg deploys `main`'s composite-pricing version over it.
+That is the intended direction — `main` is ahead — but it changes a page someone
+else shipped this morning, so read the production `frontend-admin` chunk
+fingerprint before believing the deploy.
+
+It is therefore a **sixth** commit that must never be merged into `main`. It is
+recorded here instead of in the table above because that table's intro ("these
+five commits") and the `6 + 5` arithmetic in the paragraph before it are the
+2026-11-15 screening, and re-deriving the staging side is not today's work.
+Any future re-screen should restate both branches from `git cherry` rather than
+edit these numbers in place.
+
+**Method note, because two instrument failures nearly produced the opposite
+answer.** `git show --stat` *elides* long paths with `.../`, and reading
+`.../server/services/academy/assessment/attempts.ts` as `backend/…` rather than
+`frontend-web/src/…` made three files look invented; and the comparison loop
+first ran `git rev-parse $R:$path`, which zsh parses as `$R` followed by the
+`:f` **parameter modifier**, rewriting the path — so both sides reported the
+file missing and `rev-parse` printed a commit SHA on stdout with its error
+discarded. Take paths from `git show --name-only`, and build `"$REV:$path"` into
+its own variable. A probe that says "absent from everything" is an instrument
+failure, not a finding.
+
 ## `notification-worker` version state — UNVERIFIED FROM THE REPO
 
 Production runs the asynq consumer as Render's `spotlight-notification-worker`
