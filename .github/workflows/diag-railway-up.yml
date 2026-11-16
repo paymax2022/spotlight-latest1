@@ -60,6 +60,7 @@ jobs:
           TOK_DEVELOPMENT: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
         run: |
           set -euo pipefail
+          len_staging=0; len_development=0
           for pair in "STAGING:$TOK_STAGING" "DEVELOPMENT:$TOK_DEVELOPMENT"; do
             name="${pair%%:*}"; val="${pair#*:}"
             if [ -z "$val" ]; then
@@ -67,11 +68,11 @@ jobs:
               exit 1
             fi
             echo "::add-mask::$val"
-            printf 'RAILWAY_TOKEN_%s_LEN=%s\n' "$name" "${#val}" >> "$GITHUB_ENV"
             printf '%s' "$val" > "/tmp/tok_$name"
+            eval "len_${name,,}=\${#val}"
           done
           chmod 600 /tmp/tok_STAGING /tmp/tok_DEVELOPMENT
-          echo "token lengths (never values): staging=$RAILWAY_TOKEN_STAGING_LEN development=$RAILWAY_TOKEN_DEVELOPMENT_LEN"
+          echo "token lengths (never values): staging=$len_staging development=$len_development"
 
       - name: Runner facts that could matter
         run: |
