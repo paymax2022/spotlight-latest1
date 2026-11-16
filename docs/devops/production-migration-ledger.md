@@ -3301,14 +3301,35 @@ So the plan's conclusion survives, by a mechanism the plan did not have:
   migrate job tests `needs.gates.outputs.verdict == 'proceed'` (`release.yml:163`, `:301`, `:435`, `:453`).
   Task 14 Step 5's and Task 16 Step 2's reasoning was therefore right about the outcome and wrong about the
   reason: the inertness comes from the release gate's classifier, not from `sync-frontend-web.yml`'s filter.
-- A **non-docs** push to `main` now self-releases: no dispatch, no typed `DEPLOY`, no promotion branch, no
-  human. That is the change that touches the remaining tasks. Task 11 and Task 13 assume the prod Go plane is
-  moved by an explicit promote, and Tasks 3, 6, 14 and 15 end in commits that mix paths; any one of those
-  commits that carries a single non-docs file rides straight to production, including its migration apply.
-  The `#996`-drift decision (§16.2 item 14) is therefore no longer a question the plan can defer past the
-  next code push, and each remaining push needs the operator's explicit word — this correction was delivered
-  as a PR rather than pushed for that reason, and #1043's merge then confirmed the prediction held: the
-  docs-only push it produced wrote nothing and deployed nothing.
+- A **non-docs** push to `main` self-releases *by design*: no dispatch, no typed `DEPLOY`, no promotion
+  branch, no human. Task 11 and Task 13 assume the prod Go plane is moved by an explicit promote, and Tasks
+  3, 6, 14 and 15 end in commits that mix paths; any one of those commits that carries a single non-docs file
+  is aimed straight at production, migration apply included. The `#996`-drift decision (§16.2 item 14) is
+  therefore no longer a question the plan can defer past the next code push, and each remaining push needs
+  the operator's explicit word — this correction was delivered as a PR rather than pushed for that reason,
+  and #1043's merge then confirmed the prediction held: the docs-only push it produced wrote nothing and
+  deployed nothing.
+- **But no non-docs push has actually reached production yet, and the reason is a defect, not the design.**
+  Measured on the three pushes after `ef97ec64b` landed — `43827942317` (`ef97ec64b`, 08:01:10Z),
+  `43877393067` (`2303984cf`, 13:36:28Z) and `43886555996` (`ee58728e0`, 14:31:05Z): in all three the gate
+  concluded `success`, `migrate staging database / supabase db push (staging)` concluded **`success`**, the
+  three `deploy Staging (…)` jobs concluded **`failure`**, and `smoke Staging`,
+  `migrate production database` and `deploy Production (…)` were therefore `skipped`. So staging's database
+  *is* being written automatically on every push, and production is shielded only because the staging deploy
+  leg is red — `deploy-staging` failing cascade-skips `smoke-staging` (`needs: [gates, deploy-staging]`,
+  `release.yml:377-379`), which skips `migrate-production` (`needs: [gates, smoke-staging]`, `:428-434`).
+  That is a one-line-of-luck guarantee: the failure is Railway's upload-initiate decode error
+  (`Failed to fetch: error decoding response body`, e.g. job `133390268421` at 15:10:07Z, with
+  `RAILWAY_HTTP_TIMEOUT: 600` already set), which `docs/devops/deployment-matrix.md:323-332` and the project
+  note `railway-up-400ms-decode-error-is-theirs.md` both measure as transient and **theirs**, not a token or
+  upload-shape fault — the same secret completed an upload in one job and hit it 21 s later in another.
+  Consequence for ordering, stated plainly: **the first green staging deploy leg releases the whole prod
+  backlog with no dump taken** — §16.2 item 3 records that no production dump exists and no in-repo
+  `pg_dump` caller either, and §5.6's **88** rows are a classification against a capture taken 2026-11-07
+  (`recorded: 663`) while prod has since moved to 670 history rows, so the set that would ride out on that
+  leg is not merely unbatched, it is unread. Task 3 is therefore not merely a plan step that is late; it is
+  the thing standing between the release lane and an unbatched prod `db push`, and it has to land before
+  anything that fixes the staging leg.
 - The contrast case is the one to remember: `noop_docs_only` is valid **only** for a push
   (`release-gates.py:115-119`), which is why dispatching the same docs-only SHA read as `failed` rather than
   as a no-op. A red `release gate` on a docs SHA is not evidence that docs deploy something; it is the
