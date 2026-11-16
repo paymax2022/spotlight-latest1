@@ -328,7 +328,7 @@ rather than reasoned about:
   Fixed in `.github/workflows/release.yml` by giving `deploy-development` and
   `deploy-production` the app-folder shape and leaving it out of `deploy-staging`,
   whose rows are the only correct ones.
-- **F2 — every `deploy Staging` leg dies in ~0.46 s** with
+- **F2 — every `deploy Staging` leg dies in under half a second** with
   `Failed to fetch: error decoding response body`, before any upload begins, so
   `migrate-production` and `deploy-production` are skipped and **the chain cannot
   deliver production at all**. All three legs (backend, frontend-web, frontend-admin)
@@ -338,8 +338,13 @@ rather than reasoned about:
   run locally — staging credentials succeed, and a deliberately bogus token fails with
   a clean `Unauthorized` rather than this decode error. So the failure is specific to
   the `RAILWAY_TOKEN_STAGING` value GitHub Actions holds, not to the CLI pin or the
-  shape. **Re-minting that secret is an operator action, not a repo change.** Until it
-  is replaced, `deploy-staging` is the choke point of the whole release chain.
+  shape. The log shows that secret expanding to `***`, so it is set and non-empty —
+  read this as a **malformed** value (a stray newline or a truncated paste is the
+  likely shape of it) rather than a missing one. Run 43827942317, jobs 133185143290 /
+  133185143410 / 133185143550. **Re-minting that secret is an operator action, not a
+  repo change.** Until it is replaced, `deploy-staging` is the choke point of the whole
+  release chain, and `RAILWAY_TOKEN_PRODUCTION` has never been exercised by CI (that
+  leg was skipped) and should be re-minted in the same pass.
 
 Because F2 blocked `deploy-production`, production's two frontends were written by
 hand on 2026-11-16 from `ef97ec64b` (`origin/main`) —
