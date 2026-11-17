@@ -149,7 +149,7 @@ func ValidateWalletTransferRequest(req WalletTransferRequest) error {
 	if req.AmountKobo <= 0 {
 		return ErrInvalidAmount
 	}
-	if strings.TrimSpace(req.RecipientPhone) == "" {
+	if req.EffectiveRecipient() == "" {
 		return ErrRecipientNotFound
 	}
 	return nil
