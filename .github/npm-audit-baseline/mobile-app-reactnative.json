@@ -20,7 +20,8 @@
       "ghsa": "GHSA-fc5q-39xc-vjpf",
       "severity": "high",
       "title": "picomatch vulnerable to ReDoS through single-branch repeated extglobs",
-      "reason": "No patched release exists: the advisory covers <= 4.0.7 and 4.0.7 is npm's latest (dist-tag latest, published 2026-08-24), so there is nothing to bump or override to. Transitive only — reached through glob/file-matching tooling (@expo/cli, @expo/metro-config, metro-file-map, anymatch, micromatch, tinyglobby, fast-glob); no direct dependency and no app/src import of picomatch. Accepted as unfixable on 2026-11-17, NOT as harmless. Remove this entry when a fixed picomatch publishes and the lockfile resolves it — the gate then fails on the stale entry by design."
+      "reason": "No patched release exists: the advisory covers <= 4.0.7 and 4.0.7 is npm's latest (dist-tag latest, published 2026-08-24), so there is nothing to bump or override to. Transitive only — reached through glob/file-matching tooling (@expo/cli, @expo/metro-config, metro-file-map, anymatch, micromatch, tinyglobby, fast-glob); no direct dependency and no app/src import of picomatch. Accepted as unfixable on 2026-11-17, NOT as harmless. Remove this entry when a fixed picomatch publishes and the lockfile resolves it — the gate then fails on the stale entry by design.",
+      "tracked_by": "https://github.com/paymax2022/spotlight-latest1/issues/1061"
     }
   ]
 }
