@@ -1,10 +1,9 @@
-// the camelCase feature-flag names. This maps between them for the entries where
-// the correspondence is unambiguous.
-// DELIBERATELY PARTIAL. An id with no entry here is NOT gated by the registry and
-// always renders. That is the safe direction: gating a tile against a registry key
-// that does not exist would hide it forever, and a missing mapping is far more
-// likely than a deliberate omission. Add entries as modules are registered —
-// serviceModuleKeys.spec.ts fails if a value here is not a real registry key.
+// Registry keys live in the platform_modules table (Go backend internal/modules);
+// this maps services-grid tile ids onto them. EXHAUSTIVE since 2026-11-17: every
+// SERVICE_MODULES tile id must appear here — tests/unit/modules/serviceModuleKeys.spec.ts
+// fails on any unmapped tile, because an unmapped tile renders unconditionally
+// and cannot be toggled from /admin/modules.
+// Spec: docs/superpowers/specs/2026-11-17-mobile-menu-visibility-design.md
 
 export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
   // Finance
@@ -45,6 +44,32 @@ export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
 
   // Support
   support: 'aiCare',
+
+  // Investment & learning families plus the remaining tiles. Registered
+  // 2026-11-17 so the whole grid is admin-controllable
+  // (spec 2026-11-17-mobile-menu-visibility). Keys must exist in
+  // platform_modules — migration 20261117000000 seeds them.
+  investment: 'investment',
+  crypto: 'crypto',
+  learn: 'learn',
+  'invest-ai': 'investAi',
+  'spotlight-wealth': 'spotlightWealth',
+  fractionalre: 'fractionalRealEstate',
+  'ai-trading': 'aiTrading',
+  education: 'education',
+  // Contest rides the existing vote bridge module; Property Mgmt rides realtor,
+  // matching the documented "unpublishing realtor hides the pillars" coupling.
+  contest: 'voteBridge',
+  'naija-driver': 'arena',
+  'film-academy': 'filmAcademy',
+  academy: 'academy',
+  property: 'realtor',
+  dues: 'dues',
+  connect: 'connect',
+  marketplace: 'marketplace',
+  shopping: 'shopping',
+  parcel: 'parcel',
+  admin: 'admin',
 };
 
 /**
@@ -56,9 +81,10 @@ export function registryKeyFor(serviceId: string): string | null {
 }
 
 // A SEPARATE map, not an extension of the one above. The two id-spaces collide:
-// 'marketplace' is a lifestyle shopping tile in SERVICE_MODULES and the property
-// buy/rent marketplace in PROPERTY_SUBMODULES. Sharing one table would gate the
-// shopping tile on the realtor module.
+// 'marketplace' is a lifestyle shopping tile in SERVICE_MODULES (registry key
+// 'marketplace') and the property buy/rent pillar in PROPERTY_SUBMODULES
+// (registry key 'realtor'). They are separate maps on purpose: hiding the
+// shopping tile must not touch the property pillar.
 // 'marketplace' and 'rent' both map to `realtor` on purpose — listings and leases
 // are the same registry module (see FEATURE_REALTOR_ENABLED: "property graph,
 // listings, inspections, leases, shortlet"). Unpublishing realtor therefore hides
@@ -95,6 +121,8 @@ export function quickActionRegistryKeyFor(actionId: string): string | null {
 export const FEATURED_REGISTRY_KEY: Record<string, string> = {
   bills: 'utilityPayments',
   'food-ride': 'restaurant',
+  'naija-driver': 'arena',
+  invest: 'investment',
 };
 
 export function featuredRegistryKeyFor(featuredId: string): string | null {
