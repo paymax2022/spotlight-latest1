@@ -6,7 +6,8 @@ cannot be unit-tested. Same split as changed-modules.py / test-changed-modules.p
 
 The gate waits on two things by the mechanism that actually reports them
 (spec Decision C):
-  1. every check-run NAME in .github/required-checks.txt reaches
+  1. every check-run NAME that .github/required-checks.txt requires for main (its
+     @main section, resolved by scripts/ci/required-checks.py) reaches
      completed/success — GET commits/{sha}/check-runs, --paginate MANDATORY
      (one commit here returns 50 check-runs; an unpaged read is a false green).
   2. the integration-verify WORKFLOW RUN for that SHA reaches
@@ -48,6 +49,7 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import pathlib
@@ -60,6 +62,16 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 CI_WORKFLOW = ".github/workflows/ci.yml"
 INTEG_WORKFLOW = ".github/workflows/integration-verify.yml"
 REQUIRED_CHECKS = str(ROOT / ".github/required-checks.txt")
+
+# One parser for required-checks.txt, shared with the drift test and the apply script.
+# This gate is the reader with the most to lose from a private parse: the file's @all /
+# @<branch> directives are section headers, not check names, and a gate that waited on a
+# check literally named "@main" would poll until it returned `timeout` for every release.
+_rc_spec = importlib.util.spec_from_file_location(
+    "required_checks_parser", ROOT / "scripts/ci/required-checks.py"
+)
+required_checks = importlib.util.module_from_spec(_rc_spec)
+_rc_spec.loader.exec_module(required_checks)
 
 # `skipped` satisfies: module lanes are gated on the router and report skipped
 # when their module did not change, and GitHub itself treats a skipped
@@ -135,14 +147,19 @@ def superseded(reason, main_tip, sha):
     return Verdict("superseded", f"{reason}; main is now at {main_tip[:9]}", ())
 
 
-def required_names(path=REQUIRED_CHECKS):
-    names = []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line and not line.startswith("#"):
-                names.append(line)
-    return names
+def required_names(path=REQUIRED_CHECKS, branch="main"):
+    """Check-run names that must be green on ``branch``'s tip before anything deploys.
+
+    Resolved through the shared parser, so this gate waits on exactly what branch
+    protection requires rather than on its own reading of the file. A malformed file
+    raises instead of returning a short list: a missing name here is a gate that
+    quietly stops gating.
+    """
+    file = pathlib.Path(path)
+    sections = required_checks.parse_sections(
+        file.read_text(encoding="utf-8"), file.name
+    )
+    return required_checks.contexts_for(sections, branch, file.name)
 
 
 def latest_by_name(check_runs):
