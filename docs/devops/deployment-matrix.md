@@ -474,7 +474,7 @@ rather than reasoned about:
   rows.
 
   **The episode census lives in `docs/devops/railway-upload-fault-report.md`, not
-  here.** As of 2026-11-17 17:36Z six episodes are on the record, and the longest
+  here.** As of 2026-11-17 17:42Z six episodes are on the record, and the longest
   window is episode 5's 3,474 s across two dispatches of one commit — this section
   deliberately stopped carrying per-episode totals so it cannot go stale again.
 

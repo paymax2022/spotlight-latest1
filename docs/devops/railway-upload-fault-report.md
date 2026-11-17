@@ -11,7 +11,7 @@ succeeded in the same run. Updated a third time at 14:48Z with episode 5: two
 back-to-back dispatches of that same commit, refused 54 out of 54 staging calls
 over 3,474 s, while each run's own three development uploads were accepted — the
 last of them 49 s before the same service was refused. Updated a fourth time at
-17:36Z with episode 6: run `44108272486`, a commit whose only executable
+17:42Z with episode 6: run `44108272486`, a commit whose only executable
 changes are the release gate and its harness, refused 27 out of 27 staging
 calls over 1,170 s while its three development uploads produced `SUCCESS` rows
 54-60 s before the same service was refused. No token value appears here.
@@ -193,9 +193,10 @@ whether to deploy at all, plus two docs files. It does not touch
 `scripts/ci/railway-deploy.sh` or the `railway up` call. The gate ran that new
 code, returned `proceed` after 41m46s, and the upload path then behaved exactly
 as in the five earlier episodes: nine refusals on each staging leg, 27 calls
-across 1,170 s (15:37:37.183-15:57:07.561Z), the first one 727 ms after the
-deploy marker, and zero `Indexing...` and zero `Uploading...` lines in all three
-legs. Development in the same run produced `SUCCESS` rows at 15:36:37.443Z
+across 1,170 s (15:37:37.183-15:57:07.561Z), each leg's first refusal 727, 448
+or 573 ms after its own deploy marker, and zero `Indexing...` and zero
+`Uploading...` lines in all three legs. Development in the same run produced
+`SUCCESS` rows at 15:36:37.443Z
 (`b6a4949f`), 15:36:41.228Z (`9107e0c5`) and 15:36:43.953Z (`069837f2`). The
 tightest same-basis pair is development `backend`'s row against staging
 `backend`'s first refusal, 54.2 s apart, which does *not* beat episode 5's 49 s
