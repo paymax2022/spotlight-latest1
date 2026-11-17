@@ -405,9 +405,14 @@ Done, with the evidence:
    already-pushed shape reconciliation note 2 is about: a from-zero replay never meets
    #996's existing `hidden` rows, and that workflow's anti-skip canary names
    `internal/savings`, `internal/handlers`, `internal/trading/wallet` and
-   `tests/voting` — no module-registry name at all. The two-shape local replay is
+   `tests/voting` — no module-registry name at all. The three-shape local replay is
    therefore not belt-and-braces; for this class of defect it is the only evidence that
-   exists. (An earlier draft of this section credited the `backend` job with running
+   exists. The deploy path does not close the gap either: `db-migrate.yml` records that
+   `supabase db push` aborts when the **remote records versions missing locally**, which
+   is the opposite direction from the developer stack's actual fault — a migration
+   applied by hand and never recorded — so no gate in this repo can see that state, and
+   the migration's own `RAISE WARNING` is the only signal an operator gets while
+   applying it. (An earlier draft of this section credited the `backend` job with running
    these suites against Postgres. It does not: `backend` is `go build` + `vet`.)
 
 Not done yet, and required before this ships:
