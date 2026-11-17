@@ -460,8 +460,8 @@ rather than reasoned about:
   | :27.5 | development `frontend-web` upload **accepted**, its POST having spanned the refusal above |
   | 23:38.5 | staging `frontend-web` attempt 9 refused, fault still live |
 
-  **Episode 3, 2026-11-17 07:36-08:16Z, is the longest refusal window yet — 40 minutes
-  straight, spanning two runs back to back.** Attempt 3 of run `43972239504` (its staging
+  **Episode 3, 2026-11-17 07:36-08:16Z, ran 40 minutes straight, spanning two runs
+  back to back.** Attempt 3 of run `43972239504` (its staging
   legs re-run that morning) took 27/27 refusals — first 07:36:04.8, last leg failing
   07:54:30 — and the owner-authorized release dispatch `44040251024` of the same commit
   `4d78ecf69` took 27/27 more — first 07:55:34.4, last 08:16:24.2. Nine calls per staging
@@ -473,9 +473,14 @@ rather than reasoned about:
   `28946ae4`). Episodes 2 and 3 alone contribute 81 refused calls and zero deployment
   rows.
 
+  **The episode census lives in `docs/devops/railway-upload-fault-report.md`, not
+  here.** As of 2026-11-17 17:36Z six episodes are on the record, and the longest
+  window is episode 5's 3,474 s across two dispatches of one commit — this section
+  deliberately stopped carrying per-episode totals so it cannot go stale again.
+
   One accepted request's own round trip contains a refused one. Railway is answering
   differently for `--environment staging` than for `--environment development` in the same
-  second; all three of this incident's episodes have that shape (the 16:23 table above is the
+  second; every episode of this incident has that shape (the 16:23 table above is the
   same fact, seen earlier and read as timing). The most recent staging upload known to have
   succeeded — deployment `28946ae4`, `cliMessage f7d1ac27…-serial2-i3`, 17:06:29Z —
   used the same re-minted secret and the same `--path-as-root` shape that is refused now.
