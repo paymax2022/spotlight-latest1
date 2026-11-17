@@ -10,7 +10,29 @@ The production APK still shows 12 menu tiles that product wants off:
 
 Savings, Rewards (Loyalty), Investment, Learn, Invest AI, Spotlight Wealth, Real Estate Invest, AI Trading, Creators, StudyHub (Academy), Dues & Rent, Admin.
 
-Only 3 of them (`savings`→`savings`, `loyalty`→`loyalty`, `creators`→`creators`) are wired to the platform module registry; they are currently **published visible on staging** (verified live 2026-11-17 via `GET /api/v1/modules/visibility`), which is the plane the production APK talks to. The other 9 have no registry rows and no `SERVICE_MODULE_REGISTRY_KEY` mapping, so the shipped app renders them unconditionally.
+Measured 2026-11-17 against `origin/main`'s `SERVICE_MODULE_REGISTRY_KEY` and against both live backends (`GET /api/v1/modules/visibility`), the 12 fall into three groups, not two:
+
+- **3 are wired and served today** — `savings`, `loyalty`, `creators` map to their own keys and
+  those keys answer on **staging and production both**, so they really are visible and the
+  deliberate `UPDATE` to `hidden` is what turns them off. (The draft said "staging only";
+  production serves them too, and production is where `ADR-PR1026` points a store build — its
+  §"Context" reads production answering 31 modules from 36 published-and-ready rows, which is
+  what the live call returned here. That ADR also records why the plane question is not
+  guesswork: `build-aab.sh`/`build-apk.sh` use local Gradle, Expo picks its env from
+  `NODE_ENV`, and the gitignored `.env.production` used to hold the *staging* URL, so admin
+  publication on production governed nothing on the device until eas.json became the single
+  source of truth. Either way, both planes must carry the hide.)
+- **2 are wired and already hidden** — the Learn and StudyHub tiles map to #996's single
+  `academy` key (`learn → academy`, `academy → academy`, both from `3654f6b3f`), and `academy`
+  is absent from staging *and* production payloads today. So a build cut from `main` already
+  hides both; installed store builds still show them because those binaries predate the
+  mappings. Consequence worth keeping in view: Learn and StudyHub are one switch, and
+  publishing `academy` brings both back.
+- **7 are neither mapped nor registered** — Investment, Invest AI, Spotlight Wealth, Real
+  Estate Invest, AI Trading, Dues & Rent, Admin. No `SERVICE_MODULE_REGISTRY_KEY` entry and no
+  `platform_modules` row, so the shipped app renders them unconditionally and the admin portal
+  cannot see them at all. This migration creates their rows hidden and this PR adds the
+  mappings.
 
 Additionally, the admin portal must be able to enable/disable any mobile menu item per environment — including a greyed "coming soon" teaser state — without a code change.
 
