@@ -249,10 +249,22 @@ Done, with the evidence:
    staging and production backends, recorded in reconciliation note 2 and re-read after
    the migration change. The development backend was probed too and answers HTTP 500 —
    see the R4 consequence in §4.
-4. **Go module suites — green.** `go test ./internal/modules/... -count=1 -v` →
-   28 `--- PASS`, 0 FAIL, **0 SKIP** across `internal/modules` and
-   `internal/modules/modulegate`; CI's `backend` job runs the same suites against a real
-   Postgres and is green on this head.
+4. **Go module suites — green, with the reach of each check stated.**
+   `go test ./internal/modules/... -count=1 -v` → 28 `--- PASS`, 0 FAIL, 0 SKIP across
+   `internal/modules` and `internal/modules/modulegate`. Those suites are **in-memory**:
+   no file under `internal/modules/` reads `TEST_DATABASE_URL` (the grep finds it only
+   in `internal/handlers/`), so they gate no Postgres state and CI's live-DB lane says
+   nothing about them. What CI *does* prove about this PR's SQL is `integration-verify`'s
+   `make migrate-reset` — drop `public`, re-apply every migration from zero, then
+   `rls-check` — which is the fresh-plane shape this spec's replay reproduces and
+   extends with the served-payload assertions. What CI structurally cannot see is the
+   already-pushed shape reconciliation note 2 is about: a from-zero replay never meets
+   #996's existing `hidden` rows, and that workflow's anti-skip canary names
+   `internal/savings`, `internal/handlers`, `internal/trading/wallet` and
+   `tests/voting` — no module-registry name at all. The two-shape local replay is
+   therefore not belt-and-braces; for this class of defect it is the only evidence that
+   exists. (An earlier draft of this section credited the `backend` job with running
+   these suites against Postgres. It does not: `backend` is `go build` + `vet`.)
 
 Not done yet, and required before this ships:
 
