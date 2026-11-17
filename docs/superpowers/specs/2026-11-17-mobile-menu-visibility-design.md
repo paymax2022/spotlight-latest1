@@ -75,9 +75,20 @@ Seeding the desired state is not enough, and the first push of this feature prov
 production**. Measured 2026-11-17 against both live backends —
 `GET /api/v1/modules/visibility` reports none of `crypto`, `education`, `arena`,
 `filmAcademy`, `connect`, `marketplace` or `competitions` on staging or production.
-Those tiles render today only because `serviceModuleKeys` did not name them, so shipping
-the mappings without anything else would have dropped seven live tiles on the next
-registry fetch (≤ 60 s) — the exact opposite of "nothing changes on day one".
+That measured list is R2's preserve list, not #996's seven seeded-hidden keys: `academy` —
+which gates the Learn and StudyHub tiles — is deliberately **not** published, because R1 wants
+those tiles off, and `education` is a row this file creates rather than one #996 parked.
+Six of those seven are **already mapped on `main`** (`crypto`, `arena`, `filmAcademy`,
+`connect`, `marketplace`, `competitions` — measured 2026-11-17 by reading
+`SERVICE_MODULE_REGISTRY_KEY` out of `git show origin/main:…/serviceModuleKeys.ts`; only
+`education` is new here). So a build cut from `main` already hides all six: mapped + unserved
+= `hidden` under `rules.ts`. They render in today's *store* builds only because those binaries
+predate #996's mappings. That is the sharper version of the day-one risk: shipping this without
+the flip would not merely fail to restore them, it would keep six tiles hidden from the next
+build while users' installed apps still show them — and the mappings that hid them arrived with
+#996, not with this PR. `marketplace` → `marketplace`, `crypto` → `crypto` etc. therefore stay
+visible on staging and production by this migration's audited `UPDATE`, and the ≤ 60 s fetch
+window is what makes the difference land on the next registry read rather than the next release.
 
 So R2 is carried by an explicit audited `UPDATE` to `visible` (staging + production) for
 the preserve list, not by a seed. Two consequences worth writing down:
@@ -91,19 +102,25 @@ the preserve list, not by a seed. Two consequences worth writing down:
   `20271408000100`'s own backfill makes. Staging ignores readiness, which is why the
   environment rows for it are half the job on their own.
 - **`competitions` is the one deliberate override.** #996 parked it hidden "until someone
-  marks them ready". Mapping `contest` to it and keeping R2 means publishing it here.
-  Accepted because users already see the tile and an admin can hide it again from
+  marks them ready" — and #996 also shipped the `contest → competitions` mapping itself, so the
+  Contest tile is already gated on it in any build from `main`. Keeping R2 means publishing the
+  key here, against that "until someone marks them ready" stance. Accepted because users
+  already see the tile in installed builds and an admin can hide it again from
   `/admin/modules` without a deploy.
 
 This is also why the file moved to `20271410000100`: `readiness` does not exist until
 `20271408000100`, so a migration that sets it cannot sort before it. That closes the
 version-slot question left open in the note above.
 
-Both database shapes were replayed on a real Postgres rather than reasoned about: a
-`#996`-landed plane (the flip changes `competitions` from hidden to visible and is a
-no-op for the already-visible keys) and an empty plane (development serves all 18 keys,
-staging and production serve exactly the nine preserve keys, and #996's attributes
-win). Second run of the migration inside the same transaction writes no new audit rows.
+Both database shapes were replayed on a real Postgres rather than reasoned about, and the
+empty-plane run re-measured at this branch's head after the `shopping`/`parcel`/`learn` rows
+were dropped: with the file, development serves exactly **15** keys and staging + production
+each serve exactly the **seven** preserve keys with #996's attributes winning on the shared
+rows; without it, staging and production serve nothing at all. Those are `env_flag`-NULL
+counts from the replay's predicate, not live payload sizes — see §5. The `#996`-landed run reaches
+the same end state but its attribute-precedence half is evidence about that particular
+developer database, not about `main` — see §5 for why. Second run of the migration inside the
+same transaction writes no new audit rows.
 Scripts: `/private/tmp/spot-menuvis-spike/pushed-plane-replay.sql`,
 `fresh-plane-replay.sh`.
 
@@ -156,10 +173,15 @@ one.
 
 Two tiles map onto modules this migration does not create: **Contest → `competitions`**
 and **Property Mgmt → `realtor`** (matches the codebase's documented "unpublishing
-realtor hides the property pillars" coupling). `competitions` is registered by #996,
-which is also what forces the override described in reconciliation note 2; the earlier
-draft of this spec mapped Contest to `voteBridge`, which #996 documents as "the
-wallet-paid vote money rail", not the contest surface.
+realtor hides the property pillars" coupling). Measured live on both backends 2026-11-17
+(`GET /api/v1/modules/visibility`): `realtor` is already **served on staging and production**
+(34 keys on staging, 31 on production, `realtor`, `estate` and `stays` among them), so adding
+the `property → realtor` mapping hides nothing and needs no day-one flip here. `competitions`
+is **absent from both**, so the same mapping would silently drop the Contest tile — which is
+also what forces the override described in reconciliation note 2. The earlier draft of this
+spec mapped Contest to `voteBridge`, which #996 documents as "the wallet-paid vote money rail",
+not the contest surface; `voteBridge` is served on both planes, so that draft would have made
+the bug worse by gating Contest against a module that is always on.
 
 State changes for R1:
 - `INSERT … ON CONFLICT (key) DO NOTHING` for all new rows (never clobbers admin edits, mirroring the original seed migration), plus `platform_module_environments` rows per the table above (development visible for everything).
@@ -217,13 +239,26 @@ Done, with the evidence:
    (clean run emits no diagnostics; an injected type error is reported at its line).
 2. **Migration replay on a real engine — done, both database shapes.**
    `fresh-plane-replay.sh` (empty database, migrations in filename order, with and
-   without this file) is the authoritative run: with it, development serves all 15 keys
-   the chain creates and staging + production serve exactly the seven preserve keys
-   (`arena`, `competitions`, `connect`, `crypto`, `education`, `filmAcademy`,
-   `marketplace`), with #996's attributes winning on the shared keys (`academy` stays
-   `Learn / StudyHub` / `education`, `arena` stays `Arena` / `entertainment`); without
-   it, staging and production serve **none** of the seven — the R2 regression
-   reproduced rather than asserted.
+   without this file) is the authoritative run. Its "served" query mirrors the Go decision
+   only for rows the registry can answer without a process env — `lifecycle='active' AND
+   env_flag IS NULL AND status='visible'`, plus `readiness='ready'` on production — so the
+   counts below count `env_flag`-NULL keys, not the size of a live payload. Re-measured
+   2026-11-17 at this branch's head, after the `shopping`/`parcel`/`learn` rows were
+   dropped, because the earlier 15/7 numbers came out of the 17-row file:
+   - **with** the file: development serves 15 such keys (`academy, admin, aiTrading, arena,
+     competitions, connect, crypto, dues, education, filmAcademy, fractionalRealEstate,
+     investAi, investment, marketplace, spotlightWealth`) and staging and production each
+     serve exactly the seven preserve keys (`arena`, `competitions`, `connect`, `crypto`,
+     `education`, `filmAcademy`, `marketplace`), with #996's attributes winning on the
+     shared rows (`academy` stays `Learn / StudyHub` / `education`, `arena` stays `Arena` /
+     `entertainment`);
+   - **without** the file: staging and production serve **nothing at all** — #996 leaves its
+     keys hidden on both — so the audited `UPDATE` is the only thing carrying day-one
+     visibility. That is the R2 regression reproduced rather than asserted.
+
+   Read the caveat against the live measurement below: staging answers 34 keys and production
+   31 today, because every module that carries a `FEATURE_*` flag (`realtor`, `estate`,
+   `savings`, `loyalty`, `creators`, …) sits outside the replay's filter.
    `pushed-plane-replay.sql` runs the chain plus this file inside one rolled-back
    transaction on the developer Postgres (port 54322) and reaches the same end state,
    with the audit trail (`publish`/`hide`/`readiness`, before-values) and a second
