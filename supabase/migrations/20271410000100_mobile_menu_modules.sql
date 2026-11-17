@@ -83,10 +83,16 @@ ON CONFLICT (module_key, environment) DO NOTHING;
 -- filmAcademy/competitions/arena/connect as hidden in staging AND production.
 -- Measured live on 2026-11-17 against both backends: GET /api/v1/modules/visibility
 -- reported none of crypto, education, arena, filmAcademy, connect, marketplace,
--- competitions as visible on staging or production. Before this PR those tiles
--- render unconditionally because serviceModuleKeys did not name them, so shipping
--- the mappings WITHOUT this UPDATE would drop seven live tiles on the next registry
--- fetch (≤ 60 s) — the opposite of "nothing changes on day one".
+-- competitions as visible on staging or production. SIX of those seven are already
+-- gated, because #996 (3654f6b3f) shipped the mobile mappings itself -- crypto, arena,
+-- filmAcademy, connect, marketplace and contest -> competitions are all in main's
+-- SERVICE_MODULE_REGISTRY_KEY today; only 'education' is mapped by the feature branch.
+-- So any build containing those mappings already hides those tiles, and whether the
+-- installed store artifact is such a build is not something this repo can measure
+-- (ADR-PR1026: local Gradle, gitignored .env.production, no tracked build date).
+-- Without this UPDATE the six stay hidden -- a drop for builds that shipped the
+-- mappings, and a permanent drop waiting at the next registry fetch for any that did
+-- not -- which is the opposite of "nothing changes on day one".
 --
 -- competitions is included because the Contest tile maps to it (see
 -- serviceModuleKeys.ts and #996's own comment: voteBridge is the wallet-paid vote
@@ -122,9 +128,13 @@ SELECT f.module_key, f.environment, 'publish', b.before_val, 'visible',
 -- visible and the production payload still omits the module. This mirrors exactly
 -- what 20271408000100's backfill asserts — "an empty/in_development readiness must
 -- not pull a module that production already ships" — and it is the same statement
--- about publication history, not about code quality: these tiles ship in the app
--- today. Staging ignores readiness, so only production-visible keys are touched, and
--- the audit row is module-scoped (environment NULL) the way SetReadiness writes it.
+-- about publication history, not about code quality. It is NOT a claim that
+-- production serves these modules today: the live production payload omits all seven
+-- (measured 2026-11-17), which is exactly why the UPDATE above publishes them and why
+-- readiness has to move in the same migration or the rows would say visible while the
+-- payload still left them out. Staging ignores readiness, so only production-visible
+-- keys are touched, and the audit row is module-scoped (environment NULL) the way
+-- SetReadiness writes it.
 WITH before AS (
   SELECT m.key, m.readiness AS before_val
     FROM public.platform_modules m
@@ -143,7 +153,7 @@ WITH before AS (
 )
 INSERT INTO public.platform_module_audit (module_key, environment, action, before_val, after_val, note)
 SELECT f.key, NULL, 'readiness', b.before_val, 'ready',
-       'Marked ready to match the production publication it already had (menu visibility spec 2026-11-17)'
+       'Marked ready so the R2 day-one publication is actually served in production (menu visibility spec 2026-11-17)'
   FROM flipped f
   JOIN before b ON b.key = f.key;
 
