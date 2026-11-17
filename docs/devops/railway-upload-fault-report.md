@@ -187,9 +187,10 @@ each run's own three development uploads were accepted and its own staging
 was refused 49 s later at 13:29:24.172Z, same commit, same runner, same CLI build,
 same project, same service ID.
 
-Episode 6 is run `44108272486`, the push of `c5d92c464` — a commit that changes
+Episode 6 is run `44108272486`, the push of `c5d92c464` — five files:
 `scripts/ci/release-gates.py` and its harness, i.e. the gate that decides
-whether to deploy at all, plus two docs files. It does not touch
+whether to deploy at all, a comment-only hunk in `.github/workflows/ci.yml`, and
+two docs files. Nothing in the deploy path changed: it does not touch
 `scripts/ci/railway-deploy.sh` or the `railway up` call. The gate ran that new
 code, returned `proceed` after 41m46s, and the upload path then behaved exactly
 as in the five earlier episodes: nine refusals on each staging leg, 27 calls
