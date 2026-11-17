@@ -1,6 +1,6 @@
 // Regression guard for the banner-overflow bug.
 //
-// Six screens (home, crypto, association, realtor search, crowdfunding, bills)
+// Six screens (home, crypto, association, realtor search, crowdfunding, food)
 // pass `marginHorizontal: Spacing.containerMargin` to <RemoteBanner>. The banner
 // box used `width: '100%'`, which is 100% of the PARENT's width and ignores the
 // box's own side margins — so the box started 20px in and still spanned the full
