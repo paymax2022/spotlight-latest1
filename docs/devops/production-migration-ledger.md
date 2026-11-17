@@ -3672,7 +3672,7 @@ actually enforces. `scripts/ci/test-changed-modules.py:109-126` asserts that eac
 `required-checks.txt` "still exists as a job in `ci.yml`" — a true and useful assertion about the deploy
 gate that structurally cannot notice the divergence, because it never looks at the protection API.
 
-So `release-gates.py:51` waits on the nine deep names, while GitHub waits on the five shallow ones. Reading
+So the gate's `required_names()` waits on the nine deep names, while GitHub waits on the five shallow ones. Reading
 that as a consequence of the two lists, not as an event observed this session: a `main`-bound PR can be
 merged with `openapi … / validate`, `mobile … / typecheck` or `hygiene (…)` red, because none of those is a
 required context — and `release.yml`'s gate would still refuse to deploy on the same red, because all three
