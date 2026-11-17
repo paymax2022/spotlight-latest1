@@ -166,9 +166,15 @@ row to show for any of them. Episode 4 closed the same day with the strongest
 form of the differential we can produce: run `44076555018` refused 27 out of 27
 staging calls (12:26:06-12:45:56Z, nine per leg) in a run whose three development
 uploads succeeded at 12:25:32-39Z and whose `migrate staging database / supabase
-db push (staging)` job — talking to the staging environment, with the staging
-token — succeeded in the same minutes. The environment is reachable and its
-database accepts writes; only upload-initiate answers non-JSON. Episode 5 is that
+db push (staging)` job — which reaches the staging database over its own
+`SUPABASE_*` credentials and never calls Railway at all — succeeded in the same
+minutes. We now rate that leg weaker than we first wrote it: measured in
+episode 6's run, the step logs `Connecting to remote database...` and then
+`Remote database is up to date.` and exits, so it proves the staging Postgres
+is reachable and its migration registry is at head — not that anything was
+written, and nothing about Railway, which it does not call. The load-bearing
+comparator stays the same run's development legs: only upload-initiate answers
+non-JSON. Episode 5 is that
 same release dispatched twice more in the hour after: runs `44086726792` and
 `44092969961`, both `workflow_dispatch` of the same commit `b4bba6e5f`, refused
 54 times out of 54 staging calls (nine per leg per run, 12:50:22-13:48:17Z) while
@@ -193,7 +199,8 @@ run's three development legs uploaded fine and passed their smokes in the same
 minutes; and 12:26:06-12:45:56Z the same day, in which one push-triggered release
 was refused 27 times out of 27 while its own three development uploads succeeded
 16 minutes earlier and its own `migrate staging database / supabase db push
-(staging)` job succeeded against the same environment with the same token; and
+(staging)` job succeeded against the staging database on Supabase's own
+credentials, which is not a Railway call; and
 12:50:22-13:48:17Z the same day — 3,474 s spanning two back-to-back dispatches of
 that identical commit — in which all 54 staging calls were refused, nine per leg
 per run, every one the same decode error with zero `Indexing...` and zero
@@ -213,7 +220,8 @@ for the same commit shows rows created at 12:25:32-39Z, 12:49:56-12:50:00Z and
 13:28:32-34Z — the 13:28 set `SUCCESS`, the two earlier sets `REMOVED` only
 because the later upload superseded them, which is development behaving
 normally. All three of 2026-11-17's episodes sit inside a single day in which
-the same token, the same CLI and the same three service IDs accepted every
+the development project token — a different credential from staging's, per
+Identifiers — the same CLI and the same three service IDs accepted every
 development upload. Job logs are retained: runs `43905969462`,
 `43909191817`, `43913775480`, `43972239504`; staging jobs `133687154665` /
 `133687154683` / `133687154708` (episode 2), `133891749720` / `133891749721` /
