@@ -199,10 +199,10 @@ as in the five earlier episodes: nine refusals on each staging leg, 27 calls
 across 1,170 s (15:37:37.183-15:57:07.561Z), each leg's first refusal 727, 448
 or 573 ms after its own deploy marker, and zero `Indexing...` and zero
 `Uploading...` lines in all three legs. Development in the same run produced
-`SUCCESS` rows at 15:36:37.443Z
-(`b6a4949f`), 15:36:41.228Z (`9107e0c5`) and 15:36:43.953Z (`069837f2`). The
-tightest same-basis pair is development `backend`'s row against staging
-`backend`'s first refusal, 54.2 s apart, which does *not* beat episode 5's 49 s
+`SUCCESS` rows at 15:36:37.443Z (`b6a4949f`), 15:36:41.228Z (`9107e0c5`) and
+15:36:43.953Z (`069837f2`). The tightest same-basis pair is development
+`backend`'s row against staging `backend`'s first refusal, 54.2 s apart, which
+does *not* beat episode 5's 49 s
 — so we record episode 6 as a sixth repetition, not as a tighter differential.
 Production was again never attempted: `smoke Staging`, `migrate production
 database`, `deploy Production` and `smoke Production` all skipped.
@@ -214,9 +214,9 @@ Push any commit to `paymax2022/spotlight-latest1:main` and watch
 fault is intermittent, so this may need several attempts, and a docs-only merge
 produces no attempt at all: run `44111967023` cleared its gate in 5m30s and
 skipped every deploy leg because no service changed, so a sample needs a commit
-that changes a service. Six episodes are on
-the record: 16:23:32-16:38:15Z on 2026-11-16, in which CI's staging calls were
-refused throughout (though a probe job was accepted twice inside that span, at
+that changes a service. Six episodes are on the record: 16:23:32-16:38:15Z on
+2026-11-16, in which CI's staging calls were refused throughout (though a probe
+job was accepted twice inside that span, at
 16:34:47 and 16:34:50Z); 23:18:25-23:38:48Z the same day, in which all 27 were
 refused; and 07:36:04-08:16:24Z on 2026-11-17 — a 40-minute window spanning two
 runs back to back — in which all 54 were refused: nine calls per staging leg per
@@ -226,9 +226,9 @@ minutes; and 12:26:06-12:45:56Z the same day, in which one push-triggered releas
 was refused 27 times out of 27 while its own three development uploads succeeded
 16 minutes earlier and its own `migrate staging database / supabase db push
 (staging)` job succeeded against the staging database on Supabase's own
-credentials, which is not a Railway call; and
-12:50:22-13:48:17Z the same day — 3,474 s spanning two back-to-back dispatches of
-that identical commit — in which all 54 staging calls were refused, nine per leg
+credentials, which is not a Railway call; and 12:50:22-13:48:17Z the same day —
+3,474 s spanning two back-to-back dispatches of that identical commit — in
+which all 54 staging calls were refused, nine per leg
 per run, every one the same decode error with zero `Indexing...` and zero
 `Uploading...` lines, while both runs' own development legs uploaded fine and
 passed their smokes; and 15:37:37-15:57:08Z the same day, in which a sixth
@@ -255,10 +255,9 @@ dark for 22 h 55 min — while that run's three development instances report the
 minutes on and with no further release attempted since the docs-only run
 `44111967023`: the same three 2026-11-16 rows are still `latestDeployment` for
 all three services, so on backend's 17:06:29.046Z anchor staging has been dark
-for 24 h 27 min. All four of 2026-11-17's episodes sit inside a
-single day in which
-the development project token — a different credential from staging's, per
-Identifiers — the same CLI and the same three service IDs accepted every
+for 24 h 27 min. All four of 2026-11-17's episodes sit inside a single day
+in which the development project token (a different credential from staging's,
+per Identifiers), the same CLI and the same three service IDs accepted every
 development upload. Job logs are retained: runs `43905969462`,
 `43909191817`, `43913775480`, `43972239504`; staging jobs `133687154665` /
 `133687154683` / `133687154708` (episode 2), `133891749720` / `133891749721` /
