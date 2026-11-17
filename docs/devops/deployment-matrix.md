@@ -358,7 +358,9 @@ rather than reasoned about:
 
   **Root cause, settled 2026-11-16 after ~4 h: Railway answered its own
   upload-initiate request with a non-JSON body, intermittently. Nothing in this
-  repo, this credential or this CLI version decides it.** The failure is in the
+  repo, this credential or this CLI version decides it.** (What does decide it is the
+  environment named on the call — see the second episode below, which also corrects the
+  duration bound this paragraph first relied on.) The failure is in the
   pre-flight window — no `Indexing...` line, no archive, no deployment row — which
   is what made it look like a bad token. It is not. Each candidate was measured:
 
@@ -371,14 +373,18 @@ rather than reasoned about:
   | upload shape | staging `frontend-web`'s pathless repo-root upload succeeded from CI (`7f7efc20` SUCCESS, `configFile=/frontend-web/railway.json`, then HTTP 200 serving the `Loading Spotlight` literal) and staging `backend`'s `--path-as-root` succeeded minutes later |
   | tree size | 211,126,634-byte checkout / 133,423,024-byte archive uploaded fine; a 6-byte archive failed for its own unrelated reason |
   | `environment: staging` protection rules | none configured; a probe job declaring the same environment produced both outcomes |
-  | connected git source | proposed mid-investigation and **not supported**: staging's three instances do carry `source.repo = paymax2022/spotlight-latest1` (measured with `railway api serviceInstance(...) { source { repo } }`) while development's return `null` and production's return no `source` at all — but staging then accepted six consecutive uploads at 16:45-16:47 with development in the same loop, so the source is not what refuses it |
+  | connected git source | raised mid-investigation and dropped as "**not supported**": staging's three instances do carry `source.repo = paymax2022/spotlight-latest1` (re-measured 2026-11-17 with `railway api serviceInstance(serviceId, environmentId) { source { repo } }`: staging's is that repo, development's `repo` is `null`, production's whole `source` is `null`) while staging then accepted six uploads at 16:45-16:47 and twelve more at 17:01-17:06. **That dismissal does not hold.** Six acceptances with the source connected show the source is not *sufficient* to refuse an upload; they say nothing about whether it is *necessary*, and `--environment staging` is the only variable that has ever separated a refused call from an accepted one. It stays on the list as the surviving candidate, and it is narrower than "the staging environment": the property is per-instance, since staging's own Redis instance reports `source.repo = null`, so the three instances carrying a repo are exactly the three that refuse. The ask is written up in `railway-upload-fault-report.md` |
   | request rate | staging accepted two uploads 3 s apart at 16:34:47 / :50 and refused the next one 62 s later, which no per-minute quota fits |
-  | in-flight concurrency (a pile-up of upload-initiates) | **tested and not supported.** Run 43913775480 made the identical staging `backend` call twelve times inside one job, so the fault window cannot differ between halves: six strictly one after another (17:01:06-:52, 3-4 s each) and six fired within 5 s of each other (17:03:02-:07, 4 s each). **All twelve were accepted.** A cap of ~3 would have refused three of the six. Pile-up shape only *looks* predictive, because every CI leg in this repo piles up by construction — three matrix legs launched together — so a time-boxed fault that hits CI will always arrive wrapped in concurrency |
+  | in-flight concurrency (a pile-up of upload-initiates) | **tested and not supported.** Run 43913775480 made the identical staging `backend` call twelve times inside one job, so the fault window cannot differ between halves: six strictly one after another (17:01:06-:52, 3-4 s each) and six fired within 5 s of each other (17:02:59-17:03:04, 4 s each; the six deployment rows are `ab-C1`-`ab-C6`). **All twelve were accepted.** A cap of ~3 would have refused three of the six. Pile-up shape only *looks* predictive, because every CI leg in this repo piles up by construction — three matrix legs launched together — so a time-boxed fault that hits CI will always arrive wrapped in concurrency |
 
-  Timing is the whole story: 400 ms, 452 ms, 500 ms, 1151 ms, 2526 ms, 2554 ms, 3448 ms,
-  3611 ms and 15738 ms for the same call shape across three hours — sub-second when the
-  request is refused, seconds-to-minutes when it is accepted, because a refusal is an
-  immediate non-JSON answer rather than a timeout. The draft of this section asserted the secret held "a stray
+  Timing separates an accepted call from a refused one — 400 ms, 452 ms, 500 ms, 1151 ms,
+  2526 ms, 2554 ms, 3448 ms, 3611 ms and 15738 ms for the same call shape across three
+  hours, sub-second when the request is refused, seconds-to-minutes when it is accepted,
+  because a refusal is an immediate non-JSON answer rather than a timeout. Read as a
+  *diagnostic* that holds: a `railway up` that dies in under a second and prints no
+  `Indexing...` line never reached the archive. Read as a *cause* it was wrong, and it is
+  the sentence that built the time-boxed-window model this section now corrects — the
+  durations below are per-call latencies, not a window with a length. The draft of this section asserted the secret held "a stray
   newline or a truncated paste". That was a guess, and reproducing each candidate
   corruption against the live staging environment with a known-good token disproves
   it — none of these shapes produces a decode error:
@@ -412,19 +418,66 @@ rather than reasoned about:
   So #1044 removes a single-shot halt; it does not, on its own, make `push → production`
   dependable, and it must not be merged on the claim that it does. Every structural
   candidate is now measured out — token, CLI version, upload shape, tree size, protection
-  rules, request rate, connected source, and as of run 43913775480 the arrival pattern of
-  the calls themselves. What is left is a fault on Railway's side with no predicate this
-  repo can observe and only one measured bound on its duration: **refusals ran
-  continuously from 16:23:32 to at least 16:38:15 — a stretch of fifteen minutes — while
-  the entire 16:45-17:03 sample accepted everything.** A four-attempt, 105-157 s budget is
+  rules, request rate, and as of run 43913775480 the arrival pattern of the calls
+  themselves — with one survivor, the connected git source, whose dismissal above does not
+  hold. What is left is a fault on Railway's side with no predicate this
+  repo can observe and only one measured bound on its duration: **every staging call CI
+  made between 16:23:32 and at least 16:38:15 was refused — a stretch of fifteen minutes —
+  while the entire 16:45-17:03 sample accepted everything.** "Continuously" would overstate
+  it: the 16:34:47 / :50 probe acceptances above sit *inside* that span, so the fault is
+  per-call and stochastic, with a duty cycle for the staging upload path that swings from
+  ~0 to ~1 over tens of minutes rather than a window with a length. That is why no budget
+  can be sized from this number: at duty ≈ 1 the calls come back refused however far apart
+  you space them. A four-attempt, 105-157 s budget is
   therefore known, from this incident's own data, to be smaller than the shortest window it
-  has to survive, and #1044 has been resized to 900 s of guaranteed backoff to clear it —
-  by 17 s. That margin is stated rather than smoothed over: it covers the one window this
-  incident measured, and a window two minutes longer still halts the chain. Nothing about
+  has to survive, and #1044 was resized to 900 s of guaranteed backoff against that bound.
+  The bound was a floor and not a ceiling, and it was measured by hammering one environment:
+  it says staging refused for at least 883 s, not that any refusal lasts 883 s. Nothing about
   the fault is bounded by anything in this repo, and the definitive fix is Railway's.
   `max-parallel: 1` is dropped as a remedy — it was the mitigation the concurrency model
   implied, and the model failed its test — not because serializing legs is harmful, but
   because nothing measured says it would have helped.
+
+  **#1044 has since been run against the live fault and lost, which retires "size the
+  budget" as a strategy.** Run 43972239504 (`4d78ecf69` — the merge that carried #1044)
+  cleared the gate, deployed all three development legs green, then took 9/9 refusals on
+  every staging leg: first refusal 23:18:25.2, last 23:38:48.1. **All 27 staging calls in
+  that span were refused and none had succeeded when the retry gave up** — and none created
+  a deployment row: queried 2026-11-17 00:10Z, staging's three `latestDeployment` records
+  still date from 15:56:15 (`e4670d96`), 16:11:27 (`d5825eff`) and 17:06:29Z (`28946ae4`),
+  all `SUCCESS`. `smoke Staging`,
+  `migrate production` and `deploy Production` were all skipped, and the next morning
+  production still served the hand-uploaded `5d3cc42eaff4c922` / `a40c84d670c40bb6`. That
+  is not a fault a longer sleep covers, because it is not keyed to the clock — it is keyed
+  to the upload target, and the same run proves it inside eleven seconds:
+
+  | 23:18Z | event |
+  |---|---|
+  | :16.4 | development `frontend-web` begins its upload POST |
+  | :17.2 | development `frontend-admin` upload **accepted** |
+  | :19.7 | development `backend` upload **accepted** |
+  | :25.2 | staging `frontend-admin` attempt 1 **refused** — same project, runner, CLI, SHA |
+  | :27.5 | development `frontend-web` upload **accepted**, its POST having spanned the refusal above |
+  | 23:38.5 | staging `frontend-web` attempt 9 refused, fault still live |
+
+  One accepted request's own round trip contains a refused one. Railway is answering
+  differently for `--environment staging` than for `--environment development` in the same
+  second; both of this incident's episodes have that shape (the 16:23 table above is the
+  same fact, seen earlier and read as timing). The most recent staging upload known to have
+  succeeded — deployment `28946ae4`, `cliMessage f7d1ac27…-serial2-i3`, 17:06:29Z —
+  used the same re-minted secret and the same `--path-as-root` shape that is refused now.
+  Three consequences are written down so nobody re-derives them. **Do not raise
+  `RETRY_ATTEMPTS` again from this section**: the 900 s already costs each staging leg
+  18-21 minutes of runner before it fails, and there is no upper bound left to measure
+  against.
+  **`test-railway-deploy-retry.sh`'s 883 s assertion is a floor, not a certificate** — it
+  catches a budget collapsing back toward single-shot and says nothing about sufficiency,
+  which is also what `THE UPLOAD BUDGET` in `railway-deploy.sh` claims. **A green
+  development leg is not evidence that staging will take the same bytes.** What remains is
+  to hand Railway the differential above (`railway-upload-fault-report.md`) and to decide
+  whether an upload their staging API refused — which created no deployment and therefore
+  tested nothing about the artifact — should keep holding production hostage at all. That is
+  a release-policy decision for the owner, not an edit to this file.
 
 The second live hazard found while chasing F2 is not a chain defect but produces the
 same red: a concurrent session kept hand-running staging `frontend-web` with the
