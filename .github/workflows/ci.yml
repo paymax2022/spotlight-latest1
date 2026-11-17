@@ -64,8 +64,13 @@ on:
   push:
     branches: [main]
     # A docs-only push produces no run of this workflow, and release-gates.py
-    # treats that as the verdict `noop_docs_only` rather than a timeout. Removing
-    # this filter would make that verdict unreachable — keep the two in step.
+    # reports that as the verdict `noop_docs_only` rather than a timeout — but it
+    # no longer takes the absence on faith: it reads this commit's changed files
+    # and grants the verdict only when every one of them is inside the two globs
+    # below. A push that touches anything else and has no run here fails loudly
+    # instead of deploying nothing in silence. Removing this filter would make
+    # that verdict unreachable, and editing it without DOCS_IGNORE_GLOBS in
+    # scripts/ci/release-gates.py goes red in scripts/ci/test-release-gates.py.
     paths-ignore:
       - '**.md'
       - 'docs/**'

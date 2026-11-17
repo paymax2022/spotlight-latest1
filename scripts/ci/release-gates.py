@@ -15,15 +15,26 @@ The gate waits on two things by the mechanism that actually reports them
 
 Verdicts, all real on this repo:
   proceed         every required name green + integration-verify green
-  noop_docs_only  a push produced no ci.yml run: both lanes carry
-                  paths-ignore ['**.md','docs/**'], so a docs-only commit has
-                  nothing to build
-  superseded      a required check reported cancelled: both lanes use
-                  cancel-in-progress on a per-ref group, so a newer main
-                  commit owns this release
-  failed          something reported failure/timed_out/action_required
+  noop_docs_only  a push produced no ci.yml run AND every file the commit
+                  changed sits inside ci.yml's paths-ignore
+                  ['**.md','docs/**'] — so there was nothing to build
+  superseded      a required check reported cancelled AND main's tip is a
+                  different commit, so that newer push owns this release
+  failed          something reported failure/timed_out/action_required, or a
+                  quiet verdict could not prove itself
   timeout         the budget ran out with gates still unsettled
   waiting         internal: keep polling
+
+Only `proceed` deploys. `noop_docs_only` and `superseded` exit 0 and deploy
+nothing, which makes them the two ways this gate can end a release in silence —
+so neither is taken from an absence any more. "No ci.yml run" used to be read as
+"docs-only" on the strength of ci.yml's paths-ignore alone, but a commit that
+DOES touch deployable code and never got a run looks identical from a run list,
+and under that inference it exited 0, deployed nothing, and no later push ever
+revisited its SHA. A cancellation was likewise assumed to mean a newer commit
+owns the release, even when this commit is still main's tip and nothing will.
+So the commit's file list is read before `noop_docs_only` is granted and main's
+tip before `superseded`, and either fact being unreadable fails loudly.
 
 `noop_docs_only` is valid ONLY for a push. On a workflow_dispatch rollback the
 SHA may be old enough that its runs are past retention, and reading that as
@@ -57,11 +68,71 @@ GREEN = frozenset({"success", "skipped", "neutral"})
 BAD = frozenset({"failure", "timed_out", "action_required", "startup_failure"})
 POLL_SECONDS = 30
 
+# The verdicts allowed to exit 0 without deploying anything. Pinned by
+# test-release-gates.py: a third entry here is a new way to stop a release
+# quietly, which is what this file's proof-carrying verdicts exist to prevent.
+SILENT = ("proceed", "noop_docs_only", "superseded")
+
+# ci.yml's `on.push.paths-ignore`, copied. The copy is checked against the
+# workflow file by test-release-gates.py, so editing one without the other goes
+# red in CI instead of silently changing which pushes can deploy.
+DOCS_IGNORE_GLOBS = ("**.md", "docs/**")
+
+_UNSET = object()
+
 
 class Verdict(NamedTuple):
     decision: str
     reason: str
     unsettled: tuple
+
+
+def is_docs_path(path):
+    """One changed file against DOCS_IGNORE_GLOBS, matched the way GitHub does:
+    `**.md` is any file ending in .md at any depth, `docs/**` is anything under
+    docs/ — including a non-markdown file there, because that is what the filter
+    ignores and this gate has to agree with the filter, not with a theory of what
+    counts as documentation.
+    """
+    return path.endswith(".md") or path.startswith("docs/")
+
+
+def all_docs(paths):
+    """True only for a NON-EMPTY list that is entirely inside the ignore set.
+
+    Empty proves nothing — it is also what a commit whose file list could not be
+    read looks like — so it is the caller's job to treat it as unknown, not to
+    fall through to "docs-only".
+    """
+    return bool(paths) and all(is_docs_path(p) for p in paths)
+
+
+def same_sha(left, right):
+    """Equal as SHAs, tolerating either side arriving abbreviated."""
+    left, right = (left or "").lower(), (right or "").lower()
+    return bool(left) and bool(right) and (
+        left == right or left.startswith(right) or right.startswith(left))
+
+
+def listing(paths, limit=8):
+    shown = ", ".join(f"`{p}`" for p in paths[:limit])
+    if len(paths) > limit:
+        shown += f", +{len(paths) - limit} more"
+    return shown
+
+
+def superseded(reason, main_tip, sha):
+    """`superseded` exits 0 and deploys nothing, so it must name its successor."""
+    if not main_tip:
+        return Verdict("failed",
+                       f"{reason} — but main's current commit could not be read, so no "
+                       "newer push is proven to own this release.", ())
+    if same_sha(main_tip, sha):
+        return Verdict("failed",
+                       f"{reason} — but this commit IS still main's tip, so no newer push "
+                       "owns this release and nothing will revisit it. Re-run CI for this "
+                       "SHA, or dispatch a release with skip_gates.", ())
+    return Verdict("superseded", f"{reason}; main is now at {main_tip[:9]}", ())
 
 
 def required_names(path=REQUIRED_CHECKS):
@@ -96,36 +167,55 @@ def latest_run(runs, path):
     return max(match, key=lambda r: int(r.get("id") or 0))
 
 
-def classify(check_runs, runs, required, event, absence_settled):
-    """Pure verdict logic. No I/O, no clock — the test drives it with fixtures."""
+def classify(check_runs, runs, required, event, absence_settled,
+             changed_paths=None, main_tip=None, sha=""):
+    """Pure verdict logic. No I/O, no clock — the test drives it with fixtures.
+
+    `changed_paths` (this commit's files) and `main_tip` (the commit at the head
+    of main) are what the two silent verdicts are granted on, so they arrive
+    optional and are only demanded on the branches that need them. Either being
+    None there is a failure, never a fallback: the silence is the bug.
+    """
     latest = latest_by_name(check_runs)
     ci_run = latest_run(runs, CI_WORKFLOW)
 
     if ci_run is None:
         if not absence_settled:
             return Verdict("waiting", f"no {CI_WORKFLOW} run for this SHA yet", ())
-        if event == "push":
+        if event != "push":
+            return Verdict("failed",
+                           f"no {CI_WORKFLOW} run for this SHA, and this is a "
+                           "workflow_dispatch. The commit may be old enough that its "
+                           "runs are past retention. Re-dispatch with skip_gates=true "
+                           "to assert CI was green when this SHA was main.", ())
+        if changed_paths is None:
+            return Verdict("failed",
+                           f"no {CI_WORKFLOW} run for this SHA, and the commit's changed "
+                           "files could not be read to check whether that is legitimate.", ())
+        if not changed_paths:
+            return Verdict("failed",
+                           f"no {CI_WORKFLOW} run for this SHA, and the commit reported no "
+                           "changed files at all, which says nothing about it.", ())
+        if all_docs(changed_paths):
             return Verdict("noop_docs_only",
-                           f"no {CI_WORKFLOW} run for this SHA. {CI_WORKFLOW} and "
-                           f"{INTEG_WORKFLOW} both carry paths-ignore "
-                           "['**.md','docs/**'] on push to main, so a docs-only "
-                           "commit produces zero check-runs: nothing to build, "
-                           "nothing to deploy.", ())
+                           f"no {CI_WORKFLOW} run because all {len(changed_paths)} file(s) "
+                           f"this commit changed sit inside its own paths-ignore "
+                           f"{list(DOCS_IGNORE_GLOBS)}: {listing(changed_paths)}. "
+                           "Nothing to build, nothing to deploy.", ())
+        deployable = [p for p in changed_paths if not is_docs_path(p)]
         return Verdict("failed",
-                       f"no {CI_WORKFLOW} run for this SHA, and this is a "
-                       "workflow_dispatch. The commit may be old enough that its "
-                       "runs are past retention. Re-dispatch with skip_gates=true "
-                       "to assert CI was green when this SHA was main.", ())
+                       f"no {CI_WORKFLOW} run for a push that changes deployable paths: "
+                       f"{listing(deployable)}. Nothing verified this tree, so it will not "
+                       "deploy — and it will not be called docs-only either.", ())
 
     if ci_run.get("conclusion") == "cancelled":
-        return Verdict("superseded",
-                       f"the {CI_WORKFLOW} run was cancelled by a newer main commit", ())
+        return superseded(f"the {CI_WORKFLOW} run was cancelled", main_tip, sha)
 
     cancelled = sorted(n for n in required
                        if latest.get(n, {}).get("conclusion") == "cancelled")
     if cancelled:
-        return Verdict("superseded",
-                       "cancelled by a newer main commit: " + ", ".join(cancelled), ())
+        return superseded("a required check reported cancelled: " + ", ".join(cancelled),
+                          main_tip, sha)
 
     bad, unsettled = [], []
     for name in required:
@@ -141,8 +231,7 @@ def classify(check_runs, runs, required, event, absence_settled):
     if integ is None or integ.get("status") != "completed":
         unsettled.append(f"{INTEG_WORKFLOW} run")
     elif integ.get("conclusion") == "cancelled":
-        return Verdict("superseded",
-                       f"{INTEG_WORKFLOW} was cancelled by a newer main commit", ())
+        return superseded(f"{INTEG_WORKFLOW} was cancelled", main_tip, sha)
     elif integ.get("conclusion") in BAD:
         bad.append(f"{INTEG_WORKFLOW} ({integ.get('conclusion')})")
     elif integ.get("conclusion") not in GREEN:
@@ -194,18 +283,67 @@ def make_fetchers(repo):
             rows.extend(page.get("workflow_runs") or [])
         return rows
 
-    return fetch_check_runs, fetch_runs
+    def fetch_commit_files(sha):
+        """The commit's own changed paths — what ci.yml's paths-ignore is applied
+        to, and therefore the only honest evidence that a missing run is fine.
+        Paginated because GitHub splits the file list into pages like anything
+        else; a commit here that is docs-only is far from the 300-file cap.
+        """
+        names = []
+        for page in pages(gh(f"repos/{repo}/commits/{sha}?per_page=100")):
+            names.extend(f.get("filename") for f in (page.get("files") or [])
+                         if f.get("filename"))
+        return names
+
+    def fetch_main_tip():
+        for page in pages(gh(f"repos/{repo}/commits/main")):
+            if page.get("sha"):
+                return page["sha"]
+        return None
+
+    return fetch_check_runs, fetch_runs, fetch_commit_files, fetch_main_tip
+
+
+def maybe_cancelled(check_runs, runs):
+    """Conservative pre-check for fetching main's tip: ANY cancelled row or run
+    for these two workflows, not only the latest attempt classify() will settle
+    on. Over-fetching costs one API call; under-fetching would hand classify() a
+    None tip and turn a legitimate superseded into a failure.
+    """
+    if any(row.get("conclusion") == "cancelled" for row in check_runs):
+        return True
+    return any(row.get("conclusion") == "cancelled" for row in runs
+               if row.get("path") in (CI_WORKFLOW, INTEG_WORKFLOW)
+               and row.get("event") == "push")
 
 
 def wait(sha, required, event, budget_s, absence_budget_s,
          fetch_check_runs, fetch_runs,
+         fetch_commit_files=None, fetch_main_tip=None,
          sleep=time.sleep, clock=time.monotonic, log=print):
     start = clock()
     absence_deadline = start + absence_budget_s
+    paths = tip = _UNSET
     while True:
         now = clock()
-        verdict = classify(fetch_check_runs(sha), fetch_runs(sha), required, event,
-                           absence_settled=now >= absence_deadline)
+        settled = now >= absence_deadline
+        check_runs = fetch_check_runs(sha)
+        runs = fetch_runs(sha)
+        # Each fact is read once, and only on a SHA that is heading for a verdict
+        # that needs it — a healthy release keeps polling the two calls it always
+        # made. If these guards and classify()'s branches ever drift apart,
+        # classify() receives None and fails; a missed fetch cannot re-open the
+        # silence this replaced.
+        if paths is _UNSET and settled and event == "push" \
+                and latest_run(runs, CI_WORKFLOW) is None:
+            paths = fetch_commit_files(sha) if fetch_commit_files else None
+        if tip is _UNSET and fetch_main_tip is not None \
+                and maybe_cancelled(check_runs, runs):
+            tip = fetch_main_tip()
+        verdict = classify(check_runs, runs, required, event, settled,
+                           changed_paths=None if paths is _UNSET else paths,
+                           main_tip=None if tip is _UNSET else tip,
+                           sha=sha)
         if verdict.decision != "waiting":
             return verdict
         elapsed = int(now - start)
@@ -254,10 +392,12 @@ def main(argv=None):
         if not args.repo:
             print("::error::--repo or GITHUB_REPOSITORY is required", file=sys.stderr)
             return 2
-        fetch_check_runs, fetch_runs = make_fetchers(args.repo)
+        fetch_check_runs, fetch_runs, fetch_commit_files, fetch_main_tip = \
+            make_fetchers(args.repo)
         verdict = wait(args.sha, required_names(), args.event,
                        args.budget_minutes * 60, args.absence_budget_minutes * 60,
-                       fetch_check_runs, fetch_runs)
+                       fetch_check_runs, fetch_runs,
+                       fetch_commit_files, fetch_main_tip)
 
     out = os.environ.get("GITHUB_OUTPUT")
     if out:
@@ -270,10 +410,12 @@ def main(argv=None):
             fh.write(text)
     print(text)
 
-    # `superseded` and `noop_docs_only` exit 0: a newer commit owns the release,
-    # or there was nothing to build. Neither is a failure and neither deploys —
-    # every downstream job tests `verdict == 'proceed'`.
-    return 0 if verdict.decision in ("proceed", "noop_docs_only", "superseded") else 1
+    # The silent verdicts exit 0: a newer commit owns the release, or this
+    # commit's own diff says there was nothing to build. Neither is a failure and
+    # neither deploys — every downstream job tests `verdict == 'proceed'`. Both
+    # had to prove it above, because that silence is also the only way a release
+    # can stop without anyone being told.
+    return 0 if verdict.decision in SILENT else 1
 
 
 if __name__ == "__main__":
