@@ -159,16 +159,16 @@ New invariant spec at `tests/unit/modules/serviceModuleKeys.spec.ts` (node:test 
 
 - Registry state is per environment. Staging flip is effective server-side the moment the migration lands there; production likewise when it lands there.
 - **Partial-APK reality:** shipped APKs gate only the three already-mapped tiles, so `savings`/`loyalty`/`creators` disappear from current APKs as soon as staging flips; the other 9 keep rendering until the next APK build ships the new mappings. This is inherent — no server can hide a tile the shipped code doesn't gate. Documented, accepted.
-- Fail-open on registry fetch failure is preserved (render decision ≠ authorization; API authz still protects every surface).
+- **Unreachable registry is not "show everything".** `moduleStateFor` answers from the last good read when there is one; when there is neither a live answer nor a cache, it renders only `STABLE_MODULE_KEYS` — `wallet`, `walletTransfers`, `walletBankTransfers`, `beneficiaries`, `virtualAccounts` — and hides every other tile (`src/features/modules/rules.ts`, whose comment forbids adding keys to that list to fix a visibility complaint). Render decision ≠ authorization still holds: API authz protects every surface regardless of what the grid shows.
+- **Consequence of the above for this PR.** Eleven tiles move from "unmapped, so it always renders" to "mapped, so it obeys the registry", which means on a plane whose visibility endpoint is broken the grid gets *emptier*, not unchanged. Development is exactly that plane today: measured 2026-11-17, `GET /api/v1/modules/visibility` on `backend-development-502c.up.railway.app` answers HTTP 500 `could not load module visibility`, consistent with that database being behind the registry migrations (the local stack is measurably behind — no `readiness` column). R4 therefore cannot be observed until the development plane is migrated; repairing it is an ops step (`db-migrate` dispatch), not a client change, and definitely not an addition to the stable-keys list.
 - `creators` sits in the approved disable list; it is currently published on staging and flips to hidden like `savings`/`loyalty`.
 
 ### 5. Verification
 
 Done, with the evidence:
 
-1. **Mobile unit spec — green.** 130/130 via
-   `node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test
-   "tests/unit/modules/*.spec.ts"` in `mobile-app/reactnative` (main's baseline is 105).
+1. **Mobile unit spec — green.** 130/130, 0 skipped, via the declared script
+   `npm run test:modules` in `mobile-app/reactnative` (main's baseline is 105).
    Includes the completeness invariant, the `shopping`/`parcel` exemption, and the
    staging matrix fixture. `tsc` was mutation-proved to actually read the changed files
    (clean run emits no diagnostics; an injected type error is reported at its line).
@@ -186,17 +186,20 @@ Done, with the evidence:
    stubbed.
 3. **Live-plane measurement — done.** `GET /api/v1/modules/visibility` against the
    staging and production backends, recorded in reconciliation note 2 and re-read after
-   the migration change.
+   the migration change. The development backend was probed too and answers HTTP 500 —
+   see the R4 consequence in §4.
+4. **Go module suites — green.** `go test ./internal/modules/... -count=1 -v` →
+   28 `--- PASS`, 0 FAIL, **0 SKIP** across `internal/modules` and
+   `internal/modules/modulegate`; CI's `backend` job runs the same suites against a real
+   Postgres and is green on this head.
 
 Not done yet, and required before this ships:
 
-4. **Grid verification in a browser** — RN-web services grid with a registry pointed at
+5. **Grid verification in a browser** — RN-web services grid with a registry pointed at
    the migrated database: the 12 absent, every other tile present, featured `invest`
    card hidden. CI does not cover this.
-5. **Admin flow** — `/admin/modules` shows the new rows, toggling `investment` visible
+6. **Admin flow** — `/admin/modules` shows the new rows, toggling `investment` visible
    brings the tile back within one 60 s stale window, audit row appended.
-6. **Go tests** — expected untouched (no Go changes), but they have not been re-run in
-   this reconciliation; the branch's `backend` CI job is the evidence so far.
 
 ## Out of scope
 
