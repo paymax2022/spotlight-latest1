@@ -23,11 +23,18 @@ Measured 2026-11-17 against `origin/main`'s `SERVICE_MODULE_REGISTRY_KEY` and ag
   publication on production governed nothing on the device until eas.json became the single
   source of truth. Either way, both planes must carry the hide.)
 - **2 are wired and already hidden** — the Learn and StudyHub tiles map to #996's single
-  `academy` key (`learn → academy`, `academy → academy`, both from `3654f6b3f`), and `academy`
-  is absent from staging *and* production payloads today. So a build cut from `main` already
-  hides both; installed store builds still show them because those binaries predate the
-  mappings. Consequence worth keeping in view: Learn and StudyHub are one switch, and
-  publishing `academy` brings both back.
+  `academy` key (`learn → academy`, `academy → academy`, both from `3654f6b3f`, landed
+  2026-11-12), and `academy` is absent from staging *and* production payloads today. So any
+  build that contains those mappings already hides both tiles. Which side of that line the
+  installed store artifact is on cannot be measured from the repo: the ADR above establishes
+  the artifact is cut by local Gradle against a gitignored `.env.production`, and nothing
+  tracked records its build date. For R1 the ambiguity is harmless — hidden is the requested
+  end state either way, and this PR adds no `academy` row and publishes nothing that would
+  bring these two back. What it does mean is that the same uncertainty applies to the six
+  preserve keys in R2, where hidden is *not* wanted: if the store build carries #996's
+  mappings, those six tiles are already gone for real users and the day-one `UPDATE` restores
+  them rather than merely preventing a future drop. Consequence worth keeping in view: Learn
+  and StudyHub are one switch, and publishing `academy` brings both back.
 - **7 are neither mapped nor registered** — Investment, Invest AI, Spotlight Wealth, Real
   Estate Invest, AI Trading, Dues & Rent, Admin. No `SERVICE_MODULE_REGISTRY_KEY` entry and no
   `platform_modules` row, so the shipped app renders them unconditionally and the admin portal
@@ -257,8 +264,15 @@ Done, with the evidence:
 1. **Mobile unit spec — green.** 130/130, 0 skipped, via the declared script
    `npm run test:modules` in `mobile-app/reactnative` (main's baseline is 105).
    Includes the completeness invariant, the `shopping`/`parcel` exemption, and the
-   staging matrix fixture. `tsc` was mutation-proved to actually read the changed files
+   staging matrix fixture. Re-run at this head after the three dead registry rows were
+   dropped, because the fixture's staging payload changed with them. `tsc` was
+   mutation-proved to actually read the changed files
    (clean run emits no diagnostics; an injected type error is reported at its line).
+   **None of this is enforced by CI**, and that is not my inference alone:
+   `ADR-PR1026` §Decision 6 says the same thing in the repo's own words — "The RN specs
+   require `--experimental-strip-types` (Node 22+) against CI's pinned Node 20, and no RN
+   unit spec runs in CI today; a guard nobody executes is a guard that rots". Wiring the
+   suite in is the CI-minutes decision recorded under Out of scope.
 2. **Migration replay on a real engine — done, both database shapes.**
    `fresh-plane-replay.sh` (empty database, migrations in filename order, with and
    without this file) is the authoritative run. Its "served" query mirrors the Go decision
