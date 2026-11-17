@@ -216,6 +216,31 @@ spec mapped Contest to `voteBridge`, which #996 documents as "the wallet-paid vo
 not the contest surface; `voteBridge` is served on both planes, so that draft would have made
 the bug worse by gating Contest against a module that is always on.
 
+`realtor` is worth stating precisely, because it is not the same shape as the rows this
+migration inserts. `VisibleIn` has three fail-closed axes, not one: `model.go:161`
+(lifecycle), `model.go:164` (`EnvFlagEnabled`) and `model.go:167` (production readiness),
+plus the per-environment row at 170-174. `service.go:84` computes the flag axis as
+`envFlag == "" || s.flag(envFlag)`, so a NULL `env_flag` means "the registry alone
+decides" and a named flag means the admin switch can hide a module but cannot bring back
+one the ops flag has off. Every one of the 36 keys in the base registry
+(`20261210000000_platform_module_registry.sql`) names an ops flag — 35 `FEATURE_*` plus
+`VOTES_BRIDGE_ENABLED`, and none is NULL — `realtor`
+included (`FEATURE_REALTOR_ENABLED`, true in `frontend-web/config/production-module-flags.env:57`),
+while #996's seven and every row here are NULL. That is why binding a menu tile to a flag
+was rejected: a flag no plane defines would hide the tile silently and make the
+`/admin/modules` switch look broken.
+
+**A tile switch is not the deep-link switch.** `routeModuleKeys.ts` is a separate plane,
+shipped by `b66c16aa5`, and it does not cover the same surfaces: it lists `admin` among the
+paths deliberately "never release-gated" (hiding the Admin tile leaves `/admin` reachable by
+URL), has no entry at all for the other investment tiles, `dues` or `property`, and — the one
+real divergence — gates the `/fractionalre` **route** on `realtor` (line 59) while this change
+gates the fractionalre **tile** on `fractionalRealEstate`. Unifying them was considered and
+declined: pointing the route at the tile's key would make an existing page fail closed on
+precisely the planes where this migration ships that tile hidden, which R2 forbids. The
+divergence is recorded in the migration's own comments so the next reader does not "fix" it by
+accident.
+
 State changes for R1:
 - `INSERT … ON CONFLICT (key) DO NOTHING` for all new rows (never clobbers admin edits, mirroring the original seed migration), plus `platform_module_environments` rows per the table above (development visible for everything).
 - **The visible half of the table above cannot be a seed alone** — on any plane that already ran #996 the environment rows exist as `hidden`, and `ON CONFLICT DO NOTHING` will not move them. The preserve list is therefore an explicit audited `UPDATE` to `visible` in staging + production, with `readiness = 'ready'` alongside it for production, because `VisibleIn` will not serve a production module below `ready` whatever its row says. See reconciliation note 2.

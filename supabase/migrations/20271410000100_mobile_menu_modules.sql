@@ -60,15 +60,19 @@ ON CONFLICT (key) DO NOTHING;
 -- to 'academy' and visibility.spec.ts asserts ['learn', 'academy']. A `learn` row would
 -- be a second toggle that gates nothing, for the same reason as the two above.
 --
--- WHAT THE `admin` SWITCH DOES NOT DO. It removes the tile from the grid; it does not
--- close the console. routeModuleKeys.ts lists 'admin' among the surfaces that are
--- deliberately never release-gated ("admin paths are never release-gated"), so the
--- console stays reachable by URL while the tile is hidden. The row's description says
--- that outright, because /admin/modules is where an operator would otherwise conclude
--- the toggle is broken. None of the four investment tiles, `dues` or `property` has a
--- route entry in that file either — it documents the investment family as having no
--- single module key and dues/property as gated through the property hub — so here the
--- grid entry point is what publication controls, while authz on the pages themselves is
+-- WHAT THE `admin` SWITCH DOES NOT DO, AND WHERE THE TILES AND THE ROUTES DIVERGE.
+-- Hiding a tile removes the grid entry point; it is not the same control as the
+-- deep-link guard in routeModuleKeys.ts. That file lists 'admin' among the surfaces
+-- that are "never release-gated", so the console stays reachable by URL while its tile
+-- is off, and the row's description says so outright because /admin/modules is where an
+-- operator would otherwise conclude the toggle is broken. It has no entry for the other
+-- investment tiles, `dues` or `property` either — the investment family is documented
+-- there as having no single module key, dues/property as gated through the property
+-- hub — EXCEPT one: routeModuleKeys.ts:59 gates the `/fractionalre` ROUTE on 'realtor'
+-- (the key b66c16aa5 chose), while this change gates the fractionalre TILE on
+-- 'fractionalRealEstate'. Those two switches are deliberately not unified here: moving
+-- the route onto the tile's key would make an existing page fail closed on exactly the
+-- planes where this migration ships that tile hidden. Authz on the pages themselves is
 -- a separate layer this migration does not move.
 
 -- Environment states: everything visible in development; the preserve-list is
