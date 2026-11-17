@@ -7,7 +7,11 @@ Updated 08:20Z the same day with episode 3 (see Reproduction): 54 more refusals
 across two runs while development accepted in the same minutes. Updated again at
 12:52Z with episode 4: a full push-triggered release, refused 27 out of 27 on
 staging while its own development legs and its own staging `supabase db push`
-succeeded in the same run. No token value appears here.
+succeeded in the same run. Updated a third time at 14:48Z with episode 5: two
+back-to-back dispatches of that same commit, refused 54 out of 54 staging calls
+over 3,474 s, while each run's own three development uploads were accepted — the
+last of them 49 s before the same service was refused. No token value appears
+here.
 
 ## The ask
 
@@ -164,13 +168,21 @@ staging calls (12:26:06-12:45:56Z, nine per leg) in a run whose three developmen
 uploads succeeded at 12:25:32-39Z and whose `migrate staging database / supabase
 db push (staging)` job — talking to the staging environment, with the staging
 token — succeeded in the same minutes. The environment is reachable and its
-database accepts writes; only upload-initiate answers non-JSON.
+database accepts writes; only upload-initiate answers non-JSON. Episode 5 is that
+same release dispatched twice more in the hour after: runs `44086726792` and
+`44092969961`, both `workflow_dispatch` of the same commit `b4bba6e5f`, refused
+54 times out of 54 staging calls (nine per leg per run, 12:50:22-13:48:17Z) while
+each run's own three development uploads were accepted and its own staging
+`supabase db push` succeeded. The comparator is now down to seconds — development
+`backend` created deployment `c68da956` at 13:28:34.784Z, and staging `backend`
+was refused 49 s later at 13:29:24.172Z, same commit, same runner, same CLI build,
+same project, same service ID.
 
 ## Reproduction
 
 Push any commit to `paymax2022/spotlight-latest1:main` and watch
 `Release (main → development, staging, production)` → `deploy Staging (*)`. The
-fault is intermittent, so this may need several attempts. Four episodes are on
+fault is intermittent, so this may need several attempts. Five episodes are on
 the record: 16:23:32-16:38:15Z on 2026-11-16, in which CI's staging calls were
 refused throughout (though a probe job was accepted twice inside that span, at
 16:34:47 and 16:34:50Z); 23:18:25-23:38:48Z the same day, in which all 27 were
@@ -181,19 +193,38 @@ run's three development legs uploaded fine and passed their smokes in the same
 minutes; and 12:26:06-12:45:56Z the same day, in which one push-triggered release
 was refused 27 times out of 27 while its own three development uploads succeeded
 16 minutes earlier and its own `migrate staging database / supabase db push
-(staging)` job succeeded against the same environment with the same token.
+(staging)` job succeeded against the same environment with the same token; and
+12:50:22-13:48:17Z the same day — 3,474 s spanning two back-to-back dispatches of
+that identical commit — in which all 54 staging calls were refused, nine per leg
+per run, every one the same decode error with zero `Indexing...` and zero
+`Uploading...` lines, while both runs' own development legs uploaded fine and
+passed their smokes.
 Not one staging deployment row was created on 2026-11-17: at 08:18Z the
 three `latestDeployment` records still dated from 2026-11-16 (`e4670d96`,
 `d5825eff`, `28946ae4`), and a fourth episode four hours later did not change
 that — re-measured at 12:50Z, after all 27 of episode 4's refusals, the staging
 instances still report those same three 2026-11-16 deployments, and the project's
 only deployment rows created after 12:00Z are that run's three `development`
-uploads. Both of 2026-11-17's episodes sit inside a single day in which the same
-token, the same CLI and the same three service IDs accepted every development
-upload. Job logs are retained: runs `43905969462`,
+uploads. Re-measured a fifth time at 14:45Z, after all 54 of episode 5's
+refusals: staging's `latestDeployment` records are *still* `28946ae4`,
+`d5825eff` and `e4670d96`, all dated 2026-11-16 — the environment has now been
+dark for 21 h 39 min — while `railway deployment list --environment development`
+for the same commit shows rows created at 12:25:32-39Z, 12:49:56-12:50:00Z and
+13:28:32-34Z — the 13:28 set `SUCCESS`, the two earlier sets `REMOVED` only
+because the later upload superseded them, which is development behaving
+normally. All three of 2026-11-17's episodes sit inside a single day in which
+the same token, the same CLI and the same three service IDs accepted every
+development upload. Job logs are retained: runs `43905969462`,
 `43909191817`, `43913775480`, `43972239504`; staging jobs `133687154665` /
 `133687154683` / `133687154708` (episode 2), `133891749720` / `133891749721` /
 `133891749748` (episode 3, re-run attempt), `133899929022` / `133899928994` /
 `133899928889` (episode 3, dispatch), `134038233231` / `134038233306` /
 `134038233308` (episode 4, run `44076555018`, push to `main` at
-`b4bba6e5f3b8057a83c2f447e8e60085efcea64f`).
+`b4bba6e5f3b8057a83c2f447e8e60085efcea64f`), `134051443726` / `134051443747` /
+`134051443856` (episode 5, run `44086726792`) and `134073206498` /
+`134073206566` / `134073206688` (episode 5, run `44092969961`) — both of those
+runs being `workflow_dispatch` attempts of the same commit
+`b4bba6e5f3b8057a83c2f447e8e60085efcea64f`, whose own development legs are jobs
+`134051183072` / `134051183108` / `134051183252` and `134072854755` /
+`134072854783` / `134072854845`, and whose staging `db push` jobs are
+`134051184868` and `134072855096`.
