@@ -162,7 +162,7 @@ describe('property hub gate', () => {
 });
 
 // Mirrors the keys seeded into platform_modules (supabase migrations
-// 20261210000000 and 20261117000000 — the latter seeds the services-grid tiles).
+// 20261210000000 and 20261216000100 — the latter seeds the services-grid tiles).
 // A key absent here would let a mapping target a module the registry has never
 // heard of, hiding it forever with no error anywhere.
 const REGISTRY_KEYS = new Set([
