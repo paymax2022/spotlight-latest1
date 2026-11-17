@@ -49,6 +49,21 @@ export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
   'naija-driver': 'arena',
   connect: 'connect',
 
+  // SPIKE variant D: the tiles #996 left ungated that have a real engine behind
+  // them. Keys seeded by migration 20261216000100 and mirrored into
+  // visibility.spec.ts REGISTRY_KEYS below. 'shopping' and 'parcel' are NOT here:
+  // they are comingSoon placeholders (constants/modules.ts) whose badge is not a
+  // registry state, and gating them would hide them outright.
+  investment: 'investment',
+  'invest-ai': 'investAi',
+  'spotlight-wealth': 'spotlightWealth',
+  fractionalre: 'fractionalRealEstate',
+  'ai-trading': 'aiTrading',
+  education: 'education',
+  dues: 'dues',
+  admin: 'admin',
+  property: 'realtor',
+
   // Community. NOTE: 'stays', 'estate' and 'rent' are NOT top-level tiles — they
   // are reached from the /property hub, so gating them means gating that hub's own
   // list. Left for the next batch rather than mapped against ids that do not exist.
@@ -103,13 +118,14 @@ export function quickActionRegistryKeyFor(actionId: string): string | null {
 }
 
 // A fourth id-space. 'food-ride' is a featured card only (it has no tile in
-// SERVICE_MODULES), and 'invest' is a card for the stock-investment surface, which
-// has no registry key of its own — so 'invest' is deliberately absent: unmapped cards
-// are ungated and always render.
+// SERVICE_MODULES). 'invest' is a card for the stock-investment surface, which
+// since 20261216000100 does have a registry key ('investment'), so the card is
+// gated on the same module as the tile.
 export const FEATURED_REGISTRY_KEY: Record<string, string> = {
   bills: 'utilityPayments',
   'food-ride': 'restaurant',
   'naija-driver': 'arena',
+  invest: 'investment',
 };
 
 export function featuredRegistryKeyFor(featuredId: string): string | null {
