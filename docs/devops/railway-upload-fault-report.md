@@ -6,8 +6,9 @@ queries against project `spotlight-platform`, none of which created a deployment
 Updated 08:20Z the same day with episode 3 (see Reproduction): 54 more refusals
 across two runs while development accepted in the same minutes. Updated again at
 12:52Z with episode 4: a full push-triggered release, refused 27 out of 27 on
-staging while its own development legs and its own staging `supabase db push`
-succeeded in the same run. Updated a third time at 14:48Z with episode 5: two
+staging while its own development legs succeeded in the same run — its staging
+`supabase db push` succeeded too, but that job is a Supabase call, not a Railway
+one, as Cost to us now says. Updated a third time at 14:48Z with episode 5: two
 back-to-back dispatches of that same commit, refused 54 out of 54 staging calls
 over 3,474 s, while each run's own three development uploads were accepted — the
 last of them 49 s before the same service was refused. Updated a fourth time at
@@ -182,7 +183,8 @@ same release dispatched twice more in the hour after: runs `44086726792` and
 `44092969961`, both `workflow_dispatch` of the same commit `b4bba6e5f`, refused
 54 times out of 54 staging calls (nine per leg per run, 12:50:22-13:48:17Z) while
 each run's own three development uploads were accepted and its own staging
-`supabase db push` succeeded. The comparator is now down to seconds — development
+`supabase db push` succeeded; that leg is a Supabase call, per above, so it is
+the uploads doing the work. The comparator is now down to seconds — development
 `backend` created deployment `c68da956` at 13:28:34.784Z, and staging `backend`
 was refused 49 s later at 13:29:24.172Z, same commit, same runner, same CLI build,
 same project, same service ID.
