@@ -54,8 +54,8 @@ Additionally, the admin portal must be able to enable/disable any mobile menu it
 
 ## Requirements
 
-- **R1 — Default-off list.** These 12 tiles ship hidden in staging and production; development keeps them visible: Savings (`savings`), Rewards (`loyalty`), Investment (`investment`), Learn (`learn`), Invest AI (`invest-ai`), Spotlight Wealth (`spotlight-wealth`), Real Estate Invest (`fractionalre`), AI Trading (`ai-trading`), Creators (`creators`), StudyHub (`academy`), Dues & Rent (`dues`), Admin (`admin`). Of these, `savings` / `loyalty` / `creators` already have registry rows (currently visible on staging) and flip via UPDATE; the other 9 are new rows seeded hidden.
-- **R2 — Whole-grid control.** Every `SERVICE_MODULES` tile id maps to a registry key. Tiles beyond R1 keep their current visibility: new registry rows for them are seeded visible in staging and production so nothing changes for users on day one.
+- **R1 — Default-off list.** These 12 tiles ship hidden in staging and production; development keeps them visible: Savings (`savings`), Rewards (`loyalty`), Investment (`investment`), Learn (`learn`), Invest AI (`invest-ai`), Spotlight Wealth (`spotlight-wealth`), Real Estate Invest (`fractionalre`), AI Trading (`ai-trading`), Creators (`creators`), StudyHub (`academy`), Dues & Rent (`dues`), Admin (`admin`). Measured against `main`'s map and both live payloads, that is three different jobs, not one: `savings` / `loyalty` / `creators` have rows and are **served on staging and production both**, so they flip via an audited `UPDATE`; the Learn and StudyHub tiles ride #996's existing `academy` key, which is hidden on both planes already, so they need no row and no flip (and stay one switch); the remaining **seven** (Investment, Invest AI, Spotlight Wealth, Real Estate Invest, AI Trading, Dues & Rent, Admin) have neither row nor mapping and are created hidden here.
+- **R2 — Whole-grid control.** Every `SERVICE_MODULES` tile id maps to a registry key. Tiles beyond R1 keep their visibility: for the new rows that is a seed, and for keys #996 already parked as hidden it is an audited `UPDATE` to `visible` (plus `readiness = 'ready'` on production), because a seed cannot move an existing row — see reconciliation note 2. "Nothing changes for users on day one" is the goal and is true of the installed builds product is complaining about; for the six preserve keys that `main` already maps, the `UPDATE` is what keeps the next build from hiding tiles that today's payloads already leave unserved.
 - **R3 — Admin toggles.** Per-environment visible / coming soon / hidden from the existing `/admin/modules` page, with audit — no new admin UI.
 - **R4 — Dev stays open.** Development environment shows everything.
 - **R5 — Featured card obeys.** The home featured card `invest` ("Own the companies shaping your future", route `/investment`) is registry-gated to `investment`.
@@ -110,12 +110,16 @@ those tiles off, and `education` is a row this file creates rather than one #996
 Six of those seven are **already mapped on `main`** (`crypto`, `arena`, `filmAcademy`,
 `connect`, `marketplace`, `competitions` — measured 2026-11-17 by reading
 `SERVICE_MODULE_REGISTRY_KEY` out of `git show origin/main:…/serviceModuleKeys.ts`; only
-`education` is new here). So a build cut from `main` already hides all six: mapped + unserved
-= `hidden` under `rules.ts`. They render in today's *store* builds only because those binaries
-predate #996's mappings. That is the sharper version of the day-one risk: shipping this without
-the flip would not merely fail to restore them, it would keep six tiles hidden from the next
-build while users' installed apps still show them — and the mappings that hid them arrived with
-#996, not with this PR. `marketplace` → `marketplace`, `crypto` → `crypto` etc. therefore stay
+`education` is new here). So a build containing those mappings already hides all six: mapped +
+unserved = `hidden` under `rules.ts`, and the live payloads confirm the keys are served on
+neither plane. Whether the *installed* store artifact is one of those builds cannot be measured
+from the repo — `ADR-PR1026` documents that the artifact is cut by local Gradle against a
+gitignored `.env.production`, and no tracked file records its build date — so both branches have
+to be stated: if the artifact predates #996's mappings, the flip prevents a drop at the next
+registry read (≤ 60 s); if it postdates them, six tiles are already gone for real users and the
+flip is a restore. Either way the mappings that hid them arrived with #996, not with this PR, and
+shipping without the flip keeps them hidden. `marketplace` → `marketplace`, `crypto` → `crypto`
+etc. therefore stay
 visible on staging and production by this migration's audited `UPDATE`, and the ≤ 60 s fetch
 window is what makes the difference land on the next registry read rather than the next release.
 
