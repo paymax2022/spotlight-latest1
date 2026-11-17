@@ -29,7 +29,7 @@ Additionally, the admin portal must be able to enable/disable any mobile menu it
 - **R3 — Admin toggles.** Per-environment visible / coming soon / hidden from the existing `/admin/modules` page, with audit — no new admin UI.
 - **R4 — Dev stays open.** Development environment shows everything.
 - **R5 — Featured card obeys.** The home featured card `invest` ("Own the companies shaping your future", route `/investment`) is registry-gated to `investment`.
-- **R6 — No unmapped tiles, ever.** A mobile spec asserts every `SERVICE_MODULES` id appears in exactly one of the registry-key maps; CI fails otherwise.
+- **R6 — No unmapped tiles, ever.** A mobile spec asserts every `SERVICE_MODULES` id is either mapped to a real registry key or listed in the two-item no-registry-row exemption (`shopping`, `parcel`; see the reconciliation note above). **Enforcement today is `npm run test:modules`, not CI** — no workflow executes any mobile `.spec.ts`, because the suite needs `--experimental-strip-types` (node ≥ 22.6) and the only mobile job pins node 20 through `_reusable-node-typecheck.yml`'s default. Wiring it is a CI-minute decision; the ready patch is written out in `/private/tmp/spot-menuvis-spike/proposed-ci-mobile-specs.md` (spike scratch, deliberately not committed).
 - **R7 — No new endpoints, tables, or pages.** Reuse only.
 
 ### Reconciliation note — written when this rebased onto #996
