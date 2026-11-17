@@ -10,8 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-17-mobile-menu-visibility-design.md` (read it first — this plan argues from it)
 
-> **AS EXECUTED — this plan is the pre-#996 draft and four of its literal blocks are
-> wrong on purpose-preserved main. Do not copy them.** The spec's two reconciliation
+> **AS EXECUTED — this plan is the pre-#996 draft and seven of its stated facts are
+> wrong against current main. Do not copy them.** The spec's two reconciliation
 > notes carry the shipped shape: (1) the migration is
 > `20271410000100_mobile_menu_modules.sql`, slotted AFTER #996's
 > `20271408000100`/`20271410000000` so #996 keeps its `name`/`category` and the
@@ -29,7 +29,13 @@
 > tile off an always-on module;
 > (6) the `admin` row's registry `description` carries the limit of its own switch
 > ("hides the tile only; /admin routes are deliberately never release-gated"), which the
-> SQL block below predates.
+> SQL block below predates;
+> (7) the file ends with a `DO … RAISE WARNING` guard that names any preserve key it could
+> not publish, because the flip is an `UPDATE` and a key with no row is skipped silently —
+> measured on the shape where `20271410000000` never ran, where `competitions` has no row,
+> the Contest publish is a no-op, and the tile is fail-closed hidden with no `/admin/modules`
+> switch to bring it back. Replay scripts: `fresh-plane-replay.sh` (with/without this file)
+> and `plane-b-replay.sh` (without #996's seed).
 
 ## Global Constraints
 

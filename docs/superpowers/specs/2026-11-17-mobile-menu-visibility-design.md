@@ -124,7 +124,7 @@ visible on staging and production by this migration's audited `UPDATE`, and the 
 window is what makes the difference land on the next registry read rather than the next release.
 
 So R2 is carried by an explicit audited `UPDATE` to `visible` (staging + production) for
-the preserve list, not by a seed. Two consequences worth writing down:
+the preserve list, not by a seed. Three consequences worth writing down:
 
 - **Production also checks readiness.** `Module.VisibleIn`
   (`backend/internal/modules/model.go`) refuses to *serve* a production module whose
@@ -140,13 +140,29 @@ the preserve list, not by a seed. Two consequences worth writing down:
   key here, against that "until someone marks them ready" stance. Accepted because users
   already see the tile in installed builds and an admin can hide it again from
   `/admin/modules` without a deploy.
+- **A missing row is worse than a hidden one, and `competitions` is the only preserve key
+  this migration cannot create.** Every flip here is an `UPDATE`, so a key with no
+  staging/production environment row is skipped with no error and no audit trail. Six of
+  the seven keys cannot be in that state — this file's own seed creates them — but
+  `competitions` belongs to `20271410000000` and is deliberately not re-seeded there,
+  because copying that file's `name`/`category`/`description` into this migration would
+  fork #996's text. The failure mode is not cosmetic: `serviceModuleKeys.ts` gates the
+  Contest tile on a key whose header comment says gating on a nonexistent key "would hide
+  it forever", and `/admin/modules` renders one switch per `platform_modules` row, so an
+  unregistered key has neither a tile nor a control. This is a real plane state, measured
+  on the shared developer stack on 2026-11-18: six of #996's seven rows exist there with
+  `env_flag` NULL, the `readiness` column does not, and `schema_migrations` records
+  nothing above `20271409000000` — the seed was applied by hand and never registered, and
+  `competitions` was left out. The migration therefore ends with a `DO` block that
+  `RAISE WARNING`s exactly the preserve keys it could not publish (precedent for warning
+  an operator out of band: `20260405200000_admin_role_setup.sql`). It writes no data, so
+  re-runs stay no-ops, and it is silent on every plane that has run #996.
 
 This is also why the file moved to `20271410000100`: `readiness` does not exist until
 `20271408000100`, so a migration that sets it cannot sort before it. That closes the
 version-slot question left open in the note above.
 
-Both database shapes were replayed on a real Postgres rather than reasoned about, and the
-empty-plane run re-measured at this branch's head after the `shopping`/`parcel`/`learn` rows
+Three database shapes were replayed on a real Postgres rather than reasoned about, and the empty-plane run re-measured at this branch's head after the `shopping`/`parcel`/`learn` rows
 were dropped: with the file, development serves exactly **15** keys and staging + production
 each serve exactly the **seven** preserve keys with #996's attributes winning on the shared
 rows; without it, staging and production serve nothing at all. Those are `env_flag`-NULL
@@ -154,8 +170,20 @@ counts from the replay's predicate, not live payload sizes — see §5. The `#99
 the same end state but its attribute-precedence half is evidence about that particular
 developer database, not about `main` — see §5 for why. Second run of the migration inside the
 same transaction writes no new audit rows.
+
+The third replay is the shape above the warning exists for: the registry chain applied
+**without** `20271410000000`, then this file. There, staging and production each serve
+**six** keys — the seven minus `competitions`, which has no row to publish — the guard
+fires and names `competitions`, and a second application is a no-op that warns again.
+That run also settles what the audit trail means per shape: on the #996-landed plane the
+seven collect **19** rows (**12** `publish` — six keys × two environments, because
+`education` is created visible by this file's seed instead of flipped — plus **7**
+`readiness`), while on the plane without #996 they collect **6**, all `readiness` and no
+`publish`, because there the six are published *by the seed itself*. R2 is therefore
+carried by the flip on planes that ran #996 and by the seed on planes that did not, which
+is the same promise arriving by two roads rather than a third behaviour.
 Scripts: `/private/tmp/spot-menuvis-spike/pushed-plane-replay.sql`,
-`fresh-plane-replay.sh`.
+`fresh-plane-replay.sh`, `plane-b-replay.sh`.
 
 ## Design
 
@@ -302,7 +330,7 @@ Done, with the evidence:
    require `--experimental-strip-types` (Node 22+) against CI's pinned Node 20, and no RN
    unit spec runs in CI today; a guard nobody executes is a guard that rots". Wiring the
    suite in is the CI-minutes decision recorded under Out of scope.
-2. **Migration replay on a real engine — done, both database shapes.**
+2. **Migration replay on a real engine — done, three database shapes.**
    `fresh-plane-replay.sh` (empty database, migrations in filename order, with and
    without this file) is the authoritative run. Its "served" query mirrors the Go decision
    only for rows the registry can answer without a process env — `lifecycle='active' AND
@@ -320,6 +348,16 @@ Done, with the evidence:
    - **without** the file: staging and production serve **nothing at all** — #996 leaves its
      keys hidden on both — so the audited `UPDATE` is the only thing carrying day-one
      visibility. That is the R2 regression reproduced rather than asserted.
+   - **without `20271410000000`** (`plane-b-replay.sh`, the developer stack's actual shape):
+     staging and production each serve **six** keys — the seven minus `competitions`, which
+     has no row to publish — the migration's `RAISE WARNING` fires and names exactly it, and
+     re-applying is a no-op that warns again. The same run explains the audit counts per
+     shape: **19** rows for the seven on the #996-landed plane (12 `publish` — six keys ×
+     two environments, since `education` is created visible by this file's seed rather than
+     flipped — plus 7 `readiness`) against **6** on the plane without #996, all `readiness`
+     and no `publish`, because there the six are published *by the seed itself*. So R2
+     arrives by two roads depending on plane history, and the one gap it cannot close is
+     recorded rather than silent.
 
    Read the caveat against the live measurement below: staging answers 34 keys and production
    31 today, because every module that carries a `FEATURE_*` flag (`realtor`, `estate`,
@@ -331,7 +369,12 @@ Done, with the evidence:
    evidence about that database, not about main:** the developer stack already carries
    committed rows from an earlier draft of this migration — `shopping`, `parcel`,
    `StudyHub`, `Naija Driver` and three `hide` audit rows stamped 2026-11-17 11:13 UTC
-   — and it predates #996 (no `readiness` column outside the transaction), so it models
+   — and its #996 state is partial in a way worth naming, because it is why the guard at
+   the end of this migration exists: six of #996's seven rows are present there with
+   `env_flag` NULL, `competitions` is not, the `readiness` column does not exist outside
+   the transaction, and `supabase_migrations.schema_migrations` records nothing above
+   `20271409000000` — so `20271410000000` was applied there by hand and never registered.
+   That models
    a plane where this file ran *first*, which no plane migrated from main can be. Use
    the fresh-plane run for precedence; removing the residue from the developer stack is
    an ops step, listed under Out of scope. Both scripts stub only what the registry

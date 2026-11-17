@@ -172,6 +172,52 @@ SELECT f.key, NULL, 'readiness', b.before_val, 'ready',
   FROM flipped f
   JOIN before b ON b.key = f.key;
 
+-- A PUBLISH NEEDS A ROW TO PUBLISH, AND A MISSING ROW IS NOT THE SAME AS A HIDDEN ONE.
+--
+-- Both statements above are UPDATEs, so a preserve key with no staging/production
+-- environment row is skipped without an error or a trace. That is a fact about the
+-- plane, not a defect here, but it is the one silent no-op this file can produce, and
+-- the client makes it expensive: serviceModuleKeys.ts gates the Contest tile on
+-- 'competitions', and that file's own header says gating a tile against a key with no
+-- row "would hide it forever". Worse than hidden — /admin/modules renders one switch
+-- per platform_modules row, so a key with no row has no switch either, and the operator
+-- cannot bring the tile back without a deploy.
+--
+-- Six of the seven keys cannot be missing here: this file's own seed creates them.
+-- Only 'competitions' is #996's row, and it is deliberately not re-seeded — copying its
+-- name, category and description in here would fork 20271410000000's text, and that
+-- file is the reason the key exists at all. So on any plane that has not run #996's
+-- seed, the Contest half of R2 does nothing. Measured on the shared developer stack on
+-- 2026-11-18: six of #996's seven rows are present there with env_flag NULL, the
+-- readiness column does not exist, and supabase_migrations.schema_migrations records
+-- nothing above 20271409000000 — the seed was applied by hand and never registered, and
+-- 'competitions' was left out.
+--
+-- So announce it instead of leaving an operator to infer it from a missing tile.
+-- RAISE WARNING from a migration is established here (20260405200000_admin_role_setup.sql
+-- uses it for a credential an operator has to go set out of band); this block writes no
+-- data, so re-runs stay no-ops and the guard costs nothing where the rows exist.
+DO $$
+DECLARE
+  unseeded text;
+BEGIN
+  SELECT string_agg(k.key, ', ' ORDER BY k.key)
+    INTO unseeded
+    FROM (VALUES ('crypto'),('education'),('arena'),('filmAcademy'),('connect'),
+                 ('marketplace'),('competitions')) AS k(key)
+   WHERE NOT EXISTS (
+     SELECT 1
+       FROM public.platform_module_environments e
+      WHERE e.module_key = k.key
+        AND e.environment IN ('staging','production')
+   );
+  IF unseeded IS NOT NULL THEN
+    RAISE WARNING
+      'mobile menu visibility: no staging/production registry row for %, so this migration published nothing for them. Those tiles stay fail-closed hidden and have no /admin/modules switch until 20271410000000_module_registry_add_ungated_surfaces.sql has run on this plane.',
+      unseeded;
+  END IF;
+END $$;
+
 -- Product decision 2026-11-17 (spec R1): savings/loyalty/creators are already
 -- published on staging/production — flip them to hidden and record why. The
 -- guarded WHERE makes a re-run a no-op and keeps the audit row count honest.
