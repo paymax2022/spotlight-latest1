@@ -11,6 +11,7 @@ import importlib.util
 import io
 import os
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -38,14 +39,24 @@ def run(path, conclusion="success", status="completed", event="push", id=1):
             "event": event, "id": id}
 
 
+# The commit this gate is judging, and the two facts the quiet verdicts now have
+# to prove instead of assume.
+SHA = "a" * 40
+OTHER = "b" * 40
+DOCS = ["docs/devops/deployment-matrix.md", "README.md"]
+CODE = ["backend/internal/telemedicine/service.go", "README.md"]
+
+
 def green_set():
     """The fixture that means 'everything this commit needs is green'."""
     return ([cr(n, id=i) for i, n in enumerate(REQ, start=1)],
             [run(CI, id=900), run(INTEG, id=901)])
 
 
-def decide(check_runs, runs, event="push", absence_settled=True):
-    return rg.classify(check_runs, runs, REQ, event, absence_settled)
+def decide(check_runs, runs, event="push", absence_settled=True,
+           paths=None, tip=None, sha=SHA):
+    return rg.classify(check_runs, runs, REQ, event, absence_settled,
+                       changed_paths=paths, main_tip=tip, sha=sha)
 
 
 class _Clock:
@@ -104,13 +115,29 @@ check("integ run failed -> failed",
 # Would break if classify() reported cancelled as failed: that would page a human
 # about a release that was correctly superseded.
 check("required name cancelled -> superseded",
-      decide([cr(REQ[0], conclusion="cancelled")] + crs[1:], runs).decision, "superseded")
+      decide([cr(REQ[0], conclusion="cancelled")] + crs[1:], runs, tip=OTHER).decision,
+      "superseded")
 check("ci run cancelled -> superseded",
-      decide(crs, [run(CI, conclusion="cancelled", id=900), run(INTEG, id=901)]).decision,
-      "superseded")
+      decide(crs, [run(CI, conclusion="cancelled", id=900), run(INTEG, id=901)],
+             tip=OTHER).decision, "superseded")
 check("integ run cancelled -> superseded",
-      decide(crs, [run(CI, id=900), run(INTEG, conclusion="cancelled", id=901)]).decision,
-      "superseded")
+      decide(crs, [run(CI, id=900), run(INTEG, conclusion="cancelled", id=901)],
+             tip=OTHER).decision, "superseded")
+
+# THE OTHER HALF OF THE SILENCE. `superseded` exits 0 and deploys nothing, so it
+# is only honest if a newer commit really does own the release. Two ways that can
+# be false: the cancelled commit is still main's tip (nothing superseded it, and
+# no later push will ever revisit it), or main's tip could not be read at all.
+# Would break if classify() kept asserting a successor it never checked for.
+check("cancelled while still main's tip -> failed",
+      decide([cr(REQ[0], conclusion="cancelled")] + crs[1:], runs, tip=SHA).decision,
+      "failed")
+check("cancelled with an unreadable tip -> failed",
+      decide([cr(REQ[0], conclusion="cancelled")] + crs[1:], runs, tip=None).decision,
+      "failed")
+check("superseded names the successor",
+      OTHER[:9] in decide([cr(REQ[0], conclusion="cancelled")] + crs[1:], runs,
+                          tip=OTHER).reason, True)
 
 # --- a non-required lane going red must NOT stop a release -------------------
 # `security` (CodeQL/gitleaks/trivy) and ci-optimized.yml both fire on a main push
@@ -120,19 +147,63 @@ check("non-required red -> proceed",
       decide(crs + [cr("security / codeql", conclusion="failure", id=99)], runs).decision,
       "proceed")
 
-# --- docs-only pushes produce ZERO check-runs, and that is not a failure -----
-# ci.yml and integration-verify.yml both carry paths-ignore ['**.md','docs/**'] on
-# push to main, so a docs-only commit has nothing to build. Would break if the
-# absence of a ci.yml run were read as "still starting".
+# --- a docs-only push is PROVEN from the commit's own diff -------------------
+# ci.yml ignores ['**.md','docs/**'] on push to main, so a docs-only commit
+# legitimately produces zero check-runs. It used to be inferred from that
+# absence alone — and a commit that DOES touch code but lost its CI run looks
+# identical from the run list, so it too would exit 0 and deploy nothing, with
+# nothing later ever revisiting that SHA. Would break if classify() went back to
+# reading "no ci.yml run" as "docs-only".
 check("no ci run, absence not settled -> waiting",
-      decide([], [], absence_settled=False).decision, "waiting")
-check("no ci run, settled, push -> noop_docs_only",
-      decide([], [], absence_settled=True).decision, "noop_docs_only")
+      decide([], [], absence_settled=False, paths=DOCS).decision, "waiting")
+check("docs diff, settled, push -> noop_docs_only",
+      decide([], [], absence_settled=True, paths=DOCS).decision, "noop_docs_only")
+check("noop names the diff it read",
+      DOCS[1] in decide([], [], absence_settled=True, paths=DOCS).reason, True)
+# THE ONE THAT MATTERS: same shape as the line above, one deployable path added.
+check("code diff, settled, push -> failed",
+      decide([], [], absence_settled=True, paths=CODE).decision, "failed")
+check("failure names the deployable path",
+      CODE[0] in decide([], [], absence_settled=True, paths=CODE).reason, True)
+# A diff that cannot be read, and a diff that is empty, prove nothing in either
+# direction. Both must be loud: silence is the failure being fixed.
+check("unreadable diff, settled, push -> failed",
+      decide([], [], absence_settled=True, paths=None).decision, "failed")
+check("empty diff, settled, push -> failed",
+      decide([], [], absence_settled=True, paths=[]).decision, "failed")
+# And each says which of the two happened, because "no ci.yml run and no changed
+# files" is a different thing to go and look at than "the API would not answer".
+check("unreadable diff says it could not read the files",
+      "could not be read" in decide([], [], absence_settled=True, paths=None).reason,
+      True)
+check("empty diff says it saw no files",
+      "no changed files" in decide([], [], absence_settled=True, paths=[]).reason,
+      True)
 # THE DANGEROUS ONE. On a dispatch the SHA may be old enough that its runs are past
 # retention; reading that as "docs-only" would silently skip the rollback the
 # operator asked for. Would break if classify() ignored `event`.
 check("no ci run, settled, dispatch -> failed",
-      decide([], [], event="workflow_dispatch", absence_settled=True).decision, "failed")
+      decide([], [], event="workflow_dispatch", absence_settled=True,
+             paths=DOCS).decision, "failed")
+
+# --- the ignore list is a checked copy, not a hand-synced one ----------------
+# classify() decides with ci.yml's own paths-ignore. If someone edits the
+# workflow and not the gate, every docs-only push changes verdict on a silent
+# release and nothing else notices. Would break on that drift.
+_push_block = re.search(r"\n  push:\n(.*?)\n  pull_request:",
+                        (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"),
+                        re.S).group(1)
+check("ci.yml paths-ignore matches the gate's copy",
+      re.findall(r"^\s*-\s*'([^']+)'", _push_block, re.M), list(rg.DOCS_IGNORE_GLOBS))
+for path, want in [("docs/devops/a.md", True), ("README.md", True),
+                   ("docs/a/b/c.md", True), ("notes.md", True),
+                   ("backend/internal/x.go", False), (".github/workflows/ci.yml", False),
+                   ("CLAUDE.md", True),
+                   # `docs/**` is what ci.yml ignores, so a non-markdown file under
+                   # docs/ really does skip CI. The predicate mirrors the filter, not
+                   # a theory of what counts as documentation — anything else drifts.
+                   ("docs/x.go", True)]:
+    check(f"is_docs_path({path!r})", rg.is_docs_path(path), want)
 
 # --- integration-verify is waited on as a RUN, not a check-run name ----------
 # No check-run named `integration-verify` exists; the workflow produces check-runs
@@ -212,6 +283,45 @@ got = rg.wait("a" * 40, REQ, "push", 120, 30,
 check("wait times out", got.decision, "timeout")
 check("wait slept 4 times before a 120s budget", clock.sleeps, 4)
 check("timeout names the unsettled integ run", INTEG + " run" in got.unsettled, True)
+
+# --- wait() must FETCH the evidence classify() now demands -------------------
+# Pure logic that is never wired into the polling loop would fix nothing on a
+# real release. 600s steps clear the 300s absence budget on the first poll.
+got = rg.wait(SHA, REQ, "push", 2400, 300,
+              lambda sha: [], lambda sha: [],
+              fetch_commit_files=lambda sha: CODE,
+              sleep=_Clock(600).sleep, clock=_Clock(600), log=lambda *_: None)
+check("wait reads the diff before calling an absent CI docs-only",
+      got.decision, "failed")
+got = rg.wait(SHA, REQ, "push", 2400, 300,
+              lambda sha: [], lambda sha: [],
+              fetch_commit_files=lambda sha: DOCS,
+              sleep=_Clock(600).sleep, clock=_Clock(600), log=lambda *_: None)
+check("wait still no-ops a genuinely docs-only push",
+      got.decision, "noop_docs_only")
+
+cancelled = [cr(REQ[0], conclusion="cancelled", id=1)] + \
+            [cr(n, id=i) for i, n in enumerate(REQ[1:], start=2)]
+got = rg.wait(SHA, REQ, "push", 2400, 300,
+              lambda sha: cancelled,
+              lambda sha: [run(CI, id=900), run(INTEG, id=901)],
+              fetch_main_tip=lambda: OTHER,
+              sleep=_Clock(600).sleep, clock=_Clock(600), log=lambda *_: None)
+check("wait fetches main's tip so superseded can name a successor",
+      got.decision, "superseded")
+got = rg.wait(SHA, REQ, "push", 2400, 300,
+              lambda sha: cancelled,
+              lambda sha: [run(CI, id=900), run(INTEG, id=901)],
+              sleep=_Clock(600).sleep, clock=_Clock(600), log=lambda *_: None)
+check("a cancelled check with no tip fetcher is not silently superseded",
+      got.decision, "failed")
+
+# --- which verdicts are allowed to exit 0 without deploying ------------------
+# The two quiet verdicts are only safe because each now proves itself. A third
+# silent verdict would be a new way for a release to stop without anyone being
+# told. Would break if someone added one.
+check("exactly these verdicts stay silent",
+      rg.SILENT, ("proceed", "noop_docs_only", "superseded"))
 
 # --- skip_gates is a ROLLBACK input, never a bypass --------------------------
 # A push event cannot carry inputs, so --skip-gates on a push is not a rollback.

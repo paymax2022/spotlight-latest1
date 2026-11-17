@@ -64,8 +64,8 @@ on:
   push:
     branches: [main]
     # A docs-only push produces no run of this workflow, and release-gates.py
-    # treats that as the verdict `noop_docs_only` rather than a timeout. Removing
-    # this filter would make that verdict unreachable — keep the two in step.
+    # grants `noop_docs_only` only after proving every file this commit changed
+    # sits in the globs below — test-release-gates.py pins the gate's copy.
     paths-ignore:
       - '**.md'
       - 'docs/**'

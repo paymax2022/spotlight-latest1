@@ -3340,9 +3340,9 @@ So the plan's conclusion survives, by a mechanism the plan did not have:
   `deploy Staging`, `smoke Staging`, `deploy Development`, `smoke Development`, `migrate production database`,
   `deploy Production`, `smoke Production` — concluded **skipped**. The separate
   `Deploy to Namecheap cPanel (SSH)` run for the same SHA, `43905831719`, was also `skipped`.
-  The mechanism is `ci.yml:69-71` and `integration-verify.yml:15-17`: both carry
+  The mechanism is `ci.yml`'s and `integration-verify.yml`'s `on.push.paths-ignore`: both carry
   `paths-ignore: ['**.md','docs/**']` on push, so the SHA gets no CI run at all, and the gate classifies that
-  as `noop_docs_only` (`scripts/ci/release-gates.py:108-114`), which exits 0 (`:276`) while every deploy and
+  as `noop_docs_only` (`release-gates.py`, `classify()`'s absent-CI branch), which exits 0 while every deploy and
   migrate job tests `needs.gates.outputs.verdict == 'proceed'` (`release.yml:163`, `:301`, `:435`, `:453`).
   Task 14 Step 5's and Task 16 Step 2's reasoning was therefore right about the outcome and wrong about the
   reason: the inertness comes from the release gate's classifier, not from `sync-frontend-web.yml`'s filter.
@@ -3392,7 +3392,7 @@ So the plan's conclusion survives, by a mechanism the plan did not have:
   with exit 2 for the reason measured in Task 2 Step 5. What the sweep does establish is the *absence of a
   backlog*, which is the fact that makes Task 6's batching question moot and Task 3's dump urgent.
 - The contrast case is the one to remember: `noop_docs_only` is valid **only** for a push
-  (`release-gates.py:115-119`), which is why dispatching the same docs-only SHA read as `failed` rather than
+  (`release-gates.py:185-190`), which is why dispatching the same docs-only SHA read as `failed` rather than
   as a no-op. A red `release gate` on a docs SHA is not evidence that docs deploy something; it is the
   classifier refusing to infer silence from an event that has no CI run by construction.
 
@@ -3578,8 +3578,8 @@ in both directions and both belong in the ledger:
   `release.yml` triggers on `push: branches: [main]` with **no `paths:` filter**, so on its face even a
   docs-only merge would reach `migrate production database` — whose `with:` block is `dry_run: false`,
   `include_all: false` (`release.yml:440-446`). It does not, and the reason is in the gate, not the
-  trigger: `scripts/ci/release-gates.py:104-113` returns **`noop_docs_only`**, not `proceed`, when no
-  `CI` run exists for the SHA, because `ci.yml:69-71` carries `paths-ignore: ['**.md','docs/**']` on push
+  trigger: `release-gates.py`'s absent-CI branch returns **`noop_docs_only`**, not `proceed`, when no
+  `CI` run exists for the SHA, because `ci.yml` carries `paths-ignore: ['**.md','docs/**']` on push
   to main. Every deploy and migrate job is `if: needs.gates.outputs.verdict == 'proceed'`, so they all
   skip. Measured on the merge that landed §Stage 2's docs (`b5cc95c72`, run `43918883292`, 17:29:17Z): the
   run concludes **`success`** — which is why reading a release run's colour is not enough here — with the
@@ -3587,6 +3587,12 @@ in both directions and both belong in the ledger:
   `### Release gate: **noop_docs_only**`. So a docs-only push is inert; **any push that touches code,
   config, a workflow or a migration is not**, and once the staging leg goes green that push applies to
   production automatically with no reviewer in front of it.
+  That inertness used to be an inference from an absence, and is now a proof: the gate reads the commit's
+  changed files before it will grant `noop_docs_only` (`release-gates.py:191-209`), so a push that touches
+  anything outside those two globs and has no CI run **fails** instead of exiting 0 — and `superseded` has
+  to name main's newer tip or fail the same way (`:124-135`). The two silent verdicts, which are the only
+  ways this gate can stop a release with nobody being told, are now the two that carry evidence. The
+  docs-only SHA above still reads `noop_docs_only`, and correctly: both of its files are under `docs/`.
 
 ### 6.5 Step-by-step disposition
 
@@ -3666,7 +3672,7 @@ actually enforces. `scripts/ci/test-changed-modules.py:109-126` asserts that eac
 `required-checks.txt` "still exists as a job in `ci.yml`" — a true and useful assertion about the deploy
 gate that structurally cannot notice the divergence, because it never looks at the protection API.
 
-So `release-gates.py:51` waits on the nine deep names, while GitHub waits on the five shallow ones. Reading
+So the gate's `required_names()` waits on the nine deep names, while GitHub waits on the five shallow ones. Reading
 that as a consequence of the two lists, not as an event observed this session: a `main`-bound PR can be
 merged with `openapi … / validate`, `mobile … / typecheck` or `hygiene (…)` red, because none of those is a
 required context — and `release.yml`'s gate would still refuse to deploy on the same red, because all three
