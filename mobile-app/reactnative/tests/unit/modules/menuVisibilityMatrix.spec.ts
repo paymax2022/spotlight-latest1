@@ -33,7 +33,7 @@ const STAGING: ModuleVisibility = {
   environment: 'staging',
   modules: [
     'crypto', 'education', 'arena', 'filmAcademy', 'connect',
-    'marketplace', 'shopping', 'parcel', 'voteBridge', 'competitions', 'realtor',
+    'marketplace', 'voteBridge', 'competitions', 'realtor',
   ],
   comingSoon: [],
 };

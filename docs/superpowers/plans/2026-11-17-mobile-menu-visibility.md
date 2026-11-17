@@ -10,6 +10,19 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-17-mobile-menu-visibility-design.md` (read it first — this plan argues from it)
 
+> **AS EXECUTED — this plan is the pre-#996 draft and four of its literal blocks are
+> wrong on purpose-preserved main. Do not copy them.** The spec's two reconciliation
+> notes carry the shipped shape: (1) the migration is
+> `20271410000100_mobile_menu_modules.sql`, slotted AFTER #996's
+> `20271408000100`/`20271410000000` so #996 keeps its `name`/`category` and the
+> `readiness` column already exists; (2) it seeds **14** rows, not 17 — no `shopping`,
+> `parcel` or `learn` row, because a registry row must be gated by something (spec §1);
+> (3) the "exactly these 12 keys end hidden" constraint is **11** keys for the same
+> reason (`learn` is gated on `academy`); (4) `SERVICE_MODULE_REGISTRY_KEY` gains **9**
+> entries plus one featured entry, not 19, because #996 already shipped eight of them,
+> and day-one visibility comes from an audited `UPDATE` + `readiness = 'ready'`, not
+> from a seed (spec §1 "State changes", reconciliation note 2).
+
 ## Global Constraints
 
 - `env_flag` is NULL on every new registry row (spec §1: a FEATURE_* flag unset on a plane would silently hide the tile).

@@ -60,7 +60,7 @@ those keys. `20271410000100` still seeds its own rows with `ON CONFLICT (key) DO
 NOTHING`, so on a database that already ran `20271410000000` the existing attributes
 win and the seed is a no-op for the six overlapping keys (`academy`, `arena`, `connect`,
 `crypto`, `filmAcademy`, `marketplace`; `competitions` is #996-only and this file adds
-eleven keys of its own). Verified empirically, not
+eight keys of its own). Verified empirically, not
 argued: replaying the registry chain into an empty database with and without this file
 shows `academy` keeping #996's `Learn / StudyHub` / `education` and `arena` keeping
 `Arena` / `entertainment`.
@@ -115,22 +115,43 @@ New `platform_modules` rows (env_flag deliberately **NULL on every new row** —
 | key | name | category | default status (staging/prod) |
 |---|---|---|---|
 | `investment` | Investment | investment | hidden |
-| `learn` | Learn | education | hidden |
 | `investAi` | Invest AI | investment | hidden |
 | `spotlightWealth` | Spotlight Wealth | investment | hidden |
 | `fractionalRealEstate` | Real Estate Invest | investment | hidden |
 | `aiTrading` | AI Trading | investment | hidden |
-| `academy` | StudyHub | education | hidden |
+| `academy` | StudyHub — #996's `Learn / StudyHub` wins on any plane that ran it | education | hidden |
 | `dues` | Dues & Rent | property | hidden |
 | `admin` | Admin | ops | hidden |
 | `crypto` | Crypto | investment | visible |
 | `education` | Education | utility | visible |
-| `arena` | Naija Driver | contest | visible |
+| `arena` | Naija Driver — #996's `Arena` / `entertainment` wins on any plane that ran it | contest | visible |
 | `filmAcademy` | Film Academy | education | visible |
 | `connect` | Connect | community | visible |
 | `marketplace` | Marketplace | commerce | visible |
-| `shopping` | Shopping | commerce | visible |
-| `parcel` | Parcel | commerce | visible |
+
+Seventeen rows became fourteen when this rebased onto #996. The draft also listed
+`shopping` (Shopping, commerce, visible), `parcel` (Parcel, commerce, visible) and
+`learn` (Learn, education, hidden) so that the admin would own all 22 tiles. All three
+are gone, for one rule worth keeping written down: **a registry row is only honest if
+something gates on it.**
+
+`shopping` and `parcel` cannot be gated. `visibility.spec.ts` asserts
+`registryKeyFor('shopping') === null` and calls it "a coming-soon placeholder with no
+engine and no registry row", and gating either tile empties its category group in that
+file's `a category group that gates to empty is dropped entirely` case. They stay
+unmapped — and an unmapped tile never consults the registry, so a row for them would be
+a control that lies: `/admin/modules` would list Shopping and Parcel, accept toggles and
+write audit rows while the shipped app ignored every one of them. They are the only two
+tiles on the grid that are **not** admin-togglable, and they become togglable in the
+change that gives them engines and maps them; `NO_REGISTRY_ROW` in
+`serviceModuleKeys.spec.ts` keeps that claim checked rather than merely asserted (see
+**Out of scope**).
+
+`learn` was a different mistake: the Learn tile *is* gated, but on #996's `academy` key,
+which is what main's own assertions encode — `routeModuleKeys.ts` maps the `/learn`
+route to `academy` and `visibility.spec.ts` asserts `['learn', 'academy']`. A `learn`
+row would have gated nothing and put a second, redundant "Learn" switch beside the real
+one.
 
 Two tiles map onto modules this migration does not create: **Contest → `competitions`**
 and **Property Mgmt → `realtor`** (matches the codebase's documented "unpublishing
@@ -147,9 +168,30 @@ State changes for R1:
 
 ### 2. Mobile (`serviceModuleKeys.ts` + spec)
 
-`SERVICE_MODULE_REGISTRY_KEY` gains 19 entries — `investment`, `crypto`, `learn`, `'invest-ai'→investAi`, `spotlight-wealth`→`spotlightWealth`, `fractionalre`→`fractionalRealEstate`, `'ai-trading'→aiTrading`, `education`, `contest`→`voteBridge`, `'naija-driver'`→`arena`, `'film-academy'`→`filmAcademy`, `academy`, `property`→`realtor`, `dues`, `connect`, `marketplace`→`marketplace`, `shopping`→`shopping`, `parcel`, `admin` — and the deliberately-partial comment is retired (the map is now exhaustive). `FEATURED_REGISTRY_KEY` gains `'invest'→'investment'` and `'naija-driver'→'arena'` (R5). Quick-action and property-submodule maps unchanged.
+Measured against `origin/main` rather than from the draft's list: this PR adds **nine**
+`SERVICE_MODULE_REGISTRY_KEY` entries — `investment`, `'invest-ai'→investAi`,
+`spotlight-wealth→spotlightWealth`, `fractionalre→fractionalRealEstate`,
+`'ai-trading'→aiTrading`, `education`, `dues`, `admin`, `property→realtor` — plus one
+`FEATURED_REGISTRY_KEY` entry, `'invest'→'investment'` (R5). The draft counted 19 and
+listed `crypto`, `learn`, `academy`, `'film-academy'`, `contest`, `'naija-driver'`,
+`connect`, `marketplace→marketplace`, `shopping` and `parcel` as additions; the first
+eight are #996's own lines, already on main (so the branch does not re-add them),
+`contest` rides `competitions` not `voteBridge`, and `shopping`/`parcel` stay unmapped
+per the note above. The deliberately-partial comment on the map is retired for the
+tiles this feature reaches; `Quick-action` and `PROPERTY_SUBMODULE_REGISTRY_KEY` are
+untouched.
 
-New invariant spec at `tests/unit/modules/serviceModuleKeys.spec.ts` (node:test conventions matching the sibling `moduleAvailability.spec.ts`, run by `npm run test:modules`): every `SERVICE_MODULES` tile id must resolve via `registryKeyFor` to a real registry key, and every `FEATURED_SERVICES` id must resolve via `featuredRegistryKeyFor` — zero exceptions; failure names the unmapped id. (The two id-spaces stay separate; `PROPERTY_SUBMODULE_REGISTRY_KEY` governs property pillars and is out of this invariant.)
+New invariant spec at `tests/unit/modules/serviceModuleKeys.spec.ts` (node:test
+conventions matching the sibling `moduleAvailability.spec.ts`, run by
+`npm run test:modules`) pins **both halves** of the shipped rule: every
+`SERVICE_MODULES` id outside `NO_REGISTRY_ROW = {shopping, parcel}` must resolve via
+`registryKeyFor`, and no id inside it may resolve — so a future edit that maps a
+placeholder or forgets a real tile fails, and the failure names the id. Every
+`FEATURED_SERVICES` id must resolve via `featuredRegistryKeyFor`, zero exceptions.
+(The two id-spaces stay separate; `PROPERTY_SUBMODULE_REGISTRY_KEY` governs property
+pillars and is out of this invariant.) `menuVisibilityMatrix.spec.ts` then asserts the
+2026-11-17 decision itself against a synthetic staging payload: the 12 hidden tiles
+hidden, the 8 kept tiles visible, the 2 placeholders ungated.
 
 ### 3. Admin console — zero changes
 
@@ -158,9 +200,9 @@ New invariant spec at `tests/unit/modules/serviceModuleKeys.spec.ts` (node:test 
 ### 4. Behavior & rollout
 
 - Registry state is per environment. Staging flip is effective server-side the moment the migration lands there; production likewise when it lands there.
-- **Partial-APK reality:** shipped APKs gate only the three already-mapped tiles, so `savings`/`loyalty`/`creators` disappear from current APKs as soon as staging flips; the other 9 keep rendering until the next APK build ships the new mappings. This is inherent — no server can hide a tile the shipped code doesn't gate. Documented, accepted.
+- **Partial-APK reality:** an installed APK gates exactly the tiles its own build of `serviceModuleKeys.ts` named — nothing more. So the tiles whose rows flip to hidden here (`savings`, `loyalty`, `creators`) disappear only from builds that already map them, and the nine this PR newly maps keep rendering in every APK in the field until a build carrying the new lines ships. Which mappings a given distributed APK contains is not derivable from the repository, so this spec does not claim a number; no server can hide a tile the installed code does not gate. Documented, accepted.
 - **Unreachable registry is not "show everything".** `moduleStateFor` answers from the last good read when there is one; when there is neither a live answer nor a cache, it renders only `STABLE_MODULE_KEYS` — `wallet`, `walletTransfers`, `walletBankTransfers`, `beneficiaries`, `virtualAccounts` — and hides every other tile (`src/features/modules/rules.ts`, whose comment forbids adding keys to that list to fix a visibility complaint). Render decision ≠ authorization still holds: API authz protects every surface regardless of what the grid shows.
-- **Consequence of the above for this PR.** Eleven tiles move from "unmapped, so it always renders" to "mapped, so it obeys the registry", which means on a plane whose visibility endpoint is broken the grid gets *emptier*, not unchanged. Development is exactly that plane today: measured 2026-11-17, `GET /api/v1/modules/visibility` on `backend-development-502c.up.railway.app` answers HTTP 500 `could not load module visibility`, consistent with that database being behind the registry migrations (the local stack is measurably behind — no `readiness` column). R4 therefore cannot be observed until the development plane is migrated; repairing it is an ops step (`db-migrate` dispatch), not a client change, and definitely not an addition to the stable-keys list.
+- **Consequence of the above for this PR.** Nine tiles move from "unmapped, so it always renders" to "mapped, so it obeys the registry" (the `git diff origin/main...HEAD` count: `investment`, `invest-ai`, `spotlight-wealth`, `fractionalre`, `ai-trading`, `education`, `dues`, `admin`, `property`), which means on a plane whose visibility endpoint is broken the grid gets *emptier*, not unchanged. Development is exactly that plane today: measured 2026-11-17, `GET /api/v1/modules/visibility` on `backend-development-502c.up.railway.app` answers HTTP 500 `could not load module visibility`, consistent with that database being behind the registry migrations (the local stack is measurably behind — no `readiness` column). R4 therefore cannot be observed until the development plane is migrated; repairing it is an ops step (`db-migrate` dispatch), not a client change, and definitely not an addition to the stable-keys list.
 - `creators` sits in the approved disable list; it is currently published on staging and flips to hidden like `savings`/`loyalty`.
 
 ### 5. Verification
@@ -173,17 +215,36 @@ Done, with the evidence:
    staging matrix fixture. `tsc` was mutation-proved to actually read the changed files
    (clean run emits no diagnostics; an injected type error is reported at its line).
 2. **Migration replay on a real engine — done, both database shapes.**
-   `pushed-plane-replay.sql` runs #996's chain and then this file inside one rolled-back
-   transaction on the developer Postgres (port 54322): the preserve list ends up
-   `visible` + `ready`, the R1 list ends up `hidden`, the audit trail records
-   `publish`/`hide`/`readiness` with before-values, and a second run writes no new rows.
-   `fresh-plane-replay.sh` builds two databases from empty, with and without this file:
-   with it, development serves all 18 keys and staging/production serve exactly the nine
-   preserve keys; without it, staging and production serve none of them — which is the
-   R2 regression this note describes, reproduced rather than asserted. Both scripts stub
-   only what the registry chain needs to exist at all (`auth.users`, RBAC
+   `fresh-plane-replay.sh` (empty database, migrations in filename order, with and
+   without this file) is the authoritative run: with it, development serves all 15 keys
+   the chain creates and staging + production serve exactly the seven preserve keys
+   (`arena`, `competitions`, `connect`, `crypto`, `education`, `filmAcademy`,
+   `marketplace`), with #996's attributes winning on the shared keys (`academy` stays
+   `Learn / StudyHub` / `education`, `arena` stays `Arena` / `entertainment`); without
+   it, staging and production serve **none** of the seven — the R2 regression
+   reproduced rather than asserted.
+   `pushed-plane-replay.sql` runs the chain plus this file inside one rolled-back
+   transaction on the developer Postgres (port 54322) and reaches the same end state,
+   with the audit trail (`publish`/`hide`/`readiness`, before-values) and a second
+   in-transaction run writing no new rows. **Its attribute-precedence section is
+   evidence about that database, not about main:** the developer stack already carries
+   committed rows from an earlier draft of this migration — `shopping`, `parcel`,
+   `StudyHub`, `Naija Driver` and three `hide` audit rows stamped 2026-11-17 11:13 UTC
+   — and it predates #996 (no `readiness` column outside the transaction), so it models
+   a plane where this file ran *first*, which no plane migrated from main can be. Use
+   the fresh-plane run for precedence; removing the residue from the developer stack is
+   an ops step, listed under Out of scope. Both scripts stub only what the registry
+   chain needs to exist at all (`auth.users`, RBAC
    `permissions`/`roles`/`role_permissions`, `restaurant_staff`); no table under test is
    stubbed.
+   **Row set and test mirror agree, by construction now that the three dead keys are
+   gone:** main's `visibility.spec.ts` keeps `REGISTRY_KEYS`, a hand-mirrored list of
+   registered modules, and asserts every value in `SERVICE_MODULE_REGISTRY_KEY` is in
+   it. All 14 keys this migration inserts appear in that set, and `learn`, `shopping`
+   and `parcel` appear in neither the insert nor the set — which is the checkable form
+   of "a row exists iff a tile gates on it". The pre-edit file inserted three rows the
+   mirror did not know about; the suite could not see that, because it only walks
+   map→key, never key→row.
 3. **Live-plane measurement — done.** `GET /api/v1/modules/visibility` against the
    staging and production backends, recorded in reconciliation note 2 and re-read after
    the migration change. The development backend was probed too and answers HTTP 500 —
@@ -206,3 +267,12 @@ Not done yet, and required before this ships:
 - Route-level blocking of disabled surfaces (registry is presentation-plane doctrine; API authz unchanged).
 - Per-user or per-role menu configuration.
 - Admin UI grouping/UX changes.
+- **Admin control over `shopping` and `parcel`.** The two coming-soon placeholders get
+  no registry row, so `/admin/modules` does not list them; giving them a row without
+  mapping the tiles would ship toggles that provably do nothing. They become
+  togglable together with the change that maps them, which needs their category groups
+  in `visibility.spec.ts` first.
+- **Removing this feature's draft rows from the developer stack on port 54322.** The
+  local database carries committed `shopping`/`parcel`/`StudyHub`/`Naija Driver` rows
+  and three `hide` audit rows from an earlier replay (§5.2). Deleting committed rows
+  from a shared database is the owner's call, not a side effect of a PR.

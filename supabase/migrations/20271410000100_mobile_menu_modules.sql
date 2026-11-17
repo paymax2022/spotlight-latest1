@@ -21,7 +21,6 @@
 
 INSERT INTO public.platform_modules (key, name, category, env_flag, description) VALUES
   ('investment',           'Investment',         'investment', NULL, 'Investment tile — stocks & ETFs entry (/investment)'),
-  ('learn',                'Learn',              'education',  NULL, 'Learn tile (/learn)'),
   ('investAi',             'Invest AI',          'investment', NULL, 'Invest AI tile (/invest-ai)'),
   ('spotlightWealth',      'Spotlight Wealth',   'investment', NULL, 'Spotlight Wealth tile (/spotlight-wealth)'),
   ('fractionalRealEstate', 'Real Estate Invest', 'investment', NULL, 'Real estate investment tile (/fractionalre)'),
@@ -34,14 +33,32 @@ INSERT INTO public.platform_modules (key, name, category, env_flag, description)
   ('arena',                'Naija Driver',       'contest',    NULL, 'Arena competition engine tile (/arena)'),
   ('filmAcademy',          'Film Academy',       'education',  NULL, 'Film Academy native tile (/film-academy)'),
   ('connect',              'Connect',            'community',  NULL, 'Connect tile (/connect)'),
-  ('marketplace',          'Marketplace',        'commerce',   NULL, 'Lifestyle marketplace shopping tile (/marketplace)'),
-  ('shopping',             'Shopping',           'commerce',   NULL, 'Shopping tile (renders inert via its static coming-soon flag)'),
-  ('parcel',               'Parcel',             'commerce',   NULL, 'Parcel tile (renders inert via its static coming-soon flag)')
+  ('marketplace',          'Marketplace',        'commerce',   NULL, 'Lifestyle marketplace shopping tile (/marketplace)')
 ON CONFLICT (key) DO NOTHING;
 
 -- The Contest tile maps onto #996's existing `competitions` module and Property Mgmt
 -- onto `realtor` — no rows for those two here, by design. `competitions` is the one
 -- key #996 registered that this migration republishes; see the R2 note below.
+--
+-- NO ROWS FOR `shopping` / `parcel`. The original design listed them (visible,
+-- commerce) so the admin would own every tile, but a registry row is only useful if
+-- the client gates on it, and gating them is exactly what main forbids:
+-- visibility.spec.ts asserts `registryKeyFor('shopping') === null` and calls them
+-- "a coming-soon placeholder with no engine and no registry row", and gating one
+-- empties its category group in the `a category group that gates to empty is dropped
+-- entirely` case. So they stay unmapped, which makes a row for them a control that
+-- lies: it would appear in /admin/modules, accept toggles, write audit rows and
+-- change nothing in the shipped app. Two tiles of the 22 are therefore NOT
+-- admin-togglable yet; they become togglable in the change that gives them engines
+-- and maps them, and the `NO_REGISTRY_ROW` exemption in
+-- tests/unit/modules/serviceModuleKeys.spec.ts is what keeps that honest in the
+-- meantime. Spec R2's "whole-grid control" is satisfied for every tile the client
+-- actually gates.
+--
+-- NO `learn` ROW EITHER. The Learn tile id ('learn') is gated on #996's `academy` key,
+-- which is what main's own assertions encode: routeModuleKeys.ts maps the /learn route
+-- to 'academy' and visibility.spec.ts asserts ['learn', 'academy']. A `learn` row would
+-- be a second toggle that gates nothing, for the same reason as the two above.
 
 -- Environment states: everything visible in development; the preserve-list is
 -- visible everywhere (current UX); the rest of the new rows hidden on
@@ -49,13 +66,13 @@ ON CONFLICT (key) DO NOTHING;
 INSERT INTO public.platform_module_environments (module_key, environment, status)
 SELECT m.key, e.env,
        CASE WHEN e.env = 'development'
-              OR m.key IN ('crypto','education','arena','filmAcademy','connect','marketplace','shopping','parcel')
+              OR m.key IN ('crypto','education','arena','filmAcademy','connect','marketplace')
             THEN 'visible' ELSE 'hidden' END
   FROM public.platform_modules m
   CROSS JOIN (VALUES ('development'),('staging'),('production')) AS e(env)
-  WHERE m.key IN ('investment','learn','investAi','spotlightWealth','fractionalRealEstate',
+  WHERE m.key IN ('investment','investAi','spotlightWealth','fractionalRealEstate',
                   'aiTrading','academy','dues','admin','crypto','education','arena',
-                  'filmAcademy','connect','marketplace','shopping','parcel')
+                  'filmAcademy','connect','marketplace')
 ON CONFLICT (module_key, environment) DO NOTHING;
 
 -- Spec R2, as an UPDATE rather than as a seed.
@@ -82,7 +99,7 @@ WITH before AS (
   SELECT e.module_key, e.environment, e.status AS before_val
     FROM public.platform_module_environments e
    WHERE e.module_key IN ('crypto','education','arena','filmAcademy','connect',
-                          'marketplace','competitions','shopping','parcel')
+                          'marketplace','competitions')
      AND e.environment IN ('staging','production')
      AND e.status <> 'visible'
    FOR UPDATE
@@ -114,7 +131,7 @@ WITH before AS (
     JOIN public.platform_module_environments e
       ON e.module_key = m.key AND e.environment = 'production' AND e.status = 'visible'
    WHERE m.key IN ('crypto','education','arena','filmAcademy','connect',
-                   'marketplace','competitions','shopping','parcel')
+                   'marketplace','competitions')
      AND m.readiness <> 'ready'
    FOR UPDATE OF m
 ), flipped AS (
