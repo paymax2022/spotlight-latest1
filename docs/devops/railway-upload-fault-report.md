@@ -3,7 +3,9 @@
 Evidence pack for a Railway support ticket. Written 2026-11-17 00:15Z from run
 `43972239504` of `paymax2022/spotlight-latest1` and from `railway` CLI and GraphQL
 queries against project `spotlight-platform`, none of which created a deployment.
-No token value appears here.
+Updated 08:20Z the same day with episode 3 (see Reproduction): 54 more refusals
+across two runs while development accepted in the same minutes. No token value
+appears here.
 
 ## The ask
 
@@ -151,15 +153,27 @@ therefore been done by hand-running `railway up` from a laptop, which is exactly
 the audit gap your CI path is meant to remove. Our retry budget is not the fix —
 we have already widened it to 900 s of guaranteed backoff, and in episode 2 that
 budget spent 1223 s of attempts, was refused 27 times out of 27 calls, and was
-still being refused the moment it gave up.
+still being refused the moment it gave up. Episode 3 repeated the shape back to
+back: on 2026-11-17, 07:36-08:16Z, two consecutive runs were refused 54 times out
+of 54 staging calls across a single 40-minute window, still with no deployment
+row to show for any of them.
 
 ## Reproduction
 
 Push any commit to `paymax2022/spotlight-latest1:main` and watch
 `Release (main → development, staging, production)` → `deploy Staging (*)`. The
-fault is intermittent, so this may need several attempts. Two episodes are on the
-record: 16:23:32-16:38:15Z, in which CI's staging calls were refused throughout
-(though a probe job was accepted twice inside that span, at 16:34:47 and
-16:34:50Z), and 23:18:25-23:38:48Z, in which all 27 were refused. Job logs are
-retained: runs `43905969462`, `43909191817`, `43913775480`, `43972239504`; staging
-jobs `133687154665` / `133687154683` / `133687154708` for the second episode.
+fault is intermittent, so this may need several attempts. Three episodes are on
+the record: 16:23:32-16:38:15Z on 2026-11-16, in which CI's staging calls were
+refused throughout (though a probe job was accepted twice inside that span, at
+16:34:47 and 16:34:50Z); 23:18:25-23:38:48Z the same day, in which all 27 were
+refused; and 07:36:04-08:16:24Z on 2026-11-17 — a 40-minute window spanning two
+runs back to back — in which all 54 were refused: nine calls per staging leg per
+run, every one the same decode error, zero `Indexing...` lines, while the second
+run's three development legs uploaded fine and passed their smokes in the same
+minutes. Not one staging deployment row was created on 2026-11-17: at 08:18Z the
+three `latestDeployment` records still dated from 2026-11-16 (`e4670d96`,
+`d5825eff`, `28946ae4`). Job logs are retained: runs `43905969462`,
+`43909191817`, `43913775480`, `43972239504`; staging jobs `133687154665` /
+`133687154683` / `133687154708` (episode 2), `133891749720` / `133891749721` /
+`133891749748` (episode 3, re-run attempt), `133899929022` / `133899928994` /
+`133899928889` (episode 3, dispatch).
