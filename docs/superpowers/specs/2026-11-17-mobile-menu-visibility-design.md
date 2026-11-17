@@ -258,9 +258,20 @@ Not done yet, and required before this ships:
 
 5. **Grid verification in a browser** — RN-web services grid with a registry pointed at
    the migrated database: the 12 absent, every other tile present, featured `invest`
-   card hidden. CI does not cover this.
+   card hidden. **Attempted via the existing Playwright harness and blocked, not by
+   this PR:** `npx playwright test tests/e2e/modules/featured.spec.ts` fails 4/4 at
+   `loginAs` (the 'Explore Services' home anchor never appears within its 30 s widen)
+   on this branch **and identically on a clean `origin/main` worktree at `cefcd12fd`**,
+   so the mobile e2e suite cannot currently render any gated surface, and no CI job
+   runs it (`grep -rl "playwright" .github/workflows` → nothing). Writing a new
+   `services-grid` spec was therefore rejected: an unrunnable test is not evidence. The
+   check needs either the harness repaired first (separate work — the login helper, not
+   the registry) or the manual pass against a plane that has run the migration.
 6. **Admin flow** — `/admin/modules` shows the new rows, toggling `investment` visible
-   brings the tile back within one 60 s stale window, audit row appended.
+   brings the tile back within one 60 s stale window, audit row appended. Needs a plane
+   that has run the migration plus an admin login, i.e. the owner's staging credentials
+   and deploy; the console code path itself is unchanged by this PR (spec §3, zero
+   admin diff), which is why no test is added for it here.
 
 ## Out of scope
 

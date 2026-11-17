@@ -54,8 +54,11 @@ export default function ServicesScreen() {
 
   // Registry gate. One filter here covers every band, chip and search result, so
   // an unpublished module cannot leak through a path someone forgot to update.
-  // Tiles with no registry mapping are always shown (see serviceModuleKeys), and
-  // an unreachable registry shows everything rather than emptying the tab.
+  // Tiles with no registry mapping are always shown (see serviceModuleKeys). A
+  // registry that answers nothing — no live response and no cached one — does NOT
+  // show everything: stateOf() then keeps only STABLE_MODULE_KEYS and hides the rest,
+  // so the tab empties rather than over-showing (rules.ts; adding keys to that list to
+  // fix a visibility complaint is what its comment forbids).
   // A registry 'comingSoon' module STAYS on the grid but is marked inert — that is the
   // whole point of the state, so it must not be filtered out with the hidden ones.
   // ModuleCard already drops onPress for comingSoon, so marking the flag is sufficient.
