@@ -7,6 +7,7 @@
  */
 import { api } from '@/api/client';
 import { withIntentKey } from '@/utils/intentKey';
+import { toPaymaxRecipient } from '@/api/mappers/paymaxRecipient.mapper';
 import type { TransferRecipient, WalletTransfer } from '@/types/wallet';
 
 type ApiRecord = Record<string, unknown>;
@@ -23,21 +24,17 @@ export function calculateTransferFee(amountKobo: number): number {
 // Recipient resolution
 
 /**
- * Look up a Paymax user by phone, email, or username.
+ * Look up a Paymax user by cashtag, phone, or email.
  * Returns a safe preview with masked phone — never exposes full PII.
+ * The wire shape is decoded by toPaymaxRecipient(); see
+ * tests/unit/transfers/cashtagRecipient.spec.ts for why that stays a function.
  */
 export async function resolvePaymaxRecipient(identifier: string): Promise<TransferRecipient> {
   const response = await api.get('/api/v1/transfers/paymax/resolve', {
     params: { identifier: identifier.trim() },
   });
   const data = (response.data?.data ?? response.data) as ApiRecord;
-  const recipient = (data?.recipient ?? data) as ApiRecord;
-  return {
-    userId:      String(recipient.user_id ?? ''),
-    displayName: String(recipient.display_name ?? 'Paymax User'),
-    maskedPhone: String(recipient.masked_phone ?? ''),
-    avatarUrl:   (recipient.avatar_url as string | null) ?? null,
-  };
+  return toPaymaxRecipient((data?.recipient ?? data) as ApiRecord);
 }
 
 // Transfer initiation
