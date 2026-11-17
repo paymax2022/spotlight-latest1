@@ -21,7 +21,15 @@
 > reason (`learn` is gated on `academy`); (4) `SERVICE_MODULE_REGISTRY_KEY` gains **9**
 > entries plus one featured entry, not 19, because #996 already shipped eight of them,
 > and day-one visibility comes from an audited `UPDATE` + `readiness = 'ready'`, not
-> from a seed (spec §1 "State changes", reconciliation note 2).
+> from a seed (spec §1 "State changes", reconciliation note 2); (5) **Contest maps to
+> `competitions`, not `voteBridge`** — `3654f6b3f` shipped both the mobile mapping and the
+> seed that describes `competitions` as "Distinct from voteBridge, which is the wallet-paid
+> vote money rail"; `voteBridge` is served on both planes while `competitions` is not
+> (re-measured on the live payloads), so gating Contest on `voteBridge` would have hung a
+> tile off an always-on module;
+> (6) the `admin` row's registry `description` carries the limit of its own switch
+> ("hides the tile only; /admin routes are deliberately never release-gated"), which the
+> SQL block below predates.
 
 ## Global Constraints
 
