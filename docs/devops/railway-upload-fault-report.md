@@ -11,7 +11,7 @@ succeeded in the same run. Updated a third time at 14:48Z with episode 5: two
 back-to-back dispatches of that same commit, refused 54 out of 54 staging calls
 over 3,474 s, while each run's own three development uploads were accepted — the
 last of them 49 s before the same service was refused. Updated a fourth time at
-16:05Z with episode 6: run `44108272486`, a commit whose only executable
+17:36Z with episode 6: run `44108272486`, a commit whose only executable
 changes are the release gate and its harness, refused 27 out of 27 staging
 calls over 1,170 s while its three development uploads produced `SUCCESS` rows
 54-60 s before the same service was refused. No token value appears here.
@@ -247,7 +247,11 @@ normally. Re-measured a sixth time at 16:01:40Z, after all 27 of episode 6's
 refusals: staging's `latestDeployment` records are *still* `28946ae4`,
 `d5825eff` and `e4670d96`, all dated 2026-11-16 — the environment has now been
 dark for 22 h 55 min — while that run's three development instances report the
-`SUCCESS` rows named above. All four of 2026-11-17's episodes sit inside a
+`SUCCESS` rows named above. Re-measured a seventh time at 17:33:16Z, ninety
+minutes on and with no further release attempted since the docs-only run
+`44111967023`: the same three 2026-11-16 rows are still `latestDeployment` for
+all three services, so on backend's 17:06:29.046Z anchor staging has been dark
+for 24 h 27 min. All four of 2026-11-17's episodes sit inside a
 single day in which
 the development project token — a different credential from staging's, per
 Identifiers — the same CLI and the same three service IDs accepted every
