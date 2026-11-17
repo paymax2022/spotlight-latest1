@@ -56,9 +56,55 @@ Two further deltas from the original plan, both forced by main rather than chose
 `contest` rides `competitions` (#996's key) instead of `voteBridge`, and
 `learn` rides `academy` instead of a new `learn` row, because #996 registered both
 in `20271410000000` and main's route/label/deep-link assertions are written against
-those keys. `20261216000100` still seeds its own rows with `ON CONFLICT (key) DO
+those keys. `20271410000100` still seeds its own rows with `ON CONFLICT (key) DO
 NOTHING`, so on a database that already ran `20271410000000` the existing attributes
-win and the seed is a no-op for the ten overlapping keys.
+win and the seed is a no-op for the six overlapping keys (`academy`, `arena`, `connect`,
+`crypto`, `filmAcademy`, `marketplace`; `competitions` is #996-only and this file adds
+eleven keys of its own). Verified empirically, not
+argued: replaying the registry chain into an empty database with and without this file
+shows `academy` keeping #996's `Learn / StudyHub` / `education` and `arena` keeping
+`Arena` / `entertainment`.
+
+### Reconciliation note 2 — written against the live planes
+
+Seeding the desired state is not enough, and the first push of this feature proved it.
+`INSERT … ON CONFLICT DO NOTHING` cannot express R2 on a database that has already run
+#996, because #996's `20271410000000` already seeded `marketplace`, `crypto`, `academy`,
+`filmAcademy`, `competitions`, `arena` and `connect` as **hidden in staging and
+production**. Measured 2026-11-17 against both live backends —
+`GET /api/v1/modules/visibility` reports none of `crypto`, `education`, `arena`,
+`filmAcademy`, `connect`, `marketplace` or `competitions` on staging or production.
+Those tiles render today only because `serviceModuleKeys` did not name them, so shipping
+the mappings without anything else would have dropped seven live tiles on the next
+registry fetch (≤ 60 s) — the exact opposite of "nothing changes on day one".
+
+So R2 is carried by an explicit audited `UPDATE` to `visible` (staging + production) for
+the preserve list, not by a seed. Two consequences worth writing down:
+
+- **Production also checks readiness.** `Module.VisibleIn`
+  (`backend/internal/modules/model.go`) refuses to *serve* a production module whose
+  `readiness` is not `ready`, independent of its environment row. Flipping the row alone
+  leaves the payload unchanged, so the migration sets `readiness = 'ready'` for the
+  production-visible preserve keys too, with a module-scoped audit row — the same
+  statement about publication history (not code quality) that
+  `20271408000100`'s own backfill makes. Staging ignores readiness, which is why the
+  environment rows for it are half the job on their own.
+- **`competitions` is the one deliberate override.** #996 parked it hidden "until someone
+  marks them ready". Mapping `contest` to it and keeping R2 means publishing it here.
+  Accepted because users already see the tile and an admin can hide it again from
+  `/admin/modules` without a deploy.
+
+This is also why the file moved to `20271410000100`: `readiness` does not exist until
+`20271408000100`, so a migration that sets it cannot sort before it. That closes the
+version-slot question left open in the note above.
+
+Both database shapes were replayed on a real Postgres rather than reasoned about: a
+`#996`-landed plane (the flip changes `competitions` from hidden to visible and is a
+no-op for the already-visible keys) and an empty plane (development serves all 18 keys,
+staging and production serve exactly the nine preserve keys, and #996's attributes
+win). Second run of the migration inside the same transaction writes no new audit rows.
+Scripts: `/private/tmp/spot-menuvis-spike/pushed-plane-replay.sql`,
+`fresh-plane-replay.sh`.
 
 ## Design
 
@@ -86,10 +132,16 @@ New `platform_modules` rows (env_flag deliberately **NULL on every new row** —
 | `shopping` | Shopping | commerce | visible |
 | `parcel` | Parcel | commerce | visible |
 
-Two tiles map onto existing modules without new rows: **Contest → `voteBridge`**, **Property Mgmt → `realtor`** (matches the codebase's documented "unpublishing realtor hides the property pillars" coupling).
+Two tiles map onto modules this migration does not create: **Contest → `competitions`**
+and **Property Mgmt → `realtor`** (matches the codebase's documented "unpublishing
+realtor hides the property pillars" coupling). `competitions` is registered by #996,
+which is also what forces the override described in reconciliation note 2; the earlier
+draft of this spec mapped Contest to `voteBridge`, which #996 documents as "the
+wallet-paid vote money rail", not the contest surface.
 
 State changes for R1:
 - `INSERT … ON CONFLICT (key) DO NOTHING` for all new rows (never clobbers admin edits, mirroring the original seed migration), plus `platform_module_environments` rows per the table above (development visible for everything).
+- **The visible half of the table above cannot be a seed alone** — on any plane that already ran #996 the environment rows exist as `hidden`, and `ON CONFLICT DO NOTHING` will not move them. The preserve list is therefore an explicit audited `UPDATE` to `visible` in staging + production, with `readiness = 'ready'` alongside it for production, because `VisibleIn` will not serve a production module below `ready` whatever its row says. See reconciliation note 2.
 - Deliberate one-time `UPDATE` of `platform_module_environments` to `hidden` for `savings`, `loyalty`, `creators` in staging + production, each accompanied by a `platform_module_audit` row (note cites this spec and date). Idempotent: re-running the migration is a no-op on already-hidden rows.
 - No schema DDL beyond seeds (additive-only migration gate unaffected); no RLS changes.
 
@@ -112,11 +164,39 @@ New invariant spec at `tests/unit/modules/serviceModuleKeys.spec.ts` (node:test 
 
 ### 5. Verification
 
-1. **Mobile unit spec:** the completeness invariant + existing key-validation spec green (`node --test` inside `mobile-app/reactnative`).
-2. **Migration replay:** fresh local stack `supabase migration up --include-all`, then `GET /api/v1/modules/visibility` (dev) and a staging-equivalent env read assert the exact visible/coming-soon key sets per the table above.
-3. **Grid verification:** RN-web services grid in a browser — the 12 absent, every other tile present and unchanged, featured `invest` card hidden.
-4. **Admin flow:** local admin console `/admin/modules` shows the new rows; toggling `investment` visible in the running environment makes the tile reappear on the next registry fetch (≤ 60 s); audit row appended.
-5. **Go tests:** existing module service tests stay green (no Go changes).
+Done, with the evidence:
+
+1. **Mobile unit spec — green.** 130/130 via
+   `node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test
+   "tests/unit/modules/*.spec.ts"` in `mobile-app/reactnative` (main's baseline is 105).
+   Includes the completeness invariant, the `shopping`/`parcel` exemption, and the
+   staging matrix fixture. `tsc` was mutation-proved to actually read the changed files
+   (clean run emits no diagnostics; an injected type error is reported at its line).
+2. **Migration replay on a real engine — done, both database shapes.**
+   `pushed-plane-replay.sql` runs #996's chain and then this file inside one rolled-back
+   transaction on the developer Postgres (port 54322): the preserve list ends up
+   `visible` + `ready`, the R1 list ends up `hidden`, the audit trail records
+   `publish`/`hide`/`readiness` with before-values, and a second run writes no new rows.
+   `fresh-plane-replay.sh` builds two databases from empty, with and without this file:
+   with it, development serves all 18 keys and staging/production serve exactly the nine
+   preserve keys; without it, staging and production serve none of them — which is the
+   R2 regression this note describes, reproduced rather than asserted. Both scripts stub
+   only what the registry chain needs to exist at all (`auth.users`, RBAC
+   `permissions`/`roles`/`role_permissions`, `restaurant_staff`); no table under test is
+   stubbed.
+3. **Live-plane measurement — done.** `GET /api/v1/modules/visibility` against the
+   staging and production backends, recorded in reconciliation note 2 and re-read after
+   the migration change.
+
+Not done yet, and required before this ships:
+
+4. **Grid verification in a browser** — RN-web services grid with a registry pointed at
+   the migrated database: the 12 absent, every other tile present, featured `invest`
+   card hidden. CI does not cover this.
+5. **Admin flow** — `/admin/modules` shows the new rows, toggling `investment` visible
+   brings the tile back within one 60 s stale window, audit row appended.
+6. **Go tests** — expected untouched (no Go changes), but they have not been re-run in
+   this reconciliation; the branch's `backend` CI job is the evidence so far.
 
 ## Out of scope
 

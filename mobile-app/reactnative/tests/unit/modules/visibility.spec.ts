@@ -244,7 +244,7 @@ describe('property hub gate', () => {
 
 // Mirrors the keys seeded into platform_modules (supabase migrations 20261210000000,
 // generated from frontend-web/src/lib/feature-flags.ts, 20271410000000, the app
-// surfaces that had no flag, and 20261216000100, the services tiles #1054 registers.
+// surfaces that had no flag, and 20271410000100, the services tiles #1054 registers.
 // Keep in
 // a module that can never be published, hiding it forever with no error anywhere.
 const REGISTRY_KEYS = new Set([

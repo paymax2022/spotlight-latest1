@@ -50,7 +50,7 @@ export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
   connect: 'connect',
 
   // SPIKE variant D: the tiles #996 left ungated that have a real engine behind
-  // them. Keys seeded by migration 20261216000100 and mirrored into
+  // them. Keys seeded by migration 20271410000100 and mirrored into
   // visibility.spec.ts REGISTRY_KEYS below. 'shopping' and 'parcel' are NOT here:
   // they are comingSoon placeholders (constants/modules.ts) whose badge is not a
   // registry state, and gating them would hide them outright.
@@ -119,7 +119,7 @@ export function quickActionRegistryKeyFor(actionId: string): string | null {
 
 // A fourth id-space. 'food-ride' is a featured card only (it has no tile in
 // SERVICE_MODULES). 'invest' is a card for the stock-investment surface, which
-// since 20261216000100 does have a registry key ('investment'), so the card is
+// since 20271410000100 does have a registry key ('investment'), so the card is
 // gated on the same module as the tile.
 export const FEATURED_REGISTRY_KEY: Record<string, string> = {
   bills: 'utilityPayments',
