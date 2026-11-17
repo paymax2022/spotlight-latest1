@@ -67,11 +67,10 @@ describe('service-grid mapping', () => {
     }
   });
 
-  test('unmapped tiles are never registry-gated', () => {
-    // The safe direction: no mapping ⇒ always render. Returning a key here would
-    // gate a tile against a module the registry has never heard of, hiding it
-    // permanently.
-    assert.equal(registryKeyFor('academy'), null);
+  test('no real tile is unmapped — synthetic ids miss the registry', () => {
+    // The safe direction: no mapping ⇒ always render. Under the exhaustive
+    // contract (R6, serviceModuleKeys.spec.ts) every real tile is mapped, so the
+    // only id that can miss the registry is one that was never a tile.
     assert.equal(registryKeyFor('definitely-not-a-module'), null);
   });
 
@@ -110,9 +109,11 @@ describe('the gate applied to the grid', () => {
     assert.deepEqual(removed.sort(), ['food', 'food-ride'].filter((id) => all.includes(id)).sort());
   });
 
-  test('unmapped tiles survive an empty published list', () => {
+  test('an empty published list hides every registry-gated tile', () => {
     const survivors = gate(list()).map((m) => m.id);
-    assert.ok(survivors.includes('academy'), 'an unmapped tile must not be hidden by the registry');
+    // academy was the last unmapped tile; since the exhaustive-registry contract
+    // the whole grid is gated, so an empty published list hides everything.
+    assert.ok(!survivors.includes('academy'), 'a gated tile must be hidden when unpublished');
     assert.ok(!survivors.includes('telemedicine'), 'a mapped tile must be hidden when unpublished');
   });
 });
@@ -133,9 +134,10 @@ describe('property hub gate', () => {
 
   test("the two id-spaces do not share a table", () => {
     // 'marketplace' means the lifestyle shopping tile in one space and the
-    // property buy/rent marketplace in the other. One shared table would gate the
-    // shopping tile on the realtor module — the reason these maps are separate.
-    assert.equal(registryKeyFor('marketplace'), null);
+    // property buy/rent marketplace in the other. The maps are SEPARATE, so the
+    // same id resolves differently in each: the shopping tile rides the
+    // 'marketplace' module, the property pillar rides 'realtor'.
+    assert.equal(registryKeyFor('marketplace'), 'marketplace');
     assert.equal(propertyRegistryKeyFor('marketplace'), 'realtor');
   });
 
@@ -159,9 +161,10 @@ describe('property hub gate', () => {
   });
 });
 
-// Mirrors the keys seeded into platform_modules (supabase migration
-// 20261210000000, generated from frontend-web/src/lib/feature-flags.ts). Keep in
-// a module that can never be published, hiding it forever with no error anywhere.
+// Mirrors the keys seeded into platform_modules (supabase migrations
+// 20261210000000 and 20261117000000 — the latter seeds the services-grid tiles).
+// A key absent here would let a mapping target a module the registry has never
+// heard of, hiding it forever with no error anywhere.
 const REGISTRY_KEYS = new Set([
   'aiCare', 'association', 'beneficiaries', 'checkoutTopupTier0', 'creators', 'crowdfunding',
   'disputes', 'estate', 'events', 'fintechAdmin', 'fx', 'groups', 'health', 'healthLab',
@@ -169,6 +172,9 @@ const REGISTRY_KEYS = new Set([
   'referrals', 'restaurant', 'savings', 'socialPay', 'stays', 'telemedicine', 'tierLimits',
   'transport', 'utilityPayments', 'virtualAccounts', 'voteBridge', 'votesBridge', 'wallet',
   'walletBankTransfers', 'walletTransfers',
+  'admin', 'aiTrading', 'arena', 'academy', 'connect', 'crypto', 'dues', 'education',
+  'filmAcademy', 'fractionalRealEstate', 'investment', 'investAi', 'learn', 'marketplace',
+  'parcel', 'shopping', 'spotlightWealth',
 ]);
 
 describe('mapped values are real registry modules', () => {
@@ -233,10 +239,13 @@ describe('home tab gates', () => {
 
   test('a category group that gates to empty is dropped entirely', () => {
     // The Explore card renders a label + grid per group. A group filtered to zero
-    // must disappear, not render a label above an empty grid.
+    // must disappear, not render a label above an empty grid. Under the
+    // exhaustive-registry contract no REAL tile is unmapped, so a synthetic
+    // unmapped id stands in for the survival half.
     const groups = [
       { label: 'Financial', modules: SERVICE_MODULES.filter((m) => m.category === 'financial') },
       { label: 'Learn', modules: SERVICE_MODULES.filter((m) => m.id === 'academy') },
+      { label: 'Custom', modules: [{ id: 'definitely-not-a-module' } as (typeof SERVICE_MODULES)[number]] },
     ];
     const gated = groups
       .map((g) => ({ ...g, modules: g.modules.filter((m) => {
@@ -247,8 +256,10 @@ describe('home tab gates', () => {
 
     // Financial is entirely registry-mapped, so an empty published list clears it.
     assert.ok(!gated.some((g) => g.label === 'Financial'), 'empty Financial group must be dropped');
-    // Learn is 'academy', which has no registry mapping, so it survives.
-    assert.ok(gated.some((g) => g.label === 'Learn'), 'ungated group must survive');
+    // academy is registry-gated now, so Learn drops with an empty published list too.
+    assert.ok(!gated.some((g) => g.label === 'Learn'), 'gated Learn group must be dropped');
+    // An unmapped (synthetic) id still survives — the fail-open branch lives on.
+    assert.ok(gated.some((g) => g.label === 'Custom'), 'ungated group must survive');
   });
 });
 
