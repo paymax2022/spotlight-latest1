@@ -8,7 +8,7 @@
 
 The production APK still shows 12 menu tiles that product wants off:
 
-Savings, Rewards (Loyalty), Investment, Learn, Invest AI, Spotlight Wealth, Real Estate Invest, AI Trading, StudyHub (Academy), Dues & Rent, Admin.
+Savings, Rewards (Loyalty), Investment, Learn, Invest AI, Spotlight Wealth, Real Estate Invest, AI Trading, Creators, StudyHub (Academy), Dues & Rent, Admin.
 
 Only 3 of them (`savings`→`savings`, `loyalty`→`loyalty`, `creators`→`creators`) are wired to the platform module registry; they are currently **published visible on staging** (verified live 2026-11-17 via `GET /api/v1/modules/visibility`), which is the plane the production APK talks to. The other 9 have no registry rows and no `SERVICE_MODULE_REGISTRY_KEY` mapping, so the shipped app renders them unconditionally.
 

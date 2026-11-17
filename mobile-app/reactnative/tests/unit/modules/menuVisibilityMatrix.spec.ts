@@ -1,8 +1,10 @@
 // The 2026-11-17 menu-visibility decision, encoded as the registry response the
-// staging plane must produce for the 20 keys this feature touched. Deliberately
+// staging plane must produce for the 22 tiles this feature gated. Deliberately
 // synthetic: it asserts THIS feature's keys only, so future admin toggles of
-// unrelated modules cannot break it. If it goes red, either migration
-// 20261216000100 drifted or a serviceModuleKeys mapping changed.
+// unrelated modules cannot break it. A red test here means a serviceModuleKeys
+// mapping changed or this fixture drifted — the migration's own end-state is
+// pinned by the replay psql assertions and the /api/v1/modules/visibility probe,
+// which a hardcoded fixture cannot see.
 // Spec: docs/superpowers/specs/2026-11-17-mobile-menu-visibility-design.md.
 
 import { describe, it } from 'node:test';

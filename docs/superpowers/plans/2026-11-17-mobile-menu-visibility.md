@@ -318,7 +318,7 @@ SELECT f.module_key, f.environment, 'hide', b.before_val, 'hidden',
 
 - [ ] **Step 2: Simulate the live pre-state on the local DB**
 
-The original seed migration already sets every module hidden on staging/production, so a bare replay would make the flip a no-op and audit nothing. Reproduce the live state verified 2026-11-17: all three published on staging; production rows stay hidden (the original seed's production-opt-in doctrine — if a live admin later published any of them on production, the flip audits those too, which is correct behavior, not a defect).
+The original seed migration already sets every module hidden on staging/production, so a bare replay would make the flip a no-op and audit nothing. Reproduce the live state verified 2026-11-17: all three published on staging; production rows stay hidden (the original seed's production-opt-in doctrine — if a live admin later published any of them on production, the flip audits those too, which is correct behavior, not a defect). On a truly FRESH replay from zero, `20261216000000_module_registry_seed_reachable.sql` publishes everything on staging+production first, so the flip there audits 6 rows (2 environments × 3 modules) and still converges to the same end state — audit=3 below is specific to this replay's faithful live pre-state.
 
 ```bash
 psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -c "UPDATE public.platform_module_environments SET status='visible' WHERE module_key IN ('savings','loyalty','creators') AND environment='staging';"
@@ -415,7 +415,7 @@ const HIDDEN_IN_STAGING = [
 ] as const;
 
 const VISIBLE_IN_STAGING = [
-  'crypto', 'education', 'arena', 'film-academy',
+  'crypto', 'education', 'naija-driver', 'film-academy',
   'connect', 'marketplace', 'shopping', 'parcel',
   'contest', 'property',
 ] as const;

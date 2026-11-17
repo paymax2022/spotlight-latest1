@@ -37,8 +37,8 @@ export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
   events: 'events',
 
   // Community. NOTE: 'stays', 'estate' and 'rent' are NOT top-level tiles — they
-  // are reached from the /property hub, so gating them means gating that hub's own
-  // list. Left for the next batch rather than mapped against ids that do not exist.
+  // are property-pillar ids owned by PROPERTY_SUBMODULE_REGISTRY_KEY below, so
+  // they never appear in this map; hiding the /property hub is realtor's job.
   associations: 'association',
   crowdfunding: 'crowdfunding',
 
@@ -117,7 +117,7 @@ export function quickActionRegistryKeyFor(actionId: string): string | null {
 }
 
 // A fourth id-space. 'food-ride' is a featured card only (it has no tile in
-// are ungated and always render.
+// SERVICE_MODULES). Featured ids absent from this map are ungated and always render.
 export const FEATURED_REGISTRY_KEY: Record<string, string> = {
   bills: 'utilityPayments',
   'food-ride': 'restaurant',

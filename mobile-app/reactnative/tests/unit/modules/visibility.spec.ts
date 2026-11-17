@@ -110,11 +110,10 @@ describe('the gate applied to the grid', () => {
   });
 
   test('an empty published list hides every registry-gated tile', () => {
-    const survivors = gate(list()).map((m) => m.id);
-    // academy was the last unmapped tile; since the exhaustive-registry contract
-    // the whole grid is gated, so an empty published list hides everything.
-    assert.ok(!survivors.includes('academy'), 'a gated tile must be hidden when unpublished');
-    assert.ok(!survivors.includes('telemedicine'), 'a mapped tile must be hidden when unpublished');
+    // The exhaustive-registry contract (R6) means no real tile is unmapped, so an
+    // empty published list must clear the grid COMPLETELY — pin the survivor set
+    // to exactly empty rather than sampling two tiles.
+    assert.deepEqual(gate(list()).map((m) => m.id).sort(), []);
   });
 });
 
