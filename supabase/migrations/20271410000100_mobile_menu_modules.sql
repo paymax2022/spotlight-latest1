@@ -27,7 +27,7 @@ INSERT INTO public.platform_modules (key, name, category, env_flag, description)
   ('aiTrading',            'AI Trading',         'investment', NULL, 'AI Trading — custodial, eligibility-gated managed fund tile (/ai-trading)'),
   ('academy',              'StudyHub',           'education',  NULL, 'StudyHub learning tile (/learn/academy)'),
   ('dues',                 'Dues & Rent',        'property',   NULL, 'Dues & Rent tile (/dues)'),
-  ('admin',                'Admin',              'ops',        NULL, 'In-app admin console tile (/admin)'),
+  ('admin',                'Admin',              'ops',        NULL, 'In-app admin console tile (/admin) — hides the tile only; /admin routes are deliberately never release-gated'),
   ('crypto',               'Crypto',             'investment', NULL, 'Crypto trading wallet tile (/crypto)'),
   ('education',            'Education',          'utility',    NULL, 'Education payments tile (/services/education)'),
   ('arena',                'Naija Driver',       'contest',    NULL, 'Arena competition engine tile (/arena)'),
@@ -59,6 +59,17 @@ ON CONFLICT (key) DO NOTHING;
 -- which is what main's own assertions encode: routeModuleKeys.ts maps the /learn route
 -- to 'academy' and visibility.spec.ts asserts ['learn', 'academy']. A `learn` row would
 -- be a second toggle that gates nothing, for the same reason as the two above.
+--
+-- WHAT THE `admin` SWITCH DOES NOT DO. It removes the tile from the grid; it does not
+-- close the console. routeModuleKeys.ts lists 'admin' among the surfaces that are
+-- deliberately never release-gated ("admin paths are never release-gated"), so the
+-- console stays reachable by URL while the tile is hidden. The row's description says
+-- that outright, because /admin/modules is where an operator would otherwise conclude
+-- the toggle is broken. None of the four investment tiles, `dues` or `property` has a
+-- route entry in that file either — it documents the investment family as having no
+-- single module key and dues/property as gated through the property hub — so here the
+-- grid entry point is what publication controls, while authz on the pages themselves is
+-- a separate layer this migration does not move.
 
 -- Environment states: everything visible in development; the preserve-list is
 -- visible everywhere (current UX); the rest of the new rows hidden on
