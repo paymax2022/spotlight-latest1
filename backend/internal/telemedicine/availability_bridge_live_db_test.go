@@ -79,7 +79,20 @@ func TestLiveDB_PublishedHoursBecomeTheBookableCalendar(t *testing.T) {
 	if len(byDate) == 0 {
 		t.Fatal("a doctor with published hours got an empty calendar")
 	}
+	today := doctorToday(t, ctx, pool)
 	for date, day := range byDate {
+		// The read refuses slots that are already past, so today's own day
+		// shrinks as the clock advances and its count is time-of-day
+		// dependent. Every future day must carry the full 09:00–17:00
+		// half-hour grid; today is checked for window membership only.
+		if date <= today {
+			for _, s := range day {
+				if s.Time == "09:00 AM" || s.Time == "09:30 AM" {
+					t.Errorf("%s offers %s after the clock passed it — past slots must be refused", slotLabel(s), s.Time)
+				}
+			}
+			continue
+		}
 		if len(day) != 16 {
 			t.Errorf("%s has %d slots, want the 16 a 09:00–17:00 day of 30-minute consults is: %v",
 				date, len(day), dayLabels(day))
