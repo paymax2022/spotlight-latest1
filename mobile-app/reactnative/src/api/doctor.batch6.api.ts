@@ -60,6 +60,14 @@ import type {
 // Re-export the shared money formatter so Batch 6 screens can import it here too.
 export { formatKobo } from '@/api/doctor.api';
 import { DOCTOR_USE_MOCK, doctorGet, doctorPost, doctorPut } from '@/api/doctor.client';
+import {
+  mapEarningsBreakdownWire,
+  mapRecordsDashboardWire,
+  mapWalletBalanceWire,
+  type EarningsBreakdownWire,
+  type RecordsDashboardWire,
+  type WalletBalanceWire,
+} from '@/features/doctor/batch6Wire';
 
 // Simulate network latency so loading states are exercised in the UI.
 const wait = <T>(value: T, ms = 350): Promise<T> =>
@@ -98,7 +106,6 @@ export const DEMO_RECORDS_DASHBOARD: DoctorRecordsDashboard = {
     { category: 'imaging',       count: 41,  lastUpdated: iso(4) },
     { category: 'referrals',     count: 33,  lastUpdated: iso(5) },
     { category: 'hmo',           count: 67,  lastUpdated: iso(1) },
-    { category: 'pets',          count: 24,  lastUpdated: iso(3) },
   ],
   pendingShares: 2,
 };
@@ -425,7 +432,7 @@ export const DEMO_REVIEW_DISPUTES: ReviewDispute[] = [
 
 export async function getRecordsDashboard(): Promise<DoctorRecordsDashboard> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_RECORDS_DASHBOARD);
-  return doctorGet<DoctorRecordsDashboard>('/records/dashboard');
+  return mapRecordsDashboardWire(await doctorGet<RecordsDashboardWire>('/records/dashboard'));
 }
 
 export async function getPatientRecordIndex(patientId: string): Promise<PatientRecordIndex> {
@@ -468,12 +475,12 @@ export async function getNotificationPreferences(): Promise<NotificationPreferen
 
 export async function getEarningsBreakdown(): Promise<EarningsBreakdown> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_EARNINGS_BREAKDOWN);
-  return doctorGet<EarningsBreakdown>('/earnings/breakdown');
+  return mapEarningsBreakdownWire(await doctorGet<EarningsBreakdownWire>('/earnings/breakdown'));
 }
 
 export async function getWalletBalance(): Promise<WalletBalance> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_WALLET_BALANCE);
-  return doctorGet<WalletBalance>('/wallet/balance');
+  return mapWalletBalanceWire(await doctorGet<WalletBalanceWire>('/wallet/balance'));
 }
 
 export async function getPayoutDetails(): Promise<PayoutDetail[]> {

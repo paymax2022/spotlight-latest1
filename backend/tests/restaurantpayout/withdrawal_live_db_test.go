@@ -323,6 +323,13 @@ func TestLiveDB_Withdrawal_OwnerScoped_ForeignBankAccountRejected(t *testing.T) 
 	other := seedUser(t, ctx, pool)
 	setUserTier(t, ctx, pool, owner, 3)
 	creditMerchantWallet(t, ctx, pool, led, owner, 10_000_00)
+	// `owner` must be a merchant that IS allowed to move money — approved KYB,
+	// tier, balance — and must have a usable account of its own. The KYB gate
+	// runs before the destination is read, so an unverified owner would be
+	// refused for the wrong reason and this assertion would prove nothing about
+	// owner-scoping. As it stands the only thing wrong with the request below is
+	// whose account it names.
+	seedMerchantBankAccount(t, ctx, pool, owner)                // the owner's own, valid destination
 	foreignBank := seedMerchantBankAccount(t, ctx, pool, other) // belongs to `other`
 
 	_, err := svc.RequestWithdrawal(ctx, owner, restaurant.RequestWithdrawalInput{

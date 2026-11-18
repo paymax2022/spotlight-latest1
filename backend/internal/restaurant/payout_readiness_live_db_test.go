@@ -89,7 +89,7 @@ func newReadinessFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 		}
 	}
 	t.Cleanup(func() {
-		bg := t.Context()
+		bg := context.WithoutCancel(t.Context())
 		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id IN ($1,$2,$3,$4)`, f.approved, f.pending, f.noKyb, f.rival)
 	})
 	return f

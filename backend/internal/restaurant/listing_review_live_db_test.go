@@ -23,7 +23,7 @@ func seedListing(t *testing.T, ctx context.Context, f staffFixture, name, status
 		t.Fatalf("seed listing: %v", err)
 	}
 	t.Cleanup(func() {
-		bg := t.Context()
+		bg := context.WithoutCancel(t.Context())
 		_, _ = f.pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, id)
 		_, _ = f.pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, id)
 	})

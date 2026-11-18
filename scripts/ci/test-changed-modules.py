@@ -106,25 +106,127 @@ for module in filters:
     if f"outputs.{module.replace('-', '_')}" not in ci:
         failures.append(f"{module}: ci.yml has no `changes` output gating it")
 
-# --- every required status check still exists as a job in ci.yml -------------
+# --- every required status check still exists, AND still RUNS where required --
 # Branch protection matches the check-run name EXACTLY. Rename a job and the old
 # context never reports again: PRs hang on "Expected — waiting for status" with
 # nothing in the UI explaining it, and merges stop. Fail here instead.
+#
+# Two assertions, because there are two ways to produce that identical hang:
+#   1. the name no longer exists as a check-run in ANY gated workflow (a rename), and
+#   2. the name exists but its workflow's `pull_request` trigger does not fire on the
+#      branch that requires it. ci-optimized.yml fires on main only, so its five
+#      contexts must stay in the @main section — promoting one to @all would leave
+#      every develop PR permanently unmergeable, silently, with a green CI tab.
+rc_spec = importlib.util.spec_from_file_location("rc", ROOT / "scripts/ci/required-checks.py")
+rc = importlib.util.module_from_spec(rc_spec)
+rc_spec.loader.exec_module(rc)
+
+# Workflows whose jobs are eligible to be required status checks.
+GATED_WORKFLOWS = ("ci.yml", "ci-optimized.yml")
+
+
+def job_check_names(text):
+    """Check-run names GitHub would report for this workflow's jobs.
+
+    A job reports its `name:` if it sets one, otherwise its job id — and only one of
+    the two. Crediting the id as well is what makes this assertion toothless: ci.yml's
+    `backend` job is *named* "backend (go build + vet)", so a validator that accepted
+    the bare id would also accept ci-optimized.yml's `backend` and lose the per-file
+    attribution the trigger check above depends on. Step-level `name:` fields are not
+    check-run names either, hence the two fixed indent levels.
+    """
+    names, pending = set(), None
+
+    def flush():
+        nonlocal pending
+        if pending:
+            names.add(pending)
+            pending = None
+
+    in_jobs = False
+    for line in text.splitlines():
+        if not in_jobs:
+            in_jobs = bool(re.match(r"^jobs:\s*$", line))
+            continue
+        if re.match(r"^[A-Za-z0-9_-]+:", line):  # dedent to column 0: the jobs block is over
+            break
+        if line.startswith("  #") or not line.strip():
+            continue
+        job = re.match(r"^  ([A-Za-z0-9_-]+):\s*(#.*)?$", line)
+        if job:
+            flush()
+            pending = job.group(1)
+            continue
+        named = re.match(r"^    name:\s*(.+?)\s*$", line)
+        if named and pending:
+            names.add(named.group(1))
+            pending = None
+    flush()
+    return names
+
+
+def pull_request_branches(text):
+    """Branches the workflow's `pull_request` trigger fires on. None = unreadable."""
+    block = re.search(r"^(\s*)pull_request:\s*$", text, re.M)
+    if not block:
+        inline = re.search(r"^pull_request:\s*(\{.*\})?\s*$", text, re.M)
+        return None if inline else set()  # no pull_request trigger => never reports on a PR
+    body = text[block.end():]
+    match = re.search(r"^\s{2,}branches(-ignore)?:\s*\[([^\]]*)\]", body, re.M)
+    if not match:
+        return None  # block-style or absent list: not something to guess at
+    if match.group(1):  # branches-ignore: the required set is unknowable from here
+        return None
+    return {b.strip().strip("'\"") for b in match.group(2).split(",") if b.strip()}
+
+
+reports_on = {}  # check-run name -> branches whose PRs can ever see it
+for workflow in GATED_WORKFLOWS:
+    text = (ROOT / ".github/workflows" / workflow).read_text()
+    branches = pull_request_branches(text)
+    if branches is None:
+        failures.append(
+            f"{workflow}: cannot read its pull_request branch list — a required check "
+            "gated on it could hang any branch's PRs, so this test refuses to assume"
+        )
+        branches = set()
+    for name in job_check_names(text):
+        reports_on.setdefault(name, set()).update(branches)
+
 req = ROOT / ".github/required-checks.txt"
 if req.exists():
-    ci_names = set(re.findall(r"^\s*name:\s*(.+?)\s*$", ci, re.M))
-    for line in req.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        # "<caller job name> / <job id inside the reusable>" -> the caller's name:
-        caller = line.split(" / ", 1)[0]
-        if caller not in ci_names:
+    try:
+        sections = rc.parse_sections(req.read_text(), req.name)
+        # An @<branch> header is the declaration that the branch is gated, so the file
+        # itself decides what to validate — no second list here to fall out of step.
+        # @all alone gates nothing, which is worth saying out loud.
+        gated = [b for b in sections if b != "all"]
+        if not gated:
             failures.append(
-                f"required check {line!r} has no job named {caller!r} in ci.yml — "
-                "renaming a required job blocks every PR; update "
-                ".github/required-checks.txt and re-apply branch protection"
+                "required-checks.txt has no @<branch> sections, so it declares no gated "
+                "branch; @all on its own requires nothing on anywhere"
             )
+        for branch in gated:
+            for line in rc.contexts_for(sections, branch, req.name):
+                # "<caller job name> / <job id inside the reusable>" -> the caller's name:
+                caller = line.split(" / ", 1)[0]
+                where = reports_on.get(caller)
+                if where is None:
+                    failures.append(
+                        f"required check {line!r} has no job reporting {caller!r} in "
+                        f"{' or '.join(GATED_WORKFLOWS)} — renaming a required job blocks "
+                        "every PR; update .github/required-checks.txt and re-apply "
+                        "branch protection"
+                    )
+                elif branch not in where and "*" not in where:
+                    failures.append(
+                        f"required check {line!r} is required on {branch!r} but its "
+                        f"workflow only starts PRs on {sorted(where)} — GitHub would "
+                        'wait forever on "Expected — waiting for status"; keep it in the '
+                        "section for a branch that actually runs it"
+                    )
+    except rc.ChecksFileError as exc:
+        failures.append(f"required-checks.txt: {exc}")
 
 # --- GitHub allows at most 20 unique reusable workflows per caller ------------
 # Hitting it breaks the whole pipeline at startup, so fail here instead.

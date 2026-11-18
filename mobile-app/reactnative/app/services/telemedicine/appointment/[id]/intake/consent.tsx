@@ -11,6 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useApptIntake, useSaveApptDraft } from '@/features/health/hooks';
+import { decideConsentStep } from '@/features/health/intakeDraftLock';
 import { NDPA_CONSENT_COPY } from '@/features/health/constants/health.constants';
 
 /**
@@ -18,24 +19,45 @@ import { NDPA_CONSENT_COPY } from '@/features/health/constants/health.constants'
  * Records the accepted consent version (saved on the draft) before the wizard.
  */
 export default function IntakeConsentScreen() {
-  const { id, prebooking, doctorId } = useLocalSearchParams<{ id: string; prebooking?: string; doctorId?: string }>();
+  const { id } = useLocalSearchParams<{ id: string }>();
   const appointmentId = id ?? '';
   const bundleQ = useApptIntake(appointmentId);
   const saveDraft = useSaveApptDraft(appointmentId);
   const [agreed, setAgreed] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const consent = bundleQ.data?.consent;
 
   const onContinue = () => {
     if (!consent) return;
+    setNotice(null);
     saveDraft.mutate(
       { answers: {}, consentVersion: consent.version },
       {
-        onSuccess: () => {
-          bundleQ.refetch();
+        // Settled rather than succeeded. The patient's question here is whether the
+        // agreement that lets the assigned doctor read their answers reached the
+        // server, and the response alone cannot answer it either way: a refusal
+        // (dropped connection, or the intake frozen at SUBMITTED) used to leave the
+        // button spinning and stopping with nothing said, while an accepted write
+        // that did not persist navigated into a wizard that bounced right back.
+        // Only re-reading the bundle settles it — and the refetch has to land
+        // BEFORE the navigation, because that bounce is decided by the bundle the
+        // wizard mounts with.
+        onSettled: async () => {
+          const bundle = (await bundleQ.refetch()).data;
+          const decision = decideConsentStep({
+            consentAccepted: bundle
+              ? bundle.consent.acceptedVersion === bundle.consent.version
+              : undefined,
+            intakeSubmitted: bundle?.intake.status === 'SUBMITTED',
+          });
+          if (decision.kind === 'stay') {
+            setNotice(decision.message);
+            return;
+          }
           router.replace({
             pathname: '/services/telemedicine/appointment/[id]/intake',
-            params: { id: appointmentId, ...(prebooking === '1' && doctorId ? { prebooking: '1', doctorId: String(doctorId) } : {}) },
+            params: { id: appointmentId },
           });
         },
       },
@@ -68,6 +90,11 @@ export default function IntakeConsentScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
+        {notice ? (
+          <View style={styles.banner}>
+            <Text style={styles.bannerText}>{notice}</Text>
+          </View>
+        ) : null}
         <Pressable style={styles.checkRow} onPress={() => setAgreed((v) => !v)} accessibilityRole="checkbox" accessibilityState={{ checked: agreed }}>
           <View style={[styles.check, agreed && styles.checkOn]}>
             {agreed ? <Check size={14} color={Colors.onPrimary} strokeWidth={3} /> : null}
@@ -99,4 +126,6 @@ const styles = StyleSheet.create({
   check: { width: 24, height: 24, borderRadius: Radius.sm, borderWidth: 2, borderColor: Colors.outline, alignItems: 'center', justifyContent: 'center' },
   checkOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   checkLabel: { ...Typography.bodySm, color: Colors.onSurface, flex: 1, lineHeight: 19 },
+  banner: { backgroundColor: Colors.iconBgGold, borderRadius: Radius.md, padding: Spacing.md },
+  bannerText: { ...Typography.labelMd, color: Colors.onSurface },
 });

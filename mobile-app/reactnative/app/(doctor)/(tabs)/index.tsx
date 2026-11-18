@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-  Bell, CalendarDays, Wallet, Stethoscope, ClipboardList, FlaskConical, Settings, ChevronRight, PawPrint, BarChart3,
+  Bell, CalendarDays, Wallet, Stethoscope, ClipboardList, FlaskConical, Settings, ChevronRight, BarChart3,
   Inbox, Users, MessageSquare, Smile, Video, AlertTriangle, ShieldAlert, UserCog, CalendarClock, Pill, RefreshCw, BadgeCheck, Clock,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -15,9 +15,10 @@ import { Typography } from '@/constants/tokens';
 import { shadow2 } from '@/constants/tokens';
 import SectionHeader from '@/components/SectionHeader';
 import { formatKobo } from '@/api/doctor.api';
-import { useDoctorProfile, useAppointments, useEarnings, useNotifications, useUpdateSettings, useSettings, useDashboard, useAnnouncement, useSetPresence, useDismissAnnouncement } from '@/features/doctor/hooks';
+import { useDoctorProfile, useAppointments, useEarnings, useNotifications, useSettings, useDashboard, useAnnouncement, useSetPresence, useDismissAnnouncement } from '@/features/doctor/hooks';
 import { StatCard, AppointmentRow, StateView, AlertCard, AnnouncementBanner, SectionCard } from '@/features/doctor/components';
 import { DoctorAvatar } from '@/features/telemedicine/components';
+import { isTodaySlot, mapHeaderAvatar } from '@/features/doctor/mapping';
 import { DASHBOARD_ALERT_SEVERITY_RANK, PRESENCE_LABELS } from '@/features/doctor/constants';
 import type { DashboardAlert, DashboardAlertKind, DashboardAlertSeverity } from '@/types/doctor.batch1';
 
@@ -60,7 +61,6 @@ export default function DoctorDashboardScreen() {
   const { data: earnings } = useEarnings();
   const { data: notifications = [] } = useNotifications();
   const { data: settings } = useSettings();
-  const updateSettings = useUpdateSettings();
 
   const { data: dashboard, isError: dashError, refetch: refetchDash } = useDashboard();
   const { data: announcement } = useAnnouncement();
@@ -68,8 +68,22 @@ export default function DoctorDashboardScreen() {
   const dismissAnnouncement = useDismissAnnouncement();
 
   const unread = notifications.filter((n) => !n.read).length;
-  const todays = appointments.filter((a) => ACTIVE_STATUSES.includes(a.status));
-  const isOnline = (settings?.showOnlineStatus ?? profile?.isOnline) ?? false;
+  // Status alone put a booking three days out under "Today's queue". The day
+  // comes from the server's `todayDate` — already the doctor's own zone, which
+  // a device-time `new Date()` comparison would not be.
+  const todays = appointments.filter(
+    (a) => ACTIVE_STATUSES.includes(a.status) && isTodaySlot(a.slotDate, dashboard?.todayDate),
+  );
+  // doctor_profiles.is_online is the real presence store: PUT /presence writes
+  // it and GET /profile reads it back. `showOnlineStatus` is a *privacy* flag
+  // (whether patients see the dot), so reading the switch off it left the
+  // control stuck — and writing it from here fought the settings hub.
+  const isOnline = profile?.isOnline ?? false;
+  // `autoAcceptInstant` is the real persisted flag, now that PUT /settings binds
+  // it; dashboard.acceptsInstant was a fabricated false.
+  const presenceLabel = isOnline
+    ? `${PRESENCE_LABELS.online}${settings?.autoAcceptInstant ? ' · Accepting instant' : ' · Accepting consults'}`
+    : PRESENCE_LABELS.offline;
 
   const counts = dashboard?.counts;
   const alerts: DashboardAlert[] = [...(dashboard?.alerts ?? [])].sort(
@@ -77,8 +91,6 @@ export default function DoctorDashboardScreen() {
   );
 
   const toggleOnline = () => {
-    updateSettings.mutate({ settings: { showOnlineStatus: !settings?.showOnlineStatus } });
-    // Mirror the presence aggregate (no idempotencyKey passed by callers).
     setPresence.mutate({ presence: isOnline ? 'offline' : 'online' });
   };
 
@@ -98,11 +110,19 @@ export default function DoctorDashboardScreen() {
     );
   }
 
+  const avatar = mapHeaderAvatar(profile);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <DoctorAvatar initials={profile.initials} color={profile.avatarColor} size={44} online={isOnline} />
+          <DoctorAvatar
+            uri={avatar.uri}
+            initials={avatar.initials}
+            color={avatar.color}
+            size={44}
+            online={isOnline}
+          />
           <View style={styles.headerText}>
             <Text style={styles.greeting}>Welcome back</Text>
             <Text style={styles.name} numberOfLines={1}>{profile.name}</Text>
@@ -145,15 +165,13 @@ export default function DoctorDashboardScreen() {
             <View style={[styles.statusDot, { backgroundColor: isOnline ? Colors.teal : Colors.outline }]} />
             <View>
               <Text style={styles.statusEyebrow}>YOU ARE</Text>
-              <Text style={styles.statusValue}>
-                {dashboard ? `${PRESENCE_LABELS[dashboard.presence]}${dashboard.acceptsInstant ? ' · Accepting instant' : ''}` : (isOnline ? 'Online · Accepting consults' : 'Offline')}
-              </Text>
+              <Text style={styles.statusValue}>{presenceLabel}</Text>
             </View>
           </View>
           <Pressable
             onPress={toggleOnline}
-            disabled={updateSettings.isPending || setPresence.isPending}
-            style={[styles.statusBtn, (updateSettings.isPending || setPresence.isPending) && styles.statusBtnDisabled]}
+            disabled={setPresence.isPending}
+            style={[styles.statusBtn, setPresence.isPending && styles.statusBtnDisabled]}
             accessibilityRole="button"
             accessibilityLabel={isOnline ? 'Go offline' : 'Go online'}
           >
@@ -286,13 +304,6 @@ export default function DoctorDashboardScreen() {
 
         {/* Phase 3 entry points */}
         <View style={styles.phase3Row}>
-          <Pressable style={styles.phase3Link} onPress={() => router.push('/(doctor)/vet')} accessibilityRole="button" accessibilityLabel="Veterinary mode">
-            <View style={[styles.phase3Icon, { backgroundColor: Colors.iconBgPurple }]}>
-              <PawPrint size={18} color={Colors.primary} strokeWidth={2} />
-            </View>
-            <Text style={styles.phase3Label} numberOfLines={1}>Vet mode</Text>
-            <ChevronRight size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
-          </Pressable>
           <Pressable style={styles.phase3Link} onPress={() => router.push('/(doctor)/analytics')} accessibilityRole="button" accessibilityLabel="Quality analytics">
             <View style={[styles.phase3Icon, { backgroundColor: Colors.iconBgBlue }]}>
               <BarChart3 size={18} color={Colors.secondary} strokeWidth={2} />

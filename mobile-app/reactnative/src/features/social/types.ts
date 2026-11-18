@@ -17,7 +17,11 @@ export interface MyCashtag {
   dailyLimitKobo:     number;
 }
 
-export type ActivityKind = 'sent' | 'received' | 'request' | 'split' | 'pool';
+// `other` is the landing spot for a kind the backend adds before this client
+// learns its name. It has to exist: KIND_META is keyed on this union, and an
+// unmapped key reads as undefined downstream and takes the screen down. Nothing
+// is dropped and nothing is mislabelled as a request to earn a tidy switch.
+export type ActivityKind = 'sent' | 'received' | 'request' | 'split' | 'pool' | 'other';
 export type ActivityStatus = 'completed' | 'pending' | 'declined';
 
 export interface ActivityItem {
@@ -47,6 +51,48 @@ export interface PayResult {
   id:     string;
   ok:     boolean;
   status: ActivityStatus;
+}
+
+// ── Money requests ───────────────────────────────────────────────────────────
+// A request has two roles, and they are NOT symmetric:
+//   requester = who is owed  (creates the request)
+//   payer     = who must pay (receives it, and acts on it)
+// `direction` is always read from the CALLER's point of view, which is what the
+// backend's GET /requests returns per-session:
+//   incoming → I am the payer, I owe this money
+//   outgoing → I am the requester, this is owed to me
+export type RequestState = 'PENDING' | 'PAID' | 'DECLINED' | 'CANCELLED';
+export type RequestDirection = 'incoming' | 'outgoing';
+
+export interface MoneyRequest {
+  id:              string;
+  direction:       RequestDirection;
+  state:           RequestState;
+  amountKobo:      number;
+  note:            string;
+  requesterId:     string;
+  payerId:         string;
+  /** The OTHER party, labelled for display. '' when they have no cashtag. */
+  counterpartHandle: string;
+  counterpartName:   string;
+  counterpartId:     string;
+  createdAtISO:      string;
+}
+
+/** The wire shape of one row from GET /api/finance/social/requests. */
+export interface RequestRowServer {
+  id: string;
+  requester_id?: string;
+  payer_id?: string;
+  amount_kobo?: number;
+  note?: string;
+  /** Uppercase on the wire: PENDING | PAID | DECLINED | CANCELLED. */
+  state?: string;
+  direction?: string;
+  counterpart_id?: string;
+  counterpart_handle?: string;
+  counterpart_name?: string;
+  created_at?: string;
 }
 
 export type SplitStatus = 'collecting' | 'settled';

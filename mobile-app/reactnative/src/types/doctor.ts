@@ -22,8 +22,9 @@ export interface DoctorProfile {
   specialties:     string[];          // display labels
   subSpecialties:  string[];          // display labels
   bio:             string;
-  initials:        string;
-  avatarColor:     string;            // hex used for avatar circle
+  initials:        string;            // fixture-only; the Go row has no such column — read it through mapHeaderAvatar
+  avatarColor:     string;            // hex used for avatar circle, same caveat
+  avatarUrl?:      string;            // signed GET of the doctor's own photo, from GET /doctor/profile
   email:           string;
   phone:           string;
   mdcnNumber:      string;            // MDCN registration number

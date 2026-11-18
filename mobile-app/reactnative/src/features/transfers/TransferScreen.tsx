@@ -27,6 +27,7 @@ import {
   calculateTransferFee,
 } from '@/api/transfers.api';
 import { fetchBeneficiaries } from '@/api/beneficiaries.api';
+import { recipientAddressLine } from './recipientDisplay';
 import { getWallet } from '@/api/wallet.api';
 import type { TransferRecipient, WalletTransfer, Beneficiary } from '@/types/wallet';
 
@@ -207,7 +208,7 @@ export default function TransferScreen() {
         feeKobo: data.feeKobo,
         totalKobo: data.totalDebitKobo || data.amountKobo + data.feeKobo,
         destinationName: data.receiverDisplayName || (resolvedRecipient?.displayName ?? 'Paymax user'),
-        destinationDetail: resolvedRecipient?.maskedPhone,
+        destinationDetail: resolvedRecipient ? recipientAddressLine(resolvedRecipient) : undefined,
         sourceLabel: 'Wallet',
         status: data.status === 'successful' ? 'successful' : data.status,
         createdAt: data.createdAt,
@@ -530,7 +531,7 @@ function FormStep(props: {
         <>
           <TextInputField
             label="Recipient Wallet"
-            placeholder="0801 234 5678 or name@email.com"
+            placeholder="@cashtag, phone, or email"
             value={recipient}
             onChangeText={onRecipient}
             autoCapitalize="none"
@@ -672,7 +673,7 @@ function ReviewStep(props: {
     type === 'wallet_wallet' ? resolvedRecipient?.displayName ?? 'Paymax user' : dest.resolved?.accountName ?? '';
   const destDetail =
     type === 'wallet_wallet'
-      ? resolvedRecipient?.maskedPhone
+      ? (resolvedRecipient ? recipientAddressLine(resolvedRecipient) : undefined)
       : `${dest.bankName} • •••• ${dest.accountNumber.slice(-4)}`;
 
   return (

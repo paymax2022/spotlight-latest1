@@ -245,6 +245,10 @@ export interface DoctorDashboardData {
   presence:           DoctorPresence;
   acceptsInstant:     boolean;              // availability status toggle
   counts:             DashboardCounts;
+  // The calendar day the server counted `counts.todaysAppointments` over, in
+  // the doctor's own timezone (GET /dashboard's `todayDate`). "Today's queue"
+  // filters its preview by it; absent on an older wire and in demo mode.
+  todayDate?:         string;
   todaysAppointments: DoctorAppointment[];  // today's + upcoming (preview)
   pendingRequests:    DoctorAppointment[];  // pending consultation requests
   activeConsultation?: ActiveConsultationCard; // present when a consult is live

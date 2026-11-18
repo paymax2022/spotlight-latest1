@@ -54,8 +54,11 @@ export default function ServicesScreen() {
 
   // Registry gate. One filter here covers every band, chip and search result, so
   // an unpublished module cannot leak through a path someone forgot to update.
-  // Tiles with no registry mapping are always shown (see serviceModuleKeys), and
-  // an unreachable registry shows everything rather than emptying the tab.
+  // Tiles with no registry mapping are always shown (see serviceModuleKeys). A
+  // registry that answers nothing — no live response and no cached one — does NOT
+  // show everything: stateOf() then keeps only STABLE_MODULE_KEYS and hides the rest,
+  // so the tab empties rather than over-showing (rules.ts; adding keys to that list to
+  // fix a visibility complaint is what its comment forbids).
   // A registry 'comingSoon' module STAYS on the grid but is marked inert — that is the
   // whole point of the state, so it must not be filtered out with the hidden ones.
   // ModuleCard already drops onPress for comingSoon, so marking the flag is sufficient.
@@ -169,7 +172,12 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Spacing.sm },
   title:  { ...Typography.headlineMd, color: Colors.onSurface },
 
-  chips:        { flexGrow: 0, marginBottom: Spacing.sm },
+  // flexShrink: 0 is load-bearing, not decoration. This row sits in a column whose
+  // total content height exceeds the viewport (the banded grid below it), so a shrinkable
+  // child gets squeezed: flexGrow alone left flex-shrink at react-native-web's default 1
+  // and the row collapsed from 30px to ~6px. A horizontal ScrollView is overflow-y:hidden,
+  // so the chips were sliced to their padding and every category label vanished.
+  chips:        { flexGrow: 0, flexShrink: 0, marginBottom: Spacing.sm },
   chipsContent: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.sm },
   chip: {
     paddingHorizontal: Spacing.md,

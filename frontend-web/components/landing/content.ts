@@ -5,9 +5,7 @@
  * 2026). Two things were changed deliberately when it was ported:
  *
  * 1. Links. The mock pointed at live https://www.spotlightng.com URLs, which are
- *    this same application in production, so they are app-relative now — no
- *    route on this page leaves the site except the Indoor Football enquiry,
- *    which has no programme page to send anyone to yet.
+ *    this same application in production, so they are app-relative now.
  * 2. Proof. `videos` and `endorsements` are empty because the source review
  *    found no playable shout-out clip and no issued government document
  *    (COMMUNITY_CONTENT.md). Their sections render the mock's honest empty
@@ -28,11 +26,6 @@ export const LANDING_IMG = '/assets/img/landing';
  *  so the gold wordmark every other Spotlight header uses is the real mark. */
 export const LOGO = '/assets/img/logo/logo.png';
 export const COMMUNITY_IMG = `${LANDING_IMG}/community`;
-
-/** The published enquiry line for programmes with no application page. */
-const FOOTBALL_WHATSAPP =
-  'https://wa.me/2348063437144?text=' +
-  encodeURIComponent('Hello Spotlight, I would like details about the Indoor Football competition.');
 
 export const CONTACT = {
   email: 'info@spotlightng.com',
@@ -89,10 +82,10 @@ export const programmePaths: ProgrammePath[] = [
     tab: 'Tech & STEM',
     title: ['Big ideas.', 'Real-world solutions.'],
     description:
-      'Bring your curiosity to the challenge. Explore opportunities to collaborate, build prototypes and put technical thinking to work through Spotlight’s Tech Hackathon & STEM programmes.',
+      'Bring your curiosity to the challenge. Explore opportunities to collaborate, build prototypes and put technical thinking to work through Spotlight\'s Tech Hackathon & STEM programmes.',
     tags: ['Hackathon', 'STEM', 'Innovation'],
     next: 'Check programme requirements, challenge details and the current entry process.',
-    label: 'BUILD WHAT’S NEXT.',
+    label: 'BUILD WHAT\'S NEXT.',
     image: `${LANDING_IMG}/tech.webp`,
     alt: 'Illustrative Nigerian innovators collaborating on a laptop and robotics prototype',
     action: 'Explore Tech & STEM',
@@ -107,15 +100,15 @@ export const programmePaths: ProgrammePath[] = [
     tab: 'Indoor Football',
     title: ['Your court.', 'Your kind of game.'],
     description:
-      'Bring your footwork, your focus and your team spirit. Explore Spotlight’s Indoor Football competition and a different way to put sporting talent in the spotlight.',
+      'Bring your footwork, your focus and your team spirit. Explore Spotlight\'s Indoor Football competition and a different way to put sporting talent in the spotlight.',
     tags: ['Indoor Football', 'Skill', 'Teamwork'],
-    next: 'Contact Spotlight for match format, team entry and upcoming competition details.',
+    next: 'Explore the competition route, rewards and team entry details.',
     label: 'BRING YOUR GAME.',
     image: `${LANDING_IMG}/football.webp`,
     alt: 'Illustrative Nigerian players competing for the ball on an indoor football court',
     action: 'Enquire about Football',
-    href: FOOTBALL_WHATSAPP,
-    external: true,
+    href: '/service-details/sports',
+    external: false,
     accent: '#365e52',
   },
   {
@@ -158,7 +151,7 @@ const PAGE_HINT = 'Continue to the Spotlight programme page.';
 export const chooserOptions: ChooserOption[] = [
   { key: 'entertainment', name: 'Reality TV & Entertainment', sub: 'Music · Comedy · Acting', href: '/service-details/reality-tv-show', external: false, hint: PAGE_HINT, submit: 'Explore programme' },
   { key: 'tech', name: 'Tech Hackathon & STEM', sub: 'Build something that matters', href: '/service-details/stem-contest', external: false, hint: PAGE_HINT, submit: 'Explore programme' },
-  { key: 'football', name: 'Indoor Football', sub: 'Bring your game', href: FOOTBALL_WHATSAPP, external: true, hint: 'Continue to WhatsApp to ask Spotlight about football entry details.', submit: 'Enquire on WhatsApp' },
+  { key: 'football', name: 'Indoor Football', sub: 'Bring your game', href: '/service-details/sports', external: false, hint: PAGE_HINT, submit: 'Explore programme' },
   { key: 'business', name: 'SME Pitch Competition', sub: 'Put your idea in the room', href: '/service-details/sme-pitch-contest', external: false, hint: PAGE_HINT, submit: 'Explore programme' },
   { key: 'openmic', name: 'Open Mic Competition', sub: 'Take the mic', href: '/service-details/open-mic-competition', external: false, hint: PAGE_HINT, submit: 'Explore programme' },
   { key: 'academy', name: 'Film Academy', sub: 'Learn the craft', href: '/service-details/film-academy', external: false, hint: PAGE_HINT, submit: 'Explore programme' },
@@ -312,7 +305,7 @@ export const journeySteps = [
   },
   {
     number: '03',
-    title: 'Show what you’ve got.',
+    title: 'Show what you\'ve got.',
     body: 'Follow the relevant audition, challenge, match or pitch process. Bring the preparation to match your ambition.',
   },
 ];

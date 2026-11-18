@@ -1,8 +1,10 @@
 /**
- * GET /api/v1/transfers/paymax/resolve?identifier=<phone|email>
+ * GET /api/v1/transfers/paymax/resolve?identifier=<cashtag|phone|email>
  *
- * Resolve a Paymax recipient by phone number or email.
+ * Resolve a Paymax recipient by cashtag, phone number, or email.
  * Returns a safe preview (masked phone, display name) — no PII exposed.
+ * For a `@`/`$` cashtag the normalised `handle` is echoed, so the confirmation
+ * screen can show what the sender typed instead of a number they never used.
  * Requires Bearer token and FEATURE_WALLET_TRANSFERS_ENABLED.
  */
 import { NextResponse } from 'next/server';
@@ -35,6 +37,9 @@ export async function GET(request: Request) {
         display_name: recipient.displayName,
         masked_phone: recipient.maskedPhone,
         avatar_url:   recipient.avatarUrl,
+        // Undefined for phone/email sends, so JSON.stringify drops the key
+        // rather than sending `"handle": null` on every legacy lookup.
+        handle:       recipient.handle,
       },
     });
   } catch (err) {

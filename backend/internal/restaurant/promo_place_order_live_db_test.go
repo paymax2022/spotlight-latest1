@@ -92,6 +92,9 @@ func newPromoOrderFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	// PlaceOrder's escrow is tier-gated fail-closed (ADR-033), so the paying customer
 	// needs a KYC tier. Tier 3 is unlimited — these tests are about the promo, not the cap.
 	seedKYCTier(t, ctx, pool, f.customer, 3)
+	// Same reasoning for the outlet: its owner carries a per-order receipt ceiling, and
+	// an unseeded profile would refuse the cart before the promo discount is ever applied.
+	seedKYCTier(t, ctx, pool, f.owner, 3)
 
 	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
 	if err != nil {
