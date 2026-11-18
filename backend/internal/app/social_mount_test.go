@@ -43,6 +43,15 @@ func TestRegisterSocialPay_MountsCanonicalAndLegacyAlias(t *testing.T) {
 		"GET /api/finance/social/handle/me",
 		"GET /api/finance/social/activity",
 		"POST /api/finance/social/requests",
+		// The RECEIVER's four calls (wave: @doctor → @staging11 ₦200 was
+		// creatable but not actionable). The client's requests inbox and detail
+		// screen hit exactly these paths, so a mount regression here — the same
+		// class as the double-mount bug above — silently 404s the pay/decline UI
+		// and makes an owed request impossible to settle.
+		"GET /api/finance/social/requests",
+		"POST /api/finance/social/requests/:id/pay",
+		"POST /api/finance/social/requests/:id/decline",
+		"POST /api/finance/social/requests/:id/cancel",
 		"POST /api/finance/social/splits",
 		"POST /api/finance/social/pools",
 		"POST /api/finance/social/pools/:id/contribute",
