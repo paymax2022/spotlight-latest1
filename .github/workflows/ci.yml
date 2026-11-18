@@ -122,6 +122,23 @@ jobs:
       working-directory: mobile-app/reactnative
       typecheck-command: npx tsc --noEmit -p tsconfig.json
 
+  # Nothing in CI ran the mobile module suite before this job: `test:modules` is
+  # referenced by no workflow, so the registry contract it locks (every tile key
+  # has a platform_modules row, none unmapped) was only ever checked on a laptop.
+  # Deliberately NOT folded into the whole-app tsc lane above by raising its
+  # Node: that job is a REQUIRED check named in .github/required-checks.txt and
+  # branch protection, and `--experimental-strip-types` needs Node >= 22.6 while
+  # the reusable defaults to 20 — changing a required lane's runtime to add an
+  # optional test is the bigger risk. Non-required on purpose: a red here is a
+  # signal, not a merge block.
+  mobile-module-tests:
+    name: mobile (module visibility tests)
+    uses: ./.github/workflows/_reusable-node-typecheck.yml
+    with:
+      working-directory: mobile-app/reactnative
+      node-version: '22'
+      typecheck-command: npm run test:modules
+
   backend:
     name: backend (go build + vet)
     uses: ./.github/workflows/_reusable-go-verify.yml

@@ -7,9 +7,11 @@
 -- coupling a menu tile to a FEATURE_* flag that may be unset on a plane would
 -- silently hide it; the ops-flag lane can add flags later.
 --
--- VERSION SLOT. This file deliberately sorts AFTER
--- 20271408000100_module_readiness.sql and 20271410000000_module_registry_add_ungated_surfaces.sql,
--- for two reasons that are both measured rather than assumed:
+-- VERSION SLOT. This file deliberately sorts ABOVE every migration already
+-- recorded on staging and production — 20271408000100_module_readiness.sql,
+-- 20271410000000_module_registry_add_ungated_surfaces.sql and
+-- 20271500000000_academy_acting_level_assessment.sql are all below it — for
+-- three reasons, each measured rather than assumed:
 --   1. #996 registered marketplace/crypto/academy/filmAcademy/competitions/arena/connect
 --      itself. Sorting earlier made this seed win ON CONFLICT and fix their
 --      name/category against #996's text; sorting later lets #996 win, which is what
@@ -18,6 +20,17 @@
 --      SERVE a module whose readiness is not 'ready' (Module.VisibleIn in
 --      backend/internal/modules/model.go). A row created here as production-visible
 --      could only say so honestly if the column already exists.
+--   3. `db push` SKIPS a version below the remote max applied, and both release
+--      migrate legs pass include_all: false (.github/workflows/release.yml —
+--      "NEVER true for production"), so a back-dated slot is silently not applied
+--      while the job prints "Remote database is up to date." and goes GREEN.
+--      Measured 2026-11-18: staging's history holds 20271411000000 and
+--      20271500000000 but not the old 20271410000100 slot, and production (probed
+--      read-only, run 44312341468) has 756 history rows against the repo's 757
+--      files with 20271410000000 / 20271411000000 / 20271500000000 RECORDED and
+--      20271410000100 "not recorded". Renaming is safe precisely because neither
+--      plane recorded the old slot — an already-recorded version that vanishes
+--      from the tree makes `db push` abort on remote-versions-not-found instead.
 
 INSERT INTO public.platform_modules (key, name, category, env_flag, description) VALUES
   ('investment',           'Investment',         'investment', NULL, 'Investment tile — stocks & ETFs entry (/investment)'),

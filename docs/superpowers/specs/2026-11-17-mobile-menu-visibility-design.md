@@ -86,7 +86,7 @@ Two further deltas from the original plan, both forced by main rather than chose
 `contest` rides `competitions` (#996's key) instead of `voteBridge`, and
 `learn` rides `academy` instead of a new `learn` row, because #996 registered both
 in `20271410000000` and main's route/label/deep-link assertions are written against
-those keys. `20271410000100` still seeds its own rows with `ON CONFLICT (key) DO
+those keys. `20271600000000` still seeds its own rows with `ON CONFLICT (key) DO
 NOTHING`, so on a database that already ran `20271410000000` the existing attributes
 win and the seed is a no-op for the six overlapping keys (`academy`, `arena`, `connect`,
 `crypto`, `filmAcademy`, `marketplace`; `competitions` is #996-only and this file adds
@@ -158,9 +158,24 @@ the preserve list, not by a seed. Three consequences worth writing down:
   an operator out of band: `20260405200000_admin_role_setup.sql`). It writes no data, so
   re-runs stay no-ops, and it is silent on every plane that has run #996.
 
-This is also why the file moved to `20271410000100`: `readiness` does not exist until
+This is also why the file moved to `20271600000000`: `readiness` does not exist until
 `20271408000100`, so a migration that sets it cannot sort before it. That closes the
 version-slot question left open in the note above.
+
+The slot moved a second time on 2026-11-18, and the reason is a `db push` property that
+the first rationale did not cover: **push skips any version below the remote max applied**,
+and both release migrate legs pass `include_all: false` (`.github/workflows/release.yml`,
+"NEVER true for production"), so a back-dated migration is not applied at all while the job
+prints `Remote database is up to date.` and finishes GREEN. Measured on the planes, not from
+the ledger: staging's history carries `20271411000000` and `20271500000000` but not the
+earlier `20271410000100` slot, and a read-only production probe (run `44312341468`) reported
+756 history rows against this branch's 757 migration files, with `20271410000000`,
+`20271411000000` and `20271500000000` RECORDED and `20271410000100` "not recorded". Neither
+plane had recorded the old slot, which is what made renaming safe: a recorded version that
+disappears from the tree makes `db push` abort on remote-versions-not-found instead of
+quietly skipping. So the file now sorts above everything either plane has applied, and the
+release chain can carry it. Note the ledger's "Production's max applied is now
+`20271410000000`" (§1.4) was stale — the probe puts production at `20271500000000`.
 
 Three database shapes were replayed on a real Postgres rather than reasoned about, and the empty-plane run re-measured at this branch's head after the `shopping`/`parcel`/`learn` rows
 were dropped: with the file, development serves exactly **15** keys and staging + production
