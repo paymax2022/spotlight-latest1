@@ -138,6 +138,7 @@ func withdrawalErrStatus(err error) int {
 	switch {
 	case errors.Is(err, ErrWithdrawMissingIdem), errors.Is(err, ErrWithdrawBadAmount),
 		errors.Is(err, ErrBankAccountUnverified), errors.Is(err, ErrBankAccountNameUnchecked),
+		errors.Is(err, ErrBankAccountBadNumber),
 		errors.Is(err, ErrWithdrawBadDestination), errors.Is(err, ErrStepUpRequired):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrWithdrawNoBankAccount), errors.Is(err, ErrWithdrawNotFound):

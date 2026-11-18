@@ -16,10 +16,10 @@ import { PROVIDER_TYPE_OPTIONS } from '@/features/doctor/constants';
 import type { ProviderType } from '@/types/doctor.onboarding';
 
 // A thin intro that reads the persisted provider type and forwards into the
-// EXISTING profile builder — Section B (profile/setup) for doctor & specialist
-// (specialist sets the `specialist` param so the specialty step is mandatory),
-// Section C / Batch 1 (vet/profile/setup) for veterinarian. The builders
-// themselves are NOT recreated here.
+// EXISTING Section B builder (profile/setup) — the specialist variant differs
+// only in the specialty step being mandatory. The builders themselves are NOT
+// recreated here, and there is no veterinary forwarding: that type is not one
+// this screen offers.
 
 const TYPE_META: Record<ProviderType, { icon: LucideIcon; title: string; sub: string }> = {
   doctor: {
@@ -55,14 +55,13 @@ export default function OnboardingBuilderHandoffScreen() {
     }
   };
 
-  const openBuilder = (t: ProviderType) => {
-    // specialist variant is the specialty step being mandatory inside that
-    // existing builder. Veterinarian → Section C / Batch 1 builder.
-    if (t === 'veterinarian') {
-      router.push('/(doctor)/vet/profile/setup');
-    } else {
-      router.push('/(doctor)/profile/setup');
-    }
+  const openBuilder = () => {
+    // One builder for every type this chooser offers. The specialist variant is the
+    // specialty step being mandatory inside it. There is deliberately no veterinarian
+    // route: that type is not offered here, a vet onboards from the landing page Vet
+    // module. TYPE_META keeps the member because an account whose persisted type is
+    // still 'veterinarian' must not index into an undefined label.
+    router.push('/(doctor)/profile/setup');
   };
 
   return (
@@ -102,7 +101,7 @@ export default function OnboardingBuilderHandoffScreen() {
                 </Text>
               </SectionCard>
 
-              <PrimaryButton label="Open profile builder" onPress={() => openBuilder(type)} style={styles.btn} />
+              <PrimaryButton label="Open profile builder" onPress={openBuilder} style={styles.btn} />
             </>
           ) : null}
           <PrimaryButton

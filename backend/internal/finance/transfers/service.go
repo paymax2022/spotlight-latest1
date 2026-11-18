@@ -15,6 +15,7 @@ import (
 
 	"spotlight/backend/go-common/dbutil"
 	"spotlight/backend/go-common/strutil"
+	"spotlight/backend/internal/cashtag"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/provider"
@@ -31,7 +32,20 @@ type Service struct {
 	pins       *pinStore
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	auditSink  Auditor            // optional; nil ⇒ audit() stays a stdout breadcrumb only
+	// handles is the cashtag directory, for recipients addressed as @bisi/$bisi.
+	// Same *cashtag.Service the Social Pay, Events and Creator-tip rails already
+	// address with, so one directory decides who a handle belongs to. Optional
+	// (SetCashtagDirectory, post-construction): when nil a handle recipient fails
+	// closed — 500, never a fall-through to phone matching that would pay whoever
+	// happens to hold those digits.
+	handles *cashtag.Service
 }
+
+// SetCashtagDirectory injects the cashtag directory used to address wallet
+// recipients by @handle (app-wiring, post-construction, like SetAuditor).
+// Nil is accepted and disables cashtag addressing: a sigil'd recipient is then
+// refused outright rather than resolved to an unintended account.
+func (s *Service) SetCashtagDirectory(h *cashtag.Service) { s.handles = h }
 
 // Auditor is the nil-safe seam into the shared durable audit sink
 // (services.AuditService satisfies this signature — the app-wiring auditSink).
@@ -92,14 +106,22 @@ func NewService(db *pgxpool.Pool, ledgerSvc *ledger.Service, tiersSvc *tiers.Ser
 	}
 }
 
-// ResolvePaymaxUser returns masked identity for a phone number (wallet-to-wallet recipient lookup).
-// Returns ErrRecipientNotFound (→404) when no Paymax user matches the phone, and
-// ErrAmbiguousRecipient (→409) when more than one account carries the number.
-// Matches on the 10-digit NSN, not the raw string — stored phones were never
-// normalised (a row may hold "8159491618", "08159491618" or "+2348159491618"),
-// so an exact-match lookup would miss most recipients.
-func (s *Service) ResolvePaymaxUser(ctx context.Context, phone string) (*WalletTransferResolveResponse, error) {
-	nsn := NormalizeRecipientPhone(phone)
+// ResolvePaymaxUser returns masked identity for a transfer recipient — a phone
+// number, or a `@`/`$` cashtag (wallet-to-wallet recipient lookup).
+// Returns ErrRecipientNotFound (→404) when no Paymax user matches the phone or
+// the handle is unclaimed, and ErrAmbiguousRecipient (→409) when more than one
+// account carries the number. A lookup the database could not answer is neither:
+// the cashtag leg returns it unwrapped so the caller gets a 500, matching the Next
+// BFF — see cashtagLookupFailure.
+// Phone matching is on the 10-digit NSN, not the raw string — stored phones were
+// never normalised (a row may hold "8159491618", "08159491618" or
+// "+2348159491618"), so an exact-match lookup would miss most recipients.
+// A sigil'd input never reaches the phone lookup; see ParseCashtagRecipient.
+func (s *Service) ResolvePaymaxUser(ctx context.Context, identifier string) (*WalletTransferResolveResponse, error) {
+	if handle, ok := ParseCashtagRecipient(identifier); ok {
+		return s.resolveByCashtag(ctx, handle)
+	}
+	nsn := NormalizeRecipientPhone(identifier)
 	if nsn == "" {
 		// Not a usable Nigerian mobile — no match, and never a looser probe.
 		return nil, ErrRecipientNotFound
@@ -162,8 +184,10 @@ type walletPreflight struct {
 	findReplay func(ctx context.Context, key string) (*WalletTransfer, error)
 	// verifyPIN is the transaction-PIN second factor — fail-closed.
 	verifyPIN func(ctx context.Context, userID, pin string) error
-	// resolve turns the recipient phone into an account.
-	resolve func(ctx context.Context, phone string) (*WalletTransferResolveResponse, error)
+	// resolve turns the recipient identifier (phone or @/$ cashtag) into an
+	// account. It receives WalletTransferRequest.EffectiveRecipient(), never one
+	// field read directly, so both spellings arrive at one resolver.
+	resolve func(ctx context.Context, identifier string) (*WalletTransferResolveResponse, error)
 	// enforceTier applies the fail-closed tier / daily-limit guard.
 	enforceTier func(ctx context.Context, userID string, amountKobo int64) error
 }
@@ -178,7 +202,8 @@ type walletPreflight struct {
 // UNIQUE — but telling a caller its completed transfer failed invites them to
 // send it again under a fresh key, which is a real second debit.
 func (p walletPreflight) run(ctx context.Context, senderID string, req WalletTransferRequest) (*WalletTransfer, *WalletTransferResolveResponse, error) {
-	// DB-free pre-flight: Idempotency-Key required, positive kobo amount, phone present.
+	// DB-free pre-flight: Idempotency-Key required, positive kobo amount, a
+	// recipient present (phone or cashtag — whichever spelling the body used).
 	if err := ValidateWalletTransferRequest(req); err != nil {
 		return nil, nil, err
 	}
@@ -202,7 +227,7 @@ func (p walletPreflight) run(ctx context.Context, senderID string, req WalletTra
 		return nil, nil, err
 	}
 
-	recipient, err := p.resolve(ctx, req.RecipientPhone)
+	recipient, err := p.resolve(ctx, req.EffectiveRecipient())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1405,7 +1430,16 @@ type WalletTransfer struct {
 
 // WalletTransferRequest is the body for POST /finance/transfers/paymax.
 type WalletTransferRequest struct {
-	RecipientPhone string `json:"recipient_phone" binding:"required"`
+	// RecipientIdentifier is the contract field (contracts/openapi.yaml:
+	// /transfers/paymax) — a phone number or a `@`/`$` cashtag.
+	RecipientIdentifier string `json:"recipient_identifier"`
+	// RecipientPhone is the legacy spelling of the same thing, kept for callers
+	// already deployed. Neither field is binding-required: either satisfies the
+	// recipient, and neither one answers 404 through
+	// ValidateWalletTransferRequest, which is where the money-path rules live.
+	// A body that carries BOTH is resolved from RecipientIdentifier — see
+	// EffectiveRecipient.
+	RecipientPhone string `json:"recipient_phone"`
 	AmountKobo     int64  `json:"amount_kobo" binding:"required,min=100"`
 	Narration      string `json:"narration"`
 	// Transaction PIN — the second factor every money movement requires. Not
@@ -1418,11 +1452,29 @@ type WalletTransferRequest struct {
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
+// EffectiveRecipient is the ONE recipient string this rail resolves.
+//
+// Both spellings of the recipient arrive here on purpose, and the order matters
+// for money: the contract's recipient_identifier wins, so a caller that sends an
+// identifier AND a stale recipient_phone cannot pay the phone while believing it
+// paid the identifier. Resolution itself then decides what the string means
+// (cashtag vs phone) — this only decides WHICH string it gets.
+func (r WalletTransferRequest) EffectiveRecipient() string {
+	if s := strings.TrimSpace(r.RecipientIdentifier); s != "" {
+		return s
+	}
+	return strings.TrimSpace(r.RecipientPhone)
+}
+
 // WalletTransferResolveResponse is the response for GET /finance/transfers/paymax/resolve.
 type WalletTransferResolveResponse struct {
 	UserID      string `json:"user_id"`
 	FullName    string `json:"full_name"`
 	MaskedPhone string `json:"masked_phone"`
+	// Handle is set only when the recipient was addressed by cashtag, so the
+	// confirmation screen can echo the handle the sender typed instead of a
+	// number they never used. Omitted for phone lookups.
+	Handle string `json:"handle,omitempty"`
 }
 
 // BankTransfer represents a wallet-to-bank or bank-to-bank transfer.

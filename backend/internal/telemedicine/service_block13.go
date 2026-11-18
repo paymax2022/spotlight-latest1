@@ -21,9 +21,13 @@ var defaultSlotTimes = []string{
 }
 
 // GetAvailability returns a doctor's bookable slots for the next 5 days.
-// If the doctor has published rows in doctor_availability they are returned as-is;
-// otherwise a deterministic default calendar is synthesised so the booking UI is
-// always populated. Booked slots are reported with available=false.
+//
+// Three reads, in order of trust: rows explicitly published in
+// `doctor_availability_slots` are returned as-is; otherwise the doctor's own
+// schedule row is expanded into a calendar (availability_bridge.go), so the
+// hours saved on the portal are the hours a patient can book; and only a doctor
+// who has published nothing at all gets the deterministic default calendar.
+// Booked slots are reported with available=false.
 func (s *Service) GetAvailability(ctx context.Context, doctorID string) ([]Slot, error) {
 	var exists bool
 	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM doctors WHERE id=$1)`, doctorID).Scan(&exists); err != nil {
@@ -61,7 +65,23 @@ func (s *Service) GetAvailability(ctx context.Context, doctorID string) ([]Slot,
 		return published, nil
 	}
 
-	return synthSlots(doctorID), nil
+	sched, userID, zone, found, err := s.publishedSlots(ctx, doctorID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return synthSlots(doctorID), nil
+	}
+	localNow, err := s.localNow(ctx, zone)
+	if err != nil {
+		return nil, err
+	}
+	booked, err := s.bookedSlots(ctx, userID, zone, localNow, availabilityWindowDays, sched.slotMins)
+	if err != nil {
+		return nil, err
+	}
+	return expandSlots(doctorID, sched.hours, sched.breaks,
+		sched.slotMins, sched.bufferMins, localNow, availabilityWindowDays, booked), nil
 }
 
 // synthSlots builds a deterministic 5-day x 7-slot calendar (mirrors the mobile

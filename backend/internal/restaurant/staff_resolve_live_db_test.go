@@ -78,7 +78,7 @@ func newStaffFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) staf
 		t.Fatalf("seed manager: %v", err)
 	}
 	t.Cleanup(func() {
-		bg := t.Context()
+		bg := context.WithoutCancel(t.Context())
 		_, _ = pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id IN ($1,$2)`, f.lekki, f.ikeja)
 		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id IN ($1,$2)`, f.lekki, f.ikeja)
 	})

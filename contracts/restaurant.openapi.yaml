@@ -582,18 +582,18 @@ components:
         DR the merchant wallet → CR the failed-transfer suspense account, and the row
         is written `processing`. Nothing has left the platform until an operator
         settles it (DR suspense → CR provider clearing, row `paid`); a reversal runs
-        the reserve back and marks the row `failed`.
+        the reserve back and marks the row `reversed`.
       properties:
         id: { type: string, format: uuid }
         user_id: { type: string, format: uuid, description: Merchant owner whose wallet was debited. }
-        bank_account_id: { type: string, format: uuid, description: The payout account paid — one the owner had saved, or one captured from an ad-hoc destination on this request. }
+        bank_account_id: { type: string, format: uuid, description: 'The payout account paid — one the owner had saved, or one captured from an ad-hoc destination on this request.' }
         amount_kobo: { $ref: '#/components/schemas/Money' }
         currency: { type: string, example: NGN }
         status: { type: string, enum: [pending, processing, paid, failed, reversed] }
         ledger_ref: { type: string, nullable: true }
         provider_reference: { type: string, nullable: true, description: Set by the operator when settling. }
         failure_reason: { type: string, nullable: true, description: Set by the operator when reversing. }
-        idempotency_key: { type: string, description: The Idempotency-Key this request was reserved under — also the ledger leg key, so a replay cannot post twice. }
+        idempotency_key: { type: string, description: 'The Idempotency-Key this request was reserved under — also the ledger leg key, so a replay cannot post twice.' }
         already_processed: { type: boolean, description: 'Present and true only when this row came back from replaying the same Idempotency-Key (HTTP 200 rather than a fresh 201).' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -1155,6 +1155,14 @@ paths:
         no settlement and no order row.
 
 
+        A second, independent gate prices the SELLER (ADR-062): an outlet may not receive
+        an order above its own owner's tier ceiling, since settlement credits the owner's
+        wallet and the customer-side gate looks at the wrong party. It runs inside the
+        same pricing step, so the amount judged is exactly the amount that would settle,
+        and it is per order rather than per day. An owner reads their ceiling from
+        GET /api/v1/me/tier (merchantOrderLimitKobo) instead of re-deriving it.
+
+
         Idempotency: a repeat of an Idempotency-Key this caller already used returns that
         original order and moves no money — the request body is NOT re-read, so replaying
         a key with a different body returns the original order rather than placing the new
@@ -1241,7 +1249,7 @@ paths:
         '400': { description: "Malformed cart — missing item_id/quantity, or an invalid modifier selection" }
         '401': { description: Not authenticated }
         '402': { description: Insufficient wallet balance }
-        '403': { description: KYC tier forbids this debit — wallet disabled (Tier 0) or daily debit limit exceeded }
+        '403': { description: "KYC tier forbids the order. Two independent gates answer with this code: the CALLER's debit (wallet disabled at Tier 0, or today's wallet-debit cap exceeded) and the SELLER's receipt ceiling (ADR-062) — an outlet may not receive an order worth more than its owner's own tier permits. When it is the ceiling, the message names the seller, because completing KYC is their action and not the payer's. Either way the refusal happens before any money moves." }
         '422': { description: Item unavailable (86'd) / promo code cannot be applied / validation error }
         '503': { description: Tier gate not wired on this deployment — ordering is disabled fail-closed }
   /orders/{orderId}:
@@ -1655,7 +1663,7 @@ paths:
         '200':
           description: 'Replay of the same Idempotency-Key: the first result, already_processed=true. No second move.'
           content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } }
-        '400': { description: 'No Idempotency-Key / amount not a positive whole number / destination neither one form nor the other / PIN absent / destination bank account not verified' }
+        '400': { description: 'No Idempotency-Key / amount not a positive whole number / destination neither one form nor the other / ad-hoc `account_number` not the 10 digits a bank can resolve / PIN absent / destination bank account not verified' }
         '401': { description: Not authenticated }
         '402': { description: Wallet balance is below the requested amount }
         '403': { description: 'Withdrawals disabled by feature flag / KYB not approved / wallet disabled for this tier / daily or tier limit exceeded / wrong transaction PIN' }
@@ -1687,8 +1695,7 @@ paths:
           description: The withdrawal
           content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } }
         '401': { description: Not authenticated }
-        '403': { description: Not this owner's withdrawal }
-        '404': { description: No such withdrawal }
+        '404': { description: 'No such withdrawal — the read is scoped to the caller, so another owner''s id simply is not found (never 403).' }
 
   /admin/withdrawals:
     servers:
@@ -1758,7 +1765,7 @@ paths:
       summary: 'x-admin: reverse a withdrawal — return the funds to the wallet'
       description: >
         Posts the balanced reversal of the reservation (suspense drained, merchant
-        wallet credited back) and marks the row `failed` with `reason`. The merchant
+        wallet credited back) and marks the row `reversed` with `reason`. The merchant
         is made whole exactly once: the reversal is keyed on the withdrawal, and a
         row already settled answers 409 rather than double-moving.
       parameters:

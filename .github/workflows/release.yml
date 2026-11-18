@@ -1,0 +1,550 @@
+name: Release (main → development, staging, production)
+
+# One push to main releases itself: development, staging and production, with no
+# dispatch, no typed DEPLOY, no promotion branch and no human approval. That is the
+# whole point of this file — see
+# docs/superpowers/specs/2026-11-15-auto-deploy-release-pipeline-design.md.
+#
+# Removing the approval also removes the human who used to catch a mistake, so
+# three things replace them:
+#   1. `gates` will not deploy anything until this commit's CI is provably green
+#      (scripts/ci/release-gates.py), and A TIMEOUT IS A FAILURE, not a pass.
+#   2. Nothing reaches production until staging has been probed and is serving this
+#      commit.
+#   3. Every stage reads back what the environment is ACTUALLY serving — a green job
+#      is not evidence on its own.
+# One emergency brake: vars.RAILWAY_DEPLOY_ENABLED. One rollback: dispatch with
+# ref=<prior SHA> (plus skip_gates if its check-runs are past retention). A rollback
+# deliberately does NOT apply migrations — see the migrate jobs below.
+#
+# THE DEVELOPMENT LEG DOES NOT GATE PRODUCTION (Decision F). Development's
+# frontend-web deployment FAILED on 2026-11-13 and its backend /readyz answers 503
+# because its DB pool is unreachable. Both are pre-existing and neither is caused by
+# any given commit, so requiring green development would halt every release on them.
+# Development failures are reported loudly and DO fail this workflow's overall
+# conclusion — but the staging→production leg runs concurrently and completes on its
+# own merits. READ THE RUN PAGE, NOT JUST ITS COLOUR.
+#
+# notification-worker appears in no matrix below, on purpose (Decision H).
+# Production's asynq consumer is Render's spotlight-notification-worker
+# (render.yaml:76-84) and this chain does not deploy to Render. Adding a Railway
+# production worker would put TWO consumers on one queue with the same REDIS_URL and
+# double-deliver every push, email and SMS. The production Railway backend does not
+# set RUN_WORKERS_INPROCESS and backend/internal/config/config.go:1234 defaults it to
+# false, so the web service does not drain the queue in-process either.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Commit SHA or branch to release (rollback to a prior main commit)'
+        required: false
+        default: 'main'
+        type: string
+      skip_gates:
+        description: 'Rollback only — assert CI was green when this SHA was main'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: read
+
+# NOT cancel-in-progress. ci.yml's group is `ci-<workflow>-<ref>` with
+# cancel-in-progress: true, which can kill a deploy mid-upload; a release that the
+# next push can cancel leaves a service half-updated. Runs queue instead.
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+env:
+  RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+  # The CLI's default HTTP timeout is 90s. The git-tracked frontend-web payload is
+  # 110.0 MB across 2064 files (backend 25.6 MB / 2594, frontend-admin 7.7 MB /
+  # 989), which does not upload in 90s.
+  RAILWAY_HTTP_TIMEOUT: '600'
+
+jobs:
+  gates:
+    name: release gate (CI green for this commit)
+    if: vars.RAILWAY_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+      actions: read
+    outputs:
+      verdict: ${{ steps.gate.outputs.verdict }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      at_main_tip: ${{ steps.resolve.outputs.at_main_tip }}
+      fp_development_frontend_web: ${{ steps.fingerprint.outputs.development_frontend_web }}
+      fp_development_frontend_admin: ${{ steps.fingerprint.outputs.development_frontend_admin }}
+      fp_staging_frontend_web: ${{ steps.fingerprint.outputs.staging_frontend_web }}
+      fp_staging_frontend_admin: ${{ steps.fingerprint.outputs.staging_frontend_admin }}
+      fp_production_frontend_web: ${{ steps.fingerprint.outputs.production_frontend_web }}
+      fp_production_frontend_admin: ${{ steps.fingerprint.outputs.production_frontend_admin }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the commit being released
+        id: resolve
+        run: |
+          set -euo pipefail
+          REQUESTED="${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}"
+          case "$REQUESTED" in
+            ''|main) SHA=$(git ls-remote origin refs/heads/main | cut -f1) ;;
+            *)
+              if printf '%s' "$REQUESTED" | grep -Eq '^[0-9a-f]{40}$'; then
+                SHA="$REQUESTED"
+              else
+                SHA=$(git ls-remote origin "refs/heads/$REQUESTED" | cut -f1)
+              fi
+              ;;
+          esac
+          if [ -z "$SHA" ]; then
+            echo "::error::could not resolve '$REQUESTED' to a commit on origin"
+            exit 1
+          fi
+          TIP=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$SHA" = "$TIP" ]; then AT_TIP=true; else AT_TIP=false; fi
+          echo "releasing $SHA (main tip: $TIP; at tip: $AT_TIP)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "at_main_tip=$AT_TIP" >> "$GITHUB_OUTPUT"
+
+      # The budget is 75, not the 40 this plan first specified. The gate waits on the
+      # integration-verify RUN for this SHA, so the budget has to exceed how long a GREEN
+      # run of that workflow takes. Measured over the 309 integration-verify runs with
+      # event=push, branch=main and conclusion=success: p50 24.1 min, p90 40.6, worst
+      # 46.1 — and 31 of them, 1 in 10, ran past 40 min. A timeout is a FAILURE that
+      # deploys nothing, so 40 would have halted about one main push in ten and made it
+      # look like CI's own fault. The measurement trap: over ALL completed push runs
+      # (901, so failures and cancels included, and those settle fast) the median is only
+      # 8.7 min, which would have justified 40. Size it on the green runs, not the mix.
+      # 75 is 1.6x the worst green run ever observed here. On wall clock, queue included,
+      # 1 of those 309 waited past 75; the fail-closed timeout is the right answer for
+      # that tail — nothing ships, and the operator re-dispatches.
+      - name: Wait for CI
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/ci/release-gates.py \
+            --sha "${{ steps.resolve.outputs.sha }}" \
+            --event "${{ github.event_name }}" \
+            ${{ github.event_name == 'workflow_dispatch' && inputs.skip_gates == true && '--skip-gates' || '' }} \
+            --repo "${{ github.repository }}" \
+            --budget-minutes 75
+
+      # Captured HERE, before any deploy job runs, for two reasons:
+      #   - a matrix job's outputs are unreliable (they come from whichever leg
+      #     finished last), and the smoke jobs run after the bytes are replaced;
+      #   - the comparison is only meaningful against the PRE-deploy state.
+      - name: Fingerprint the served frontends (pre-deploy)
+        id: fingerprint
+        if: steps.gate.outputs.verdict == 'proceed'
+        run: |
+          set -uo pipefail
+          . scripts/ci/railway-urls.sh
+          fp() { bash scripts/ci/frontend-fingerprint.sh "$1"; }
+          {
+            echo "development_frontend_web=$(fp "$(railway_url development frontend-web)/")"
+            echo "development_frontend_admin=$(fp "$(railway_url development frontend-admin)/admin/login")"
+            echo "staging_frontend_web=$(fp "$(railway_url staging frontend-web)/")"
+            echo "staging_frontend_admin=$(fp "$(railway_url staging frontend-admin)/admin/login")"
+            echo "production_frontend_web=$(fp "$(railway_url production frontend-web)/")"
+            echo "production_frontend_admin=$(fp "$(railway_url production frontend-admin)/admin/login")"
+          } >> "$GITHUB_OUTPUT"
+
+  deploy-development:
+    name: deploy Development (${{ matrix.service }})
+    needs: gates
+    if: needs.gates.outputs.verdict == 'proceed'
+    runs-on: ubuntu-latest
+    environment: development
+    strategy:
+      # One service being red must not stop the other two being deployed — and
+      # development/frontend-web IS red today.
+      fail-fast: false
+      matrix:
+        include:
+          # backend uploads its own directory as the root so Railway builds
+          # backend/Dockerfile, and BUILD_DIR makes the SHA reachable by that
+          # Dockerfile (it bakes BUILD_COMMIT via -ldflags).
+          - service: backend
+            upload_path: backend
+            root_flag: --path-as-root
+            build_dir: backend
+          # The upload shape follows the service's Railway `rootDirectory`, which
+          # is NOT the same in every environment — measured 2026-11-16 with
+          # `railway api` `serviceInstance(serviceId, environmentId){rootDirectory}`:
+          #   staging    frontend-web/frontend-admin -> 'frontend-web'/'frontend-admin'
+          #   development+production                 -> None for both frontends
+          # Only staging strips the folder out of the archive, so only staging
+          # uploads from the repo root. Here the archive root must BE the app
+          # folder, exactly as for backend. The proof: this leg's first run
+          # uploaded the repo root to development, the deploy reported SUCCESS,
+          # and smoke Development then failed with "/admin/login answered 404" —
+          # a monorepo-root build that serves neither frontend. Re-uploading the
+          # same commit with --path-as-root returned HTTP 200 on the same host.
+          - service: frontend-web
+            upload_path: frontend-web
+            root_flag: --path-as-root
+            build_dir: ''
+          - service: frontend-admin
+            upload_path: frontend-admin
+            root_flag: --path-as-root
+            build_dir: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gates.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+      - name: Deploy ${{ matrix.service }}
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+          SERVICE: ${{ matrix.service }}
+          RAILWAY_ENV: development
+          SHA: ${{ needs.gates.outputs.sha }}
+          UPLOAD_PATH: ${{ matrix.upload_path }}
+          ROOT_FLAG: ${{ matrix.root_flag }}
+          BUILD_DIR: ${{ matrix.build_dir }}
+        run: bash scripts/ci/railway-deploy.sh
+
+  smoke-development:
+    name: smoke Development
+    needs: [gates, deploy-development]
+    # !cancelled() deliberately opts out of skip-propagation: with a plain `needs:`,
+    # a failed matrix leg would skip this job entirely and the services that DID
+    # deploy would go unprobed. The verdict test then re-imposes the part we want.
+    if: ${{ !cancelled() && needs.gates.outputs.verdict == 'proceed' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            require_readyz: 'false'   # 503 today: its DB pool is unreachable
+            fingerprint: ''           # unused — the backend branch reads /api/v1/public/build
+          - service: frontend-web
+            require_readyz: 'true'
+            fingerprint: ${{ needs.gates.outputs.fp_development_frontend_web }}
+          - service: frontend-admin
+            require_readyz: 'true'
+            fingerprint: ${{ needs.gates.outputs.fp_development_frontend_admin }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gates.outputs.sha }}
+      - name: Did this commit touch ${{ matrix.service }}?
+        id: touched
+        run: |
+          set -euo pipefail
+          case "${{ matrix.service }}" in
+            backend) dir=backend ;;
+            frontend-web) dir=frontend-web ;;
+            frontend-admin) dir=frontend-admin ;;
+          esac
+          # A fingerprint is only EXPECTED to change when the service's own files
+          # changed. Otherwise every unrelated commit warns spuriously and the
+          # warning stops meaning anything.
+          #
+          # `rev-parse --verify <sha>~1` first: on a root commit the `~1` revision
+          # does not exist and `git diff` would abort under set -e. An unresolvable
+          # parent reads as touched, which is the safe direction — it only decides
+          # whether to warn.
+          if git rev-parse -q --verify "${{ needs.gates.outputs.sha }}~1" >/dev/null \
+             && git diff --quiet "${{ needs.gates.outputs.sha }}~1" "${{ needs.gates.outputs.sha }}" -- "$dir"; then
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Probe ${{ matrix.service }}
+        env:
+          SERVICE: ${{ matrix.service }}
+          RAILWAY_ENV: development
+          SHA: ${{ needs.gates.outputs.sha }}
+          REQUIRE_READYZ: ${{ matrix.require_readyz }}
+          EXPECT_FINGERPRINT: ${{ matrix.fingerprint }}
+          TOUCHED: ${{ steps.touched.outputs.touched }}
+        run: bash scripts/ci/railway-smoke.sh
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # THE STAGING → PRODUCTION LEG. The ordering is the contract: migrations before
+  # traffic in each environment, and NOTHING reaches production until staging has
+  # been probed and is serving this commit. `migrate-production` needs
+  # `smoke-staging`, not `deploy-staging` — a successful upload is not evidence the
+  # new bytes are being served.
+  #
+  # Every job here uses a plain `needs:` (no `!cancelled()`), so a red staging probe
+  # cascade-skips the entire production half. That skip-propagation is the mechanism
+  # that replaces the human who used to read the staging URL before typing DEPLOY.
+  # The development leg opts OUT of it above, because its two pre-existing failures
+  # must not halt every release.
+  #
+  # WHY `gates` IS IN EVERY `needs:` LIST BELOW. GitHub's `needs` context only
+  # exposes jobs named in the list, and these jobs read needs.gates.outputs.{verdict,
+  # sha,at_main_tip,fp_*} in their `if:` and their checkout ref. Declaring only the
+  # ordering job makes every one of those expressions resolve empty — actionlint
+  # v1.7.12 rejects it outright, and GitHub would skip the whole leg even on an all
+  # green run. The extra edge adds no ordering power (gates is already a transitive
+  # ancestor); it only makes the outputs readable.
+  # ─────────────────────────────────────────────────────────────────────────────
+  migrate-staging:
+    name: migrate staging database
+    needs: gates
+    if: needs.gates.outputs.verdict == 'proceed'
+    uses: ./.github/workflows/_reusable-db-apply.yml
+    permissions:
+      contents: read
+    # REQUIRED — a reusable workflow receives no caller secrets without it.
+    secrets: inherit
+    with:
+      target: staging
+      dry_run: false
+      include_all: false
+      # A ROLLBACK DOES NOT MIGRATE. `supabase db push --linked` against a remote
+      # that already holds newer versions aborts with "remote migration versions
+      # not found in local migrations directory" — the exact failure db-migrate.yml's
+      # stale-ref guard exists to prevent. So the apply no-ops when the target SHA
+      # is not main's tip, and the code is still rolled back.
+      #
+      # The no-op is an INPUT to a step inside a job that always runs, never a
+      # job-level `if:`. A skipped `needs:` dependency makes GitHub skip every job
+      # downstream of it — an if-skipped migrate would cancel the deploy after it,
+      # and a rollback would deploy nothing at all.
+      skip_apply: ${{ needs.gates.outputs.at_main_tip != 'true' }}
+      skip_reason: 'not main tip — an older supabase/migrations tree makes db push abort with remote-versions-not-found'
+
+  deploy-staging:
+    name: deploy Staging (${{ matrix.service }})
+    needs: [gates, migrate-staging]
+    if: needs.gates.outputs.verdict == 'proceed'
+    runs-on: ubuntu-latest
+    environment: staging
+    strategy:
+      # Unlike development, fail-fast is acceptable here — but it is still set false
+      # so one red service produces a complete picture instead of two cancelled
+      # legs and a guess about which one actually broke.
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            upload_path: backend
+            root_flag: --path-as-root
+            build_dir: backend
+          # Frontends: NO positional path, NO --path-as-root — the only
+          # environment where that is correct. staging's two frontend instances
+          # carry `rootDirectory: frontend-web` / `frontend-admin` (measured
+          # 2026-11-16), which the services' own git-source builds need, so Railway
+          # strips that prefix and the archive must be the whole repo. Uploading an
+          # app folder here would make it look for `frontend-*/` inside an archive
+          # that already IS that folder. development and production have
+          # `rootDirectory: None` and take the opposite shape.
+          - service: frontend-web
+            upload_path: ''
+            root_flag: ''
+            build_dir: ''
+          - service: frontend-admin
+            upload_path: ''
+            root_flag: ''
+            build_dir: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gates.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+      - name: Deploy ${{ matrix.service }}
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          SERVICE: ${{ matrix.service }}
+          RAILWAY_ENV: staging
+          SHA: ${{ needs.gates.outputs.sha }}
+          UPLOAD_PATH: ${{ matrix.upload_path }}
+          ROOT_FLAG: ${{ matrix.root_flag }}
+          BUILD_DIR: ${{ matrix.build_dir }}
+        run: bash scripts/ci/railway-deploy.sh
+
+  smoke-staging:
+    name: smoke Staging
+    needs: [gates, deploy-staging]
+    if: needs.gates.outputs.verdict == 'proceed'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            require_readyz: 'true'
+            fingerprint: ''
+          - service: frontend-web
+            require_readyz: 'true'
+            fingerprint: ${{ needs.gates.outputs.fp_staging_frontend_web }}
+          - service: frontend-admin
+            require_readyz: 'true'
+            fingerprint: ${{ needs.gates.outputs.fp_staging_frontend_admin }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gates.outputs.sha }}
+      - name: Did this commit touch ${{ matrix.service }}?
+        id: touched
+        run: |
+          set -euo pipefail
+          case "${{ matrix.service }}" in
+            backend) dir=backend ;;
+            frontend-web) dir=frontend-web ;;
+            frontend-admin) dir=frontend-admin ;;
+          esac
+          if git rev-parse -q --verify "${{ needs.gates.outputs.sha }}~1" >/dev/null \
+             && git diff --quiet "${{ needs.gates.outputs.sha }}~1" "${{ needs.gates.outputs.sha }}" -- "$dir"; then
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          fi
+      # THIS JOB IS THE GATE ON PRODUCTION. `smoke-production`'s ancestors include
+      # it, so a staging probe that fails — wrong commit served, /readyz red, or a
+      # frontend that answers anything but 200 — cascade-skips the entire production
+      # leg. Do not weaken it to a warning.
+      - name: Probe ${{ matrix.service }}
+        env:
+          SERVICE: ${{ matrix.service }}
+          RAILWAY_ENV: staging
+          SHA: ${{ needs.gates.outputs.sha }}
+          REQUIRE_READYZ: ${{ matrix.require_readyz }}
+          EXPECT_FINGERPRINT: ${{ matrix.fingerprint }}
+          TOUCHED: ${{ steps.touched.outputs.touched }}
+        run: bash scripts/ci/railway-smoke.sh
+
+  migrate-production:
+    name: migrate production database
+    # `smoke-staging`, not `deploy-staging`: the probe is what proves staging is
+    # serving this commit, and that proof is the precondition for touching
+    # production. A plain `needs:` means a red staging probe cascade-skips this job
+    # and everything after it.
+    needs: [gates, smoke-staging]
+    if: needs.gates.outputs.verdict == 'proceed'
+    uses: ./.github/workflows/_reusable-db-apply.yml
+    permissions:
+      contents: read
+    secrets: inherit
+    with:
+      target: production
+      dry_run: false
+      # NEVER true for production. An unattended --include-all is how an old,
+      # superseded migration gets applied out of order. db-migrate.yml keeps the
+      # input for an operator who has decided to use it deliberately.
+      include_all: false
+      skip_apply: ${{ needs.gates.outputs.at_main_tip != 'true' }}
+      skip_reason: 'not main tip — an older supabase/migrations tree makes db push abort with remote-versions-not-found'
+
+  deploy-production:
+    name: deploy Production (${{ matrix.service }})
+    needs: [gates, migrate-production]
+    if: needs.gates.outputs.verdict == 'proceed'
+    runs-on: ubuntu-latest
+    environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            upload_path: backend
+            root_flag: --path-as-root
+            build_dir: backend
+          # production/frontend-web on Railway is NOT an orphan and NOT the same
+          # thing as www.spotlightng.com. The cPanel lane (sync-frontend-web.yml →
+          # paymax2022/spotlight-latest) serves the customer domain; this service is
+          # the BFF that mobile-app/reactnative/eas.json:65 bakes into the shipped
+          # build's EXPO_PUBLIC_API_BASE_URL (and production-apk inherits it at :72),
+          # and that frontend-admin's production WEB_API_BASE_URL also points at.
+          # Nothing in the release chain updated it before this file.
+          #
+          # Upload shape: production's frontend instances report
+          # `rootDirectory: None` (measured 2026-11-16), unlike staging's, so the
+          # archive root must BE the app folder — the same rule as backend, and the
+          # same correction made to deploy-development above. A repo-root upload
+          # here builds the monorepo and serves neither app.
+          - service: frontend-web
+            upload_path: frontend-web
+            root_flag: --path-as-root
+            build_dir: ''
+          - service: frontend-admin
+            upload_path: frontend-admin
+            root_flag: --path-as-root
+            build_dir: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gates.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+      - name: Deploy ${{ matrix.service }}
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          SERVICE: ${{ matrix.service }}
+          RAILWAY_ENV: production
+          SHA: ${{ needs.gates.outputs.sha }}
+          UPLOAD_PATH: ${{ matrix.upload_path }}
+          ROOT_FLAG: ${{ matrix.root_flag }}
+          BUILD_DIR: ${{ matrix.build_dir }}
+        run: bash scripts/ci/railway-deploy.sh
+
+  smoke-production:
+    name: smoke Production
+    needs: [gates, deploy-production]
+    if: needs.gates.outputs.verdict == 'proceed'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            require_readyz: 'true'
+            fingerprint: ''
+          - service: frontend-web
+            require_readyz: 'true'
+            fingerprint: ${{ needs.gates.outputs.fp_production_frontend_web }}
+          - service: frontend-admin
+            require_readyz: 'true'
+            fingerprint: ${{ needs.gates.outputs.fp_production_frontend_admin }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gates.outputs.sha }}
+      - name: Did this commit touch ${{ matrix.service }}?
+        id: touched
+        run: |
+          set -euo pipefail
+          case "${{ matrix.service }}" in
+            backend) dir=backend ;;
+            frontend-web) dir=frontend-web ;;
+            frontend-admin) dir=frontend-admin ;;
+          esac
+          if git rev-parse -q --verify "${{ needs.gates.outputs.sha }}~1" >/dev/null \
+             && git diff --quiet "${{ needs.gates.outputs.sha }}~1" "${{ needs.gates.outputs.sha }}" -- "$dir"; then
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Probe ${{ matrix.service }}
+        env:
+          SERVICE: ${{ matrix.service }}
+          RAILWAY_ENV: production
+          SHA: ${{ needs.gates.outputs.sha }}
+          REQUIRE_READYZ: ${{ matrix.require_readyz }}
+          EXPECT_FINGERPRINT: ${{ matrix.fingerprint }}
+          TOUCHED: ${{ steps.touched.outputs.touched }}
+        run: bash scripts/ci/railway-smoke.sh

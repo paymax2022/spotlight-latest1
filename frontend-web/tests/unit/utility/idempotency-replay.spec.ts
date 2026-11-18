@@ -20,6 +20,7 @@ vi.mock('@/src/server/wallet/service', () => ({
   debitWallet: vi.fn(),
   reverseWalletDebit: vi.fn(),
   creditWallet: vi.fn(),
+  resolveBillingEmail: vi.fn(async () => 'member@test.local'),
 }));
 
 vi.mock('@/src/server/utility/adapters/registry', () => ({

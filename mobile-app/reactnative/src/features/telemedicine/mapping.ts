@@ -110,7 +110,7 @@ function availabilityLabel(online: boolean, available: boolean): string {
 }
 
 /** Server `booked` is the UI's `upcoming`; the other lifecycle names match. */
-function mapStatus(raw: unknown): ConsultStatus {
+export function mapStatus(raw: unknown): ConsultStatus {
   switch (str(raw)) {
     case 'booked':        return 'upcoming';
     case 'confirmed':     return 'confirmed';
@@ -121,7 +121,7 @@ function mapStatus(raw: unknown): ConsultStatus {
   }
 }
 
-function mapConsultType(raw: unknown): ConsultType {
+export function mapConsultType(raw: unknown): ConsultType {
   const t = str(raw);
   if (t === 'audio' || t === 'chat') return t;
   return 'video';
@@ -167,6 +167,17 @@ export function mapLiveSpecialty(raw: unknown): Specialty {
   };
 }
 
+/**
+ * doctors.avatar_url is an R2 OBJECT KEY unless the server has signed it, and a
+ * key is not a picture — feeding one to <Image source={{uri}}> renders a broken
+ * image. Only an absolute URL becomes a photo; anything else leaves the avatar
+ * on its initials fallback. Same rule as mapAvatarUri in features/doctor.
+ */
+function photoUriFrom(raw: unknown): string | undefined {
+  const v = str(raw);
+  return v.includes('://') ? v : undefined;
+}
+
 export function mapLiveDoctor(raw: unknown): Doctor {
   const r = (raw ?? {}) as Record<string, unknown>;
   const slug = str(r.specialty);
@@ -185,6 +196,7 @@ export function mapLiveDoctor(raw: unknown): Doctor {
     bio:             str(r.bio) || str(r.about),
     initials:        initialsFromName(name),
     avatarColor:     avatarColorFor(str(r.id)),
+    photoUri:        photoUriFrom(r.avatar_url),
     rating:          num(r.rating),
     reviewCount:     num(r.review_count),
     yearsExperience: num(r.experience_years),

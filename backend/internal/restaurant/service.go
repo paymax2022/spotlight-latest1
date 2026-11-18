@@ -82,6 +82,14 @@ type TierLimiter interface {
 	// Satisfies ledger.DebitGuard for EscrowWithGuard / in-tx calls.
 	EnforceWalletDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
 	EnforceCheckoutDebitLimitTx(ctx context.Context, tx pgx.Tx, userID string, amountKobo int64) error
+	// EnforceMerchantReceiptLimit is the MERCHANT-side ceiling: the largest order an
+	// outlet may take in, judged on the KYC tier of the account that RECEIVES the
+	// money (restaurants.owner_id — settlement's sole payee leg). The two gates above
+	// price the PAYER, so a card-funded order — which debits no wallet — reached an
+	// unverified merchant completely ungated.
+	// It has no Tx counterpart: it compares the amount to a per-tier constant and
+	// reads one row, so there is no concurrent posting to serialise against.
+	EnforceMerchantReceiptLimit(ctx context.Context, userID string, amountKobo int64) error
 }
 
 // ErrTierGateUnwired is returned by every restaurant money path when the Service was
@@ -752,6 +760,24 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 	// gross = base + discount).
 	total := grossKobo - discountKobo + serviceFeeKobo + tipKobo + packagingKobo
 
+	// Merchant receipt ceiling (KYC-consistency): the outlet may not TAKE an order
+	// worth more than its OWNER's verification level admits.
+	// It lives here, at the end of pricing, because `total` is the first moment the
+	// gated number exists, and because pricing is the ONE step every rail shares:
+	// QuoteOrder (the card rail's pre-charge amount), the wallet escrow, and
+	// PlaceOrderPaystackFunded's post-charge re-price all come through this function,
+	// so refusing here refuses before money moves — the customer is never prompted to
+	// pay for an order the seller cannot legally take. A `total` including tip,
+	// delivery, packaging and the service fee is what will settle to the owner, so
+	// that is the number gated; gating the food subtotal would leave the tip as a
+	// lever around the ceiling.
+	// On a multi-restaurant cart this gates the PRIMARY owner against the WHOLE cart,
+	// which is the same single-payee simplification the promo scoping above already
+	// documents — the money really does go to that one owner.
+	if err := s.enforceMerchantReceiptLimit(ctx, ownerID, total); err != nil {
+		return nil, err
+	}
+
 	return &orderPricing{
 		primaryRestaurantID: primaryRestaurantID,
 		ownerID:             ownerID,
@@ -774,6 +800,21 @@ func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID strin
 		packagingKobo:       packagingKobo,
 		total:               total,
 	}, nil
+}
+
+// enforceMerchantReceiptLimit is the merchant-side half of the tier gate, with the
+// same fail-closed contract as the customer-side one (ADR-033): no TierLimiter wired
+// means no order is priced at all, not that every ceiling is unlimited.
+// The tiers error is WRAPPED, not replaced, so escrowErrStatus can still match
+// tiers.ErrMerchantOrderLimitExceeded with errors.Is to pick the HTTP status.
+func (s *Service) enforceMerchantReceiptLimit(ctx context.Context, ownerID string, totalKobo int64) error {
+	if s.tiers == nil {
+		return ErrTierGateUnwired
+	}
+	if err := s.tiers.EnforceMerchantReceiptLimit(ctx, ownerID, totalKobo); err != nil {
+		return fmt.Errorf("restaurant: merchant receipt gate: %w", err)
+	}
+	return nil
 }
 
 // QuoteOrder computes the exact price of a cart from CURRENT menu/promo/

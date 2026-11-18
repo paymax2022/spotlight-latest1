@@ -14,10 +14,10 @@ export default function Menu() {
       <li><Link href="/about">About</Link></li>
       <li><Link href="/season-2">Season 2</Link></li>
       <li className="has-dropdown">
-        <Link href="/service">
+        <span className="menu-group">
           Programes
           <i className="fas fa-angle-down" />
-        </Link>
+        </span>
         <ul className="submenu">
           {serviceMenuItems.map((item) => (
             <li key={item.href}><Link href={item.href}>{item.label}</Link></li>

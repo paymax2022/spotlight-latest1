@@ -36,7 +36,6 @@ export const RECORD_CATEGORY_LABELS: Record<RecordCategory, string> = {
   referrals:     'Referrals',
   hmo:           'HMO records',
   dependents:    'Dependents',
-  pets:          'Pet records',
 };
 
 // Icon hints (Ionicons-style names) for the dashboard quick-category tiles.
@@ -53,7 +52,6 @@ export const RECORD_CATEGORY_ICONS: Record<RecordCategory, string> = {
   referrals:     'share-social-outline',
   hmo:           'shield-checkmark-outline',
   dependents:    'people-outline',
-  pets:          'paw-outline',
 };
 
 export const RECORD_RESTRICTION_LEVEL_LABELS: Record<RecordRestrictionLevel, string> = {

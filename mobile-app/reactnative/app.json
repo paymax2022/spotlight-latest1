@@ -79,7 +79,7 @@
     },
     "android": {
       "package": "com.spotlight.paymax",
-      "versionCode": 20,
+      "versionCode": 21,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",

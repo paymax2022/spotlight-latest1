@@ -36,6 +36,33 @@ export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
   ride: 'transport',
   creators: 'creators',
   events: 'events',
+  marketplace: 'marketplace',
+
+  // Registered in 20271410000000. These seven had no registry key at all, so they
+  // were the tiles the fail-closed rule could not reach — the admin portal's
+  // publish/hide changed nothing for them.
+  crypto: 'crypto',
+  learn: 'academy',
+  academy: 'academy',
+  'film-academy': 'filmAcademy',
+  contest: 'competitions',
+  'naija-driver': 'arena',
+  connect: 'connect',
+
+  // SPIKE variant D: the tiles #996 left ungated that have a real engine behind
+  // them. Keys seeded by migration 20271600000000 and mirrored into
+  // visibility.spec.ts REGISTRY_KEYS below. 'shopping' and 'parcel' are NOT here:
+  // they are comingSoon placeholders (constants/modules.ts) whose badge is not a
+  // registry state, and gating them would hide them outright.
+  investment: 'investment',
+  'invest-ai': 'investAi',
+  'spotlight-wealth': 'spotlightWealth',
+  fractionalre: 'fractionalRealEstate',
+  'ai-trading': 'aiTrading',
+  education: 'education',
+  dues: 'dues',
+  admin: 'admin',
+  property: 'realtor',
 
   // Community. NOTE: 'stays', 'estate' and 'rent' are NOT top-level tiles — they
   // are reached from the /property hub, so gating them means gating that hub's own
@@ -91,10 +118,14 @@ export function quickActionRegistryKeyFor(actionId: string): string | null {
 }
 
 // A fourth id-space. 'food-ride' is a featured card only (it has no tile in
-// are ungated and always render.
+// SERVICE_MODULES). 'invest' is a card for the stock-investment surface, which
+// since 20271600000000 does have a registry key ('investment'), so the card is
+// gated on the same module as the tile.
 export const FEATURED_REGISTRY_KEY: Record<string, string> = {
   bills: 'utilityPayments',
   'food-ride': 'restaurant',
+  'naija-driver': 'arena',
+  invest: 'investment',
 };
 
 export function featuredRegistryKeyFor(featuredId: string): string | null {

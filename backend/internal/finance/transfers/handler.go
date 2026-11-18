@@ -3,6 +3,7 @@ package transfers
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -56,8 +57,11 @@ func unavailable(c *gin.Context, feature string) {
 	})
 }
 
-// ResolvePaymax handles GET /finance/transfers/paymax/resolve?phone=...
+// ResolvePaymax handles GET /finance/transfers/paymax/resolve?identifier=...
 // Returns the recipient's masked phone + display name (never the full number).
+// `identifier` is the contract's parameter name; `phone` is accepted as the
+// legacy spelling of the same lookup. A value carrying a @/$ sigil is resolved
+// through the cashtag directory — see ParseCashtagRecipient.
 func (h *Handler) ResolvePaymax(c *gin.Context) {
 	if !h.walletEnabled {
 		unavailable(c, "wallet transfers")
@@ -68,8 +72,11 @@ func (h *Handler) ResolvePaymax(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{keyError: keyUnauthenticated})
 		return
 	}
-	phone := c.Query("phone")
-	resp, err := h.svc.ResolvePaymaxUser(c.Request.Context(), phone)
+	identifier := c.Query("identifier")
+	if strings.TrimSpace(identifier) == "" {
+		identifier = c.Query("phone")
+	}
+	resp, err := h.svc.ResolvePaymaxUser(c.Request.Context(), identifier)
 	if err != nil {
 		writeError(c, err)
 		return

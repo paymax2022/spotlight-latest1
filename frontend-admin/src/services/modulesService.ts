@@ -3,6 +3,7 @@ import type {
   ModuleAuditEntry,
   ModuleEnvironment,
   ModuleLifecycle,
+  ModuleReadiness,
   ModuleRegistry,
   ModuleStatus,
   PlatformModule,
@@ -90,6 +91,27 @@ export function setModuleLifecycle(
 
 export function getModuleHistory(key: string): Promise<ModuleAuditEntry[]> {
   return request<ModuleAuditEntry[]>(`/${encodeURIComponent(key)}/history`);
+}
+
+/**
+ * Record how finished a module is. Separate from setModuleVisibility because the
+ * two questions are different: this one is "is the product done?", that one is
+ * "should this tier serve it?".
+ *
+ * Server-side, setting anything below 'ready' withdraws the module from production
+ * even while its production toggle still reads visible — and the reverse restores
+ * it without a second click. So this control has real consequences in both
+ * directions and the UI must say so before it is used on a live module.
+ */
+export function setModuleReadiness(
+  key: string,
+  readiness: ModuleReadiness,
+  note?: string,
+): Promise<PlatformModule> {
+  return request<PlatformModule>(`/${encodeURIComponent(key)}/readiness`, {
+    method: 'PATCH',
+    body: JSON.stringify({ readiness, note }),
+  });
 }
 
 // A grant opens a RESTRICTED module for one user who has not completed KYC. It does

@@ -28,6 +28,7 @@ export function TelemedTabs({ active }: { active: string }) {
     { href: '/admin/telemedicine/finance', label: 'Finance', key: 'finance' },
     { href: '/admin/telemedicine/support', label: 'Support', key: 'support' },
     { href: '/admin/telemedicine/safety', label: 'Safety', key: 'safety' },
+    { href: '/admin/telemedicine/announcements', label: 'Announcements', key: 'announcements' },
   ];
   return (
     <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>

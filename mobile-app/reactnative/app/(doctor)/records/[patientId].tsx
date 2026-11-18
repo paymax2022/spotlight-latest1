@@ -43,7 +43,6 @@ const CATEGORY_ICON: Record<RecordCategory, LucideIcon> = {
   referrals:     Icons.Share2,
   hmo:           Icons.ShieldCheck,
   dependents:    Icons.Users,
-  pets:          Icons.PawPrint,
 };
 
 const EXPORT_LABELS = RECORD_EXPORT_FORMAT_OPTIONS.map((o) => o.label);
@@ -193,7 +192,6 @@ export default function PatientRecordIndexScreen() {
           <View style={styles.list}>
             <RecordCategoryRow icon={ScrollText} label="Access log" count={0} onPress={() => router.push(`/(doctor)/records/${pid}/access-log`)} />
             <RecordCategoryRow icon={Icons.Users} label="Dependent records" count={index.entries.find((e) => e.category === 'dependents')?.count ?? 0} onPress={() => router.push(`/(doctor)/records/${pid}/category/dependents`)} />
-            <RecordCategoryRow icon={Icons.PawPrint} label="Pet health records" count={0} onPress={() => router.push('/(doctor)/vet')} />
           </View>
         </ScrollView>
       )}

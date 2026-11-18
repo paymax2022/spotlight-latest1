@@ -1,5 +1,17 @@
 # GO-LIVE Checklist (tracker)
 
+> **HISTORICAL — do not use this as the go-live path.** It pre-dates the current
+> architecture. Rather than line numbers — which this very banner shifts, and which two
+> earlier drafts of this sentence got wrong for exactly that reason — the stale items are
+> cited by the text to search for: the `VIDEOSDK_*` row of the credentials table, and the
+> two instructions that say to fill `deploy.yml` TODOs ("Staging deploy of the SHA image…"
+> and "Fill `deploy.yml` TODOs for your cloud + add sandbox creds…").
+> `deploy.yml`'s jobs are all skipped while `vars.GCP_PROJECT_ID` is unset. For what is
+> actually authoritative, read
+> [`deployment-matrix.md`](deployment-matrix.md), and for what this plan measured
+> and left open, read [`production-migration-ledger.md`](production-migration-ledger.md) §16.
+> Kept as a record, not deleted.
+
 Status legend: ✅ done in repo · 🟡 scaffolded, needs in-container build/test · ⬜ ops/infra (env-dependent).
 
 ## Rails with no backing service (now scaffolded behind RAILS_MODE)

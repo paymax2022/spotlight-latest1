@@ -4,6 +4,7 @@ package restaurant
 // unless TEST_DATABASE_URL is set; needs migration 20271064000010.
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestLiveDB_CommissionConfig(t *testing.T) {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(t.Context(), `DELETE FROM restaurant_commission_config WHERE restaurant_id=$1`, restID)
+		_, _ = pool.Exec(context.WithoutCancel(t.Context()), `DELETE FROM restaurant_commission_config WHERE restaurant_id=$1`, restID)
 	})
 
 	// (a) no override -> the seeded global 80/10/10.

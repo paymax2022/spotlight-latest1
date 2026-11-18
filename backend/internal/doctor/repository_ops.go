@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // repository_ops.go — pgx data access for the Wave 4 (operational) endpoint groups:
@@ -417,6 +418,118 @@ func (r *Repository) SetTimezone(ctx context.Context, userID, tz string) (*Profi
 	return r.GetProfile(ctx, userID)
 }
 
+// GetTimezone answers the zone PUT /schedule/timezone writes. A doctor with no
+// profile row, or an empty column, has never picked one: answer the default the
+// rest of the module already assumes rather than an empty string the schedule
+// screen refuses to save.
+func (r *Repository) GetTimezone(ctx context.Context, userID string) (string, error) {
+	var tz *string
+	err := r.db.QueryRow(ctx, `SELECT timezone FROM doctor_profiles WHERE user_id = $1`, userID).Scan(&tz)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return "Africa/Lagos", nil
+	case err != nil:
+		return "", err
+	}
+	if tz == nil || *tz == "" {
+		return "Africa/Lagos", nil
+	}
+	return *tz, nil
+}
+
+// ZoneApplies evaluates the zone exactly as the date expressions that read this
+// column do (now() AT TIME ZONE $1) — including fixed offsets and abbreviations,
+// which are legal here but absent from pg_timezone_names. Postgres answers 22023
+// for a zone it cannot apply, which is the caller's mistake; any other failure is
+// ours and must not be reported to the doctor as a bad zone.
+func (r *Repository) ZoneApplies(ctx context.Context, zone string) (bool, error) {
+	var at time.Time
+	err := r.db.QueryRow(ctx, `SELECT now() AT TIME ZONE $1::text`, zone).Scan(&at)
+	if err == nil {
+		return true, nil
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "22023" {
+		return false, nil
+	}
+	return false, err
+}
+
+// EffectiveTimezone is the single zone every date expression in this module
+// evaluates: the column the schedule screen writes (doctor_profiles.timezone,
+// gated by SetTimezone), or the module default when the doctor never picked one.
+//
+// A value Postgres cannot apply — a row that predates that gate — degrades to the
+// default instead of propagating, because it is evaluated inside the doctor's own
+// appointment list and the dashboard: a 22023 there is an unreadable portal, not a
+// bad zone the caller can still fix. Any other failure is ours and does propagate.
+func (r *Repository) EffectiveTimezone(ctx context.Context, userID string) (string, error) {
+	tz, err := r.GetTimezone(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	applies, err := r.ZoneApplies(ctx, tz)
+	if err != nil {
+		return "", err
+	}
+	if !applies {
+		return "Africa/Lagos", nil
+	}
+	return tz, nil
+}
+
+// DashboardDays is the date half of the landing projection: how many consults fall
+// on the doctor's own today, how many are still ahead, and the local date the
+// first number was counted against (the screens filter "Today's queue" by it, so
+// the list and the tile cannot drift to different days).
+type DashboardDays struct {
+	Today    int64  `json:"today"`
+	Upcoming int64  `json:"upcoming"`
+	Date     string `json:"date"`
+}
+
+// DashboardDayCounts counts the doctor's live bookings by day. `now` is the
+// caller's clock, not the database's: "today" is a boundary that has to be testable
+// without racing midnight. Cancelled and completed bookings are not consults.
+func (r *Repository) DashboardDayCounts(ctx context.Context, userID, zone string, now time.Time) (DashboardDays, error) {
+	const q = `
+		SELECT
+			COUNT(*) FILTER (
+			    WHERE to_char(a.scheduled_at AT TIME ZONE $2, 'YYYY-MM-DD')
+			          = to_char($3::timestamptz AT TIME ZONE $2, 'YYYY-MM-DD'))::bigint,
+			COUNT(*) FILTER (WHERE a.scheduled_at >= $3)::bigint,
+			to_char($3::timestamptz AT TIME ZONE $2, 'YYYY-MM-DD')
+		FROM appointments a
+		JOIN doctors d ON d.id = a.doctor_id
+		WHERE d.user_id = $1
+		  AND a.status NOT IN ('cancelled','completed')`
+	var out DashboardDays
+	if err := r.db.QueryRow(ctx, q, userID, zone, now).Scan(&out.Today, &out.Upcoming, &out.Date); err != nil {
+		return DashboardDays{}, err
+	}
+	return out, nil
+}
+
+// AppointmentReminderSettings projects the one reminder row the reminders screen
+// edits (reminder_type = 'appointment'). No row means the doctor never saved any:
+// answer the screen's defaults, with a non-nil offsets list the screen can filter.
+func (r *Repository) AppointmentReminderSettings(ctx context.Context, userID string) (ReminderSettings, error) {
+	const q = `
+		SELECT settings, enabled FROM doctor_reminders
+		WHERE user_id = $1 AND reminder_type = 'appointment'
+		ORDER BY updated_at DESC LIMIT 1`
+	var settings []byte
+	var enabled bool
+	err := r.db.QueryRow(ctx, q, userID).Scan(&settings, &enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DefaultReminderSettings(), nil
+	}
+	if err != nil {
+		return ReminderSettings{}, err
+	}
+	return decodeReminderSettings(settings, enabled), nil
+}
+
 func (r *Repository) ListConsultQueue(ctx context.Context, userID string) ([]ConsultQueueEntry, error) {
 	const q = `
 		SELECT id, user_id, appointment_id, position, status, detail, created_at, updated_at
@@ -438,73 +551,113 @@ func (r *Repository) ListConsultQueue(ctx context.Context, userID string) ([]Con
 	return out, rows.Err()
 }
 
+// ListAppointmentRequests answers the doctor's decision queue from the booking
+// table itself.
+//
+// There is no request row to read: BookAppointment writes `appointments` and
+// nothing in this repository has ever inserted into
+// doctor_appointment_requests, so a booking waiting on this doctor was invisible
+// here while the patient's screen said "Awaiting doctor confirmation". The
+// booking's own status IS the request's state.
 func (r *Repository) ListAppointmentRequests(ctx context.Context, userID string) ([]AppointmentRequest, error) {
-	const q = `
-		SELECT id, user_id, appointment_id, patient, consult_type, status, requested_slot, detail, created_at, updated_at
-		FROM doctor_appointment_requests WHERE user_id = $1 ORDER BY created_at DESC`
-	rows, err := r.db.Query(ctx, q, userID)
+	appts, err := r.ListAppointments(ctx, userID, "")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []AppointmentRequest{}
-	for rows.Next() {
-		ar := AppointmentRequest{}
-		if err := rows.Scan(&ar.ID, &ar.UserID, &ar.AppointmentID, &ar.Patient, &ar.ConsultType,
-			&ar.Status, &ar.RequestedSlot, &ar.Detail, &ar.CreatedAt, &ar.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, ar)
+	out := make([]AppointmentRequest, 0, len(appts))
+	for i := range appts {
+		out = append(out, requestForAppointment(&appts[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *Repository) GetAppointmentRequest(ctx context.Context, userID, id string) (*AppointmentRequest, error) {
-	const q = `
-		SELECT id, user_id, appointment_id, patient, consult_type, status, requested_slot, detail, created_at, updated_at
-		FROM doctor_appointment_requests WHERE id = $1 AND user_id = $2`
-	ar := &AppointmentRequest{}
-	err := r.db.QueryRow(ctx, q, id, userID).Scan(&ar.ID, &ar.UserID, &ar.AppointmentID, &ar.Patient,
-		&ar.ConsultType, &ar.Status, &ar.RequestedSlot, &ar.Detail, &ar.CreatedAt, &ar.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+	// The inbox links here with `r.id`, which is the appointment id, and refetches
+	// after the decision — so a booking that is no longer pending must still
+	// answer, as accepted/rejected rather than 404.
+	a, err := r.GetAppointment(ctx, userID, id)
+	if err != nil {
+		return nil, err
 	}
-	return ar, err
+	ar := requestForAppointment(a)
+	return &ar, nil
 }
 
-// TransitionAppointment moves the underlying appointment to a new status (accept→confirmed,
-// reject→cancelled, reschedule→rescheduled) and mirrors the decision onto its request row
-// when one exists. Scoped + status-set → naturally idempotent. Returns the appointment.
+// requestForAppointment projects a booking onto the request shape the screens
+// parse. `appointment` is nested and complete because that is how
+// requests/index.tsx reads it (`r.appointment.patient.name`,
+// `TYPE_ICON[r.appointment.consultType]`) — the flat columns the old table
+// carried would leave those undefined and throw on the first real row.
+func requestForAppointment(a *Appointment) AppointmentRequest {
+	// appointments has no triage column, so the inbox badge gets the one
+	// priority that is not invented. billing follows the escrow: a ₦0 consult is
+	// the free follow-up the quote produces, anything else was paid.
+	billing := "paid"
+	if a.FeeKobo == 0 {
+		billing = "free_follow_up"
+	}
+	// The patient's note with the request is what they typed as the reason for
+	// booking — the inbox shows it under the patient's name.
+	note := ""
+	if a.Reason != nil {
+		note = *a.Reason
+	}
+	return AppointmentRequest{
+		ID:            a.ID,
+		UserID:        a.UserID,
+		AppointmentID: a.ID,
+		Status:        requestStatusFor(a.Status),
+		Priority:      "normal",
+		Billing:       billing,
+		RequestedAt:   a.CreatedAt,
+		PatientNote:   note,
+		Appointment:   a,
+	}
+}
+
+// requestStatusFor maps the appointment's UI status onto AppointmentRequestStatus.
+func requestStatusFor(status string) string {
+	switch status {
+	case "upcoming":
+		return "pending"
+	case "cancelled":
+		return "rejected"
+	default:
+		return "accepted"
+	}
+}
+
+// TransitionAppointment decides a patient's booking: accept→confirmed,
+// reject→cancelled. Scoped through the owning doctor, so a second doctor cannot
+// decide someone else's appointment. Returns the appointment.
 func (r *Repository) TransitionAppointment(ctx context.Context, userID, appointmentID, status string, requestedSlot *string, detail []byte) (*Appointment, error) {
+	// A proposed slot has nowhere to live: `appointments` carries no
+	// requested_slot column, and the row that used to hold it is the table this
+	// plane no longer reads. Refusing beats writing the status and reporting a
+	// reschedule that was never recorded.
+	if requestedSlot != nil {
+		return nil, ErrStatusUnsupported
+	}
+	dbStatus, err := appointmentStatusForWrite(status)
+	if err != nil {
+		return nil, err
+	}
 	const q = `
-		UPDATE doctor_appointments SET status = $3, updated_at = now()
-		WHERE id = $1 AND user_id = $2`
-	tag, err := r.db.Exec(ctx, q, appointmentID, userID, status)
+		UPDATE appointments a
+		   SET status = $3
+		  FROM doctors d
+		 WHERE a.id = $1 AND d.id = a.doctor_id AND d.user_id = $2`
+	tag, err := r.db.Exec(ctx, q, appointmentID, userID, dbStatus)
 	if err != nil {
 		return nil, err
 	}
 	if tag.RowsAffected() == 0 {
 		return nil, ErrNotFound
 	}
-	// Mirror onto the linked request row (best-effort, scoped). Appointment status uses
-	// the ConsultStatus vocabulary (confirmed|cancelled|upcoming); the request row uses
-	// the AppointmentRequestStatus vocabulary (accepted|rejected|reschedule_requested).
-	var reqStatus string
-	switch status {
-	case "confirmed":
-		reqStatus = "accepted"
-	case "cancelled":
-		reqStatus = "rejected"
-	case "upcoming":
-		reqStatus = "reschedule_requested"
-	default:
-		reqStatus = status
-	}
-	_, _ = r.db.Exec(ctx,
-		`UPDATE doctor_appointment_requests
-		 SET status = $3, requested_slot = COALESCE($4, requested_slot), detail = detail || $5::jsonb, updated_at = now()
-		 WHERE appointment_id = $1 AND user_id = $2`,
-		appointmentID, userID, reqStatus, requestedSlot, jsonx.RawOrEmptyObject(detail))
+	// The doctor's decline reason and the mutation's audit payload have no column
+	// on `appointments` either; they used to land in the request row's `detail`
+	// JSONB. Nothing here can record them, so the decision is written and the
+	// reason is not (see the flag in the change notes) rather than pretending.
 	return r.GetAppointment(ctx, userID, appointmentID)
 }
 
