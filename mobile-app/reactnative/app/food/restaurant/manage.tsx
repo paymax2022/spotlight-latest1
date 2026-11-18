@@ -224,7 +224,7 @@ function ManageStore({
   // stale one. geoTouched distinguishes "never touched" from "touched, and
   // now has no pin".
   const serverGeo = server?.geoLat != null && server?.geoLng != null
-    ? { lat: server.geoLat, lng: server.geoLng } : null;
+    ? { lat: server.geoLat, lng: server.geoLng, plusCode: server.plusCode ?? undefined } : null;
   const geoVal = geoTouched ? geo : serverGeo;
   const dirty = useMemo(
     () => server != null && (
@@ -940,6 +940,9 @@ function AddressField({
         }}
         near={near}
         resolved={Boolean(geo)}
+        // Reopening a store whose location was already saved must show that pin —
+        // otherwise the field looks like the address never took (see the prop).
+        savedPlusCode={geo?.plusCode ?? null}
         surface="checkout"
         placeholder={placeholder}
         enableRecents={false}

@@ -174,8 +174,16 @@ func (s *MDCNReviewService) Decide(ctx context.Context, reviewerID, verification
 			return nil, errors.New("doctor: discipline (medical|dental) required to approve")
 		}
 	}
-	// Idempotency: repeated identical terminal decision is a no-op success.
+	// Idempotency: repeated identical terminal decision is a no-op success. An approve
+	// still re-applies the discoverability projection, so a doctor approved before the
+	// directory gate existed becomes discoverable when ops re-approves them.
 	if cur == to {
+		if to == "approved" {
+			republish := true
+			if err := s.repo.SetProfileVerification(ctx, ownerID, "approved", &republish); err != nil {
+				return nil, fmt.Errorf("doctor: approved but not listable in the patient directory: %w", err)
+			}
+		}
 		return s.repo.GetMDCNVerification(ctx, verificationID)
 	}
 	if !canDoctorVerif(cur, to) {
@@ -200,21 +208,31 @@ func (s *MDCNReviewService) Decide(ctx context.Context, reviewerID, verification
 		return nil, fmt.Errorf("%w (state changed)", ErrReviewIllegalTransition)
 	}
 
-	// HL-2: flip the discoverability gate on doctor_profiles. Idempotent.
+	// HL-2: flip the discoverability gate on doctor_profiles AND the patient
+	// directory. A failure here must not be swallowed: that is exactly how an
+	// approved doctor ended up invisible to patients with the console reporting
+	// success. The decision itself is already committed, so re-approving after the
+	// profile is listable heals it via the idempotent branch above.
 	publishTrue := true
 	publishFalse := false
 	switch in.Action {
 	case "approve":
-		_ = s.repo.SetProfileVerification(ctx, ownerID, "approved", &publishTrue)
+		if err := s.repo.SetProfileVerification(ctx, ownerID, "approved", &publishTrue); err != nil {
+			return nil, fmt.Errorf("doctor: approved but not listable in the patient directory: %w", err)
+		}
 		if s.sched != nil {
 			_ = s.sched.ScheduleAt(ctx, JobMDCNLicenceSweep, ownerID, verificationID, *in.LicenceExpiry, map[string]any{
 				"user_id": ownerID, "reason": "licence_expiry",
 			})
 		}
 	case "reject":
-		_ = s.repo.SetProfileVerification(ctx, ownerID, "rejected", &publishFalse)
+		if err := s.repo.SetProfileVerification(ctx, ownerID, "rejected", &publishFalse); err != nil {
+			return nil, err
+		}
 	case "need_info":
-		_ = s.repo.SetProfileVerification(ctx, ownerID, "needs_info", &publishFalse)
+		if err := s.repo.SetProfileVerification(ctx, ownerID, "needs_info", &publishFalse); err != nil {
+			return nil, err
+		}
 	}
 
 	// HL-12: immutable audit (no register data / PII in meta).

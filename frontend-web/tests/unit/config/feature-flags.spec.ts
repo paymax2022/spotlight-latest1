@@ -19,6 +19,7 @@ const ALL_FLAGS = [
   'FEATURE_VIRTUAL_ACCOUNTS_ENABLED',
   'VOTES_BRIDGE_ENABLED',
   'FEATURE_REFERRALS_ENABLED',
+  'FEATURE_REFERRAL_REWARDS_ENABLED',
   'FEATURE_FINTECH_ADMIN_ENABLED',
   'FEATURE_TIER_LIMITS_ENABLED',
   'FEATURE_FX_ORCHESTRATION_ENABLED',
@@ -47,6 +48,7 @@ describe('Feature flags', () => {
   it('virtualAccounts flag is OFF by default', () => expect(featureFlags.virtualAccounts()).toBe(false));
   it('votesBridge flag is OFF by default', () => expect(featureFlags.votesBridge()).toBe(false));
   it('referrals flag is OFF by default', () => expect(featureFlags.referrals()).toBe(false));
+  it('referralRewards flag is OFF by default', () => expect(featureFlags.referralRewards()).toBe(false));
   it('fintechAdmin flag is OFF by default', () => expect(featureFlags.fintechAdmin()).toBe(false));
   it('tierLimits flag is ON by default (fail-closed enforcement, mirrors Go)', () =>
     expect(featureFlags.tierLimits()).toBe(true));

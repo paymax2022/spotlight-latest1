@@ -82,7 +82,7 @@ func createUnconfirmedUser(t *testing.T, url, key, email string) string {
 	}
 
 	t.Cleanup(func() {
-		del, err := http.NewRequestWithContext(t.Context(), http.MethodDelete, url+"/auth/v1/admin/users/"+created.ID, nil)
+		del, err := http.NewRequestWithContext(context.WithoutCancel(t.Context()), http.MethodDelete, url+"/auth/v1/admin/users/"+created.ID, nil)
 		if err != nil {
 			t.Errorf("cleanup: build delete: %v", err)
 			return

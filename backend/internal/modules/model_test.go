@@ -14,6 +14,10 @@ import (
 func mod(lc Lifecycle, flagOn bool, envs map[Environment]Status) Module {
 	m := Module{
 		Key: "telemedicine", Name: "Telemedicine", Lifecycle: lc,
+		// Ready by default so the matrix below tests the axes it names. Readiness has
+		// its own cases in TestVisibleIn_ProductionAlsoRequiresReadiness; a helper that
+		// left it empty would silently hide every production case here.
+		Readiness:      ReadinessReady,
 		EnvFlagEnabled: flagOn, Environments: map[Environment]EnvironmentState{},
 		CreatedAt: time.Now(),
 	}
@@ -165,7 +169,11 @@ func TestComingSoonAndVisibleAreMutuallyExclusive(t *testing.T) {
 			Key:            "demo",
 			Lifecycle:      LifecycleActive,
 			EnvFlagEnabled: true,
-			Environments:   map[Environment]EnvironmentState{env: {Status: st}},
+			// Ready, so this test stays about the two statuses. Readiness has its
+			// own cases below; leaving it empty would hide every production row here
+			// for a reason unrelated to what is under test.
+			Readiness:    ReadinessReady,
+			Environments: map[Environment]EnvironmentState{env: {Status: st}},
 		}
 		vis, soon := m.VisibleIn(env), m.ComingSoonIn(env)
 		if vis && soon {
@@ -217,5 +225,115 @@ func TestComingSoonRespectsLifecycleAndFlag(t *testing.T) {
 	other := base()
 	if other.ComingSoonIn("staging") {
 		t.Error("coming-soon in production must not leak into staging")
+	}
+}
+
+// Readiness is the product axis — what state the build itself is in. It is not
+// derived from publication, and publishing to production is gated on it.
+func TestParseReadiness(t *testing.T) {
+	for _, ok := range []string{"in_development", "testing", "ready"} {
+		if _, err := ParseReadiness(ok); err != nil {
+			t.Fatalf("ParseReadiness(%q) errored: %v", ok, err)
+		}
+	}
+	// "" must not default to ready: an omitted field in a PATCH would otherwise be
+	// the cheapest way to walk a module straight through the interlock.
+	for _, bad := range []string{"", "READY", "Ready", "prod_ready", "development", "unknown"} {
+		if _, err := ParseReadiness(bad); !errors.Is(err, ErrInvalidReadiness) {
+			t.Fatalf("ParseReadiness(%q) should be rejected, got err=%v", bad, err)
+		}
+	}
+}
+
+func TestAssertPublishableIn_ProductionIsGatedOnReadiness(t *testing.T) {
+	with := func(lc Lifecycle, r Readiness) Module {
+		m := mod(lc, true, map[Environment]Status{EnvProduction: StatusVisible})
+		m.Readiness = r
+		return m
+	}
+	for _, r := range []Readiness{ReadinessInDevelopment, ReadinessTesting, Readiness("")} {
+		if err := with(LifecycleActive, r).AssertPublishableIn(EnvProduction); !errors.Is(err, ErrNotReadyForProduction) {
+			t.Fatalf("readiness %q must refuse a production publish, got %v", r, err)
+		}
+	}
+	if err := with(LifecycleActive, ReadinessReady).AssertPublishableIn(EnvProduction); err != nil {
+		t.Fatalf("a ready module must publish to production, got %v", err)
+	}
+
+	// Development and staging stay freely publishable at ANY readiness. That is
+	// the whole reason the axis exists: a team must be able to put an unfinished
+	// module in front of testers without pretending it is launched.
+	for _, r := range []Readiness{ReadinessInDevelopment, ReadinessTesting, ReadinessReady} {
+		m := with(LifecycleActive, r)
+		if err := m.AssertPublishableIn(EnvDevelopment); err != nil {
+			t.Fatalf("%q must not block a development publish, got %v", r, err)
+		}
+		if err := m.AssertPublishableIn(EnvStaging); err != nil {
+			t.Fatalf("%q must not block a staging publish, got %v", r, err)
+		}
+	}
+
+	// Archive outranks readiness: the withdrawal decision is checked first, so
+	// restoring stays the deliberate step it already was.
+	if err := with(LifecycleArchived, ReadinessReady).AssertPublishableIn(EnvProduction); !errors.Is(err, ErrArchivedModule) {
+		t.Fatalf("archived module must refuse with ErrArchivedModule, got %v", err)
+	}
+}
+
+// The read-path half of the requirement: an unfinished module must be invisible to
+// live users, not merely un-publishable. Demoting readiness therefore withdraws a
+// launched module from production on its own, without anyone touching the tier row.
+func TestVisibleIn_ProductionAlsoRequiresReadiness(t *testing.T) {
+	for _, r := range []Readiness{ReadinessInDevelopment, ReadinessTesting, Readiness("")} {
+		m := mod(LifecycleActive, true, map[Environment]Status{EnvProduction: StatusVisible})
+		m.Readiness = r
+		if m.VisibleIn(EnvProduction) {
+			t.Fatalf("readiness %q must hide a production-published module from live users", r)
+		}
+		// Other tiers keep serving it, so testers are not locked out by a
+		// production decision.
+		m2 := mod(LifecycleActive, true, map[Environment]Status{EnvStaging: StatusVisible, EnvDevelopment: StatusVisible})
+		m2.Readiness = r
+		if !m2.VisibleIn(EnvStaging) || !m2.VisibleIn(EnvDevelopment) {
+			t.Fatalf("readiness %q must not hide a module in staging or development", r)
+		}
+	}
+	ready := mod(LifecycleActive, true, map[Environment]Status{EnvProduction: StatusVisible})
+	ready.Readiness = ReadinessReady
+	if !ready.VisibleIn(EnvProduction) {
+		t.Fatal("a ready module must be visible in production")
+	}
+}
+
+// Raising readiness again must restore the launch with no further clicks — the tier
+// row was never rewritten. Same shape as archive/restore.
+func TestReadinessDemoteLeavesTheTierRowIntact(t *testing.T) {
+	m := mod(LifecycleActive, true, map[Environment]Status{EnvProduction: StatusVisible})
+	m.Readiness = ReadinessInDevelopment
+	if m.VisibleIn(EnvProduction) {
+		t.Fatal("precondition: demoted module must be hidden")
+	}
+	if got := m.Environments[EnvProduction].Status; got != StatusVisible {
+		t.Fatalf("demoting readiness must not rewrite the tier row, it says %q", got)
+	}
+	m.Readiness = ReadinessReady
+	if !m.VisibleIn(EnvProduction) {
+		t.Fatal("re-reading readiness must restore visibility on its own")
+	}
+}
+
+// A teaser is inert, so readiness must NOT gate it. Gating it would make the
+// readiness field a precondition for announcing anything, and operators would start
+// claiming 'ready' to get past it — which defeats the gate where it matters.
+func TestReadinessDoesNotGateComingSoon(t *testing.T) {
+	for _, env := range []Environment{EnvProduction, EnvStaging} {
+		m := mod(LifecycleActive, true, map[Environment]Status{env: StatusComingSoon})
+		m.Readiness = ReadinessInDevelopment
+		if !m.ComingSoonIn(env) {
+			t.Fatalf("an unfinished module must still be teisable in %s", env)
+		}
+		if m.VisibleIn(env) {
+			t.Fatalf("a coming_soon teaser must never read as usable in %s", env)
+		}
 	}
 }

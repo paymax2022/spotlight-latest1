@@ -168,6 +168,31 @@ function marketingDrawerSpecs(
       await expect(page.locator(toggle)).toBeVisible();
       await openDrawer(page, toggle);
     });
+
+    /**
+     * Until the bundle lands, the inline script in the server HTML is the only
+     * thing that can answer a click — on production that is several seconds — so
+     * it has to write the disclosure state assistive tech reads as well as the
+     * classes that paint the panel. Holding every chunk back reproduces the
+     * window locally instead of waiting on a slow host.
+     */
+    test('the pre-hydration script keeps the toggle honest', async ({ page }) => {
+      await page.route('**/_next/static/**/*.js', () => {});
+      await page.goto(path, { waitUntil: 'commit' });
+      await expect(page.locator(toggle)).toBeVisible();
+      await expect(page.locator(toggle)).toHaveAttribute('aria-expanded', 'false');
+
+      await page.locator(toggle).click();
+      await expect(page.locator(panel)).toHaveClass(/is-open/);
+      await expect(page.locator(toggle)).toHaveAttribute('aria-expanded', 'true');
+
+      // Closed from its own button rather than a second toggle click: with the
+      // panel open on /season-2 the toggle sits under the panel and cannot be
+      // reached, which is the panel covering it, not a broken control.
+      await page.locator(`${root} .hdr-drawer__close`).click();
+      await expect(page.locator(panel)).not.toHaveClass(/is-open/);
+      await expect(page.locator(toggle)).toHaveAttribute('aria-expanded', 'false');
+    });
   });
 }
 

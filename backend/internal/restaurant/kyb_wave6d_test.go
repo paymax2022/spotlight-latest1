@@ -123,7 +123,7 @@ func TestLiveDB_KYBWave6D(t *testing.T) {
 
 	// A-007: replacing supersedes, never destroys.
 	if _, err := svc.SaveKYB(ctx, restID, owner, KYB{LegalName: "Wave6D Kitchen", BusinessType: "sole_proprietor",
-		ContactEmail: "o@w6.ng", ContactPhone: "08011112222", BankCode: "058", AccountNumber: "0123456789", AccountName: "Chukwu Obi"}); err != nil {
+		ContactEmail: "o@w6.ng", ContactPhone: "08011112222"}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	for _, n := range []string{"v1", "v2"} {
@@ -158,9 +158,23 @@ func TestLiveDB_KYBWave6D(t *testing.T) {
 		t.Fatalf("second submit should be an idempotent duplicate: %+v %v", k2, err)
 	}
 
-	// A-011: names differ (account holder vs legal/storefront).
+	// A-011: the destination holder is unrelated to the business. KYB no longer
+	// carries a settlement account, so the warning compares the names the outlet is
+	// known by against the payout account its wallet would actually pay.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO restaurant_bank_accounts (user_id, bank_name, bank_code, account_number, account_name, is_verified)
+		VALUES ($1,'Test Microfinance Bank','058','0123456789','Chukwu Obi',TRUE)`, owner); err != nil {
+		t.Fatalf("seed payout account: %v", err)
+	}
 	if !svc.AdminNameMatchWarning(ctx, restID) {
 		t.Error("expected name_match_warning")
+	}
+	// With no destination registered there is nothing to compare, so no warning.
+	if _, err := pool.Exec(ctx, `DELETE FROM restaurant_bank_accounts WHERE user_id=$1`, owner); err != nil {
+		t.Fatalf("clear payout account: %v", err)
+	}
+	if svc.AdminNameMatchWarning(ctx, restID) {
+		t.Error("an outlet with no payout destination must not warn")
 	}
 
 	// A-008: needs-changes returns it to the applicant, who can edit and resubmit.

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Barlow_Condensed, DM_Sans, Manrope } from 'next/font/google';
 import Layout from '@/components/layout/Layout';
+import LandingHeader from '@/components/landing/LandingHeader';
 import Closing from '@/components/landing/Closing';
 import Faq from '@/components/landing/Faq';
 import Hero from '@/components/landing/Hero';
@@ -97,9 +98,12 @@ export default async function HomePage() {
     // `#top` has to sit on the document's first box: the header is sticky, so
     // scrolling to it leaves the page exactly where it was.
     <Layout
-      headerStyle={1}
+      // The two props that pick a template header and nav have no bearing on
+      // this page: `templateHeader={false}` means Layout draws neither.
+      headerStyle={undefined}
+      onePageNav={undefined}
+      templateHeader={false}
       footerStyle={2}
-      onePageNav={false}
       breadcrumbTitle={null}
       breadcrumbClassName={undefined}
       breadcrumbPadding={undefined}
@@ -109,6 +113,7 @@ export default async function HomePage() {
           Skip to content
         </a>
         <JoinDialogProvider>
+          <LandingHeader />
           <main id="main">
             <Hero />
             <Network />

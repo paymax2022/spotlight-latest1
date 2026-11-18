@@ -17,7 +17,6 @@ import { CONSENT_VERSION } from '@/features/kycverify/constants';
 import { cleanProviderReason } from '@/features/kycverify/providerReason';
 import { ID_FORMATS, validateIdNumber } from '@/features/kycverify/idFormats';
 import IdNumberField from '@/features/kycverify/components/IdNumberField';
-import DojahRequirement from '@/features/kycverify/components/DojahRequirement';
 import type { IdType, VerificationCheck } from '@/features/kycverify/types';
 
 // The doctor wizard keys its options by its own slugs; the KYC gateway and
@@ -141,7 +140,6 @@ export default function GovernmentIdScreen() {
                 value={idNumber}
                 onChangeText={(text) => { setIdNumber(text); setVerified(null); setError(undefined); }}
               />
-              <DojahRequirement idType={idTypeKey} idNumber={validation.normalized} />
             </>
           ) : null}
           {error && <Text style={styles.error}>{error}</Text>}

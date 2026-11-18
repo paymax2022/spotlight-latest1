@@ -80,7 +80,14 @@ type Availability struct {
 }
 
 // UpdateAvailabilityRequest is the body for PUT /availability.
+// The schedule is nested, matching contracts/doctor.openapi.yaml
+// (UpdateAvailabilityRequest → required: [schedule]).
 type UpdateAvailabilityRequest struct {
+	Schedule *AvailabilityScheduleInput `json:"schedule"`
+}
+
+// AvailabilityScheduleInput carries the writable columns of doctor_availability.
+type AvailabilityScheduleInput struct {
 	WorkingDays         json.RawMessage `json:"workingDays,omitempty"`
 	Breaks              json.RawMessage `json:"breaks,omitempty"`
 	Rules               json.RawMessage `json:"rules,omitempty"`
@@ -101,7 +108,10 @@ type Appointment struct {
 	Patient     json.RawMessage `json:"patient,omitempty"`
 	ConsultType *string         `json:"consultType,omitempty"`
 	Status      string          `json:"status"`
-	SlotDate    *time.Time      `json:"slotDate,omitempty"`
+	// SlotDate is the doctor's LOCAL calendar day, date-only. The screens build
+	// their clock with `new Date(`${slotDate}T00:00:00`)`, so a full timestamp
+	// here parses as Invalid Date and the card loses its date.
+	SlotDate    *string         `json:"slotDate,omitempty"`
 	SlotTime    *string         `json:"slotTime,omitempty"`
 	FeeKobo     int64           `json:"feeKobo"`
 	Reason      *string         `json:"reason,omitempty"`

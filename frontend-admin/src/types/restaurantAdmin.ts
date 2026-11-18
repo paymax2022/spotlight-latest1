@@ -442,6 +442,10 @@ export interface RestaurantApplication {
   legal_name?: string;
   business_type?: string;
   cac_number?: string;
+  /** Legacy settlement details from before outlets were paid into the owner's
+   *  wallet and chose a destination bank per withdrawal. KYB no longer collects
+   *  them, so a missing value on a recent application is expected, not a gap —
+   *  only applications filed before the change can carry them. */
   bank_account_name?: string;
   bank_account_number?: string;
   bank_name?: string;

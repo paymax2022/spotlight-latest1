@@ -20,6 +20,8 @@ export interface MerchantStore {
    *  address picker's map when editing rather than starting pin-less. */
   geoLat?: number | null;
   geoLng?: number | null;
+  /** The Plus Code stored with that pin — what the owner saw when they confirmed it. */
+  plusCode?: string | null;
   /**
    * Price of ONE takeaway pack, integer kobo. The platform seeds ₦200; the owner
    * sets their own, and 0 is a legitimate choice meaning "I don't charge for
@@ -163,10 +165,6 @@ export interface RestaurantKYB {
   tin: string;
   contactEmail: string;
   contactPhone: string;
-  /** Settlement (payout) account — the merchant's OWN bank account, not a credential. */
-  bankCode: string;
-  accountNumber: string;
-  accountName: string;
   status: string; // 'draft' | 'submitted' | 'under_review' | 'needs_more_info' | 'approved' | 'rejected'
   decisionReason?: string;
   documents: string[];

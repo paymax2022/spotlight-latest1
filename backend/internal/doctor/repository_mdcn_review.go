@@ -176,12 +176,89 @@ func (r *Repository) DecideMDCN(ctx context.Context, verificationID, from, to, r
 
 // SetProfileVerification flips the doctor's discoverability gate (HL-2). Idempotent.
 // publish nil leaves is_published unchanged.
+//
+// Discoverability lives in TWO tables: doctor_profiles.is_published gates the
+// provider portal, while patients discover doctors through the telemedicine
+// directory (ListDoctors: FROM doctors WHERE is_available = TRUE). Writing only the
+// profile left every approved doctor invisible to patients, so the publish decision
+// is projected onto the directory row in the same statement — one command, so the
+// two gates cannot diverge. The directory row is keyed by user_id (unique), and
+// doctors_block_when_suspended still forces it offline if the profile is suspended.
+//
+// The profile builder writes ONLY profile_draft, and submission materializes just
+// title/name/mdcn_number — so specialty_id and fee_kobo are still '' and 0 for a
+// builder-onboarded doctor who DID enter a specialty and prices. The projection
+// therefore falls back to the draft, and translates the provider taxonomy ('gp',
+// 'cardio', …) into the directory's slug allowlist ('general', 'cardiology', …).
+// consult_fee_kobo is the directory's legacy base fee — per-modality prices are sold
+// as consult packages — so the doctor's own chat fee is the base, never an invented one.
 func (r *Repository) SetProfileVerification(ctx context.Context, userID, verification string, publish *bool) error {
 	if publish == nil {
 		_, err := r.db.Exec(ctx, `UPDATE doctor_profiles SET verification=$2, updated_at=now() WHERE user_id=$1`, userID, verification)
 		return err
 	}
-	_, err := r.db.Exec(ctx, `UPDATE doctor_profiles SET verification=$2, is_published=$3, updated_at=now() WHERE user_id=$1`, userID, verification, *publish)
+	if !*publish {
+		// Taking a doctor offline must never CREATE a directory row: a refusal for a
+		// doctor who was never listed has nothing to insert, and an unlistable profile
+		// would fail the insert's check constraints and turn the refusal into an error.
+		const q = `
+			WITH profile AS (
+				UPDATE doctor_profiles SET verification=$2, is_published=false, updated_at=now()
+				WHERE user_id=$1
+				RETURNING user_id
+			)
+			UPDATE doctors SET is_available=false WHERE user_id IN (SELECT user_id FROM profile)`
+		_, err := r.db.Exec(ctx, q, userID, verification)
+		return err
+	}
+	const q = `
+		WITH profile AS (
+			UPDATE doctor_profiles SET verification=$2, is_published=true, updated_at=now()
+			WHERE user_id=$1
+			RETURNING user_id, name, specialty_id, fee_kobo, years_experience, mdcn_number,
+			          phone, bio, avatar_url, profile_draft
+		),
+		resolved AS (
+			SELECT p.*,
+			       COALESCE(NULLIF(p.specialty_id, ''), p.profile_draft->'draft'->>'specialtyId', '') AS raw_slug,
+			       COALESCE(NULLIF(p.fee_kobo, 0),
+			                NULLIF((p.profile_draft->'draft'->'pricing'->>'chatFeeKobo')::bigint, 0)) AS fee
+			FROM profile p
+		),
+		mapped AS (
+			SELECT r.*,
+			       CASE r.raw_slug
+			           WHEN 'gp'        THEN 'general'
+			           WHEN 'cardio'    THEN 'cardiology'
+			           WHEN 'derma'     THEN 'dermatology'
+			           WHEN 'pediatric' THEN 'paediatrics'
+			           WHEN 'mental'    THEN 'mental_health'
+			           WHEN 'ob-gyn'    THEN 'womens_health'
+			           WHEN 'dental'    THEN 'dentistry'
+			           WHEN 'ortho'     THEN 'orthopedic'
+			           ELSE CASE WHEN r.raw_slug = ANY(ARRAY['general','cardiology','dermatology','paediatrics',
+			                   'veterinary','pharmacy','mental_health','womens_health','neurology','eye_care',
+			                   'nutrition','dentistry','oncology','orthopedic','radiology','ent','urology','psychiatry'])
+			               THEN r.raw_slug ELSE 'general' END
+			       END AS dir_specialty
+			FROM resolved r
+		)
+		INSERT INTO doctors (user_id, name, specialty, consult_fee_kobo, experience_years,
+		                     mdcn_number, phone, bio, avatar_url, is_available)
+		SELECT user_id, name, dir_specialty, fee, COALESCE(years_experience, 0),
+		       mdcn_number, phone, bio, avatar_url, true
+		FROM mapped
+		ON CONFLICT (user_id) DO UPDATE SET
+			name             = EXCLUDED.name,
+			specialty        = EXCLUDED.specialty,
+			consult_fee_kobo = EXCLUDED.consult_fee_kobo,
+			experience_years = EXCLUDED.experience_years,
+			mdcn_number      = EXCLUDED.mdcn_number,
+			phone            = EXCLUDED.phone,
+			bio              = EXCLUDED.bio,
+			avatar_url       = EXCLUDED.avatar_url,
+			is_available     = EXCLUDED.is_available`
+	_, err := r.db.Exec(ctx, q, userID, verification)
 	return err
 }
 

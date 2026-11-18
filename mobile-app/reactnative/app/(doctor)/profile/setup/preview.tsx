@@ -161,11 +161,20 @@ export default function ProfilePreviewScreen() {
           )}
         </SectionCard>
 
-        <SectionCard title="Payout" style={styles.card}>
-          <InfoRow label="Bank" value={draft.bankAccount?.bankName ?? 'Not set'} />
-          <InfoRow label="Account name" value={draft.bankAccount?.accountName ?? 'Not set'} />
-          <InfoRow label="Account number" value={draft.bankAccount?.accountNumber ? `****${draft.bankAccount.accountNumber.slice(-4)}` : 'Not set'} />
-          <InfoRow label="Verified" value={draft.bankAccount?.isVerified ? 'Yes' : 'No'} />
+        <SectionCard title="Payout account" style={styles.card}>
+          {draft.bankAccount ? (
+            <>
+              <InfoRow label="Bank" value={draft.bankAccount.bankName} />
+              <InfoRow label="Account name" value={draft.bankAccount.accountName ?? '—'} />
+              <InfoRow label="Account number" value={draft.bankAccount.accountNumber ? `****${draft.bankAccount.accountNumber.slice(-4)}` : '—'} />
+              <InfoRow label="Verified" value={draft.bankAccount.isVerified ? 'Yes' : 'No'} />
+            </>
+          ) : (
+            <>
+              <InfoRow label="Bank" value="Not set up yet" />
+              <Text style={styles.hint}>Payout details are not part of this application. Add them any time from Earnings → Bank account once your profile is approved.</Text>
+            </>
+          )}
         </SectionCard>
 
         <PrimaryButton label="Submit for verification" onPress={() => router.push('/(doctor)/profile/setup/submit')} style={styles.btn} />
@@ -183,6 +192,7 @@ const styles = StyleSheet.create({
   specialty: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   card:      { marginBottom: Spacing.md },
   bio:       { ...Typography.bodyMd, color: Colors.onSurface },
+  hint:      { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: Spacing.sm },
   btn:       { marginTop: Spacing.sm },
   btnGap:    { marginTop: Spacing.sm },
 });

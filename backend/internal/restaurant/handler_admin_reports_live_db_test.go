@@ -5,6 +5,7 @@ package restaurant
 // Seeds orders dated in 2001 so no real data can leak into the asserted windows.
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -67,11 +68,12 @@ func TestLiveDB_AdminReports_GMVNetRevenueCohorts(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() {
+		bg := context.WithoutCancel(t.Context())
 		for _, o := range seed {
-			_, _ = pool.Exec(t.Context(), `DELETE FROM orders WHERE id=$1`, o.orderID)
-			_, _ = pool.Exec(t.Context(), `DELETE FROM settlements WHERE id=$1`, o.settlement)
+			_, _ = pool.Exec(bg, `DELETE FROM orders WHERE id=$1`, o.orderID)
+			_, _ = pool.Exec(bg, `DELETE FROM settlements WHERE id=$1`, o.settlement)
 		}
-		_, _ = pool.Exec(t.Context(), `DELETE FROM restaurants WHERE id=$1`, restID)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, restID)
 	})
 
 	f := ReportFilter{From: d("2001-03-01").Truncate(24 * time.Hour), To: d("2001-05-01").Truncate(24 * time.Hour), RestaurantID: restID, GroupBy: "month"}
@@ -157,13 +159,13 @@ func TestLiveDB_AdminOrderTrace(t *testing.T) {
 	mustExec(`INSERT INTO restaurant_delivery_offers (order_id, rider_id, status, created_at, responded_at) VALUES ($1,$2,'accepted',$3,$4)`, orderID, rider, at.Add(2*time.Minute), at.Add(3*time.Minute))
 	mustExec(`INSERT INTO disputes (id, user_id, reference, module_type, type, description, status) VALUES ($1,$2,$3,'food','late_delivery','the food arrived very cold and late',  'open')`, dispID, cust, orderID)
 	t.Cleanup(func() {
-		ctx := t.Context()
-		_, _ = pool.Exec(ctx, `DELETE FROM disputes WHERE id=$1`, dispID)
-		_, _ = pool.Exec(ctx, `DELETE FROM audit_logs WHERE resource_id=$1`, orderID)
-		_, _ = pool.Exec(ctx, `DELETE FROM restaurant_delivery_offers WHERE order_id=$1`, orderID)
-		_, _ = pool.Exec(ctx, `DELETE FROM orders WHERE id=$1`, orderID)
-		_, _ = pool.Exec(ctx, `DELETE FROM settlements WHERE id=$1`, stID)
-		_, _ = pool.Exec(ctx, `DELETE FROM restaurants WHERE id=$1`, restID)
+		bg := context.WithoutCancel(t.Context())
+		_, _ = pool.Exec(bg, `DELETE FROM disputes WHERE id=$1`, dispID)
+		_, _ = pool.Exec(bg, `DELETE FROM audit_logs WHERE resource_id=$1`, orderID)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurant_delivery_offers WHERE order_id=$1`, orderID)
+		_, _ = pool.Exec(bg, `DELETE FROM orders WHERE id=$1`, orderID)
+		_, _ = pool.Exec(bg, `DELETE FROM settlements WHERE id=$1`, stID)
+		_, _ = pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, restID)
 	})
 
 	ev, err := svc.AdminOrderTrace(ctx, orderID)

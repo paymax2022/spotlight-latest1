@@ -259,6 +259,14 @@ export default function ApplyForm({ prefillBatch, onClose }: Props) {
     applicationFeeDue > 0 ? 'your application fee' : '',
     instalmentCount > 1 ? 'your first tuition instalment' : 'your tuition',
   ].filter(Boolean).join(' and ');
+  // What is still owed once today's payment lands. Uses the same rounded unit the
+  // server's tuitionPlanShape bills against, so the figure cannot drift from the
+  // schedule created on submit. A free intake owes nothing today, so the line
+  // belongs to the charged path only.
+  const balanceOutstanding =
+    registrationFeeRequired && firstTuitionDue > 0 && instalmentCount > 1
+      ? Math.round((discountedTuition - firstTuitionDue) * 100) / 100
+      : 0;
 
   function pickSub(slug: string, key: string) {
     setForm((p) => {
@@ -902,6 +910,14 @@ export default function ApplyForm({ prefillBatch, onClose }: Props) {
                       <b>{formatNaira(priceOf(a))}</b>
                     </div>
                   ))}
+                {balanceOutstanding > 0 && (
+                  <div className={styles.breakdownRow}>
+                    <span>
+                      {`Balance after today · ${instalmentCount - 1} instalment${instalmentCount === 2 ? '' : 's'}`}
+                    </span>
+                    <b>{formatNaira(balanceOutstanding)}</b>
+                  </div>
+                )}
                 <p className={styles.totalNote}>
                   {registrationFeeRequired && instalmentCount > 1
                     ? 'The first instalment is paid now; the rest fall due on your plan.'

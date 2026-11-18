@@ -1,7 +1,7 @@
 // The steps block gets one serialisable object from the server so no client
 // branch re-derives availability, re-filters the board, or has to know that
 // `voteCountPublic` can be turned off by an admin.
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const listContests = vi.hoisted(() => vi.fn());
 const getLeaderboard = vi.hoisted(() => vi.fn());
@@ -156,6 +156,24 @@ describe('buildOpenMicEditionStepsData', () => {
     expect(hidden.showLeaderboard).toBe(false);
     expect(hidden.showVoteCounts).toBe(false);
   });
+
+  it('leaves hidden counts out of the payload, not just out of the markup', () => {
+    const hidden = buildOpenMicEditionStepsData(
+      contest({ votingConfig: { ...contest().votingConfig, voteCountPublic: false } }),
+      [entry(1), entry(2), entry(3)],
+    );
+    expect(hidden.showVoteCounts).toBe(false);
+    expect(hidden.board?.rows.map((row) => row.voteCount)).toEqual([null, null, null]);
+    expect(hidden.board?.totalVotes).toBeNull();
+    // An entry count is not a vote count, so the switch does not remove it.
+    expect(hidden.board?.entryCount).toBe(3);
+  });
+
+  it('still delivers the counts when the switch is left on', () => {
+    const shown = buildOpenMicEditionStepsData(contest(), [entry(1), entry(2), entry(3)]);
+    expect(shown.board?.rows.map((row) => row.voteCount)).toEqual([10, 20, 30]);
+    expect(shown.board?.totalVotes).toBe(60);
+  });
 });
 
 describe('loadOpenMicEditionSteps', () => {
@@ -178,5 +196,101 @@ describe('loadOpenMicEditionSteps', () => {
     getLeaderboard.mockResolvedValue([]);
     const data: OpenMicEditionStepsData | null = await loadOpenMicEditionSteps();
     expect(data?.board).toStrictEqual({ rows: [], entryCount: 0, totalVotes: 0 });
+  });
+});
+
+describe('the three window states, resolved by the read', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // START/END span November 2026. The clock is pinned rather than trusted: a
+  // test that read the real one would go red on 1 December and teach nobody
+  // anything about this code.
+  it('is open while now sits inside the window', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T12:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest(), []);
+    expect(data.registrationState).toBe('open');
+    expect(data.submissionState).toBe('open');
+    expect(data.votingState).toBe('open');
+  });
+
+  it('is not-started before the window opens and closed after it ends', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-20T00:00:00.000Z'));
+    expect(buildOpenMicEditionStepsData(contest(), []).registrationState).toBe('not-started');
+    vi.setSystemTime(new Date('2026-12-05T00:00:00.000Z'));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('closed');
+  });
+
+  it('is unknown when neither end of the window is set', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(
+      contest({ registrationStartAt: undefined, registrationEndAt: undefined }),
+      [],
+    );
+    // `unknown` must not collapse into `closed`: the copy for unset dates says
+    // "to be confirmed", and the closed styling would contradict it.
+    expect(data.registrationState).toBe('unknown');
+    expect(data.registrationEndAt).toBeNull();
+  });
+
+  it('still reports open when only one end of the window is set', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest({ registrationEndAt: undefined }), []);
+    expect(data.registrationStartAt).toBe(START);
+    expect(data.registrationState).toBe('open');
+  });
+
+  it('is serialisable, because the client must not recompute any of it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(contest(), []);
+    expect(JSON.parse(JSON.stringify(data))).toStrictEqual(data);
+  });
+
+  // The three state fields are the same type computed from the same three
+  // arguments, so a builder that wires submission's result into
+  // `registrationState` still passes every single-window test above. Only one
+  // test with three *different* answers can tell the difference — and it has to
+  // pin one instant, so the three windows are read against the same clock.
+  it('labels each window from its own dates, never a neighbour', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T00:00:00.000Z'));
+    const data = buildOpenMicEditionStepsData(
+      contest({
+        registrationStartAt: '2026-09-01T00:00:00.000Z',
+        registrationEndAt: '2026-09-30T23:59:59.000Z',
+        // Submission stays on START/END (November) — open at this instant.
+        votingConfig: {
+          ...contest().votingConfig,
+          votingStartAt: '2026-12-01T00:00:00.000Z',
+          votingEndAt: '2026-12-31T23:59:59.000Z',
+        },
+      }),
+      [],
+    );
+    expect(data.registrationState).toBe('closed');
+    expect(data.submissionState).toBe('open');
+    expect(data.votingState).toBe('not-started');
+  });
+
+  // Inclusive at both ends, because that is what the store does when it decides
+  // whether to accept a submission (`persistence.ts:76-77` compares with
+  // `>=`/`<=`). A page that says "closed" an hour before the deadline would
+  // point artists away from a form that still takes them.
+  it('is inclusive at both ends of the window, which is what the store does', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(START));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('open');
+    vi.setSystemTime(new Date(END));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('open');
+    vi.setSystemTime(new Date(Date.parse(END) + 1));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('closed');
+    vi.setSystemTime(new Date(Date.parse(START) - 1));
+    expect(buildOpenMicEditionStepsData(contest(), []).submissionState).toBe('not-started');
   });
 });

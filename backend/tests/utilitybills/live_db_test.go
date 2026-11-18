@@ -151,15 +151,11 @@ func newFixture(t *testing.T, tier int, fundKobo int64, requiresValidation bool)
 		VALUES ($1, $2, 'prepaid', 'eko-electric', 200, 'active')`, providerID, productID); err != nil {
 		t.Fatalf("seed mapping: %v", err)
 	}
-	t.Cleanup(func() {
-		// Catalogue rows are not user-scoped, so CleanupUser does not reach them.
-		// Order matters: mappings/products reference the biller and provider.
-		bg := context.Background()
-		_, _ = pool.Exec(bg, `DELETE FROM public.utility_provider_product_mappings WHERE provider_id=$1`, providerID)
-		_, _ = pool.Exec(bg, `DELETE FROM public.utility_products WHERE id=$1`, productID)
-		_, _ = pool.Exec(bg, `DELETE FROM public.utility_billers WHERE id=$1`, billerID)
-		_, _ = pool.Exec(bg, `DELETE FROM public.utility_providers WHERE id=$1`, providerID)
-	})
+	// Catalogue rows are not user-scoped, so CleanupUser does not reach them, and
+	// this run's purchase rows pin them with NO ACTION keys until they go.
+	// deleteFixtureTree handles both halves; see fixtures_test.go for why the
+	// four-statement version of this never worked.
+	cleanupFixture(t, pool, billerID, providerID)
 
 	// idempotency layer, and the tests must exercise THAT, not a cache) ---
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))

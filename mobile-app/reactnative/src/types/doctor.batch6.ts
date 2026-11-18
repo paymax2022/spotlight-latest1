@@ -73,8 +73,8 @@ export type { BankAccount } from '@/types/doctor.profile';
 // SECTION W — MEDICAL RECORDS (18)
 // Consolidated. The per-patient consultation / prescription / lab / document /
 // imaging / allergy / medication / diagnosis / care-plan / referral / HMO /
-// dependent / pet histories are all VIEWS over the Phase 2 PatientRecordHub and
-// the dependent/pet record types — modelled here as a category index rather than
+// dependent histories are all VIEWS over the Phase 2 PatientRecordHub and the
+// dependent record types — modelled here as a category index rather than
 // 18 separate shapes. ADD: a records dashboard, a category index, restriction
 // warnings, and download/share descriptors.
 
@@ -90,8 +90,11 @@ export type RecordCategory =
   | 'care_plans'
   | 'referrals'
   | 'hmo'
-  | 'dependents'
-  | 'pets';
+  // No 'pets' member: the Records hub renders its category grid from data, so a
+  // pets category here is a veterinary affordance inside the human doctor plane.
+  // A vet's records live in the Vet module, reached from the landing page Vet
+  // icon. Pinned by scripts/ci/check-doctor-vet-boundary.py.
+  | 'dependents';
 
 export interface RecordCategoryCount {
   category:    RecordCategory;

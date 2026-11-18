@@ -5,10 +5,13 @@ import type {
   Cashtag,
   MyCashtag,
   ActivityItem,
+  ActivityKind,
   ActivityStatus,
   SendInput,
   RequestInput,
   PayResult,
+  MoneyRequest,
+  RequestRowServer,
   SplitBill,
   SplitStatus,
   ShareState,
@@ -17,6 +20,7 @@ import type {
   CreatePoolInput,
   ContributeResult,
 } from './types';
+import { mapRequestRow, mapRequestRows } from './lib/requests';
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
@@ -96,6 +100,17 @@ const MOCK_POOLS: GroupPool[] = [
   },
 ];
 
+// Mirrors the live wire shape (snake_case, uppercase state, handle WITHOUT the
+// leading "@") so mock mode exercises the same mapping as a real response.
+// `direction` is the caller's view: incoming = @you owes it.
+const MOCK_REQUESTS: RequestRowServer[] = [
+  { id: 'req_in_1', requester_id: 'u_bisi', payer_id: 'u_me', amount_kobo: 200_00,  note: 'Lunch',    state: 'PENDING',  direction: 'incoming', counterpart_id: 'u_bisi',  counterpart_handle: 'bisi',  counterpart_name: 'Bisi Adeyemi', created_at: minsAgo(12) },
+  { id: 'req_in_2', requester_id: 'u_ada',  payer_id: 'u_me', amount_kobo: 800_00,  note: 'Movie tix', state: 'PENDING',  direction: 'incoming', counterpart_id: 'u_ada',   counterpart_handle: 'ada',   counterpart_name: 'Ada Eze',       created_at: minsAgo(90) },
+  { id: 'req_in_3', requester_id: 'u_tunde', payer_id: 'u_me', amount_kobo: 1_500_00, note: 'Fuel',   state: 'PAID',     direction: 'incoming', counterpart_id: 'u_tunde', counterpart_handle: 'tunde', counterpart_name: 'Tunde Okafor',  created_at: minsAgo(600) },
+  { id: 'req_out_1', requester_id: 'u_me', payer_id: 'u_chidi', amount_kobo: 5_000_00, note: 'Rent share', state: 'PENDING', direction: 'outgoing', counterpart_id: 'u_chidi', counterpart_handle: 'chidi', counterpart_name: 'Chidi Nwosu', created_at: minsAgo(240) },
+  { id: 'req_out_2', requester_id: 'u_me', payer_id: 'u_femi',  amount_kobo: 1_200_00, note: 'Book',   state: 'DECLINED', direction: 'outgoing', counterpart_id: 'u_femi',  counterpart_handle: 'femi',  counterpart_name: 'Femi Bakare',   created_at: minsAgo(1_440) },
+];
+
 // dedicated "my cashtag summary" endpoint (limits/avatar) yet — we merge the
 // handle response into the display shape and fall back to safe defaults for
 // the fields the backend doesn't return (MISSING: GET /me profile summary).
@@ -120,6 +135,23 @@ export async function getMyCashtag(): Promise<MyCashtag> {
 }
 
 // Backend: GET /activity returns activity feed with pagination support.
+//
+// The feed's own words for a P2P row are 'send' and 'receive'
+// (backend/internal/social/handler.go ActivityFeed), while the client's display
+// table is keyed 'sent' / 'received'. Cast straight through, an unmapped key
+// makes ActivityRow look up KIND_META[kind] and render `undefined.Icon`, which
+// takes the whole Activity screen down on real data — so the wire vocabulary is
+// translated here, at the boundary, rather than everywhere downstream.
+const ACTIVITY_KIND_FROM_SERVER: Record<string, ActivityKind> = {
+  send: 'sent',
+  receive: 'received',
+  sent: 'sent',
+  received: 'received',
+  request: 'request',
+  split: 'split',
+  pool: 'pool',
+};
+
 export async function getActivity(): Promise<ActivityItem[]> {
   if (USE_MOCK) { await delay(); return MOCK_ACTIVITY; }
   try {
@@ -127,7 +159,7 @@ export async function getActivity(): Promise<ActivityItem[]> {
     const items = (res.data as { activity?: Array<{ kind: string; id: string; counterpart_id: string; amount_kobo: number; note: string; state?: string; created_at: string }> })?.activity ?? [];
     return items.map((item) => ({
       id: item.id,
-      kind: item.kind as ActivityItem['kind'],
+      kind: ACTIVITY_KIND_FROM_SERVER[item.kind] ?? 'other',
       status: (item.state || 'completed') as ActivityStatus,
       counterparty: item.counterpart_id,
       avatarColor: '#340075',
@@ -354,6 +386,68 @@ export async function requestMoney(input: RequestInput): Promise<PayResult> {
   );
   const request = (res.data as { request?: { id?: string } })?.request;
   return { id: request?.id ?? `req_${Date.now()}`, ok: true, status: 'pending' };
+}
+
+// ── The receiver's half of a money request ──────────────────────────────────
+// Creating a request is only half the feature: the person it is addressed to
+// has to be able to act on it. These four calls are that half, against the
+// endpoints that already exist in backend/internal/social/handler.go Register —
+// GET /requests, POST /requests/:id/pay, /decline, /cancel.
+//
+// No Idempotency-Key is sent on the actions: the server keys the whole transfer
+// off the request id itself (`"req:<id>"` ledger legs + a PENDING-guarded row
+// flip), so a retry converges instead of double-charging.
+
+// Backend: GET /requests → { success, requests: RequestRowServer[] }, newest
+// first, both directions. `direction` is from the CALLER's point of view:
+// 'incoming' = I owe it (I am the payer), 'outgoing' = it is owed to me.
+export async function listRequests(): Promise<MoneyRequest[]> {
+  if (USE_MOCK) { await delay(); return MOCK_REQUESTS.map(mapRequestRow); }
+  const res = await api.get(`${API_BASE}/requests`);
+  return mapRequestRows((res.data as { requests?: RequestRowServer[] })?.requests);
+}
+
+// Paying is a wallet debit for the amount the requester asked for, and only the
+// named payer may do it. A short wallet is refused with the transfers rail's
+// shape (402 + code INSUFFICIENT_BALANCE, backend/internal/finance/transfers/
+// decision.go) — which social's own errMap is being aligned to; until that
+// lands, social maps it to the default 400 carrying the ledger's verbatim
+// sentence (go-common/httperr/httperr.go:200 passes a 4xx string through).
+// requestFailure in lib/requests.ts recognises either, so the payer is told to
+// top up and retry the SAME request rather than start a new one.
+export async function payRequest(id: string): Promise<PayResult> {
+  if (USE_MOCK) {
+    await delay();
+    const row = MOCK_REQUESTS.find((r) => r.id === id);
+    if (row) row.state = 'PAID';
+    return { id, ok: true, status: 'completed' };
+  }
+  await api.post(`${API_BASE}/requests/${encodeURIComponent(id)}/pay`);
+  return { id, ok: true, status: 'completed' };
+}
+
+export async function declineRequest(id: string): Promise<PayResult> {
+  if (USE_MOCK) {
+    await delay();
+    const row = MOCK_REQUESTS.find((r) => r.id === id);
+    if (row) row.state = 'DECLINED';
+    return { id, ok: true, status: 'declined' };
+  }
+  await api.post(`${API_BASE}/requests/${encodeURIComponent(id)}/decline`);
+  return { id, ok: true, status: 'declined' };
+}
+
+// The requester's own withdrawal — not available to the payer, who uses
+// declineRequest instead.
+export async function cancelRequest(id: string): Promise<PayResult> {
+  if (USE_MOCK) {
+    await delay();
+    const row = MOCK_REQUESTS.find((r) => r.id === id);
+    if (row) row.state = 'CANCELLED';
+    return { id, ok: true, status: 'declined' };
+  }
+  await api.post(`${API_BASE}/requests/${encodeURIComponent(id)}/cancel`);
+  return { id, ok: true, status: 'declined' };
 }
 
 // Backend: POST /handle expects { handle } → { success, handle }. NOTE: the

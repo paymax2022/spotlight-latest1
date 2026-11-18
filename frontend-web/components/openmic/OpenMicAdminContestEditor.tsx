@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { OpenMicContest, OpenMicContestStatus } from '@/src/features/openmic/types';
+import { isLegacyBeatUrl, publicBeatUrl } from '@/src/features/openmic/beat-storage';
 import { adminAuthHeaders } from '@/src/lib/auth/client';
 
 type Props = {
@@ -61,17 +62,18 @@ export default function OpenMicAdminContestEditor({ contest }: Props) {
     try {
       const body = new FormData();
       body.append('file', file);
-      const res = await fetch('/api/registration/uploads', { method: 'POST', body });
+      const res = await fetch(`/api/admin/open-mic/beats?contestId=${encodeURIComponent(contest.id)}`, {
+        method: 'POST',
+        headers: await adminAuthHeaders(false),
+        body,
+      });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok || !payload?.success) throw new Error(payload?.error || 'Beat upload failed.');
-      const uploadedUrl = String(payload?.upload?.previewUrl || '');
-      if (!uploadedUrl) throw new Error('Upload succeeded but no file URL was returned.');
-      setForm((prev) => ({
-        ...prev,
-        downloadUrl: uploadedUrl,
-        previewUrl: prev.previewUrl || uploadedUrl,
-      }));
-      setMessage('Beat file uploaded. Save changes to publish it.');
+      const previewUrl = String(payload?.beat?.previewUrl || '');
+      const downloadUrl = String(payload?.beat?.downloadUrl || '');
+      if (!downloadUrl) throw new Error('Upload succeeded but no beat URL was returned.');
+      setForm((prev) => ({ ...prev, downloadUrl, previewUrl: previewUrl || downloadUrl }));
+      setMessage('Beat uploaded. Save changes to publish it.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Beat upload failed.');
     } finally {
@@ -198,14 +200,25 @@ export default function OpenMicAdminContestEditor({ contest }: Props) {
           </div>
           <div className="md:col-span-2">
             <label className="form-label">Beat Download URL (used by frontend download button)</label>
-            <input className="form-input h-[44px]" value={form.downloadUrl} onChange={(e) => setField('downloadUrl', e.target.value)} />
+            <input className="form-input h-[44px]" value={form.downloadUrl} onChange={(e) => setField('downloadUrl', e.target.value)} placeholder="/api/open-mic/beats/…" />
+            {isLegacyBeatUrl(form.downloadUrl) ? (
+              <p className="form-error">
+                This beat was uploaded before the public-beat fix, so artists get an access error. Re-upload the mp3
+                and save.
+              </p>
+            ) : form.downloadUrl && publicBeatUrl(form.downloadUrl) === null ? (
+              <p className="form-error">
+                The programme page cannot serve that address, so the beat will not play or download. Upload the mp3
+                instead of pasting a URL, then save.
+              </p>
+            ) : null}
           </div>
           <div className="md:col-span-2">
-            <label className="form-label">Upload Beat File (MP3/WAV)</label>
+            <label className="form-label">Upload Beat File (MP3)</label>
             <input
               className="form-input h-[44px]"
               type="file"
-              accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-wav,audio/mp4"
+              accept=".mp3"
               onChange={(e) => {
                 const selected = e.target.files?.[0];
                 if (selected) void uploadBeatFile(selected);

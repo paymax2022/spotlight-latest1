@@ -59,6 +59,10 @@ function mapStore(r: any): MerchantStore {
     createdAt: r.created_at,
     geoLat: typeof r.geo_lat === 'number' ? r.geo_lat : null,
     geoLng: typeof r.geo_lng === 'number' ? r.geo_lng : null,
+    // Read back with the pin, so reopening an outlet still shows the confirmation the
+    // owner saw when they set it. Absent on an older payload reads as "no code", which
+    // is what it is — the pin itself is the coordinates, not this string.
+    plusCode: typeof r.plus_code === 'string' && r.plus_code ? r.plus_code : null,
     // Left undefined when the server omits it, so the UI can tell "not loaded"
     // from a genuine ₦0 and never shows a price the owner did not set.
     packagingFeeKobo: typeof r.packaging_fee_kobo === 'number' ? r.packaging_fee_kobo : undefined,
@@ -90,9 +94,6 @@ function mapKYB(r: any, documents: string[] = []): RestaurantKYB {
     tin: r?.tin ?? '',
     contactEmail: r?.contact_email ?? '',
     contactPhone: r?.contact_phone ?? '',
-    bankCode: r?.bank_code ?? '',
-    accountNumber: r?.account_number ?? '',
-    accountName: r?.account_name ?? '',
     status: r?.status ?? 'draft',
     decisionReason: r?.decision_reason ?? undefined,
     documents,
@@ -110,7 +111,7 @@ let seq = 0;
 // in the offline demo would be noise, not a warning).
 let mockKYB: RestaurantKYB = {
   restaurantId: mockStore.id, legalName: '', businessType: '', rcNumber: '', tin: '',
-  contactEmail: '', contactPhone: '', bankCode: '', accountNumber: '', accountName: '',
+  contactEmail: '', contactPhone: '',
   status: 'approved', documents: [],
 };
 const nextId = (p: string) => `${p}-${(seq += 1)}`;
@@ -359,7 +360,6 @@ export async function getEarnings(): Promise<MerchantEarnings> {
 export type SaveKYBInput = Pick<
   RestaurantKYB,
   'legalName' | 'businessType' | 'rcNumber' | 'tin' | 'contactEmail' | 'contactPhone'
-  | 'bankCode' | 'accountNumber' | 'accountName'
 >;
 
 export async function getKYB(id: string): Promise<RestaurantKYB> {
@@ -377,9 +377,6 @@ export async function saveKYB(id: string, input: SaveKYBInput): Promise<Restaura
     tin: input.tin,
     contact_email: input.contactEmail,
     contact_phone: input.contactPhone,
-    bank_code: input.bankCode,
-    account_number: input.accountNumber,
-    account_name: input.accountName,
   };
   const raw = unwrap<any>(await api.put(`${BASE}/${enc(id)}/kyb`, body));
   return mapKYB(raw?.kyb ?? raw);

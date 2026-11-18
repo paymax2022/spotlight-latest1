@@ -341,20 +341,43 @@ func (s *Service) ListReminders(ctx context.Context, userID string) ([]Reminder,
 	return s.repo.ListReminders(ctx, userID)
 }
 
-func (s *Service) SaveReminderSettings(ctx context.Context, userID, idemKey string, raw json.RawMessage) (*Reminder, error) {
+func (s *Service) SaveReminderSettings(ctx context.Context, userID, idemKey string, raw json.RawMessage) (*ReminderSettings, error) {
 	if idemKey == "" {
 		return nil, ErrIdempotencyRequired
 	}
-	p := parseOpsPatch(raw)
-	settings := p.Settings
-	if len(settings) == 0 {
-		settings = raw
+	// reminders.tsx posts { reminders: {...} }; the same object at the top level is
+	// accepted too, since the contract does not pin the envelope.
+	var body struct {
+		Reminders *ReminderSettings `json:"reminders"`
 	}
-	enabled := true
-	if p.Enabled != nil {
-		enabled = *p.Enabled
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, ErrInvalidReminders
 	}
-	return s.repo.SaveReminder(ctx, userID, strOrDefault(p.ReminderType, "appointment"), settings, enabled)
+	settings := body.Reminders
+	if settings == nil {
+		var direct ReminderSettings
+		if err := json.Unmarshal(raw, &direct); err != nil {
+			return nil, ErrInvalidReminders
+		}
+		settings = &direct
+	}
+	if settings.OffsetsMins == nil {
+		settings.OffsetsMins = []int{}
+	}
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		return nil, err
+	}
+	// The enabled flag lives on the row as well as in the object: the row is what
+	// GET /schedule/reminders and this read project, so write it from the same value.
+	if _, err := s.repo.SaveReminder(ctx, userID, "appointment", payload, settings.Enabled); err != nil {
+		return nil, err
+	}
+	saved, err := s.repo.AppointmentReminderSettings(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &saved, nil
 }
 
 func (s *Service) SetTimezone(ctx context.Context, userID, idemKey string, raw json.RawMessage) (*Profile, error) {
@@ -363,6 +386,16 @@ func (s *Service) SetTimezone(ctx context.Context, userID, idemKey string, raw j
 	}
 	p := parseOpsPatch(raw)
 	tz := strOrDefault(p.Timezone, "Africa/Lagos")
+	// The column is read by date expressions (now() AT TIME ZONE), so a zone
+	// Postgres cannot apply is the caller's to fix here — not a 22023 later in
+	// whichever screen evaluates it.
+	applies, err := s.repo.ZoneApplies(ctx, tz)
+	if err != nil {
+		return nil, err
+	}
+	if !applies {
+		return nil, ErrInvalidTimezone
+	}
 	return s.repo.SetTimezone(ctx, userID, tz)
 }
 
@@ -585,6 +618,46 @@ type Reminder struct {
 	UpdatedAt    time.Time       `json:"updatedAt"`
 }
 
+// ReminderSettings is the single object the reminders screen edits
+// (src/types/doctor.batch1.ts). The rows stay one-per-type in doctor_reminders;
+// the screen's save applies to the appointment row.
+type ReminderSettings struct {
+	Enabled      bool  `json:"enabled"`
+	OffsetsMins  []int `json:"offsetsMins"`
+	ChannelPush  bool  `json:"channelPush"`
+	ChannelEmail bool  `json:"channelEmail"`
+	ChannelSMS   bool  `json:"channelSms"`
+}
+
+// DefaultReminderSettings is what a doctor who never opened the reminders screen
+// answers: nothing configured (so nothing is claimed to be on), with an empty
+// offsets list rather than nil — reminders.tsx binds it and calls .includes.
+func DefaultReminderSettings() ReminderSettings {
+	return ReminderSettings{OffsetsMins: []int{}}
+}
+
+// decodeReminderSettings reads a doctor_reminders.settings object. The enabled
+// column stays authoritative because the row list exposes it; rows written by the
+// old binder wrapped the whole request, so the inner object wins when present.
+func decodeReminderSettings(raw []byte, enabled bool) ReminderSettings {
+	out := DefaultReminderSettings()
+	if len(raw) > 0 {
+		var wrapped struct {
+			Reminders *ReminderSettings `json:"reminders"`
+		}
+		if json.Unmarshal(raw, &wrapped) == nil && wrapped.Reminders != nil {
+			out = *wrapped.Reminders
+		} else if json.Unmarshal(raw, &out) != nil {
+			out = DefaultReminderSettings()
+		}
+	}
+	if out.OffsetsMins == nil {
+		out.OffsetsMins = []int{}
+	}
+	out.Enabled = enabled
+	return out
+}
+
 // ConsultQueueEntry mirrors public.doctor_consult_queue.
 type ConsultQueueEntry struct {
 	ID            string          `json:"id"`
@@ -597,18 +670,27 @@ type ConsultQueueEntry struct {
 	UpdatedAt     time.Time       `json:"updatedAt"`
 }
 
-// AppointmentRequest mirrors public.doctor_appointment_requests (mobile AppointmentRequest).
+// AppointmentRequest is the doctor's decision view of ONE booking. It mirrors
+// the mobile AppointmentRequest (types/doctor.batch1.ts), which nests the
+// appointment rather than flattening it — and reads `r.appointment.patient.*`
+// and `TYPE_ICON[r.appointment.consultType]` off that nesting.
+//
+// It is projected from public.appointments (repository_ops.go
+// requestForAppointment); it does NOT mirror doctor_appointment_requests, a
+// table nothing in this repository writes.
 type AppointmentRequest struct {
-	ID            string          `json:"id"`
-	UserID        string          `json:"userId"`
-	AppointmentID *string         `json:"appointmentId,omitempty"`
-	Patient       json.RawMessage `json:"patient,omitempty"`
-	ConsultType   *string         `json:"consultType,omitempty"`
-	Status        string          `json:"status"`
-	RequestedSlot *string         `json:"requestedSlot,omitempty"`
-	Detail        json.RawMessage `json:"detail,omitempty"`
-	CreatedAt     time.Time       `json:"createdAt"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
+	ID               string       `json:"id"`
+	UserID           string       `json:"userId"`
+	AppointmentID    string       `json:"appointmentId"`
+	Status           string       `json:"status"` // pending|accepted|rejected|reschedule_requested
+	Priority         string       `json:"priority"`
+	Billing          string       `json:"billing"`
+	RequestedAt      time.Time    `json:"requestedAt"`
+	PatientNote      string       `json:"patientNote"`
+	RejectionReason  *string      `json:"rejectionReason,omitempty"`
+	ProposedSlotDate *string      `json:"proposedSlotDate,omitempty"`
+	ProposedSlotTime *string      `json:"proposedSlotTime,omitempty"`
+	Appointment      *Appointment `json:"appointment"`
 }
 
 // ClinicPortfolio mirrors mobile ClinicPortfolio. There is no dedicated clinics

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
+import DrawerEnhancement from './DrawerEnhancement';
 import './header-drawer.css';
 
 export type DrawerLink = { href: string; label: string };
@@ -77,9 +78,11 @@ export default function HeaderDrawer({
 
   return (
     <>
+      <DrawerEnhancement />
       <div
         className={`hdr-drawer__backdrop${open ? ' is-open' : ''}`}
         aria-hidden="true"
+        data-drawer-dismiss="drawer"
         onClick={onClose}
       />
       <aside
@@ -90,7 +93,13 @@ export default function HeaderDrawer({
       >
         <div className="hdr-drawer__top">
           <p className="hdr-drawer__title">Menu</p>
-          <button type="button" className="hdr-drawer__close" aria-label="Close menu" onClick={onClose}>
+          <button
+            type="button"
+            className="hdr-drawer__close"
+            aria-label="Close menu"
+            data-drawer-dismiss="drawer"
+            onClick={onClose}
+          >
             &times;
           </button>
         </div>

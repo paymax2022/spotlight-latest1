@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"spotlight/backend/go-common/ginutil"
+	"spotlight/backend/go-common/httperr"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -33,6 +34,11 @@ func uuidAppointmentID(c *gin.Context) bool {
 // ErrAppointmentNotFound / ErrIntakeNotFound (missing OR foreign — uniform) →
 // 404; ErrUploadsNotConfigured → 503; anything else → the caller's default
 // status. FailOK sanitizes the message.
+//
+// The submitted-freeze is the one refusal a client has to branch on, and it shares
+// status 400 with the ordinary validation failure while the reactions are opposite
+// (stop editing vs keep going). It therefore also carries a stable `code`; the
+// sentence stays byte-identical so a client on an older build still recognises it.
 func preconsultFail(c *gin.Context, err error, defCode int) {
 	switch {
 	case errors.Is(err, ErrAppointmentNotFound):
@@ -41,6 +47,12 @@ func preconsultFail(c *gin.Context, err error, defCode int) {
 		ginutil.FailOK(c, http.StatusNotFound, "intake not found")
 	case errors.Is(err, ErrUploadsNotConfigured):
 		ginutil.FailOK(c, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, ErrIntakeAlreadySubmitted):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   httperr.Sanitize(c, http.StatusBadRequest, err.Error()),
+			"code":    "intake_already_submitted",
+		})
 	default:
 		ginutil.FailOK(c, defCode, err.Error())
 	}
@@ -74,6 +86,9 @@ func (h *Handler) SaveDraft(c *gin.Context) {
 	}
 	var req struct {
 		Answers map[string]any `json:"answers"`
+		// Absent (autosave) leaves the recorded consent untouched; present is the
+		// consent screen's "I agree", which Service.SaveDraft validates and stores.
+		ConsentVersion *int `json:"consent_version"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ginutil.FailOK(c, http.StatusBadRequest, "invalid body")
@@ -82,7 +97,7 @@ func (h *Handler) SaveDraft(c *gin.Context) {
 	if !uuidAppointmentID(c) {
 		return
 	}
-	it, err := h.svc.SaveDraft(c.Request.Context(), id, c.Param("appointmentId"), req.Answers)
+	it, err := h.svc.SaveDraft(c.Request.Context(), id, c.Param("appointmentId"), req.Answers, req.ConsentVersion)
 	if err != nil {
 		preconsultFail(c, err, http.StatusBadRequest)
 		return

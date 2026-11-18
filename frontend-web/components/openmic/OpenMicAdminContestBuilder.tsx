@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { NIGERIA_CITIES_BY_STATE, NIGERIA_STATES } from '@/src/features/registration/config';
+import { isLegacyBeatUrl, publicBeatUrl } from '@/src/features/openmic/beat-storage';
 import { adminAuthHeaders } from '@/src/lib/auth/client';
 
 function slugify(input: string) {
@@ -80,7 +81,7 @@ export default function OpenMicAdminContestBuilder() {
     if (!String(form.city || '').trim()) errors.city = 'City is required.';
     if (!String(form.venueName || '').trim()) errors.venueName = 'Finale venue name is required.';
     if (!String(form.beatTitle || '').trim()) errors.beatTitle = 'Official beat title is required.';
-    if (!String(form.beatDownloadUrl || '').trim()) errors.beatDownloadUrl = 'Official beat file URL is required.';
+    if (!String(form.beatDownloadUrl || '').trim()) errors.beatDownloadUrl = 'Upload the official beat mp3.';
     return errors;
   }
 
@@ -90,23 +91,20 @@ export default function OpenMicAdminContestBuilder() {
     try {
       const body = new FormData();
       body.append('file', file);
-      const res = await fetch('/api/registration/uploads', {
+      const res = await fetch('/api/admin/open-mic/beats', {
         method: 'POST',
+        headers: await adminAuthHeaders(false),
         body,
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok || !payload?.success) {
         throw new Error(payload?.error || 'Beat upload failed.');
       }
-      const uploadedUrl = payload?.upload?.previewUrl;
-      if (uploadedUrl) {
-        setForm((prev) => ({
-          ...prev,
-          beatDownloadUrl: uploadedUrl,
-          beatPreviewUrl: prev.beatPreviewUrl || uploadedUrl,
-        }));
-      }
-      setMessage('Beat file uploaded and attached to this contest.');
+      const previewUrl = String(payload?.beat?.previewUrl || '');
+      const downloadUrl = String(payload?.beat?.downloadUrl || '');
+      if (!downloadUrl) throw new Error('Upload succeeded but no beat URL was returned.');
+      setForm((prev) => ({ ...prev, beatDownloadUrl: downloadUrl, beatPreviewUrl: previewUrl || downloadUrl }));
+      setMessage('Beat uploaded. Artists can now play and download it.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Beat upload failed.');
     } finally {
@@ -311,16 +309,26 @@ export default function OpenMicAdminContestBuilder() {
           </div>
           <div className="md:col-span-2">
             <label className="form-label">Beat File URL (Download)*</label>
-            <input className="form-input h-[44px]" value={form.beatDownloadUrl} onChange={(e) => setField('beatDownloadUrl', e.target.value)} placeholder="https://..." />
-            <p className="form-help">You can paste a direct URL, or upload an MP3/WAV file below.</p>
+            <input className="form-input h-[44px]" value={form.beatDownloadUrl} onChange={(e) => setField('beatDownloadUrl', e.target.value)} placeholder="/api/open-mic/beats/…" />
+            <p className="form-help">The upload below fills this. Artists can only open a beat this site stores.</p>
             {validationErrors.beatDownloadUrl ? <p className="form-error">{validationErrors.beatDownloadUrl}</p> : null}
+            {isLegacyBeatUrl(form.beatDownloadUrl) ? (
+              <p className="text-[12px] text-amber-400">
+                This beat predates the public-beat storage fix, so artists get an access error. Re-upload the mp3.
+              </p>
+            ) : form.beatDownloadUrl && publicBeatUrl(form.beatDownloadUrl) === null ? (
+              <p className="text-[12px] text-amber-400">
+                The programme page cannot serve that address, so the beat will not play or download. Upload the mp3
+                instead of pasting a URL.
+              </p>
+            ) : null}
           </div>
           <div className="md:col-span-2">
-            <label className="form-label">Upload Beat File (MP3/WAV)</label>
+            <label className="form-label">Upload Beat File (MP3)</label>
             <input
               className="form-input h-[44px] file:mr-3 file:rounded-sm file:border file:border-white/60 file:bg-transparent file:px-2 file:py-1 file:text-xs file:text-foreground"
               type="file"
-              accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-wav,audio/mp4"
+              accept=".mp3"
               onChange={(e) => {
                 const selected = e.target.files?.[0];
                 if (selected) void uploadBeatFile(selected);
@@ -331,7 +339,13 @@ export default function OpenMicAdminContestBuilder() {
           </div>
           <div className="md:col-span-2">
             <label className="form-label">Beat Preview URL (Optional)</label>
-            <input className="form-input h-[44px]" value={form.beatPreviewUrl} onChange={(e) => setField('beatPreviewUrl', e.target.value)} placeholder="https://..." />
+            <input className="form-input h-[44px]" value={form.beatPreviewUrl} onChange={(e) => setField('beatPreviewUrl', e.target.value)} placeholder="/api/open-mic/beats/…" />
+            {form.beatPreviewUrl && publicBeatUrl(form.beatPreviewUrl) === null ? (
+              <p className="text-[12px] text-amber-400">
+                The player ignores a preview it cannot serve. Upload the mp3 instead of pasting a URL, or leave this
+                empty to play the download file.
+              </p>
+            ) : null}
           </div>
           <div className="md:col-span-2">
             <label className="form-label">Beat Usage Rules</label>
