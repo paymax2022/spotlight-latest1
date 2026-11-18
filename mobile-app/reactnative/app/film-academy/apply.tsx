@@ -24,6 +24,7 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { getOverview, applyToBatch, FILM_ACADEMY_STATUS_KEY } from '@/features/filmAcademy/api';
+import { ACADEMY_PAYMENTS } from '@/features/filmAcademy/payments';
 import { alertAsync } from '@/lib/confirm';
 import { useAuthStore } from '@/store/authStore';
 import { normalizeAccountName } from '@/features/account/name';
@@ -41,13 +42,19 @@ export default function FilmAcademyApplyScreen() {
   const batch = data?.batches.find((b) => b.id === batchId);
 
   // When the programme charges an application fee, the server requires a
-  // verified Paystack reference that this form cannot yet produce — the submit
-  // would be rejected. Say so BEFORE the user fills anything in, rather than
-  // failing them at the end. Staging currently has registration_type 'paid'
-  // with a NGN 5,000 fee, so this is the live path, not a hypothetical one.
+  // verified Paystack reference — the submit would be rejected without one. Say
+  // so BEFORE the user fills anything in, rather than failing them at the end.
+  // Registration is free now (the fee has been removed, so people can register
+  // without paying), so the expected path is feeRequired === false and the form
+  // submits with no charge; the paid branch stays for a settings flip back.
   const feeRequired =
     String(data?.settings?.registration_type ?? '').toLowerCase() === 'paid' &&
     Number(data?.settings?.application_fee ?? 0) > 0;
+  // The server gates charging on registration_type alone — even with a zero
+  // fee it still expects the first tuition instalment — so this flag, not
+  // feeRequired, decides whether anything is collected here.
+  const registrationPaid =
+    String(data?.settings?.registration_type ?? '').toLowerCase() === 'paid';
   const baseFee = Number(data?.settings?.application_fee ?? 0);
   // Only the areas this batch offers — exactly. An empty entry means the batch
   // has no trainings set, and the form shows none rather than inventing the
@@ -82,7 +89,7 @@ export default function FilmAcademyApplyScreen() {
   const [fullName, setFullName]     = React.useState('');
   const [phone, setPhone]           = React.useState('');
   // Accordion state: { areaSlug: formatKey } — presence of a slug means the
-  // area is selected, and the value is the price line (sub) the applicant
+  // area is selected, and the value is the format line (sub) the applicant
   // tapped. An empty value only ever appears on a legacy server with no
   // format table, where the header tap selects the area directly.
   const [selections, setSelections] = React.useState<Record<string, string>>({});
@@ -140,7 +147,12 @@ export default function FilmAcademyApplyScreen() {
     ? (instalmentCount === 1 ? discountedTuition : Math.round((discountedTuition / instalmentCount) * 100) / 100)
     : 0;
   const applicationFeeDue = feeRequired ? applicationFee : 0;
-  const payNow = applicationFeeDue + firstTuitionPayment;
+  // ONE payment at submit — ONLY when registration is paid. With registration
+  // free the server expects nothing at submit (expectedTotalPayment = 0, and it
+  // records payment_status 'not_required'): charging the first tuition
+  // instalment here would take real money the server would not record. Tuition
+  // is instead settled offline, weekly, at the venue or by bank transfer.
+  const payNow = registrationPaid ? applicationFeeDue + firstTuitionPayment : 0;
   // What is still owed once today's payment lands. Only meaningful on a real
   // instalment plan (more than one charge), and it uses the same rounded unit
   // the server's tuitionPlanShape bills against, so the figure cannot drift
@@ -156,7 +168,7 @@ export default function FilmAcademyApplyScreen() {
   const atLimit = selectedCount >= maxAreas;
 
   // The hub hands over what was picked there: `area` lists the trainings,
-  // `formats` the slug:key pairs whose price line was tapped. A format choice
+  // `formats` the slug:key pairs whose format line was tapped. A format choice
   // only lands when the area is offered by this batch AND carries that key —
   // a crafted query cannot select something the server would reject. An area
   // named with no format just opens its accordion; with the legacy fee-per-area
@@ -195,7 +207,7 @@ export default function FilmAcademyApplyScreen() {
   const applicantEmail = known.email;
   const applicantPhone = known.phone || phone.trim();
 
-  // Tapping a sub (price line) selects that area in that format; tapping the
+  // Tapping a sub (format line) selects that area in that format; tapping the
   // selected one again deselects the area. At the cap, a new area cannot be
   // added — its subs are disabled and the limit note explains why.
   const pickSub = (slug: string, key: string) =>
@@ -233,8 +245,9 @@ export default function FilmAcademyApplyScreen() {
         email: applicantEmail,
         phone: applicantPhone,
         areas_of_interest: selectedSlugs,
-        // The accordion choices: each area with the price line tapped. The
-        // server prices tuition from these pairs, area by area.
+        // The accordion choices: each area with the format line tapped. The
+        // server records these pairs on the application; its own rows decide
+        // what is invoiced.
         ...(hasStructure
           ? { area_selections: selectedSlugs.map((slug) => ({ slug, key: selections[slug] })) }
           : {}),
@@ -245,7 +258,16 @@ export default function FilmAcademyApplyScreen() {
       });
       await qc.invalidateQueries({ queryKey: FILM_ACADEMY_KEY });
       await qc.invalidateQueries({ queryKey: FILM_ACADEMY_STATUS_KEY });
-      await alertAsync({ title: 'You are in', message: 'Your payment was received and your place is secured. You can start learning now.' });
+      // The charged path settled a payment; the free path filed an application
+      // whose tuition is paid weekly, offline. Each is told what actually
+      // happened rather than one shared sentence.
+      await alertAsync(reference
+        ? { title: 'You are in', message: 'Your payment was received and your place is secured. You can start learning now.' }
+        : {
+            title: 'Application submitted',
+            message:
+              `Your application is in. Tuition is ₦${ACADEMY_PAYMENTS.tuitionNgn.toLocaleString('en-NG')}, payable in instalments of ₦${ACADEMY_PAYMENTS.weeklyNgn.toLocaleString('en-NG')} weekly — at the Film Academy venue or by transfer to ${ACADEMY_PAYMENTS.bankName}, ${ACADEMY_PAYMENTS.accountNumber}.`,
+          });
       router.replace('/film-academy/learn');
     } catch (e) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
@@ -259,16 +281,16 @@ export default function FilmAcademyApplyScreen() {
     setError(null);
     // Mirror the server's required fields rather than discovering them via a 400.
     if (!batchId)            return setError('No cohort selected.');
-    // that can apply — say so rather than showing an input we would ignore.
+    // The server decides who can apply — say so rather than showing an input we would ignore.
     if (!applicantEmail)     return setError('Please sign in to apply.');
     if (!applicantName)      return setError('Enter your full name.');
     if (!applicantPhone)     return setError('Enter your phone number.');
-    if (selectedCount === 0) return setError('Tap a training, then tap its price line to choose it.');
+    if (selectedCount === 0) return setError('Tap a training, then tap the format you want to choose it.');
     if (selectedCount > maxAreas) {
       return setError(`Choose at most ${maxAreas} areas of interest for this batch.`);
     }
     if (hasStructure && Object.values(selections).some((k) => !k)) {
-      return setError('Choose a price line for each training you selected.');
+      return setError('Choose a training format for each training you selected.');
     }
     if (!motivation.trim())  return setError('Tell us why you want to join.');
 
@@ -344,7 +366,7 @@ export default function FilmAcademyApplyScreen() {
 
         <Text style={styles.label}>Areas of interest</Text>
         <Text style={styles.totalNote}>
-          Tap a training to open it, then tap its price line to choose.
+          Tap a training to open it, then tap the training format you want.
         </Text>
         <Text style={[styles.noticeText, atLimit && styles.limitReached]}>
           {atLimit
@@ -365,7 +387,6 @@ export default function FilmAcademyApplyScreen() {
               const chosenOpt = hasFormats
                 ? (a.pricing_options ?? []).find((o) => o.key === chosenKey)
                 : undefined;
-              const legacyFee = !hasFormats ? Number(a.fee_ngn ?? 0) : 0;
               return (
                 <View key={a.slug} style={[styles.accItem, picked && styles.accItemOn]}>
                   <Pressable
@@ -386,16 +407,13 @@ export default function FilmAcademyApplyScreen() {
                     <View style={styles.formatBody}>
                       <Text style={[styles.chipText, picked && styles.chipTextOn]}>{a.label}</Text>
                       {chosenOpt ? (
-                        <Text style={styles.totalNote}>
-                          {chosenOpt.label} — ₦{Number(chosenOpt.price_ngn).toLocaleString('en-NG')}
-                        </Text>
+                        // Format only — the programme tuition is flat, so the
+                        // per-format price figures are not shown.
+                        <Text style={styles.totalNote}>{chosenOpt.label}</Text>
                       ) : (
                         !picked && !!a.description && (
                           <Text style={styles.totalNote} numberOfLines={1}>{a.description}</Text>
                         )
-                      )}
-                      {picked && legacyFee > 0 && (
-                        <Text style={styles.totalNote}>₦{legacyFee.toLocaleString('en-NG')}</Text>
                       )}
                     </View>
                     {hasFormats && (
@@ -418,7 +436,7 @@ export default function FilmAcademyApplyScreen() {
                             disabled={blocked}
                             accessibilityRole="radio"
                             accessibilityState={{ selected: on, disabled: blocked }}
-                            accessibilityLabel={`${o.label}${o.note ? `, ${o.note}` : ''}, ₦${Number(o.price_ngn).toLocaleString('en-NG')}`}
+                            accessibilityLabel={`${o.label}${o.note ? `, ${o.note}` : ''}`}
                             style={[styles.subRow, on && styles.subRowOn, blocked && styles.chipBlocked]}
                           >
                             {on
@@ -426,9 +444,6 @@ export default function FilmAcademyApplyScreen() {
                               : <View style={styles.subDot} />}
                             <Text style={[styles.subText, on && styles.chipTextOn]}>
                               {o.label}{o.note ? ` (${o.note})` : ''}
-                            </Text>
-                            <Text style={[styles.subPrice, on && styles.chipTextOn]}>
-                              = ₦{Number(o.price_ngn).toLocaleString('en-NG')}
                             </Text>
                           </Pressable>
                         );
@@ -441,69 +456,96 @@ export default function FilmAcademyApplyScreen() {
           </View>
         )}
 
-        {/* Running total. Tapping a chip adds or removes its line immediately. */}
-        <View style={styles.totalBox}>
-          <View style={[styles.totalRow, styles.totalRowGrand, { borderTopWidth: 0, marginTop: 0, paddingTop: 0 }]}>
-            <Text style={styles.totalGrandLabel}>Pay now</Text>
-            <Text style={styles.totalGrandValue}>₦{payNow.toLocaleString('en-NG')}</Text>
-          </View>
-          <Text style={styles.totalNote}>
-            {applicationFeeDue > 0
-              ? `Application fee ₦${applicationFeeDue.toLocaleString('en-NG')} (non-refundable) + `
-              : ''}
-            {instalmentCount > 1 ? 'first tuition instalment' : 'tuition'}. You start learning as soon as you pay.
-          </Text>
+        {/* What this application costs. Registration is free, so applying
+            charges nothing: the card states the programme's payment terms
+            instead of a charge. A paid registration (settings flipped back)
+            keeps the original pay-now breakdown. */}
+        {payNow > 0 ? (
+          <View style={styles.totalBox}>
+            <View style={[styles.totalRow, styles.totalRowGrand, { borderTopWidth: 0, marginTop: 0, paddingTop: 0 }]}>
+              <Text style={styles.totalGrandLabel}>Pay now</Text>
+              <Text style={styles.totalGrandValue}>₦{payNow.toLocaleString('en-NG')}</Text>
+            </View>
+            <Text style={styles.totalNote}>
+              {applicationFeeDue > 0
+                ? `Application fee ₦${applicationFeeDue.toLocaleString('en-NG')} (non-refundable) + `
+                : ''}
+              {instalmentCount > 1 ? 'first tuition instalment' : 'tuition'}. You start learning as soon as you pay.
+            </Text>
 
-          {tuitionTotal > 0 && (
-            <>
-              <View style={[styles.totalRow, styles.totalRowGrand]}>
-                <Text style={styles.totalLabel}>
-                  Total tuition{instalmentCount > 1 ? ` (${instalmentCount} instalments)` : ''}
-                </Text>
-                <Text style={styles.totalValue}>₦{tuitionTotal.toLocaleString('en-NG')}</Text>
-              </View>
-              {selectedAreas
-                .filter((a) => areaFee(a) > 0)
-                .map((a) => (
-                  <View key={a.slug} style={styles.totalRow}>
-                    <Text style={styles.totalSubLabel}>
-                      {a.label}
-                      {hasStructure && selections[a.slug]
-                        ? ` — ${(a.pricing_options ?? []).find((o) => o.key === selections[a.slug])?.label ?? selections[a.slug]}`
-                        : ''}
-                    </Text>
+            {tuitionTotal > 0 && (
+              <>
+                <View style={[styles.totalRow, styles.totalRowGrand]}>
+                  <Text style={styles.totalLabel}>
+                    Total tuition{instalmentCount > 1 ? ` (${instalmentCount} instalments)` : ''}
+                  </Text>
+                  <Text style={styles.totalValue}>₦{tuitionTotal.toLocaleString('en-NG')}</Text>
+                </View>
+                {selectedAreas
+                  .filter((a) => areaFee(a) > 0)
+                  .map((a) => (
+                    <View key={a.slug} style={styles.totalRow}>
+                      <Text style={styles.totalSubLabel}>
+                        {a.label}
+                        {hasStructure && selections[a.slug]
+                          ? ` — ${(a.pricing_options ?? []).find((o) => o.key === selections[a.slug])?.label ?? selections[a.slug]}`
+                          : ''}
+                      </Text>
+                      <Text style={styles.totalSubValue}>
+                        ₦{areaFee(a).toLocaleString('en-NG')}
+                      </Text>
+                    </View>
+                  ))}
+                {!hasStructure && areasTotal === 0 && selectedAreas.length > 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalSubLabel}>Cohort tuition</Text>
                     <Text style={styles.totalSubValue}>
-                      ₦{areaFee(a).toLocaleString('en-NG')}
+                      ₦{Number(batch?.training_fee_ngn ?? 0).toLocaleString('en-NG')}
                     </Text>
                   </View>
-                ))}
-              {!hasStructure && areasTotal === 0 && selectedAreas.length > 0 && (
-                <View style={styles.totalRow}>
-                  <Text style={styles.totalSubLabel}>Cohort tuition</Text>
-                  <Text style={styles.totalSubValue}>
-                    ₦{Number(batch?.training_fee_ngn ?? 0).toLocaleString('en-NG')}
-                  </Text>
-                </View>
-              )}
-              {balanceOutstanding > 0 && (
-                <View style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>
-                    {`Balance after today (${instalmentCount - 1} instalment${instalmentCount === 2 ? '' : 's'})`}
-                  </Text>
-                  <Text style={styles.totalValue}>₦{balanceOutstanding.toLocaleString('en-NG')}</Text>
-                </View>
-              )}
-              <Text style={styles.totalNote}>
-                {instalmentCount > 1
-                  ? 'The first instalment is paid now; the rest fall due on your plan. '
-                  : ''}
-                Tuition excludes feeding and project fees
-                (script print-out, make-up, props &amp; set design, location —
-                ₦20,000 per movie project).
-              </Text>
-            </>
-          )}
-        </View>
+                )}
+                {balanceOutstanding > 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>
+                      {`Balance after today (${instalmentCount - 1} instalment${instalmentCount === 2 ? '' : 's'})`}
+                    </Text>
+                    <Text style={styles.totalValue}>₦{balanceOutstanding.toLocaleString('en-NG')}</Text>
+                  </View>
+                )}
+                <Text style={styles.totalNote}>
+                  {instalmentCount > 1
+                    ? 'The first instalment is paid now; the rest fall due on your plan. '
+                    : ''}
+                  Tuition excludes feeding and project fees
+                  (script print-out, make-up, props &amp; set design, location —
+                  ₦20,000 per movie project).
+                </Text>
+              </>
+            )}
+          </View>
+        ) : (
+          <View style={styles.totalBox}>
+            <View style={[styles.totalRow, styles.totalRowGrand, { borderTopWidth: 0, marginTop: 0, paddingTop: 0 }]}>
+              <Text style={styles.totalGrandLabel}>Programme tuition</Text>
+              <Text style={styles.totalGrandValue}>₦{ACADEMY_PAYMENTS.tuitionNgn.toLocaleString('en-NG')}</Text>
+            </View>
+            <Text style={styles.totalNote}>
+              {registrationPaid
+                ? 'Nothing is charged today.'
+                : 'Registration is free — nothing is charged to apply.'}
+            </Text>
+            <Text style={styles.totalNote}>
+              Tuition can be paid in instalments — ₦{ACADEMY_PAYMENTS.weeklyNgn.toLocaleString('en-NG')} weekly, at
+              the Film Academy venue or by bank transfer to {ACADEMY_PAYMENTS.bankName}, Account:{' '}
+              {ACADEMY_PAYMENTS.accountNumber}.
+            </Text>
+            <Text style={styles.totalNote}>
+              Tuition excludes feeding and project fees
+              (script print-out, make-up, props &amp; set design, location —
+              ₦20,000 per movie project).
+            </Text>
+          </View>
+        )}
 
         {/* What the tuition buys, and what it does not — server-owned copy so
             the phone and the admin console cannot drift apart on promises. */}
@@ -606,7 +648,6 @@ const styles = StyleSheet.create({
   subRowOn:    { backgroundColor: Colors.iconBgPurple },
   subDot:      { width: 14, height: 14 },
   subText:     { ...Typography.bodyMd, color: Colors.onSurfaceVariant, flex: 1 },
-  subPrice:    { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   trainingCheck: { width: 18, height: 18, borderRadius: 9, borderWidth: 1,
                    borderColor: Colors.onSurfaceVariant, alignItems: 'center', justifyContent: 'center' },
   trainingCheckOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
