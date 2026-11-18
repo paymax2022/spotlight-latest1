@@ -1,0 +1,191 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# F2 differential probe — BRANCH ONLY, NOT A PIPELINE, DELETE AFTER READING.
+#
+# Why this exists. `railway up` to the staging environment has refused in CI for
+# twelve episodes with `Failed to fetch: error decoding response body`, sub-second,
+# producing no deployment row — while the same command from a laptop to the same
+# staging environment succeeds, and the same CI runner succeeds uploading to
+# development with a different token.
+#
+# Explanations already killed on 2026-11-18:
+#   · size / transport window — the 7.5 MB backend `--path-as-root` archive refuses
+#     exactly like the 133 MB whole-repo ones (run 44359708940);
+#   · `--verbose` hiding the status — it prints no URL, bytes or status on the CI
+#     arm, so Railway's status code is not obtainable from CI logs;
+#   · the retry budget — an 18.5-minute ladder still lost 27-for-27;
+#   · THE TOKEN — `RAILWAY_TOKEN_STAGING` was replaced at 21:13:48Z, and run
+#     44401391758 still lost 9/9 attempts on the backend leg, first refusal 0.85 s
+#     after the step started. A brand-new credential behaves identically.
+#
+# So this run asks the two questions no prior run could answer, in ONE job, with
+# the credential held CONSTANT:
+#
+#   1. Same token, same runner, same command shape, two environments. If the
+#      staging token uploads to development and refuses on staging, F2 is keyed to
+#      the staging TARGET and no credential rotation can ever fix it. If it refuses
+#      on both, the staging token is scope-limited and that is the whole story.
+#   2. Can CI use the trigger path at all? `serviceInstanceDeploy` — the mutation
+#      behind the dashboard's Deploy, and the only shape proven to land main on
+#      these instances (positive control, 17:16-17:22Z) — has never been exercised
+#      with anything but a user session. If it works here, the staging legs have a
+#      transport CI can actually use, and this file is the migration recipe.
+#
+# Secret hygiene: both tokens are mapped into step env vars (never interpolated
+# into script text), written to one file in RUNNER_TEMP, read back with `cat`, and
+# deleted in the last step. Nothing prints a token; Railway's own identity output
+# is not queried.
+# ─────────────────────────────────────────────────────────────────────────────
+name: F2 probe (staging differential)
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Commit to check out and to deploy through the trigger (full sha)'
+        required: true
+        default: '560e4287dd25db5d21a999de4172ca5b6156607f'
+        type: string
+      token_secret:
+        description: 'Which Railway secret to authenticate with'
+        required: false
+        default: 'RAILWAY_TOKEN_STAGING'
+        type: choice
+        options:
+          - RAILWAY_TOKEN_STAGING
+          - RAILWAY_TOKEN_DEVELOPMENT
+
+permissions:
+  contents: read
+
+# No `environment:` on purpose: an environment declaration would change which
+# secret resolves, and the point is to hold the credential constant while changing
+# only the target.
+concurrency:
+  group: f2-probe
+  cancel-in-progress: false
+
+env:
+  PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+  SERVICE_ID: 70de07d8-c058-4221-b645-61c4f1ac7aa5 # backend
+  STAGING_ENV_ID: 6b5f27a3-a290-4574-a977-363eb21d43ad
+  DEV_ENV_ID: 87489af5-8543-4d17-8811-1241c8869430
+
+jobs:
+  differential:
+    name: one token, two environments, then the trigger
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TOK_FILE: ${{ runner.temp }}/tok
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+
+      - name: Install Railway CLI (the exact release the legs pin)
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Resolve the token under test into one file
+        env:
+          S_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          S_DEV: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+        run: |
+          case "${{ inputs.token_secret }}" in
+            RAILWAY_TOKEN_STAGING) printf %s "$S_STAGING" > "$TOK_FILE" ;;
+            *) printf %s "$S_DEV" > "$TOK_FILE" ;;
+          esac
+          if [ ! -s "$TOK_FILE" ]; then
+            echo "::error::${{ inputs.token_secret }} resolved EMPTY — no upload was attempted"
+            exit 1
+          fi
+          echo "::notice::token under test = ${{ inputs.token_secret }} (bytes: $(wc -c < "$TOK_FILE"))"
+
+      - name: 'Read side — can this token see the two environments?'
+        run: |
+          export RAILWAY_TOKEN="$(cat "$TOK_FILE")"
+          echo "--- environment lookup (a wrong id cannot silently deploy elsewhere) ---"
+          railway api "query { environment(id: \"$STAGING_ENV_ID\") { name } }" 2>&1 | head -3
+          railway api "query { environment(id: \"$DEV_ENV_ID\") { name } }" 2>&1 | head -3
+          echo "--- latest backend rows per environment (proves auth + read scope) ---"
+          for E in development staging; do
+            echo "### $E"
+            railway deployment list --service backend --environment "$E" --project "$PROJECT" --json 2>&1 \
+              | python3 -c '
+          import sys, json
+          raw = sys.stdin.read()
+          try:
+              rows = json.loads(raw)
+          except Exception:
+              print("  NON-JSON:", raw[:200].replace("\n", " ")); raise SystemExit(0)
+          for r in (rows if isinstance(rows, list) else [])[:2]:
+              print("  id=%s status=%s created=%s" % (str(r.get("id"))[:8], r.get("status"), r.get("gmtCreate")))
+          '
+          done
+
+      - name: 'Arm A — same token, upload to DEVELOPMENT'
+        if: always()
+        run: |
+          export RAILWAY_TOKEN="$(cat "$TOK_FILE")"
+          echo "::group::railway up → development (one attempt, no ladder)"
+          timeout 400 railway up backend --path-as-root --no-gitignore \
+            --service backend --environment development --project "$PROJECT" \
+            --detach --verbose --message "f2-probe-armA" 2>&1 | tail -20
+          echo "arm_A_upload_exit=${PIPESTATUS[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::endgroup::"
+
+      - name: 'Arm B — same token, upload to STAGING (the F2 edge)'
+        if: always()
+        run: |
+          export RAILWAY_TOKEN="$(cat "$TOK_FILE")"
+          echo "::group::railway up → staging (one attempt, no ladder)"
+          timeout 400 railway up backend --path-as-root --no-gitignore \
+            --service backend --environment staging --project "$PROJECT" \
+            --detach --verbose --message "f2-probe-armB" 2>&1 | tail -20
+          echo "arm_B_upload_exit=${PIPESTATUS[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::endgroup::"
+
+      - name: 'Arm C — the trigger path, staging, commitSha pinned'
+        if: always()
+        run: |
+          export RAILWAY_TOKEN="$(cat "$TOK_FILE")"
+          date -u +%Y-%m-%dT%H:%M:%S.000Z > "$RUNNER_TEMP/start.txt"
+          START="$(cat "$RUNNER_TEMP/start.txt")"
+          echo "arm_C_started=$START" | tee -a "$GITHUB_STEP_SUMMARY"
+          { railway api "mutation(\$s: String!, \$e: String!, \$sha: String!){ serviceInstanceDeploy(serviceId: \$s, environmentId: \$e, commitSha: \$sha) }" \
+              --var "s=$SERVICE_ID" --var "e=$STAGING_ENV_ID" --var "sha=${{ inputs.sha }}" 2>&1 || true; } \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: 'Arm C verdict — row, build, served sha, routes'
+        if: always()
+        run: |
+          export RAILWAY_TOKEN="$(cat "$TOK_FILE")"
+          START="$(cat "$RUNNER_TEMP/start.txt")"
+          echo "looking for a staging backend row created after $START"
+          for i in $(seq 1 22); do
+            out="$(railway deployment list --service backend --environment staging --project "$PROJECT" --json 2>/dev/null \
+              | START="$START" python3 -c '
+          import os, sys, json
+          start = os.environ["START"]
+          try: rows = json.loads(sys.stdin.read())
+          except Exception: raise SystemExit(0)
+          fresh = [r for r in (rows if isinstance(rows, list) else []) if (r.get("gmtCreate") or "") > start]
+          for r in fresh[:1]:
+              print("row=%s status=%s created=%s snap=%s" % (str(r.get("id"))[:8], r.get("status"), r.get("gmtCreate"), str(r.get("snapshotId"))[:8]))
+          ')"
+            [ -n "$out" ] && echo "poll $i: $out"
+            case "$out" in
+              *SUCCESS*) echo "VERDICT=TRIGGER_SUCCESS"; break ;;
+              *FAILED*|*CRASHED*|*REMOVED*) echo "VERDICT=TRIGGER_DEAD"; break ;;
+            esac
+            sleep 25
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "--- what staging serves now ---"
+          curl -s --http1.1 -m 25 https://backend-staging-new.up.railway.app/api/v1/public/build; echo
+          echo "--- receiver-path routes (401 = mounted+gated, 404 = absent) ---"
+          for R in /api/finance/social/requests /api/finance/social/requests/zzz/pay; do
+            printf "%-40s POST=%s\n" "$R" "$(curl -s --http1.1 -m 25 -o /dev/null -w '%{http_code}' -X POST "https://backend-staging-new.up.railway.app$R")"
+          done
+
+      - name: 'Clean the token file'
+        if: always()
+        run: rm -f "$TOK_FILE"
