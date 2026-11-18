@@ -78,14 +78,14 @@ components:
         A patient's pre-consultation health intake bound to one appointment.
         IN_CONSULT is unreachable until status=SUBMITTED. Visible only to the
         assigned doctor (object-level) + patient. Patient-reported, not a diagnosis.
-      required: [appointment_id, consult_id, status, consent_version]
+      required: [appointment_id, consult_id, status]
       properties:
         appointment_id: { type: string, format: uuid }
         consult_id: { type: string, format: uuid }
         status:
           type: string
           enum: [DRAFT, SUBMITTED]
-        consent_version: { type: string }
+        consent_version: { type: integer, description: Version of the consent text the patient accepted; omitted until they have. }
         red_flag_level: { type: string, nullable: true }
         red_flag_severity:
           type: string
@@ -155,6 +155,12 @@ components:
           type: object
           additionalProperties: true
         schema_version: { type: integer }
+        consent_version:
+          type: integer
+          description: >
+            Present only when the patient accepts the consent text; absent leaves
+            the stored agreement untouched, so auto-save cannot wipe it. A version
+            other than the active one is rejected.
 
     RedFlagResult:
       type: object

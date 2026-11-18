@@ -255,10 +255,13 @@ export default function ElectricityScreen() {
               {discos.filter((d) => d.isActive).map((disco) => {
                 const active = selectedDisco?.id === disco.id;
                 return (
-                  <Pressable key={disco.id} onPress={() => { setSelectedDisco(disco); setValidation(null); }} style={[styles.providerCard, active && styles.providerCardActive]}>
-                    <ProviderLogo code={disco.code} name={disco.name} logoUri={resolveProviderImage(providerLogos, disco.code, disco.name)} />
-                    <Text style={[styles.providerName, active && styles.providerNameActive]} numberOfLines={1}>{disco.name}</Text>
-                    {active && <CheckCircle2 size={16} color={Colors.primary} strokeWidth={2.2} />}
+                  <Pressable key={disco.id} onPress={() => { setSelectedDisco(disco); setValidation(null); }} accessibilityLabel={disco.name} style={[styles.providerCard, active && styles.providerCardActive]}>
+                    <ProviderLogo fill code={disco.code} name={disco.name} logoUri={resolveProviderImage(providerLogos, disco.code, disco.name)} />
+                    {active && (
+                      <View style={styles.providerCardCheck}>
+                        <CheckCircle2 size={16} color={Colors.primary} strokeWidth={2.2} />
+                      </View>
+                    )}
                   </Pressable>
                 );
               })}
@@ -490,15 +493,14 @@ const styles = StyleSheet.create({
   heroBanner:  { aspectRatio: 2, borderRadius: Radius.xl, overflow: 'hidden', marginBottom: Spacing.lg },
   card:        { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.lg },
   sectionTitle:{ ...Typography.titleMd, color: Colors.onSurface },
-  providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
-  providerCard:{ width: '31%', minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.sm, gap: Spacing.sm, alignItems: 'center' },
+  providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
+  providerCard:{ width: '31%', maxWidth: 132, aspectRatio: 1, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   providerCardActive:{ borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
+  providerCardCheck:{ position: 'absolute', right: 5, bottom: 5, padding: 1, borderRadius: Radius.full, backgroundColor: '#FFFFFF' },
   providerIcon:{ width: 34, height: 34, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   providerLogoWrap:{ backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: Colors.surfaceContainerHigh, overflow: 'hidden' },
   providerLogo:{ width: 28, height: 28, borderRadius: 4 },
   providerInitial:{ ...Typography.labelMd, fontWeight: '800' },
-  providerName:{ ...Typography.labelMd, color: Colors.onSurface },
-  providerNameActive:{ color: Colors.onPrimaryFixed },
   typeRow:     { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md },
   typePill:    { flex: 1, paddingVertical: Spacing.sm, borderRadius: Radius.full, alignItems: 'center', borderWidth: 1.5, borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLow },
   typePillActive:{ backgroundColor: Colors.primaryContainer, borderColor: Colors.primary },

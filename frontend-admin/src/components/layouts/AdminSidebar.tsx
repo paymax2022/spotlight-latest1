@@ -2,30 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { AdminMenuCounts } from '@/types/admin';
 import { getAdminMenuCounts } from '@/services/adminApiClient';
 import { canManageStem, canReadStem, useStemRoles } from '@/config/stemAccess';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import { clearAdminSession } from '@/features/auth/adminAuth';
 import { colors, tint } from '@/components/ui/vuexy';
-
-type SectionIcon = '📊' | '🏆' | '👥' | '💰' | '💳' | '🏥' | '🎓' | '🏨' | '🚗' | '🍽️' | '🏠' | '⚙️';
-
-const sectionIcons: Record<string, SectionIcon> = {
-  'Overview': '📊',
-  'Contests': '🏆',
-  'Support': '👥',
-  'Transactions': '💳',
-  'Finance': '💰',
-  'Health': '🏥',
-  'Academy': '🎓',
-  'Stays': '🏨',
-  'Mobility': '🚗',
-  'Restaurant': '🍽️',
-  'Property Management': '🏠',
-  'Platform': '⚙️',
-};
 
 type NavItem = {
   label: string;
@@ -560,7 +543,242 @@ const navItemsBase: NavItem[] = [
   { label: 'Compliance (SU-12)', href: '/admin/platform/edtech/compliance', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
 ];
 
-const sections = ['Overview', 'Transactions', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Commission', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Business Registry', 'Platform · EdTech'];
+/* ─────────────────────────────  navigation hierarchy  ─────────────────────────────
+ *
+ * 446 screens across 38 flat sections was not navigable: every section defaulted to
+ * open (`expanded[section] ?? true`), so first paint dumped all 446 links into one
+ * scroll column, and the 38 names were inconsistent enough to be useless as an index
+ * ('Support' held both the chat handoff queue and the RBAC matrix; 'Referral' sat
+ * beside 'Referral Rewards'; 'Transactions' was a section with one link in it).
+ *
+ * The tree below groups them into 12 product domains, each split into the
+ * sub-groups its own URLs already form (/admin/health/lab/*, /admin/stays/payouts…).
+ * Placement is by the LONGEST matching href prefix, so /admin/mobility/bus lands in
+ * 'Bus & Transit' rather than the catch-all 'Ride & Fleet', and the grouping survives
+ * a nav item moving sections.
+ *
+ * navItemsBase is deliberately untouched: its per-item comments record WHY a link
+ * exists and which permission keeps it honest. Those gates are read here unchanged.
+ */
+
+type NavModule = { label: string; prefixes?: string[]; exact?: string[] };
+type NavDomain = { label: string; icon: string; modules: NavModule[] };
+
+const NAV_DOMAINS: NavDomain[] = [
+  {
+    label: 'Overview', icon: '📊',
+    modules: [
+      { label: 'Dashboards', exact: ['/admin'] },
+      { label: 'Analytics', prefixes: ['/admin/analytics'] },
+    ],
+  },
+  {
+    label: 'Payments & Finance', icon: '💳',
+    modules: [
+      { label: 'Ledger & Reconciliation', prefixes: ['/admin/finance', '/admin/payments-finance'] },
+      { label: 'Foreign Exchange', prefixes: ['/admin/fx'] },
+      { label: 'Commission & Placement', prefixes: ['/admin/commission', '/admin/featured-placement', '/admin/merchant-onboarding'] },
+    ],
+  },
+  {
+    label: 'Financial Products', icon: '🏦',
+    modules: [
+      { label: 'Insurance', prefixes: ['/admin/insurance'] },
+      { label: 'Savings & Vaults', prefixes: ['/admin/savings'] },
+      { label: 'Invest (Stocks)', prefixes: ['/admin/invest'] },
+      { label: 'Crypto', prefixes: ['/admin/crypto'] },
+      { label: 'Fractional Real Estate', prefixes: ['/admin/fractionalre'] },
+      { label: 'Crowdfunding', prefixes: ['/admin/crowdfunding'] },
+      { label: 'Social Escrow', prefixes: ['/admin/social-escrow'] },
+    ],
+  },
+  {
+    label: 'Growth & Rewards', icon: '🎯',
+    modules: [
+      { label: 'Referral Programme', prefixes: ['/admin/referral'] },
+      { label: 'Referral Rewards', prefixes: ['/admin/referral-rewards'] },
+      { label: 'Loyalty & Points', prefixes: ['/admin/loyalty', '/admin/points'] },
+      { label: 'Paymax Black', prefixes: ['/admin/loyalty-black'] },
+      { label: 'Creators', prefixes: ['/admin/creators'] },
+    ],
+  },
+  {
+    label: 'Contests & Programs', icon: '🏆',
+    modules: [
+      { label: 'Competitions', prefixes: ['/admin/competitions', '/admin/contests', '/admin/open-mic', '/admin/judges-scores', '/admin/registration', '/admin/stages-evictions', '/admin/sme-pitch', '/admin/reality-tv'] },
+      { label: 'Voting', prefixes: ['/admin/voting'] },
+      { label: 'STEM', prefixes: ['/admin/stem'] },
+      { label: 'Schools & Emerging Innovators', prefixes: ['/admin/schools', '/admin/school-profiles', '/admin/school-teams', '/admin/emerging-innovators', '/admin/emerging-teams', '/admin/emerging-projects'] },
+      { label: 'Arena', prefixes: ['/admin/arena'] },
+    ],
+  },
+  {
+    label: 'Health', icon: '🏥',
+    modules: [
+      { label: 'Pharmacy', prefixes: ['/admin/health/pharmacy', '/admin/health/pharmacy-reviews', '/admin/health/symptom-mappings'] },
+      { label: 'Laboratory', prefixes: ['/admin/health/lab'] },
+      { label: 'Veterinary', prefixes: ['/admin/health/vet'] },
+      { label: 'Triage & Intake', prefixes: ['/admin/health/triage', '/admin/health/doctor', '/admin/intake'] },
+      { label: 'Telemedicine', prefixes: ['/admin/telemedicine'] },
+      { label: 'Nutrition', prefixes: ['/admin/nutrition'] },
+    ],
+  },
+  {
+    label: 'Education', icon: '🎓',
+    modules: [
+      { label: 'Academy Overview', exact: ['/admin/academy'] },
+      { label: 'Curriculum & Exams', prefixes: ['/admin/academy/curriculum', '/admin/academy/content', '/admin/academy/exams', '/admin/academy/question-bank', '/admin/academy/bundles', '/admin/academy/film', '/admin/academy/live', '/admin/academy/credentials'] },
+      { label: 'Engagement & Moderation', prefixes: ['/admin/academy/gamification', '/admin/academy/rewards', '/admin/academy/notifications', '/admin/academy/moderation', '/admin/academy/analytics'] },
+      { label: 'Commerce & Sponsors', prefixes: ['/admin/academy/commerce', '/admin/academy/edupay', '/admin/academy/sponsors'] },
+      { label: 'Schools & Tutors', prefixes: ['/admin/academy/schools', '/admin/academy/tutors'] },
+      { label: 'Fees & Bursaries', prefixes: ['/admin/academy/fees'] },
+      { label: 'Learner Consoles', prefixes: ['/admin/learn', '/admin/spotlight'] },
+      { label: 'EdTech Platform', prefixes: ['/admin/platform/edtech'] },
+    ],
+  },
+  {
+    label: 'Property & Travel', icon: '🏨',
+    modules: [
+      { label: 'Travel Operations', prefixes: ['/admin/stays/dashboard', '/admin/stays/reservations', '/admin/stays/overbooking', '/admin/stays/manual-actions', '/admin/stays/breaks', '/admin/stays/coverage', '/admin/stays/agents'] },
+      { label: 'Listings & Content', prefixes: ['/admin/stays/suppliers', '/admin/stays/mapping', '/admin/stays/moderation', '/admin/stays/content-qa', '/admin/stays/cms', '/admin/stays/merchandising', '/admin/stays/templates'] },
+      { label: 'Pricing & Payouts', prefixes: ['/admin/stays/refunds', '/admin/stays/reconciliation', '/admin/stays/payouts', '/admin/stays/markup-rules', '/admin/stays/fx', '/admin/stays/commission', '/admin/stays/promotions', '/admin/stays/loyalty'] },
+      { label: 'Trust & Settings', prefixes: ['/admin/stays/reviews', '/admin/stays/fraud', '/admin/stays/reliability', '/admin/stays/kyc', '/admin/stays/rbac', '/admin/stays/audit', '/admin/stays/config'] },
+      { label: 'Partner Extranet', prefixes: ['/extranet'] },
+      { label: 'Estate & Community Living', prefixes: ['/admin/estate', '/admin/property', '/admin/property-roles'] },
+      { label: 'Vendors', prefixes: ['/admin/vendors'] },
+      { label: 'Realtor', prefixes: ['/admin/realtor'] },
+    ],
+  },
+  {
+    label: 'Mobility & Food', icon: '🚗',
+    modules: [
+      { label: 'Bus & Transit', prefixes: ['/admin/mobility/bus'] },
+      { label: 'Logistics & Rentals', prefixes: ['/admin/mobility/parcels', '/admin/mobility/movers', '/admin/mobility/towing', '/admin/mobility/car-hire'] },
+      { label: 'Ride & Fleet', prefixes: ['/admin/mobility'] },
+      { label: 'Restaurant & Delivery', prefixes: ['/admin/restaurant'] },
+    ],
+  },
+  {
+    label: 'Commerce & Community', icon: '🛍️',
+    modules: [
+      { label: 'Marketplace', prefixes: ['/admin/marketplace'] },
+      { label: 'Business Registry', prefixes: ['/admin/business'] },
+      { label: 'Events & Ticketing', prefixes: ['/admin/events'] },
+      { label: 'Social Pay & P2P', prefixes: ['/admin/social', '/admin/p2pmarket', '/admin/spray'] },
+      { label: 'Groups & Associations', prefixes: ['/admin/groups', '/admin/association'] },
+    ],
+  },
+  {
+    label: 'Connect', icon: '🌐',
+    modules: [
+      { label: 'Overview & Users', prefixes: ['/admin/connect/dashboard', '/admin/connect/users', '/admin/connect/identity', '/admin/connect/underage'] },
+      { label: 'Trust & Safety', prefixes: ['/admin/connect/moderation', '/admin/connect/media-review', '/admin/connect/cases', '/admin/connect/aml', '/admin/connect/audit'] },
+      { label: 'Money', prefixes: ['/admin/connect/finance', '/admin/connect/gifting', '/admin/connect/payouts'] },
+      { label: 'Engagement & Growth', prefixes: ['/admin/connect/voting', '/admin/connect/gamification', '/admin/connect/catalog', '/admin/connect/comms', '/admin/connect/analytics', '/admin/connect/geo'] },
+      { label: 'Settings & Access', prefixes: ['/admin/connect/rbac', '/admin/connect/support', '/admin/connect/config'] },
+      { label: 'Network & Talent', prefixes: ['/admin/connect/jobs', '/admin/connect/bounties', '/admin/connect/content', '/admin/connect/company-claims', '/admin/connect/assessments', '/admin/connect/mentorship', '/admin/connect/loyalty-audit'] },
+    ],
+  },
+  {
+    label: 'Service Desk & Governance', icon: '🛡️',
+    modules: [
+      { label: 'Support Queues', prefixes: ['/admin/chatbot', '/admin/leads', '/admin/handoffs'] },
+      { label: 'Users', prefixes: ['/admin/users'] },
+      { label: 'Roles & Permissions', prefixes: ['/admin/roles', '/admin/rbac-settings', '/admin/permissions-matrix', '/admin/permissions', '/admin/admins'] },
+      { label: 'Audit & Security', prefixes: ['/admin/audit-logs', '/admin/login-activity', '/admin/security-events'] },
+      { label: 'Platform Configuration', prefixes: ['/admin/modules', '/admin/maps'] },
+    ],
+  },
+];
+
+// Anything left over lands here instead of disappearing. The old sidebar only
+// rendered sections named in a hand-maintained list, and 'Invest (Stocks)' was
+// missing from it — 9 live screens that no operator could reach from the menu.
+const UNFILED = 'Unfiled';
+
+/** True when `href` is `prefix` itself or sits under it at a path-segment boundary. */
+function underHref(href: string, prefix: string) {
+  return href === prefix || href.startsWith(`${prefix}/`);
+}
+
+type Placement = { di: number; mi: number; pattern: string };
+
+const PLACEMENTS: Placement[] = NAV_DOMAINS.flatMap((domain, di) =>
+  domain.modules.flatMap((module, mi) =>
+    [...(module.prefixes ?? []), ...(module.exact ?? [])].map((pattern) => ({ di, mi, pattern })),
+  ),
+);
+
+/** Longest matching pattern wins; declared order breaks exact ties. */
+function placeHref(href: string): Placement | null {
+  let best: Placement | null = null;
+  for (const p of PLACEMENTS) {
+    const hit = underHref(href, p.pattern);
+    if (hit && (!best || p.pattern.length > best.pattern.length)) best = p;
+  }
+  return best;
+}
+
+type PlacedModule = { key: string; label: string; items: NavItem[] };
+type PlacedDomain = { key: string; label: string; icon: string; modules: PlacedModule[] };
+
+function buildNavTree(items: NavItem[]): PlacedDomain[] {
+  const buckets = new Map<string, NavItem[]>();
+  const seen = new Set<string>();
+
+  for (const item of items) {
+    if (seen.has(item.href)) continue; // /admin/users was listed twice (Overview + Support)
+    seen.add(item.href);
+    const p = placeHref(item.href);
+    const key = p ? `${NAV_DOMAINS[p.di].label}::${NAV_DOMAINS[p.di].modules[p.mi].label}` : `${UNFILED}::${item.section}`;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(item);
+    else buckets.set(key, [item]);
+  }
+
+  const domains: PlacedDomain[] = [];
+  const pushDomain = (label: string, icon: string): PlacedDomain => {
+    const existing = domains.find((d) => d.key === label);
+    if (existing) return existing;
+    const created: PlacedDomain = { key: label, label, icon, modules: [] };
+    domains.push(created);
+    return created;
+  };
+
+  for (const [key, moduleItems] of buckets) {
+    const [domainLabel, moduleLabel] = key.split('::');
+    const domain = pushDomain(domainLabel, NAV_DOMAINS.find((d) => d.label === domainLabel)?.icon ?? '📁');
+    if (!domain.modules.some((m) => m.label === moduleLabel)) domain.modules.push({ key: `${domainLabel}::${moduleLabel}`, label: moduleLabel, items: moduleItems });
+    else domain.modules.find((m) => m.label === moduleLabel)!.items.push(...moduleItems);
+  }
+
+  // Module order = the order declared in NAV_DOMAINS, not insertion order.
+  for (const domain of domains) {
+    const declared = NAV_DOMAINS.find((d) => d.label === domain.label)?.modules.map((m) => m.label) ?? [];
+    domain.modules.sort((a, b) => Math.max(declared.indexOf(a.label), -1) - Math.max(declared.indexOf(b.label), -1) || a.label.localeCompare(b.label));
+  }
+  domains.sort((a, b) => (a.label === UNFILED ? 1 : b.label === UNFILED ? -1 : NAV_DOMAINS.findIndex((d) => d.label === a.label) - NAV_DOMAINS.findIndex((d) => d.label === b.label)));
+  return domains;
+}
+
+export const NAV_TREE = buildNavTree(navItemsBase);
+
+// One lowercase 'domain module label' per screen, built once. The search box
+// re-filters all 445 entries on every keystroke, so the strings it matches
+// against are not rebuilt each time.
+const SEARCH_KEYS = new Map<string, string>();
+for (const domain of NAV_TREE) {
+  for (const module of domain.modules) {
+    for (const item of module.items) {
+      SEARCH_KEYS.set(item.href, `${domain.label} ${module.label} ${item.label}`.toLowerCase());
+    }
+  }
+}
+
+const TOTAL_SCREENS = new Set(navItemsBase.map((i) => i.href)).size;
+// v2: the flat menu persisted a boolean per section name, which means nothing
+// against domain/module keys.
+const EXPANDED_KEY = 'admin_sidebar_expanded_v2';
 
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';
@@ -568,6 +786,7 @@ export function AdminSidebar() {
   const [counts, setCounts] = useState<AdminMenuCounts | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [query, setQuery] = useState('');
   const [loggingOut, setLoggingOut] = useState(false);
   const stemRoles = useStemRoles();
   const allowRead = canReadStem(stemRoles);
@@ -578,17 +797,83 @@ export function AdminSidebar() {
     try {
       const raw = localStorage.getItem('spotlight_admin_user');
       if (raw) setAuthUser(JSON.parse(raw) as AuthUser);
-      const exp = localStorage.getItem('admin_sidebar_expanded');
+      const exp = localStorage.getItem(EXPANDED_KEY);
       if (exp) setExpanded(JSON.parse(exp) as Record<string, boolean>);
     } catch {}
   }, []);
 
   const isActive = (href: string) => (href === '/admin' ? pathname === '/admin' : pathname === href || pathname.startsWith(`${href}/`));
 
-  const toggleSection = (section: string) => {
-    const next = { ...expanded, [section]: !expanded[section] };
+  // Arriving somewhere new drops the stored flag of the branch that now holds the
+  // current page, so it re-opens even after "Collapse all" — an operator must be
+  // able to see where they are. Browsing state anywhere else is left alone.
+  useEffect(() => {
+    const keys: string[] = [];
+    for (const domain of NAV_TREE) {
+      for (const module of domain.modules) {
+        if (module.items.some((item) => isActive(item.href))) keys.push(domain.key, module.key);
+      }
+    }
+    if (!keys.length) return;
+    setExpanded((prev) => {
+      if (!keys.some((k) => k in prev)) return prev;
+      const next = { ...prev };
+      for (const k of keys) delete next[k];
+      localStorage.setItem(EXPANDED_KEY, JSON.stringify(next));
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  const needle = query.trim().toLowerCase();
+
+  // Access rules are byte-for-byte the ones the flat menu applied — same stem
+  // roles, same RBAC check — so this reorganises what an operator could already
+  // reach and neither widens nor narrows it.
+  const tree = useMemo(
+    () =>
+      NAV_TREE.map((domain) => ({
+        ...domain,
+        modules: domain.modules
+          .map((module) => ({
+            ...module,
+            items: module.items.filter((item) => {
+              if (item.stemAccess === 'read' && !allowRead) return false;
+              if (item.stemAccess === 'manage' && !allowManage) return false;
+              if (item.permissions?.length && !hasAnyPermission(authUser, item.permissions)) return false;
+              if (needle && !SEARCH_KEYS.get(item.href)!.includes(needle)) return false;
+              return true;
+            }),
+          }))
+          .filter((module) => module.items.length),
+      })).filter((domain) => domain.modules.length),
+    [needle, authUser, allowRead, allowManage],
+  );
+
+  const shownCount = tree.reduce((n, d) => n + d.modules.reduce((m, x) => m + x.items.length, 0), 0);
+
+  const setOpen = (key: string, open: boolean) => {
+    const next = { ...expanded, [key]: open };
     setExpanded(next);
-    localStorage.setItem('admin_sidebar_expanded', JSON.stringify(next));
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify(next));
+  };
+
+  // Recorded choice wins, so every header is a working control. What re-opens the
+  // branch you are standing in is the route effect below: arriving somewhere new
+  // clears that branch's stored flag, so "you are here" is visible without the
+  // menu ever hiding a link you deliberately closed.
+  const isOpen = (key: string, holdsActive: boolean) => expanded[key] ?? (needle ? true : holdsActive);
+
+  const allOpen = tree.every((d) => expanded[d.key] === true && d.modules.every((m) => expanded[m.key] === true));
+
+  const setAll = (open: boolean) => {
+    const next: Record<string, boolean> = {};
+    for (const d of tree) {
+      next[d.key] = open;
+      for (const m of d.modules) next[m.key] = open;
+    }
+    setExpanded(next);
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify(next));
   };
 
   const handleLogOut = async () => {
@@ -601,10 +886,52 @@ export function AdminSidebar() {
     }
   };
 
+  const domainButton: CSSProperties = {
+    width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', border: 'none',
+    background: 'transparent', color: colors.text, cursor: 'pointer', fontSize: 12, fontWeight: 700,
+    textTransform: 'uppercase', letterSpacing: 0.4, borderRadius: '0.375rem', textAlign: 'left', transition: 'all .15s',
+  };
+  const moduleButton: CSSProperties = {
+    width: '100%', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', border: 'none',
+    background: 'transparent', color: colors.muted, cursor: 'pointer', fontSize: 11.5, fontWeight: 600,
+    borderRadius: '0.3rem', textAlign: 'left', transition: 'all .15s',
+  };
+  const chevron: CSSProperties = { opacity: 0.55, fontSize: 9, flexShrink: 0 };
+  const countPill: CSSProperties = { fontSize: 10, fontWeight: 700, color: colors.danger, background: tint(colors.danger, 0.12), padding: '2px 5px', borderRadius: '999px' };
+
+  const renderLink = (item: NavItem, flat = false) => {
+    const count = item.countKey && counts ? counts[item.countKey] : null;
+    const active = isActive(item.href);
+    // isActive() prefix-matches, so /admin/finance highlights on the way to
+    // /admin/finance/transactions — inherited from the flat menu. aria-current
+    // only ever belongs to the screen you are actually on, and two "page" markers
+    // in one nav is not a valid trail.
+    const exact = pathname === item.href;
+    return (
+      <Link
+        href={item.href}
+        title={item.label}
+        aria-current={exact ? 'page' : undefined}
+        style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6,
+          padding: '5px 8px', borderLeft: `2px solid ${active ? colors.primary : 'transparent'}`,
+          background: active ? tint(colors.primary, 0.08) : 'transparent', color: active ? colors.primary : colors.text,
+          borderRadius: '0.25rem', fontSize: '0.8125rem', textDecoration: 'none', transition: 'all .12s',
+          cursor: 'pointer', fontWeight: active ? 600 : 500, marginLeft: flat ? -8 : 0,
+        }}
+        onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = tint(colors.primary, 0.04); }}
+        onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+      >
+        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.label}</span>
+        {typeof count === 'number' && count > 0 && <span style={countPill}>{count}</span>}
+      </Link>
+    );
+  };
+
   return (
     <aside style={{ width: 280, borderRight: `1px solid ${colors.border}`, height: '100vh', background: colors.bg, display: 'flex', flexDirection: 'column' }}>
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 12 }}>
-        <Link href="/admin" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '10px 8px', borderRadius: '0.375rem', background: isActive('/admin') ? tint(colors.primary, 0.1) : 'transparent', textDecoration: 'none', transition: 'all .15s' }}>
+        <Link href="/admin" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, padding: '10px 8px', borderRadius: '0.375rem', background: isActive('/admin') ? tint(colors.primary, 0.1) : 'transparent', textDecoration: 'none', transition: 'all .15s' }}>
           <span style={{ fontSize: 20 }}>📊</span>
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>Admin</div>
@@ -612,88 +939,91 @@ export function AdminSidebar() {
           </div>
         </Link>
 
-        {sections.map((section) => {
-        const items = navItemsBase.filter((item) => {
-          if (item.section !== section) return false;
-          if (item.stemAccess === 'read' && !allowRead) return false;
-          if (item.stemAccess === 'manage' && !allowManage) return false;
-          if (item.permissions?.length && !hasAnyPermission(authUser, item.permissions)) return false;
-          return true;
-        });
-        if (!items.length) return null;
+        {/* 445 screens is a lookup problem before it is a browsing problem, so the
+            menu is searchable and starts folded instead of showing every link. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
+            placeholder={`Search ${TOTAL_SCREENS} screens`}
+            aria-label="Search admin screens"
+            style={{ flex: 1, minWidth: 0, padding: '6px 8px', fontSize: 12.5, borderRadius: '0.375rem', border: `1px solid ${colors.inputBorder}`, background: colors.card, color: colors.text }}
+          />
+          <button
+            onClick={() => setAll(!allOpen)}
+            style={{ border: `1px solid ${colors.border}`, background: 'transparent', color: colors.muted, fontSize: 10.5, fontWeight: 600, borderRadius: '0.375rem', padding: '5px 7px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+          >
+            {allOpen ? 'Collapse all' : 'Expand all'}
+          </button>
+        </div>
 
-        const isExpanded = expanded[section] ?? true;
-        const icon = sectionIcons[section.split(' · ')[0]] || '📋';
+        {needle && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, color: colors.muted, margin: '0 2px 8px' }}>
+            <span>{shownCount ? `${shownCount} match${shownCount === 1 ? '' : 'es'}` : `No screens match “${query.trim()}”`}</span>
+            {shownCount > 0 && (
+              <button onClick={() => setQuery('')} style={{ border: 'none', background: 'transparent', color: colors.primary, fontSize: 11, cursor: 'pointer', padding: 0 }}>Clear</button>
+            )}
+          </div>
+        )}
 
-        return (
-          <div key={section} style={{ marginBottom: 8 }}>
-            <button
-              onClick={() => toggleSection(section)}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '8px 8px',
-                border: 'none',
-                background: 'transparent',
-                color: colors.text,
-                cursor: 'pointer',
-                fontSize: 12,
-                fontWeight: 600,
-                textTransform: 'uppercase',
-                letterSpacing: 0.4,
-                transition: 'all .15s',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = tint(colors.primary, 0.05))}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <span>{icon}</span>
-              <span style={{ flex: 1, textAlign: 'left', color: colors.muted }}>{section}</span>
-              <span style={{ opacity: 0.6, fontSize: 10 }}>{isExpanded ? '▼' : '▶'}</span>
-            </button>
+        <nav aria-label="Admin sections">
+          {tree.map((domain) => {
+            const domainOpen = isOpen(domain.key, domain.modules.some((m) => m.items.some((i) => isActive(i.href))));
+            const domainCount = domain.modules.reduce((n, m) => n + m.items.length, 0);
+            return (
+              <div key={domain.key} style={{ marginBottom: 2 }}>
+                <button
+                  onClick={() => setOpen(domain.key, !domainOpen)}
+                  aria-expanded={domainOpen}
+                  style={{ ...domainButton, background: domainOpen ? tint(colors.primary, 0.05) : 'transparent' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = tint(colors.primary, 0.05))}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = domainOpen ? tint(colors.primary, 0.05) : 'transparent')}
+                >
+                  <span aria-hidden="true" style={{ width: 18, textAlign: 'center', flexShrink: 0 }}>{domain.icon}</span>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{domain.label}</span>
+                  <span style={{ fontSize: 10, color: colors.muted, fontVariantNumeric: 'tabular-nums' }}>{domainCount}</span>
+                  <span aria-hidden="true" style={chevron}>{domainOpen ? '▼' : '▶'}</span>
+                </button>
 
-            {isExpanded && (
-              <div style={{ display: 'grid', gap: 4, marginTop: 4, paddingLeft: 4 }}>
-                {items.map((item) => {
-                  const count = item.countKey && counts ? counts[item.countKey] : null;
-                  const active = isActive(item.href);
+                {domainOpen && domain.modules.map((module) => {
+                  // A one-screen module is a heading with nothing to choose, so the
+                  // screen becomes the row itself.
+                  if (module.items.length === 1) {
+                    return (
+                      <div key={module.key} style={{ marginLeft: 17, paddingLeft: 8 }}>
+                        {renderLink(module.items[0], true)}
+                      </div>
+                    );
+                  }
+                  const moduleOpen = isOpen(module.key, module.items.some((i) => isActive(i.href)));
                   return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '6px 8px',
-                        borderLeft: `2px solid ${active ? colors.primary : 'transparent'}`,
-                        background: active ? tint(colors.primary, 0.08) : 'transparent',
-                        color: active ? colors.primary : colors.text,
-                        borderRadius: '0.25rem',
-                        fontSize: '0.8125rem',
-                        textDecoration: 'none',
-                        transition: 'all .12s',
-                        cursor: 'pointer',
-                        fontWeight: active ? 600 : 500,
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!active) e.currentTarget.style.background = tint(colors.primary, 0.04);
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!active) e.currentTarget.style.background = 'transparent';
-                      }}
-                    >
-                      <span>{item.label}</span>
-                      {typeof count === 'number' && count > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: colors.danger, background: tint(colors.danger, 0.12), padding: '2px 5px', borderRadius: '999px' }}>{count}</span>}
-                    </Link>
+                    <div key={module.key} style={{ marginLeft: 17, paddingLeft: 8, borderLeft: `1px solid ${colors.border}`, marginBottom: 2 }}>
+                      <button
+                        onClick={() => setOpen(module.key, !moduleOpen)}
+                        aria-expanded={moduleOpen}
+                        style={moduleButton}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = tint(colors.primary, 0.04))}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{module.label}</span>
+                        <span style={{ fontSize: 10, opacity: 0.75 }}>{module.items.length}</span>
+                        <span aria-hidden="true" style={chevron}>{moduleOpen ? '▼' : '▶'}</span>
+                      </button>
+                      {moduleOpen && (
+                        <ul role="list" style={{ listStyle: 'none', margin: '2px 0 4px', padding: 0, display: 'grid', gap: 2 }}>
+                          {module.items.map((item) => (
+                            <li key={item.href}>{renderLink(item)}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   );
                 })}
               </div>
-            )}
-          </div>
-        );
-        })}
+            );
+          })}
+        </nav>
       </div>
 
       <div style={{ borderTop: `1px solid ${colors.border}`, padding: 12, flexShrink: 0 }}>

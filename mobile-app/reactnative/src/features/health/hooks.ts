@@ -146,8 +146,13 @@ export function useApptIntake(appointmentId?: string) {
 
 export function useSaveApptDraft(appointmentId?: string) {
   return useMutation({
-    mutationFn: (args: { answers: IntakeResponseValues; consentVersion?: string }) =>
-      saveIntakeDraftForAppt(appointmentId as string, args.answers, args.consentVersion),
+    mutationFn: (args: {
+      answers: IntakeResponseValues;
+      consentVersion?: string | number;
+      allowedNames?: string[];
+    }) => saveIntakeDraftForAppt(
+      appointmentId as string, args.answers, args.consentVersion, args.allowedNames,
+    ),
   });
 }
 
@@ -158,8 +163,13 @@ export function useSaveApptDraft(appointmentId?: string) {
 export function useSubmitApptIntake(appointmentId?: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { answers: IntakeResponseValues; consentVersion: string }) =>
-      submitApptIntake(appointmentId as string, args.answers, args.consentVersion),
+    mutationFn: (args: {
+      answers: IntakeResponseValues;
+      consentVersion: string;
+      allowedNames?: string[];
+    }) => submitApptIntake(
+      appointmentId as string, args.answers, args.consentVersion, args.allowedNames,
+    ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'appt-intake', appointmentId] });
       qc.invalidateQueries({ queryKey: [KEY, 'health-profile'] });

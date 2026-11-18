@@ -2256,7 +2256,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if consultRooms != nil && cfg.ConsultUsesLiveKit() {
 			telemedSvc = telemedSvc.WithConsultEngine(consultRooms)
 		}
-		telemedHandler := telemedicine.NewHandler(telemedSvc)
+		// doctors.avatar_url is an R2 object key, not a link, so a patient reading
+		// the directory or a doctor profile gets a short-lived signed GET for the
+		// photo — the same treatment the provider's own header already has from
+		// doctorHandler below. Unconfigured R2 env leaves the stored value as it
+		// was, so the avatar falls back to initials rather than breaking the read.
+		telemedHandler := telemedicine.NewHandler(telemedSvc).
+			WithPresigner(r2.New(r2.Config{
+				AccountEndpoint: cfg.R2AccountEndpoint,
+				Bucket:          cfg.R2Bucket,
+				AccessKeyID:     cfg.R2AccessKeyID,
+				SecretAccessKey: cfg.R2SecretAccessKey,
+				Region:          cfg.R2Region,
+			}), cfg.R2Bucket)
 
 		// Legacy /api/finance/telemedicine/... (kept for backward compat)
 		teleGroup := finance.Group("/telemedicine")

@@ -20,7 +20,9 @@ import { IntakeField, RedFlagInterstitial, EmergencyBanner } from '@/features/he
 import {
   useApptIntake, useSaveApptDraft, useSubmitApptIntake,
 } from '@/features/health/hooks';
-import { presignAttachment } from '@/features/health/api';
+import { presignAttachment, recordAttachment } from '@/features/health/api';
+import { schemaAnswerNames } from '@/features/health/intakeMapping';
+import { resolveObsoletePrebookingRoute } from '@/features/telemedicine/intakeRoute';
 import {
   visibleSteps, validateStep, validatePreConsult, firstUnansweredStepIndex, formatMedList,
 } from '@/features/health/utils';
@@ -36,23 +38,36 @@ import type {
 type Phase = 'wizard' | 'review' | 'redflag' | 'done';
 
 export default function PreConsultIntakeWizard() {
-  const { id, resume, reason, prebooking, doctorId } = useLocalSearchParams<{
-    id: string; resume?: string; reason?: string; prebooking?: string; doctorId?: string;
+  const { id, resume, reason, doctorId } = useLocalSearchParams<{
+    id: string; resume?: string; reason?: string; doctorId?: string;
   }>();
   const appointmentId = id ?? '';
-  // Pre-booking mode: the triage runs from the doctor profile BEFORE an appointment
-  // exists (keyed by a synthetic `pre-<doctorId>` id). On completion we continue to
-  // booking; the answers are submitted to the real appointment at payment.
-  const prebookingMode = prebooking === '1' && !!doctorId;
 
-  const bundleQ = useApptIntake(appointmentId);
+  // A `pre-<doctorId>` link is the pre-booking intake address this wizard used to
+  // be opened with before the intake moved after payment. The id can never be a
+  // real appointment, so the bundle request would 400 and leave the patient on a
+  // "Please try again" whose Retry fails identically. Booking is where an
+  // appointment id comes from, so that is where the link now goes.
+  const obsoleteBooking = useMemo(
+    () => resolveObsoletePrebookingRoute(appointmentId, doctorId),
+    [appointmentId, doctorId],
+  );
+
+  const bundleQ = useApptIntake(obsoleteBooking ? undefined : appointmentId);
   const saveDraft = useSaveApptDraft(appointmentId);
   const submit = useSubmitApptIntake(appointmentId);
 
   const schema = bundleQ.data?.schema;
   const intake = bundleQ.data?.intake;
-  const consentVersion = bundleQ.data?.consent.version ?? '';
-  const acceptedVersion = bundleQ.data?.consent.acceptedVersion;
+  // Optional-chain on `consent` too: a bundle that reached us without it (an older
+  // server, an unexpected payload) must land on the error state, not throw here.
+  const consent = bundleQ.data?.consent;
+  const consentVersion = consent?.version ?? '';
+  const acceptedVersion = consent?.acceptedVersion;
+  // A submitted intake is immutable: service.go refuses both a draft save and a
+  // resubmit once status='SUBMITTED'. Leaving the wizard editable would 400 on
+  // every keystroke and land the patient on "Could not submit".
+  const alreadySubmitted = intake?.status === 'SUBMITTED';
 
   const [values, setValues] = useState<IntakeResponseValues>({});
   const [errors, setErrors] = useState<IntakeErrors>({});
@@ -65,14 +80,21 @@ export default function PreConsultIntakeWizard() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (obsoleteBooking) router.replace(obsoleteBooking);
+  }, [obsoleteBooking]);
+
+  useEffect(() => {
     if (!bundleQ.data) return;
-    if (acceptedVersion !== consentVersion) {
+    // Re-consent cannot be recorded on an intake the server has frozen (the
+    // consent screen saves through the same draft route), so a new consent
+    // version must not bounce a submitted patient into a dead end.
+    if (!alreadySubmitted && acceptedVersion !== consentVersion) {
       router.replace({
         pathname: '/services/telemedicine/appointment/[id]/intake/consent',
-        params: { id: appointmentId, ...(prebookingMode ? { prebooking: '1', doctorId: String(doctorId) } : {}) },
+        params: { id: appointmentId },
       });
     }
-  }, [bundleQ.data, acceptedVersion, consentVersion, appointmentId, prebookingMode, doctorId]);
+  }, [bundleQ.data, alreadySubmitted, acceptedVersion, consentVersion, appointmentId]);
 
   useEffect(() => {
     if (hydrated.current || !intake) return;
@@ -84,10 +106,14 @@ export default function PreConsultIntakeWizard() {
       const merged: IntakeResponseValues = { ...(local ?? {}), ...intake.answers };
       // Prefill the chief complaint from the "reason for visit" typed at booking,
       // so we never re-ask what the patient already told us (PRD §3 low-friction).
-      if (!merged.chief_complaint && typeof reason === 'string' && reason.trim()) {
-        merged.chief_complaint = reason.trim();
+      // The storage name is reason_for_visit — the server's schema, not the mock's.
+      if (!merged.reason_for_visit && typeof reason === 'string' && reason.trim()) {
+        merged.reason_for_visit = reason.trim();
       }
       setValues(merged);
+      // Files already recorded server-side (M16: reopening a draft or a submitted
+      // intake must show what is already attached, not offer a duplicate upload).
+      setAttachments(intake.attachments ?? []);
       hydrated.current = true;
       // M3 resume: jump to the first unanswered step.
       if (resume === '1' && schema) {
@@ -103,12 +129,21 @@ export default function PreConsultIntakeWizard() {
   );
   const step = steps[stepIndex];
 
+  // The keys the server's active schema declares. Everything else — the M12
+  // attachment refs, or an older offline draft saved under a mock-mode vocabulary —
+  // has to be dropped before it goes out, because intake.validate rejects an
+  // unknown field name and that fails the whole save.
+  const allowedNames = useMemo(
+    () => schemaAnswerNames(schema?.steps ?? []),
+    [schema],
+  );
+
   // Debounced autosave: local first (offline-safe), then server.
   const persist = (next: IntakeResponseValues) => {
     setIntakeDraft(appointmentId, next).catch(() => {});
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      saveDraft.mutate({ answers: next, consentVersion });
+      saveDraft.mutate({ answers: next, consentVersion, allowedNames });
     }, 600);
   };
 
@@ -133,10 +168,15 @@ export default function PreConsultIntakeWizard() {
       const { uploadUrl, attachment } = await presignAttachment(appointmentId, {
         fieldId: field.id, fileName: picked.name, mimeType: picked.mimeType,
       });
-      // Live: PUT the file binary to uploadUrl. Mock URLs are no-ops.
+      // Live: PUT the file binary to the presigned URL, then tell the server the
+      // object landed. Recording before a confirmed PUT would store a dead key.
       if (!uploadUrl.startsWith('mock://')) {
         const blob = await (await fetch(picked.uri)).blob();
-        await fetch(uploadUrl, { method: 'PUT', body: blob, headers: { 'Content-Type': picked.mimeType } });
+        const put = await fetch(uploadUrl, {
+          method: 'PUT', body: blob, headers: { 'Content-Type': picked.mimeType },
+        });
+        if (!put.ok) throw new Error(`upload refused (${put.status})`);
+        await recordAttachment(appointmentId, attachment);
       }
       setAttachments((prev) => [...prev, attachment]);
       const nextRefs = [...attachments, attachment].map((a) => a.storageKey);
@@ -154,6 +194,14 @@ export default function PreConsultIntakeWizard() {
     setValue(fieldId, next.filter((a) => a.fieldId === fieldId).map((a) => a.storageKey));
   };
 
+  if (obsoleteBooking) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Health intake" />
+        <StateView kind="loading" message="Taking you to booking…" />
+      </SafeAreaView>
+    );
+  }
   if (bundleQ.isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -162,7 +210,7 @@ export default function PreConsultIntakeWizard() {
       </SafeAreaView>
     );
   }
-  if (bundleQ.isError || !schema || !intake) {
+  if (bundleQ.isError || !schema || !intake || !consent) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Health intake" />
@@ -194,8 +242,8 @@ export default function PreConsultIntakeWizard() {
           <View style={styles.doneIcon}><Check size={34} color={Colors.teal} strokeWidth={3} /></View>
           <Text style={styles.doneTitle}>Your details are ready for {intake.doctorName ?? 'your doctor'}</Text>
           <Text style={styles.doneBody}>
-            Your doctor will review your intake before the consult begins. You can update it any time
-            before the consult starts.
+            Your doctor will review your intake before the consult begins. Once submitted, your
+            answers are locked and can’t be changed here.
           </Text>
           <View style={styles.doneActions}>
             <PrimaryButton label="Back to appointment" onPress={() => router.replace(`/services/telemedicine/appointment/${appointmentId}` as never)} />
@@ -206,14 +254,16 @@ export default function PreConsultIntakeWizard() {
     );
   }
 
-  if (phase === 'review') {
+  if (phase === 'review' || alreadySubmitted) {
     return (
       <ReviewScreen
         schema={schema}
         values={values}
         attachments={attachments}
         submitting={submit.isPending}
+        readOnly={alreadySubmitted}
         onBack={() => setPhase('wizard')}
+        onExit={() => router.replace(`/services/telemedicine/appointment/${appointmentId}` as never)}
         onSubmit={onSubmit}
       />
     );
@@ -238,7 +288,7 @@ export default function PreConsultIntakeWizard() {
     }
     setErrors({});
     // Persist immediately on Next (don't wait for debounce).
-    saveDraft.mutate({ answers: values, consentVersion });
+    saveDraft.mutate({ answers: values, consentVersion, allowedNames });
     if (isLastStep) {
       setPhase('review');
     } else {
@@ -252,16 +302,6 @@ export default function PreConsultIntakeWizard() {
   };
 
   function goDone() {
-    if (prebookingMode && doctorId) {
-      // Pre-booking triage complete → continue to booking. Keep the draft under
-      // `pre-<doctorId>` so the answers transfer to the real appointment at payment.
-      const chief = typeof values.chief_complaint === 'string' ? values.chief_complaint : '';
-      router.replace({
-        pathname: '/services/telemedicine/doctor/[id]/book',
-        params: { id: String(doctorId), reason: chief, intakeReady: '1' },
-      });
-      return;
-    }
     clearIntakeDraft(appointmentId).catch(() => {});
     setPhase('done');
   }
@@ -275,7 +315,7 @@ export default function PreConsultIntakeWizard() {
       return;
     }
     submit.mutate(
-      { answers: values, consentVersion },
+      { answers: values, consentVersion, allowedNames },
       {
         onSuccess: (res) => {
           if (res.red_flag) {
@@ -302,7 +342,7 @@ export default function PreConsultIntakeWizard() {
             <Text style={styles.disclaimerText}>{INTAKE_NOT_DIAGNOSIS_COPY}</Text>
           </View>
 
-          {step.id === 'symptom_detail' ? <EmergencyBanner /> : null}
+          {step.prdScreen === 'M5' ? <EmergencyBanner /> : null}
 
           {Object.keys(errors).length > 0 ? (
             <View style={styles.banner}>
@@ -344,13 +384,16 @@ export default function PreConsultIntakeWizard() {
 }
 
 function ReviewScreen({
-  schema, values, attachments, submitting, onBack, onSubmit,
+  schema, values, attachments, submitting, readOnly, onBack, onExit, onSubmit,
 }: {
   schema: PreConsultIntakeSchema;
   values: IntakeResponseValues;
   attachments: IntakeAttachment[];
   submitting: boolean;
+  /** An already-submitted intake is frozen server-side: show it, don't edit it. */
+  readOnly?: boolean;
   onBack: () => void;
+  onExit: () => void;
   onSubmit: () => void;
 }) {
   const steps = visibleSteps(schema, values);
@@ -371,12 +414,23 @@ function ReviewScreen({
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Review & submit" onBack={onBack} />
+      <ScreenHeader
+        title={readOnly ? 'Your submitted intake' : 'Review & submit'}
+        showBack={readOnly ? false : undefined}
+        onBack={onBack}
+      />
       <ScrollView contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
         <View style={styles.disclaimer}>
           <ShieldCheck size={14} color={Colors.teal} strokeWidth={2} />
           <Text style={styles.disclaimerText}>{INTAKE_NOT_DIAGNOSIS_COPY}</Text>
         </View>
+        {readOnly ? (
+          <View style={styles.banner}>
+            <Text style={styles.bannerText}>
+              Submitted — your answers are locked and can no longer be changed here.
+            </Text>
+          </View>
+        ) : null}
         {steps.map((s) => (
           <View key={s.id} style={styles.reviewCard}>
             <Text style={styles.reviewTitle}>{s.title}</Text>
@@ -386,7 +440,7 @@ function ReviewScreen({
                 <Text
                   style={[
                     styles.reviewVal,
-                    (f.id === 'allergies_list' || f.id === 'medications_list') && styles.reviewCritical,
+                    f.critical && styles.reviewCritical,
                   ]}
                 >
                   {renderValue(f)}
@@ -397,13 +451,21 @@ function ReviewScreen({
         ))}
       </ScrollView>
       <View style={styles.footer}>
-        <Pressable style={styles.backBtn} onPress={onBack} hitSlop={6}>
-          <ChevronLeft size={20} color={Colors.onSurface} />
-          <Text style={styles.backLabel}>Edit</Text>
-        </Pressable>
-        <View style={styles.nextWrap}>
-          <PrimaryButton label="Submit intake" onPress={onSubmit} loading={submitting} />
-        </View>
+        {readOnly ? (
+          <View style={styles.nextWrap}>
+            <PrimaryButton label="Back to appointment" onPress={onExit} />
+          </View>
+        ) : (
+          <>
+            <Pressable style={styles.backBtn} onPress={onBack} hitSlop={6}>
+              <ChevronLeft size={20} color={Colors.onSurface} />
+              <Text style={styles.backLabel}>Edit</Text>
+            </Pressable>
+            <View style={styles.nextWrap}>
+              <PrimaryButton label="Submit intake" onPress={onSubmit} loading={submitting} />
+            </View>
+          </>
+        )}
       </View>
     </SafeAreaView>
   );

@@ -48,6 +48,7 @@ paths = [
     '''^backend/internal/config/env_parity_test\.go$''',               # sk_test_/sk_live_ env-parity fixtures asserting required-var detection — fake keys; earlier commits in this file's history carried a longer suffix the stripe rule matched
     '''^backend/internal/stepup/store_live_test\.go$''',               # tokenHash fixture: a 16-char hex run repeated 4x to fill a 64-char sha256-hex column ("Any 64-char value" per the test's own comment); never a real token hash. Flagged generic-api-key (entropy 4.0) in 648d33098.
     '''^backend/internal/crypto/provider_quidax_test\.go$''',          # test fixtures: example_webhook_secret_key, example_test_api_key, example_invalid_signature_123 for HMAC verification tests
+    '''^backend/internal/telemedicine/handler_avatar_test\.go$''',      # fake R2 creds (AKIAEXAMPLE / secretEXAMPLE — documentation placeholders) plus the local `key :=` object-key fixture, whose `[]string{…, key, "X-Amz-Signature="}` line hit generic-api-key at entropy 3.875 in a72275194. No real credential: the test asserts the shape of a presigned URL, never a usable secret.
 
     # -- Docs / templates with placeholder tokens --------------------------
     '''^MARKETPLACE_QUICK_START\.md$''',

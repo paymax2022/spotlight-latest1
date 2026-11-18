@@ -74,7 +74,7 @@ the dashboard / settings.
 | 17 | Consultation pricing setup | `profile/setup/pricing` | `useProfileDraft`, `useSaveProfileDraft` | `ConsultationPricing` (+ `CONSULT_FEE_PRESETS_KOBO`) |
 | 18 | Free follow-up policy setup | `profile/setup/free-follow-up` | `useProfileDraft`, `useSaveProfileDraft` | `FreeFollowUpPolicy` (+ `FREE_FOLLOW_UP_WINDOW_OPTIONS`) |
 | 19 | Availability setup **(EXISTS — reuse)** | `availability` | `useAvailability`, `useUpdateAvailability` | `AvailabilitySchedule` |
-| 20 | Bank account setup | `profile/setup/bank-account` | `useSaveBankAccount`, `useProfileDraft` | `BankAccount`, `SaveBankAccountInput` (+ `BANK_LIST`) |
+| 20 | *(retired — payout is not part of onboarding; doctors add bank details any time afterwards on `earnings/bank-account`, which uses `usePayoutDetails` / `useUpdatePayoutBankAccount`)* | — | — | `BankAccount`, `SaveBankAccountInput` (+ `BANK_LIST`) |
 | 21 | Tax/VAT information | `profile/setup/tax-info` | `useSaveTaxInfo`, `useProfileDraft` | `TaxInfo`, `SaveTaxInfoInput` |
 | 22 | Profile preview | `profile/setup/preview` | `useProfileDraft` | `DoctorProfileDraft` |
 | 23 | Submit for verification **(extends existing submit)** | `profile/setup/submit` | `useSubmitProfileVerification` | `SubmitProfileVerificationInput/Result` |
@@ -89,7 +89,7 @@ the dashboard / settings.
 
 > Routes 1–22 form the wizard; the order is driven by `PROFILE_BUILDER_STEPS`.
 > Each builder step reads the current draft and patches it via `useSaveProfileDraft`
-> (or the dedicated upload/bank/tax mutation). Screen 19 deep-links to the
+> (or the dedicated upload/tax mutation). Screen 19 deep-links to the
 > existing `availability` route rather than re-implementing it.
 
 ---

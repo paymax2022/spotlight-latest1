@@ -1523,7 +1523,7 @@ components:
         Status gates the consult: IN_CONSULT is unreachable until status=SUBMITTED.
         Red-flag triage runs at submit (see RedFlagResult). Patient-reported data,
         not a diagnosis. Visible only to the assigned doctor (object-level) + patient.
-      required: [appointment_id, consult_id, status, consent_version]
+      required: [appointment_id, consult_id, status]
       properties:
         appointment_id: { type: string, format: uuid }
         consult_id: { type: string, format: uuid }
@@ -1531,7 +1531,7 @@ components:
           type: string
           description: DRAFT auto-saves as the patient fills the wizard; SUBMITTED unlocks READY_FOR_CONSULT.
           enum: [DRAFT, SUBMITTED]
-        consent_version: { type: string, description: Version of the consent text the patient accepted (shared-with-doctor consent). }
+        consent_version: { type: integer, description: Version of the consent text the patient accepted (shared-with-doctor consent). Omitted until they have accepted one. }
         red_flag_level: { type: string, nullable: true, description: "Triage level assigned at submit (NONE/URGENT/EMERGENCY)" }
         red_flag_severity:
           type: string
@@ -1612,6 +1612,14 @@ components:
           description: Field-name → value map of answers captured so far.
           additionalProperties: true
         schema_version: { type: integer, description: Schema version the draft was authored against. }
+        consent_version:
+          type: integer
+          description: >
+            Present only when the patient accepts the consent text, which is how the
+            wizard gets past its gate. Absent leaves the agreement already stored
+            untouched, so an auto-save cannot wipe it; a version other than the
+            active one is rejected so a stale client cannot accept text the patient
+            never saw.
 
     RedFlagResult:
       type: object
