@@ -42,6 +42,8 @@ import BankPicker from './components/BankPicker';
 import AmountInput from './components/AmountInput';
 import PinSheet from './components/PinSheet';
 import TransferReceipt from './components/TransferReceipt';
+import { kycBlockFor, type KycBlock } from './kycBlock';
+import { useKycStepUp } from '@/features/kycverify/useKycStepUp';
 import {
   useBanks,
   usePinStatus,
@@ -102,6 +104,15 @@ export default function TransferScreen() {
   const [pinError, setPinError] = useState<string | null>(null);
   // Server said the caller has no PIN, so no sheet can succeed until one exists.
   const [pinNotSet, setPinNotSet] = useState(false);
+  // A refusal that needs a KYC verification rather than another digit. The
+  // message and its call-to-action are one piece of state on purpose: setting
+  // them separately would let the sheet render a KYC button under an
+  // "Incorrect PIN." Use showPinError() for every PIN-sheet message.
+  const [kycBlock, setKycBlock] = useState<KycBlock | null>(null);
+  const showPinError = (message: string | null, kyc: KycBlock | null = null) => {
+    setPinError(message);
+    setKycBlock(kyc);
+  };
 
   // receipt
   const [receipt, setReceipt] = useState<TransferReceiptData | null>(null);
@@ -111,6 +122,13 @@ export default function TransferScreen() {
   const banksQuery = useBanks();
   const pinStatusQuery = usePinStatus();
   const queryClient = useQueryClient();
+  // Tier 1 is what switches the wallet on, so a refusal offers exactly the step-up
+  // that clears it — and remembers this screen to come back to. Same gate the
+  // checkout sheet uses (src/components/PaymentActionScreen.tsx). Lazy because
+  // this screen only ever calls `open()`: reading the tier here would put a
+  // network call in front of a member who is mid-transfer, for an answer the
+  // button does not use.
+  const kycStepUp = useKycStepUp(1, { lazy: true });
   const walletQuery = useQuery({ queryKey: ['wallet', 'balance'], queryFn: getWallet, staleTime: 30_000 });
   const beneficiariesQuery = useQuery({
     queryKey: ['beneficiaries'],
@@ -165,6 +183,7 @@ export default function TransferScreen() {
     setSource(emptyAccount);
     setReceipt(null);
     setPinNotSet(false);
+    showPinError(null);
   };
 
   const resolveRecipientMut = useMutation({
@@ -181,11 +200,19 @@ export default function TransferScreen() {
   const handleTransferError = (e: unknown) => {
     if (isPinNotSet(e)) {
       setPinSheet(null);
-      setPinError(null);
+      showPinError(null);
       setPinNotSet(true);
       return;
     }
-    setPinError(getErrorMessage(e));
+    // A tier refusal is the one failure the sheet must not return to the keypad
+    // for: the PIN was correct, the wallet is simply switched off until KYC. Stay
+    // open, say why, and put the verification one tap away.
+    const kyc = kycBlockFor(e);
+    if (kyc) {
+      showPinError(kyc.message, kyc);
+      return;
+    }
+    showPinError(getErrorMessage(e));
   };
 
   const walletTransferMut = useMutation({
@@ -267,7 +294,7 @@ export default function TransferScreen() {
   };
 
   const beginAuthorise = () => {
-    setPinError(null);
+    showPinError(null);
     const hasPin = pinStatusQuery.data?.hasPin ?? false;
     setPinSheet(hasPin ? 'verify' : 'create');
   };
@@ -285,17 +312,26 @@ export default function TransferScreen() {
     queryClient.setQueryData(['transfers', 'pin-status'], { hasPin: false });
   };
 
+  // The button on the refusal itself. Closes the sheet before navigating: a Modal
+  // left mounted across a route change lingers on Android, and PaymentSheet.tsx
+  // already pairs `close()` with its KYC push for the same reason.
+  const goToKycVerify = () => {
+    setPinSheet(null);
+    showPinError(null);
+    kycStepUp.open();
+  };
+
   const submitTransfer = (pin: string) => {
-    setPinError(null);
+    showPinError(null);
     // Defense-in-depth: re-assert amount + balance at authorise time so no state
     // manipulation between review and confirm can push through an invalid/over-balance
     // transfer. The backend re-validates fail-closed regardless.
     if (!Number.isInteger(amountKobo) || amountKobo < MIN_TRANSFER_KOBO) {
-      setPinError('Enter a valid amount to continue.');
+      showPinError('Enter a valid amount to continue.');
       return;
     }
     if (usesWallet && walletQuery.isSuccess && totalDebitKobo > balanceKobo) {
-      setPinError('Insufficient wallet balance for this transfer.');
+      showPinError('Insufficient wallet balance for this transfer.');
       return;
     }
     if (type === 'wallet_wallet') {
@@ -354,7 +390,7 @@ export default function TransferScreen() {
     if (pinSheet === 'create') {
       createPinMut.mutate(pin, {
         onSuccess: () => { void pinStatusQuery.refetch(); submitTransfer(pin); },
-        onError: (e) => setPinError(getErrorMessage(e)),
+        onError: (e) => showPinError(getErrorMessage(e)),
       });
       return;
     }
@@ -476,8 +512,9 @@ export default function TransferScreen() {
         mode={pinSheet === 'create' ? 'create' : 'verify'}
         loading={transferPending}
         error={pinError}
+        action={kycBlock ? { label: kycBlock.label, onPress: goToKycVerify } : null}
         onSubmit={handlePinSubmit}
-        onClose={() => { setPinSheet(null); setPinError(null); }}
+        onClose={() => { setPinSheet(null); showPinError(null); }}
       />
     </SafeAreaView>
   );

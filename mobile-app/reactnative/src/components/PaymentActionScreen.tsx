@@ -21,6 +21,7 @@ import {
   calculateBankTransferFee,
 } from '@/api/beneficiaries.api';
 import { fetchBanks } from '@/features/transfers/api';
+import { kycBlockFor, type KycBlock } from '@/features/transfers/kycBlock';
 import BankPicker from '@/features/transfers/components/BankPicker';
 import TripPinInput from '@/features/mobility/components/TripPinInput';
 import type { TransferRecipient, WalletTransfer, Beneficiary, BankTransferResult } from '@/types/wallet';
@@ -206,7 +207,12 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   const amountKobo = useMemo(() => Math.round(amountValue * 100), [amountValue]);
   const feeKobo = useMemo(() => calculateTransferFee(amountKobo), [amountKobo]);
 
-  const kycStepUp = useKycStepUp(1);
+  // Tier 1 is what switches the wallet on, so every refusal below offers exactly
+  // the step-up that clears it. Lazy because this screen only ever calls `open()`
+  // and `check()` — the first navigates unconditionally, the second fetches on
+  // demand — so an eager read on mount is a request whose answer nobody here
+  // would use. Same reasoning as the wallet PIN sheet in TransferScreen.
+  const kycStepUp = useKycStepUp(1, { lazy: true });
 
   // Wallet funding is initialized by the server (Idempotency-Key + ledger
   // authority) and then RESUMED inside the in-app Paystack SDK, which is what
@@ -291,6 +297,13 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
       setPinError(undefined);
     },
     onError: (error) => {
+      const kyc = kycBlockFor(error);
+      if (kyc) {
+        // Keep the reason on the confirm step after the dialog is dismissed.
+        setPinError(kyc.message);
+        void promptKycForBlock(kyc);
+        return;
+      }
       const msg = error instanceof Error ? error.message : 'Transfer failed. Please try again.';
       const lower = msg.toLowerCase();
       if (lower.includes('insufficient')) {
@@ -379,6 +392,12 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
       setPinError(undefined);
     },
     onError: (error) => {
+      const kyc = kycBlockFor(error);
+      if (kyc) {
+        setPinError(kyc.message);
+        void promptKycForBlock(kyc);
+        return;
+      }
       const msg = error instanceof Error ? error.message : 'Transfer failed. Please try again.';
       const lower = msg.toLowerCase();
       if (lower.includes('insufficient')) {
@@ -424,6 +443,21 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
         'Would you like to continue with verification now?',
       confirmLabel: 'Continue to verification',
       cancelLabel: 'Cancel',
+    });
+    if (proceed) kycStepUp.open();
+  };
+
+  // A tier refusal is the one transfer failure another PIN cannot answer, so it
+  // must not fall through to 'Transfer Failed' with an OK button: say why, then
+  // offer the verification (or the limit raise) the message is asking for. The
+  // wallet PIN sheet does the same thing inline; this rail reports through dialogs,
+  // so the call-to-action is the dialog's confirm button.
+  const promptKycForBlock = async (block: KycBlock) => {
+    const proceed = await confirmAsync({
+      title: block.label === 'Raise my limit' ? 'Daily limit reached' : 'Verify your account to send money',
+      message: block.message,
+      confirmLabel: block.label,
+      cancelLabel: 'Not now',
     });
     if (proceed) kycStepUp.open();
   };

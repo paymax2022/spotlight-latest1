@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { X, Delete, ShieldCheck } from 'lucide-react-native';
+import PrimaryButton from '@/components/PrimaryButton';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -24,6 +25,14 @@ interface Props {
   loading?: boolean;
   /** External error (e.g. "Incorrect PIN") shown beneath the dots. */
   error?: string | null;
+  /**
+   * One-action call-to-action rendered directly under `error`, for failures the
+   * keypad cannot resolve — a tier-blocked wallet needs a KYC verification, not a
+   * fourth digit. Owned by the caller: this sheet stays agnostic about where it
+   * navigates, because the same sheet gates wallet→wallet, wallet→bank and
+   * bank→bank.
+   */
+  action?: { label: string; onPress: () => void } | null;
   title?: string;
 }
 
@@ -42,6 +51,7 @@ export default function PinSheet({
   onClose,
   loading = false,
   error,
+  action,
   title,
 }: Props) {
   const [pin, setPin] = useState('');
@@ -145,6 +155,12 @@ export default function PinSheet({
 
           {shownError ? <Text style={styles.error}>{shownError}</Text> : <View style={styles.errorSpacer} />}
 
+          {/* The way out of a refusal the keypad cannot answer. Suppressed while a
+              request is in flight so the sheet cannot navigate away mid-debit. */}
+          {action && !loading ? (
+            <PrimaryButton label={action.label} onPress={action.onPress} style={styles.action} />
+          ) : null}
+
           {loading ? (
             <View style={styles.loading}>
               <ActivityIndicator color={Colors.primary} />
@@ -224,6 +240,10 @@ const styles = StyleSheet.create({
   dotError: { borderColor: Colors.error },
   error: { ...Typography.labelSm, color: Colors.error, textAlign: 'center', marginTop: Spacing.sm, minHeight: 16 },
   errorSpacer: { minHeight: 16, marginTop: Spacing.sm },
+  // Shorter than the standalone PrimaryButton (56): this sits above a three-row
+  // keypad inside a bottom sheet, and the sheet must not push the keypad off a
+  // small-screen phone.
+  action: { height: 46, marginTop: Spacing.sm, paddingHorizontal: Spacing.md },
   loading: { alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.xxl },
   loadingText: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   pad: {

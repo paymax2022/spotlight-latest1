@@ -303,7 +303,10 @@ export async function initiateWalletToWallet(
       throw new ApiError('Insufficient wallet balance', 402);
     }
     if (rpcError.message?.includes('TIER_LIMIT_EXCEEDED')) {
-      throw new ApiError('Daily wallet limit for your KYC tier has been reached', 403);
+      // Same code as the pre-flight deny above: the RPC is the atomic authority,
+      // so a race that slips past `enforceWalletLimit` must still be recognisable
+      // by the client without parsing prose.
+      throw new ApiError('Daily wallet limit for your KYC tier has been reached', 403, 'daily_limit_exceeded');
     }
     if (rpcError.message?.includes('SELF_TRANSFER')) {
       throw new ApiError('You cannot transfer to yourself', 422);

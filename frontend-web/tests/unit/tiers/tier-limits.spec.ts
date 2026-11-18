@@ -209,8 +209,11 @@ describe('enforceWalletLimit — tier enforcement', () => {
     mockGetKycTier.mockResolvedValue(0);
     mockAdmin.mockReturnValue(buildClient({ tier: 0 }));
 
+    // `code` is what the mobile PIN sheet matches to offer "Verify my account";
+    // it mirrors the Go rail's wallet_disabled. Prose alone is not a contract.
     await expect(enforceWalletLimit('user-0', 1_000)).rejects.toMatchObject({
       status: 403,
+      code: 'wallet_disabled',
       message: expect.stringContaining('disabled'),
     });
   });
@@ -231,6 +234,7 @@ describe('enforceWalletLimit — tier enforcement', () => {
 
     await expect(enforceWalletLimit('user-1', 1_000_000)).rejects.toMatchObject({
       status: 403,
+      code: 'daily_limit_exceeded',
     });
   });
 
@@ -256,6 +260,7 @@ describe('enforceWalletLimit — tier enforcement', () => {
 
     await expect(enforceWalletLimit('user-2', 2_000_000)).rejects.toMatchObject({
       status: 403,
+      code: 'daily_limit_exceeded',
     });
   });
 
