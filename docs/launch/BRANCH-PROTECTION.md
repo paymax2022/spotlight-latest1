@@ -2,22 +2,37 @@
 
 Requires repo admin. Branch protection cannot be set from a normal Actions run.
 
-## `develop` — LIVE as of 2026-08-14
+## Status, measured 2026-11-17
 
-`develop` is protected, and this is the only protection currently configured on the
-repo (`main` remains unprotected — the section below is still a proposal).
+| Branch | Live protection | Can it ever be satisfied? |
+|---|---|---|
+| `main` | five contexts: `backend`, `frontend-admin`, `frontend-web`, `migrations`, `secrets-scan` | Yes — all five are `ci-optimized.yml` jobs, and that workflow triggers on `push`/`pull_request` to `[main]` |
+| `develop` | nine `ci.yml` check-run names (the original flat `required-checks.txt` list) | **No** — `ci.yml` now triggers on `[main]` for both `push` and `pull_request` ("develop/staging/prod are gone from both lists"), so a PR into `develop` never starts it and those contexts sit on *"Expected — waiting for status"* forever |
 
-Apply or change it with:
+So `main` is **under**-gated — it does not require `ci.yml`'s nine, which means a
+mobile-only change can merge with `mobile (whole-app tsc) / typecheck` red — while
+`develop` is **over**-gated with names that can no longer report. Both columns above are
+GitHub-side state: the repo carries the lists, an admin token applies them. Clearing or
+re-scoping `develop` is an operator action, and until someone takes it `develop` is not
+declared in `required-checks.txt` at all.
+
+Apply or change a gated branch's set with:
 
 ```bash
-GITHUB_TOKEN=<admin token> scripts/ci/apply-branch-protection.sh develop
+GITHUB_TOKEN=<admin token> scripts/ci/apply-branch-protection.sh main
 ```
 
-The required checks live in **`.github/required-checks.txt`** — one home, read by
-that script. They are the nine unconditional jobs of `ci.yml`, which is now the
-single pipeline. Module lanes are deliberately *not* required: they are gated on
-the router and report `skipped` when their module did not change, so requiring
-them would couple branch protection to routing for no gain.
+The required checks live in **`.github/required-checks.txt`** — one home, and one parser
+(`scripts/ci/required-checks.py`) shared by the apply script, `test-changed-modules.py`
+and `release-gates.py`. The file is sectioned by branch (`@all`, `@<branch>`) because the
+candidate sets come from two workflows with different triggers and are not
+interchangeable; `@main` currently carries **both** sets — `ci.yml`'s nine plus
+`ci-optimized.yml`'s five — which is what lets `main` be applied without silently
+dropping the `secrets-scan` gate. A branch with no section is a hard error rather than an
+empty payload, because an empty list is an unprotected branch. Module lanes are
+deliberately *not* required: they are gated on the router and report `skipped` when their
+module did not change, so requiring them would couple branch protection to routing for no
+gain.
 
 **Those nine names only exist where `ci.yml` runs, and since 2026-11-15 it runs on
 `main` alone** (`push: branches: [main]`, `pull_request: branches: [main]`). `develop`
@@ -48,17 +63,31 @@ means picking which lane `main` is gated on, and that has not been decided here.
   status"*, not as passed, so a docs-only PR would never start the workflow and
   could never merge. This is why the `paths-ignore` was removed from
   `pull_request` (it is still on `push`, where docs-only changes cost nothing).
-- **Renaming a required job blocks every PR.** Protection matches the check-run
-  name exactly; the old context simply never reports again. `scripts/ci/test-changed-modules.py`
-  asserts every name in `required-checks.txt` still exists as a job in `ci.yml`,
-  so a rename fails CI loudly instead of hanging merges silently. After any
-  rename: update `required-checks.txt`, then re-run the apply script.
+- **Renaming a required job blocks every PR and every deploy.** Protection matches the
+  check-run name exactly; the old context simply never reports again.
+  `scripts/ci/test-changed-modules.py` asserts every name in `required-checks.txt` still
+  exists as a reported check-run in `ci.yml` **or** `ci-optimized.yml`, *and* that its
+  workflow actually starts PRs on the branch that requires it — so both a rename and a
+  context filed under a branch that cannot report it fail CI loudly instead of hanging
+  merges (and `release-gates.py`, which waits on the same list) silently. After any
+  rename: update `required-checks.txt`, then re-run the apply script for each gated
+  branch.
 
 > Check-run names are `"<caller job name> / <job id inside the reusable>"` for
 > reusable-workflow calls, and just the job's `name:` for inline jobs. You cannot
 > require a *workflow* — only its checks.
 
-## Proposed settings for `main` (not yet applied)
+## Still-proposed extras for `main` (never applied)
+
+`main` is protected today — the five `ci-optimized.yml` contexts in the table at the top —
+so this is no longer a proposal for an unprotected branch, it is the list of *additional*
+rules that were never applied. One caveat before using any name below: several of them do
+not exist as check-runs anymore (`secrets (no client-exposed secrets)`, `CodeQL (go)`,
+`gitleaks (secret scan)`, `trivy (filesystem — deps + IaC misconfig)`). That ground is now
+covered by the live `secrets-scan` context, `hygiene (client secrets + live-DB test gate +
+migration versions)` and `workflows (actionlint)`. Re-derive any check name from a real
+PR's checks list before requiring it — a name that never reports hangs every PR on
+"Expected", which is the failure `test-changed-modules.py` exists to catch.
 
 - Require a pull request before merging; **≥ 1 approval**.
 - **Require review from Code Owners** (activates `.github/CODEOWNERS`).
