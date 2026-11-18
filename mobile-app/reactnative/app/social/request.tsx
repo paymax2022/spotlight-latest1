@@ -48,7 +48,13 @@ export default function RequestMoney() {
         <View style={styles.successBody}>
           <View style={styles.successIcon}><CircleCheck size={40} color={SocialColors.ok} /></View>
           <Text style={styles.successTitle}>Request sent</Text>
-          <Text style={styles.successSub}>{normalizeHandle(from)} will be notified to pay {formatNaira(amountKobo)}.</Text>
+          {/* The social module emits no push for a request, so this used to
+              promise a notification nobody receives. Say where the other person
+              actually finds it instead. */}
+          <Text style={styles.successSub}>
+            {normalizeHandle(from)} can pay {formatNaira(amountKobo)} from Money requests in your Social Pay.
+            You’ll see it settle in your activity.
+          </Text>
           <PrimaryButton label="Done" onPress={() => router.dismissAll?.() ?? goBack('/social')} style={{ marginTop: Spacing.lg }} />
         </View>
       </SafeAreaView>
@@ -65,7 +71,8 @@ export default function RequestMoney() {
 
         <View style={styles.infoCard}>
           <Text style={styles.infoText}>
-            A request only notifies the other person — money moves when they approve and pay. You can only request for yourself.
+            A request asks the other person for money — it moves nothing until
+            they pay it from their Money requests. You can only request for yourself.
           </Text>
         </View>
 

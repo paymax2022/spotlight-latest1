@@ -28,6 +28,10 @@ make verify           # build + vet + tsc(web+admin) + contract-check
 Do not promote on red. (In the authoring sandbox only structural review was possible — no Go
 toolchain — so the first real green must come from the dev container/CI.)
 
+Since 2026-11-15 "do not promote on red" is enforced rather than advised: `release.yml`'s
+`gates` job waits for this commit's CI to settle and refuses to deploy on red **or on
+timeout** — a run that never finished is not a pass.
+
 ## 2. Migrate
 
 Additive-only, forward-only (CLAUDE.md). 226 migrations in `supabase/migrations/` including
@@ -38,8 +42,14 @@ make migrate-up       # apply pending migrations to $DATABASE_URL
 # (make verify already runs migrate-reset to prove clean-apply + idempotency in CI)
 ```
 
-There are **no un-authored modules** — every feature module has its tables. "Migrate the full
-suite" = run the above against each environment's database in order: dev → staging → prod.
+There are **no un-authored modules** — every feature module has its tables. Since
+2026-11-15 you do not run these by hand for a normal release: `release.yml` applies
+pending migrations to each environment **before** that environment's deploy —
+`migrate-staging` before `deploy-staging`, `migrate-production` before
+`deploy-production` — through `_reusable-db-apply.yml`. The manual path still exists
+as `db-migrate.yml`, dispatch-only, for a one-off apply or a dry run; it shares that
+same apply path and the same Supabase CLI pin, so there is exactly one way each
+database gets written.
 
 ## 3. Build once, promote the same artifact
 
@@ -49,7 +59,11 @@ make docker-build SHA=$(git rev-parse --short HEAD)   # backend image tagged by 
 ```
 
 Promote the SAME image/bundle through staging → prod (build-once). The pipeline skeleton is
-`.github/workflows/deploy.yml`.
+`.github/workflows/deploy.yml` — that is the GCP/Cloud Run lane and is separate from the
+Railway chain. The production hosts this repo actually serves come from `release.yml`, which
+uploads the working tree per service with `railway up` (see
+`docs/devops/deployment-matrix.md` for which host serves what). Pushing to `main` is the
+release: there is no branch to merge into and no confirmation to type.
 
 ## 4. Configure each surface for the environment
 
@@ -67,10 +81,12 @@ frontend-admin (:3001): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_K
 Template: `frontend-admin/.env.production.example`.
 
 mobile (Expo): `EXPO_PUBLIC_API_BASE_URL` = prod frontend-web origin; the 51
-`EXPO_PUBLIC_*_USE_MOCK=false`. Source of truth: `mobile-app/reactnative/.env.production`
-(+ `docs/GO-LIVE-CONFIG.md`). A module goes live only when: backend flag ON → `/api/v1/*`
-proxy exists → `USE_MOCK=false` → smoke test → published for that environment in
-`/admin/modules`.
+`EXPO_PUBLIC_*_USE_MOCK=false`. Source of truth: `mobile-app/reactnative/eas.json` — the tracked
+file whose `production` and `production-apk` profiles inline those values (see §4b;
+`.env.production` is gitignored and proves nothing) — plus `docs/GO-LIVE-CONFIG.md`.
+A module goes live only when: backend flag ON → `/api/v1/*` proxy exists → `USE_MOCK=false` →
+smoke test → published for that environment in `/admin/modules` → and its `env_flag` variable
+is ON (§4b, "Published is not the same as served").
 
 ## 4b. Publication and readiness (`platform_modules`)
 
@@ -83,9 +99,22 @@ the other.
   publishes at any readiness.
 - Demoting readiness below `ready` withdraws a live production module on its own, without
   touching its tier rows, so marking it Ready again restores exactly the previous state.
-- A store build reads the tier of the backend it is pointed at, not its own build name. So
-  today's production APK, wired to staging, is governed by the **staging** column until it is
-  rewired.
+- A store build reads the tier of the backend it is pointed at, not its own build name. The
+  tracked source of truth for that is `mobile-app/reactnative/eas.json`, and its `production`
+  and `production-apk` profiles point at the production BFF
+  (`EXPO_PUBLIC_API_BASE_URL=https://frontend-web-production-9259.up.railway.app`, prod
+  Supabase) — so those builds are governed by the **production** column. `.env.production` is
+  gitignored and can hold anything, including staging URLs; check the origin actually inlined
+  in the artifact before trusting a build's name.
+- **Published is not the same as served.** `VisibleIn` answers from the registry, and then the
+  `FEATURE_*` variable named by the module's `env_flag` is applied on top of it
+  (`EnvFlagEnabled: envFlag == "" || s.flag(envFlag)` in `internal/modules/service.go`). A
+  module that is `active`, `ready` and `visible` in production still vanishes from
+  `/api/v1/modules/visibility` while that variable is unset or false — and no console action
+  brings it back, because the console does not own this lever. When someone reports "I
+  published it and it still doesn't show", check the flag before the registry. The two sets
+  are only equal by coincidence: when this was written production held 36 rows at
+  ready+visible and served 31.
 - `FEATURE_MODULE_GATE_ENFORCE` (Go) is the server-side half. Unset it is observe-only: the
   gate resolves the module and logs what it would refuse. Turn it on only after the route map
   has met real traffic, and remember it is mounted on the finance group alone.
@@ -104,9 +133,24 @@ console → ship the build. Shipping first leaves the newly registered surfaces 
 
 ## 6. Rollback
 
-Flags are the fast lever: turn a misbehaving module's `FEATURE_*` OFF (no redeploy needed for
-gating). For code: redeploy the previous build-once image. Migrations are additive/forward-only,
-so DB rollback is by compensating migration, never destructive `DROP`.
+**The brake is a variable, not a person.** Set `RAILWAY_DEPLOY_ENABLED` to anything other
+than `true` and `release.yml` stops at its first job — use that first when a bad commit is
+already on `main` and you want to stop the next push from releasing too.
+
+**Roll the code back** with a `workflow_dispatch` on `release.yml` carrying
+`ref=<prior main SHA>`. It re-runs the same chain against that commit. If that SHA is old
+enough that its check-runs are past retention, add `skip_gates=true` — that is the only way
+past the CI gate, so it is a deliberate, logged exception, not a convenience.
+
+**A rollback does not apply migrations.** An older `supabase/migrations/` tree against a
+remote that already holds newer versions makes `supabase db push` abort with "remote
+migration versions not found in local migrations directory", so the chain skips the apply
+instead of corrupting the schema. That is why migrations are additive-only: the deployed
+code goes back, the schema does not.
+
+Flags are still the fast lever: turn a misbehaving module's `FEATURE_*` OFF (no redeploy
+needed for gating). Migrations are additive/forward-only, so DB rollback is by compensating
+migration, never destructive `DROP`.
 
 ## Module enablement cheat-sheet (flag → surfaces)
 

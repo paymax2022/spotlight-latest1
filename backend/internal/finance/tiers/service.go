@@ -407,3 +407,82 @@ func GetConfig(t Tier) TierConfig {
 	}
 	return tierConfigs[Tier0]
 }
+
+// ── Merchant receipt ceiling ──────────────────────────────────────────────────
+// How large an order may be for a merchant to be allowed to TAKE IT at all.
+// Every other gate in this file prices the account that PAYS. Nothing capped what an
+// account may RECEIVE, so an unverified restaurant could accept unlimited card-funded
+// orders — which is a KYC bypass with a ledger entry: the money lands in the owner's
+// wallet (settlement pays restaurants.owner_id, and card-funded orders never touch the
+// customer's wallet, so EnforceCheckoutDebitLimit cannot see them) and leaves through
+// a withdrawal the owner initiates later. ADR-042's justification for letting a Tier-0
+// account move money at all is that it cannot get value OUT; that holds for the payer
+// and says nothing about the payee.
+//
+// The ceiling is DERIVED from the same ladder ADR-001 sets for spending, so "consistent
+// with tier KYC" stays true after a compliance change to tierConfigs rather than living
+// as a second table that can drift. See merchant_receipt_test.go, which pins both the
+// numbers and that derivation.
+//
+// It is a PER-ORDER ceiling, matching the request it implements ("cannot receive an
+// order that is more than its KYC level") and the shape of SmallTransactionMaxKobo. A
+// cumulative daily cap on receipts would be a different, unasked-for rule — and the
+// first big weekend would shut a Tier-1 outlet's queue.
+
+// ErrMerchantOrderLimitExceeded is returned when an order is worth more than the
+// receiving merchant's KYC level admits. Distinct from ErrDailyLimitExceeded and
+// ErrKYCRequiredForAmount because it names a DIFFERENT account: the merchant must be
+// told to verify, while the customer who typed the address did nothing wrong.
+var ErrMerchantOrderLimitExceeded = errors.New("tiers: order is larger than this merchant's verification level allows — the seller must complete KYC to accept it")
+
+// MerchantReceiptLimitKobo is the largest single order (kobo) an account at tier t may
+// receive as a merchant. 0 means unlimited.
+// Tier 0 reuses the unverified per-TRANSACTION line (₦20,000) rather than a ban, so a
+// new outlet can trade small while it verifies; Tiers 1 and 2 each take their own
+// tier's daily debit cap (₦50,000 / ₦200,000); Tier 3 is unlimited.
+// An unknown tier falls back to Tier 0's config, the same way GetConfig does —
+// never to "unlimited".
+func MerchantReceiptLimitKobo(t Tier) int64 {
+	switch t {
+	case Tier0:
+		return SmallTransactionMaxKobo
+	case Tier1, Tier2:
+		return GetConfig(t).DailyDebitLimitKobo
+	case Tier3:
+		return 0 // unlimited
+	}
+	// Any other value (a tier number this build does not know, a negative): the
+	// strictest rung. Returning 0 here would read as "unlimited" and fail open.
+	return SmallTransactionMaxKobo
+}
+
+// EnforceMerchantReceiptLimit gates an incoming payment on the tier of the account
+// that will RECEIVE it.
+// A missing user_profiles row is UNVERIFIED, not unknown: the account has completed no
+// KYC, so it gets the strictest rung (Tier 0) rather than an error. This differs
+// deliberately from the debit gates above, where no row fails closed into a refusal —
+// for a payer "no wallet" is the correct answer, but for a payee it would mean an
+// outlet with no profile row cannot receive ANY order, and every cart over ₦20,000
+// would 500 at the door. Big orders still refuse; small business keeps trading.
+// Any other tier-read failure still fails closed.
+func (s *Service) EnforceMerchantReceiptLimit(ctx context.Context, userID string, amountKobo int64) error {
+	tier, err := s.GetUserTier(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		tier = Tier0
+	} else if err != nil {
+		return fmt.Errorf("tiers: enforce merchant receipt limit (fail closed): %w", err)
+	}
+	return merchantReceiptDecision(MerchantReceiptLimitKobo(tier), amountKobo)
+}
+
+// merchantReceiptDecision is the whole rule with the tier resolved by the caller, kept
+// as a real function so the boundary tests exercise THIS code and not a re-implementation.
+func merchantReceiptDecision(limitKobo, amountKobo int64) error {
+	if limitKobo == 0 {
+		return nil // unlimited tier
+	}
+	if amountKobo > limitKobo {
+		return ErrMerchantOrderLimitExceeded
+	}
+	return nil
+}

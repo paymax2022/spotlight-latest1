@@ -42,6 +42,13 @@ var ErrAppointmentNotFound = errors.New("preconsult: appointment not found")
 // not assigned to all fold here.
 var ErrIntakeNotFound = errors.New("preconsult: intake not found")
 
+// ErrIntakeAlreadySubmitted is the freeze: the intake is SUBMITTED, so no further
+// draft write can reach the doctor. SaveDraft and Submit both refuse it, and the
+// two share one sentinel because the patient's correct next move is identical.
+// preconsultFail carries it out as code "intake_already_submitted" — the wizard
+// branches on that, not on this sentence.
+var ErrIntakeAlreadySubmitted = errors.New("preconsult: intake already submitted")
+
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe. Bodies are never
 // passed; only IDs / status / red-flag codes.
 type Auditor interface {
@@ -221,7 +228,7 @@ func (s *Service) SaveDraft(ctx context.Context, caller, appointmentID string, a
 		return nil, ErrIntakeNotFound
 	}
 	if it.Status == "SUBMITTED" {
-		return nil, errors.New("preconsult: intake already submitted")
+		return nil, ErrIntakeAlreadySubmitted
 	}
 	raw, err := json.Marshal(answers)
 	if err != nil {
@@ -285,7 +292,7 @@ func (s *Service) Submit(ctx context.Context, caller, appointmentID string, answ
 		return nil, ErrIntakeNotFound
 	}
 	if it.Status == "SUBMITTED" {
-		return nil, errors.New("preconsult: intake already submitted")
+		return nil, ErrIntakeAlreadySubmitted
 	}
 
 	sc, err := s.intake.GetActiveSchemaBySlug(ctx, SchemaSlug)

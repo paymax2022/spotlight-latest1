@@ -2,7 +2,7 @@
  * Block 10 — Wallet-to-Wallet Transfer Service
  *
  * Provides:
- *   resolvePaymaxUser()      — look up a recipient by phone/email; returns safe preview
+ *   resolvePaymaxUser()      — look up a recipient by cashtag/phone/email; returns safe preview
  *   calculateTransferFee()   — PRD fee schedule (§18.2)
  *   initiateWalletToWallet() — atomic debit+credit via transfer_wallet_atomic RPC
  *
@@ -35,13 +35,53 @@ export interface TransferRecipient {
   displayName: string;
   maskedPhone: string;
   avatarUrl: string | null;
+  /**
+   * Set only when the sender addressed the recipient by cashtag, as the
+   * normalised `@handle`. The confirmation screen echoes this instead of a
+   * phone number the sender never typed. Absent for phone/email sends.
+   */
+  handle?: string;
+}
+
+/**
+ * Handle grammar — MUST stay identical to `handlePattern` in
+ * backend/internal/cashtag/service.go (exported there as IsValidShape). The BFF
+ * and the Go rail resolve the same `@handle` to the same account only while
+ * both agree on what a cashtag even is; if they diverge, a sender on one entry
+ * point pays the person the other entry point would have refused.
+ */
+const CASHTAG_SHAPE = /^[a-z0-9][a-z0-9_]{2,29}$/;
+
+/**
+ * Read a cashtag recipient identifier, or return null when the text is not one.
+ *
+ * The `@`/`$` sigil is MANDATORY: bare `bisi` is never guessed to be a handle.
+ * Mirrors ParseCashtagRecipient in
+ * backend/internal/finance/transfers/cashtag_recipient.go.
+ *
+ * Shape only — no reserved-word or impersonation guard here, because those were
+ * enforced when the handle was claimed. Re-checking them on lookup would refuse
+ * a send to an account that legitimately holds the handle.
+ */
+export function parseCashtagIdentifier(raw: string): string | null {
+  const trimmed = (raw ?? '').trim();
+  if (trimmed.length < 2) return null;
+  const sigil = trimmed[0];
+  if (sigil !== '@' && sigil !== '$') return null;
+  const handle = trimmed.slice(1).trim().toLowerCase();
+  return CASHTAG_SHAPE.test(handle) ? handle : null;
 }
 
 // resolvePaymaxUser
 
 /**
- * Look up a Paymax user by phone number or email address.
+ * Look up a Paymax user by cashtag, phone number, or email address.
  * Returns a safe preview — no full phone or sensitive PII exposed.
+ *
+ * A `@`/`$` sigil means the cashtag directory; anything else means phone or
+ * email, exactly as before. The directory is unique per handle
+ * (uq_cashtag_handle), so unlike the phone leg a cashtag lookup has no
+ * ambiguity to refuse — it resolves or it 404s.
  *
  * Phone matching is by 10-digit NSN, because user_profiles was never normalised:
  * the same subscriber is stored as "8159491618", "08159491618",
@@ -62,6 +102,14 @@ export async function resolvePaymaxUser(
   }
 
   const raw = identifier.trim();
+
+  // Cashtag before anything else, and only when the sender sigil'd it. This
+  // ordering is the behaviour: `raw.includes('@')` used to send `@bisi_2` down
+  // the email leg, where it matched nothing (no account emails itself with a
+  // handle) and the send 404'd. A bare `bisi` still is not read as a handle.
+  const cashtag = parseCashtagIdentifier(raw);
+  if (cashtag) return resolveByCashtag(cashtag, requestingUserId);
+
   const isEmail = raw.includes('@');
   const nsn = isEmail ? '' : normalizeNsn(raw);
 
@@ -134,6 +182,67 @@ export async function resolvePaymaxUser(
     displayName: profile.full_name ?? 'Paymax User',
     maskedPhone: maskPhone(profile.phone ?? ''),
     avatarUrl: profile.avatar_url ?? null,
+  };
+}
+
+// resolveByCashtag — the directory leg of resolvePaymaxUser
+
+/**
+ * Resolve a normalised handle through cashtag_handles, then read its owner's
+ * profile. Mirrors resolveByCashtag in
+ * backend/internal/finance/transfers/cashtag_recipient.go, so both entry
+ * points send a `@cashtag` transfer to the same account or both refuse it.
+ *
+ * The filter value is the handle WE normalised, never the caller's raw text —
+ * the same rule the phone leg follows with nsnDigitPattern().
+ */
+async function resolveByCashtag(
+  handle: string,
+  requestingUserId: string,
+): Promise<TransferRecipient> {
+  const supabase = createAdminClient();
+
+  const { data: claim, error: claimError } = await supabase
+    .from('cashtag_handles')
+    .select('user_id')
+    .eq('handle', handle)
+    .maybeSingle();
+
+  if (claimError) {
+    console.error('[transfers] cashtag directory lookup failed:', claimError.message);
+    throw new ApiError('Failed to resolve recipient', 500);
+  }
+
+  const ownerId = (claim as { user_id?: string } | null)?.user_id ?? '';
+
+  // Unclaimed, or claimed by the sender: refuse with the same 404 the phone leg
+  // gives for "no such recipient", so the response never reveals which. The
+  // directory hit settles it — no profile row is read.
+  if (!ownerId || ownerId === requestingUserId) {
+    throw new ApiError('No Paymax user found for this identifier', 404);
+  }
+
+  const { data: profile, error } = await supabase
+    .from('user_profiles')
+    .select('id, full_name, phone, avatar_url')
+    .eq('id', ownerId)
+    .maybeSingle();
+
+  if (error) throw new ApiError('Failed to resolve recipient', 500);
+
+  // A directory row without a profile is broken data, not a recipient. Fail
+  // closed rather than credit an id we cannot show the sender a name for.
+  const row = profile as
+    | { id: string; full_name: string | null; phone: string | null; avatar_url: string | null }
+    | null;
+  if (!row) throw new ApiError('No Paymax user found for this identifier', 404);
+
+  return {
+    userId: row.id,
+    displayName: row.full_name ?? 'Paymax User',
+    maskedPhone: maskPhone(row.phone ?? ''),
+    avatarUrl: row.avatar_url ?? null,
+    handle: `@${handle}`,
   };
 }
 

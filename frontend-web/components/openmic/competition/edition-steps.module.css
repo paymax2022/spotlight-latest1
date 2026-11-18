@@ -1,0 +1,27 @@
+/* Live content inside the five step accordions. */
+.stepState { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; margin: 14px 0; font-size: 14px; }
+.stepState b { font-weight: 700; }
+.windowOpen { color: #1f7a3d; }
+.windowClosed { color: #8a3b12; }
+.windowUnknown { color: #4d4a45; }
+
+.beatPlayer { margin: 16px 0 12px; }
+.beatPlayer audio { width: 100%; }
+.beatCredit { margin: 8px 0 0; font-size: 13px; color: #4d4a45; }
+
+.board { list-style: none; margin: 18px 0; padding: 0; border-top: 1px solid rgba(20, 18, 15, .14); }
+.board li { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(20, 18, 15, .14); }
+.board .rank { font-size: 15px; font-weight: 800; color: #a2601b; }
+.board .who { min-width: 0; }
+.board .who strong { display: block; font-size: 15px; }
+.board .who span { display: block; font-size: 13px; color: #5d5952; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board .votes { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.board .link { grid-column: 1 / -1; font-size: 13px; }
+
+.tally { margin: 0 0 4px; font-size: 13px; color: #4d4a45; }
+.note { margin: 12px 0 0; font-size: 13px; color: #4d4a45; }
+.entryLink { display: block; margin: 10px 0; font-size: 13px; word-break: break-all; }
+
+@media (max-width: 680px) {
+  .board li { grid-template-columns: 28px minmax(0, 1fr) auto; }
+}

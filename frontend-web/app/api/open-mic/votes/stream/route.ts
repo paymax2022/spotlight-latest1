@@ -2,6 +2,7 @@
 // Each message: { type: 'snapshot', entries: [{id, voteCount, leaderboardScore}], ts }
 
 import { createAdminClient } from '@/lib/supabase/server';
+import { streamCountsVisible, type StreamCountGateRow } from '@/src/features/openmic/standings-visibility';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,15 +27,20 @@ export async function GET(request: Request) {
   async function snapshot() {
     try {
       const supabase = createAdminClient();
-      // Visibility gate: a non-'public' contest (hidden/private/regional)
-      // streams entry ids only — counts stay redacted, same contract as the
-      // gated /api/v2/votes/stream (hidden fields absent, not nulled).
+      // Two signals gate the counts: a non-'public' edition and an admin who
+      // marked the counts private. Open Mic editions live in `contests` —
+      // reading the other plane's table returns nothing, which used to look
+      // like "not public" and silently froze every live count on the board.
+      // Same contract as the gated /api/v2/votes/stream: hidden fields are
+      // absent, not nulled.
       const { data: contest } = await supabase
-        .from('competitions')
-        .select('visibility')
+        .from('contests')
+        .select('visibility, sponsor_assets')
         .eq('id', contestId!)
         .maybeSingle();
-      const countsVisible = (contest as any)?.visibility === 'public';
+      const countsVisible = streamCountsVisible(
+        (contest ?? {}) as StreamCountGateRow,
+      );
 
       const { data } = await supabase
         .from('competition_entries')

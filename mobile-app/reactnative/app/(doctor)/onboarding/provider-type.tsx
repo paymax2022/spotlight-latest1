@@ -18,7 +18,8 @@ import type { ProviderType } from '@/types/doctor.onboarding';
 // Selectable card list over PROVIDER_TYPE_OPTIONS. Records the choice via
 // useSelectProviderType, then routes into the consent gate. The chosen type is
 // persisted on the merchant-upgrade status so the permissions step can route to
-// the correct builder (doctor/specialist → Section B; veterinarian → Section C).
+// the correct builder. PROVIDER_TYPE_OPTIONS is the only source of what may be
+// chosen here — veterinary is absent from it, so it cannot be selected.
 
 const ICON_MAP: Record<ProviderType, LucideIcon> = {
   doctor:       Stethoscope,

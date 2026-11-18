@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import DrawerEnhancement from '@/components/marketing/DrawerEnhancement'
 import MobileMenu from './MobileMenu'
 
 // Quick-nav links shown when the user is signed in
@@ -125,6 +126,7 @@ export default function Offcanvas({ isOffCanvas, handleOffCanvas }) {
 
   return (
     <>
+      <DrawerEnhancement />
       <div className="fix-area">
         <div className={`offcanvas__info ${isOffCanvas ? 'info-open' : ''}`}>
           <div className="offcanvas__wrapper">
@@ -137,7 +139,7 @@ export default function Offcanvas({ isOffCanvas, handleOffCanvas }) {
                     <img src="/assets/img/logo/logo.png" alt="Spotlight logo" />
                   </Link>
                 </div>
-                <div className="offcanvas__close" onClick={handleOffCanvas}>
+                <div className="offcanvas__close" data-drawer-dismiss="offcanvas" onClick={handleOffCanvas}>
                   <button aria-label="Close panel">
                     <i className="fas fa-times" />
                   </button>
@@ -302,8 +304,12 @@ export default function Offcanvas({ isOffCanvas, handleOffCanvas }) {
                 </div>
               )}
 
-              {/* ── Mobile nav (tablet breakpoint) ────────────────── */}
-              <div className="d-md-block d-lg-none" style={{ marginBottom: 16 }}>
+              {/* ── The site menu, at every width ───────────────────── */}
+              {/* Opening the hamburger on a laptop used to bring up a panel of
+                  account links with no navigation in it: this block was gated to
+                  the tablet range because the header bar carries a menu inline,
+                  which is not the menu the panel just opened. */}
+              <div style={{ marginBottom: 16 }}>
                 <MobileMenu />
               </div>
 
@@ -373,6 +379,7 @@ export default function Offcanvas({ isOffCanvas, handleOffCanvas }) {
       </div>
       <div
         className={`offcanvas__overlay ${isOffCanvas ? 'overlay-open' : ''}`}
+        data-drawer-dismiss="offcanvas"
         onClick={handleOffCanvas}
       />
     </>

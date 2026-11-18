@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { extractSessionToken, isSessionValid, resolveEnforce } from '../../../../middleware';
+import { describeUpstreamFailure } from '@/lib/webProxyError';
 
 /**
  * Server-side proxy to the PUBLIC WEB APP: /api/web-proxy/<...> -> <WEB_API_BASE_URL>/<...>
@@ -115,7 +116,11 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
     // Log the TARGET, never a header. An unbounded hang here would be invisible.
     console.error(`[web-proxy] ${method} /${path.join('/')} -> ${WEB_API_BASE_URL} failed:`,
       err instanceof Error ? err.message : err);
-    return NextResponse.json({ error: 'Upstream web app unreachable.' }, { status: 502 });
+    return NextResponse.json({
+      // This string is the only thing the operator sees, so it names the cause:
+      // refused means nothing is listening, a missed deadline means it was slow.
+      error: describeUpstreamFailure(err, { baseUrl: WEB_API_BASE_URL, timeoutMs: TIMEOUT_MS }),
+    }, { status: 502 });
   }
 }
 

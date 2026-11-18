@@ -1154,3 +1154,51 @@ h6,
 .font-serif {
   font-family: var(--font-kumbh, 'Kumbh Sans', sans-serif) !important;
 }
+
+/* "Programes" is a dropdown label now, not a link — main.css styles menu items
+   by the `a` element, so a non-link label beside them needs the same
+   declarations or it renders in the wrong size, weight and colour. */
+.header-main .main-menu ul li > .menu-group {
+  display: inline-block;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--header);
+  padding: 20px 0;
+  text-align: left;
+  position: relative;
+  text-transform: capitalize;
+  transition: all 0.4s ease-in-out;
+}
+
+.header-main .main-menu ul li:hover > .menu-group {
+  color: var(--theme2);
+}
+
+/* The drawer's copy is a button, so it must also undo the UA defaults that an
+   anchor never had: its own font, background and border. */
+.mean-container .mean-nav ul li > .menu-group {
+  width: 100%;
+  padding: 10px 0;
+  color: var(--header);
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 500;
+  text-transform: capitalize;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.mean-container .mean-nav ul li > .menu-group:hover {
+  color: var(--theme2);
+}
+
+/* main.css hides the caret inside a drawer link (`li > a > i`) because the row
+   already carries a `mean-expand` toggle; a button is not an anchor, so the
+   same hiding has to be named again or the row grows a second affordance. */
+.mean-container .mean-nav ul li > .menu-group > i {
+  display: none;
+}
