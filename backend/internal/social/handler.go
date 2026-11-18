@@ -432,10 +432,21 @@ func (s *Service) ActivityFeed(ctx context.Context, userID string, limit int) ([
 }
 
 // RequestRow is a money request the caller is party to.
+//
+// CounterpartHandle/CounterpartName describe the OTHER party (the payer for a
+// request the caller sent, the requester for a request the caller owes). The
+// ids alone are useless to the member client — a cashtag request is a
+// person-shaped object ("@doctor asked you for ₦200"), and the payer-side
+// inbox has no reverse handle lookup to make of a UUID: GET /handle/:handle
+// goes handle→id and GET /handle/me is caller-scoped. So the read carries the
+// label, exactly like GetPoolDetail's contributor roster already does.
 type RequestRow struct {
 	Request
 
-	Direction string `json:"direction"` // incoming (I owe) | outgoing (owed to me)
+	Direction         string `json:"direction"` // incoming (I owe) | outgoing (owed to me)
+	CounterpartID     string `json:"counterpart_id"`
+	CounterpartHandle string `json:"counterpart_handle"`
+	CounterpartName   string `json:"counterpart_name"`
 }
 
 // ListRequests returns money requests the caller sent or received, newest first.
@@ -443,11 +454,23 @@ func (s *Service) ListRequests(ctx context.Context, userID string, limit int) ([
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	const q = `SELECT id, requester_id, payer_id, amount_kobo, COALESCE(note,''), state,
-	                  CASE WHEN payer_id = $1 THEN 'incoming' ELSE 'outgoing' END AS direction
-	           FROM social_requests
-	           WHERE requester_id = $1 OR payer_id = $1
-	           ORDER BY created_at DESC LIMIT $2`
+	// counterpart_id picks the party that is NOT the caller; direction is
+	// decided off payer_id so the caller's own role falls out of the row.
+	const q = `WITH scoped AS (
+		           SELECT id, requester_id, payer_id, amount_kobo, note, state, created_at,
+		                  CASE WHEN requester_id = $1 THEN payer_id ELSE requester_id END AS counterpart_id
+		           FROM social_requests
+		           WHERE requester_id = $1 OR payer_id = $1
+		       )
+		       SELECT c.id, c.requester_id, c.payer_id, c.amount_kobo, COALESCE(c.note,''), c.state,
+		              CASE WHEN c.payer_id = $1 THEN 'incoming' ELSE 'outgoing' END AS direction,
+		              c.counterpart_id,
+		              COALESCE(ch.handle, ''),
+		              COALESCE(NULLIF(trim(up.full_name), ''), ch.handle, '')
+		       FROM scoped c
+		       LEFT JOIN cashtag_handles ch ON ch.user_id = c.counterpart_id
+		       LEFT JOIN user_profiles up ON up.id = c.counterpart_id
+		       ORDER BY c.created_at DESC LIMIT $2`
 	rows, err := s.db.Query(ctx, q, userID, limit)
 	if err != nil {
 		return nil, err
@@ -457,7 +480,8 @@ func (s *Service) ListRequests(ctx context.Context, userID string, limit int) ([
 	for rows.Next() {
 		var r RequestRow
 		var state string
-		if err := rows.Scan(&r.ID, &r.RequesterID, &r.PayerID, &r.AmountKobo, &r.Note, &state, &r.Direction); err != nil {
+		if err := rows.Scan(&r.ID, &r.RequesterID, &r.PayerID, &r.AmountKobo, &r.Note, &state,
+			&r.Direction, &r.CounterpartID, &r.CounterpartHandle, &r.CounterpartName); err != nil {
 			return nil, err
 		}
 		r.State = RequestState(state)
