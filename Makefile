@@ -30,7 +30,7 @@ RLS_ALLOWLIST ?= 'spatial_ref_sys'
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?# ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?# "}{printf "  %-16s %s\n", $$1, $$2}'
 
-dev: # run full stack: backend+redis (docker) + frontend-web (:3000) + mobile ($(MOBILE_DIR) :8083)
+dev: # run full stack: backend+redis (docker) + frontend-web (:3000, supervised) + mobile ($(MOBILE_DIR) :8083)
 	@echo "==> ensuring backend + redis are up via docker-compose (api on :8080)..."
 	docker compose up -d api redis
 	@echo "==> waiting for backend health on :8080..."
@@ -39,9 +39,9 @@ dev: # run full stack: backend+redis (docker) + frontend-web (:3000) + mobile ($
 	  [ $$i -eq 30 ] && { echo "    ERROR: backend never became healthy — check 'docker compose logs api'"; exit 1; }; \
 	  sleep 1; \
 	done
-	@echo "==> starting frontend-web (:3000) + mobile ($(MOBILE_DIR) :8083). Ctrl-C stops both."
+	@echo "==> starting frontend-web (:3000, restarted if it dies) + mobile ($(MOBILE_DIR) :8083). Ctrl-C stops both."
 	@trap 'kill 0' INT TERM EXIT; \
-	( cd frontend-web && npm run dev ) & \
+	scripts/dev/web-supervisor.sh & \
 	( cd $(MOBILE_DIR) && npm run start ) & \
 	wait
 
