@@ -1,0 +1,96 @@
+name: F2 raw HTTP capture (branch-only, no production path)
+
+# The pack's one missing artifact. `railway up` prints
+# `Failed to fetch: error decoding response body / expected value at line 1
+# column 1` and discards the response, and we have never been able to say what
+# Railway's upload-initiate endpoint actually answered. Measured 2026-11-18
+# 15:06-15:09Z from a laptop session with `--verbose`, which prints the URL the
+# CLI never showed us and a second failure mode:
+#
+#   POST https://backboard.railway.com/project/<p>/environment/<e>/up
+#        ?serviceId=<s>&message=<m>
+#   laptop  -> `Indexing... Uploading... error sending request ... Caused by:
+#               operation timed out`  (exit 1 after ~35 s)
+#   CI      -> `error decoding response body` sub-second, no Indexing line
+#
+# Measured 15:06-15:09Z the same day the laptop credential ALSO fails, so this
+# is no longer a CI-vs-laptop or a token-vs-session split: within minutes the
+# same command from the same laptop timed out on two services after succeeding
+# at 15:02, and `railway up --verbose` is what surfaced the URL at all.
+#
+# So the endpoint is `backboard.railway.com …/up`, and it answers with either
+# nothing or a non-JSON body. This job asks it directly with curl - once per
+# environment, staging vs development as the control - and prints the status
+# line, the response headers and the first bytes of the body. Nothing else in
+# the repo talks to that path, so nothing here can change a deployment.
+#
+# Secret handling: the token arrives as `secrets.RAILWAY_TOKEN_STAGING`, is
+# exported into the step environment, and is used only inside a header value. It
+# is never echoed; Actions masks `secrets.*` in logs anyway, and every printed
+# line passes a redactor that rewrites any 40+ character token-shaped run.
+# Delete this file with its branch.
+
+on:
+  push:
+    branches:
+      - f2-http-capture
+
+permissions:
+  contents: read
+
+concurrency:
+  group: f2-http-capture
+  cancel-in-progress: false
+
+env:
+  PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+  BACKEND: 70de07d8-c058-4221-b645-61c4f1ac7aa5
+  STAGING_ENV: 6b5f27a3-a290-4574-a977-363eb21d43ad
+  DEV_ENV: 87489af5-8543-4d17-8811-1241c8869430
+
+jobs:
+  capture:
+    name: capture the /up response
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging
+    steps:
+      - name: Ask the endpoint the CLI asks
+        env:
+          TOK: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          DEV_TOK: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+        run: |
+          set -uo pipefail
+          redact() { sed -E 's/[A-Za-z0-9._-]{40,}/<REDACTED_LONG>/g'; }
+          probe() { # $1 label  $2 token  $3 env-id  $4 method
+            local label="$1" tok="$2" eid="$3" method="$4"
+            echo "===== $label  method=$method  $(date -u +%H:%M:%S)Z ====="
+            rm -f /tmp/h.txt /tmp/b.txt
+            curl -sS -o /tmp/b.txt -D /tmp/h.txt -X "$method" \
+              --max-time 45 \
+              -H "Authorization: Bearer $tok" \
+              -w 'status=%{http_code} type=%{content_type} bytes=%{size_download} secs=%{time_total} ip=%{remote_ip}\n' \
+              "https://backboard.railway.com/project/$PROJECT/environment/$eid/up?serviceId=$BACKEND&message=f2-curl-${label}" 2>&1 | redact
+            echo "--- response headers ---"; redact < /tmp/h.txt | head -14
+            echo "--- body, first 400 bytes ---"; head -c 400 /tmp/b.txt | redact; echo
+          }
+          # 1. Route reachability, no body: a healthy API answers 405/400 JSON;
+          #    a CDN/gateway fault answers 5xx HTML, which is exactly what
+          #    `expected value at line 1 column 1` means to a JSON parser.
+          probe staging-GET "$TOK" "$STAGING_ENV" GET
+          probe dev-GET   "$DEV_TOK" "$DEV_ENV" GET
+          # 2. A body-less POST: the method `railway up` uses, with nothing to
+          #    deploy. Deliberately no archive is sent from this job - a real
+          #    payload could land on staging and be built - so the worst this
+          #    can produce is a rejected request.
+          probe staging-POST "$TOK" "$STAGING_ENV" POST
+          probe dev-POST   "$DEV_TOK" "$DEV_ENV" POST
+          # 3. Same path, no Authorization header: separates an application-layer
+          #    answer from a front-door/gateway answer.
+          echo "===== staging-UNAUTH-GET  $(date -u +%H:%M:%S)Z ====="
+          rm -f /tmp/h.txt /tmp/b.txt
+          curl -sS -o /tmp/b.txt -D /tmp/h.txt --max-time 45 \
+            -w 'status=%{http_code} type=%{content_type} bytes=%{size_download} secs=%{time_total} ip=%{remote_ip}\n' \
+            "https://backboard.railway.com/project/$PROJECT/environment/$STAGING_ENV/up?serviceId=$BACKEND&message=f2-curl-unauth" 2>&1 | redact
+          echo "--- response headers ---"; redact < /tmp/h.txt | head -14
+          echo "--- body, first 400 bytes ---"; head -c 400 /tmp/b.txt | redact; echo
