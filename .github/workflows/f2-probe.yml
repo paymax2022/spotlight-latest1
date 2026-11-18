@@ -75,8 +75,6 @@ jobs:
     name: one token, two environments, then the trigger
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      TOK_FILE: ${{ runner.temp }}/tok
     steps:
       - uses: actions/checkout@v4
         with:
@@ -91,18 +89,18 @@ jobs:
           S_DEV: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
         run: |
           case "${{ inputs.token_secret }}" in
-            RAILWAY_TOKEN_STAGING) printf %s "$S_STAGING" > "$TOK_FILE" ;;
-            *) printf %s "$S_DEV" > "$TOK_FILE" ;;
+            RAILWAY_TOKEN_STAGING) printf %s "$S_STAGING" > "$RUNNER_TEMP/tok" ;;
+            *) printf %s "$S_DEV" > "$RUNNER_TEMP/tok" ;;
           esac
-          if [ ! -s "$TOK_FILE" ]; then
+          if [ ! -s "$RUNNER_TEMP/tok" ]; then
             echo "::error::${{ inputs.token_secret }} resolved EMPTY — no upload was attempted"
             exit 1
           fi
-          echo "::notice::token under test = ${{ inputs.token_secret }} (bytes: $(wc -c < "$TOK_FILE"))"
+          echo "::notice::token under test = ${{ inputs.token_secret }} (bytes: $(wc -c < "$RUNNER_TEMP/tok"))"
 
       - name: 'Read side — can this token see the two environments?'
         run: |
-          export RAILWAY_TOKEN="$(cat "$TOK_FILE")"
+          export RAILWAY_TOKEN="$(cat "$RUNNER_TEMP/tok")"
           echo "--- environment lookup (a wrong id cannot silently deploy elsewhere) ---"
           railway api "query { environment(id: \"$STAGING_ENV_ID\") { name } }" 2>&1 | head -3
           railway api "query { environment(id: \"$DEV_ENV_ID\") { name } }" 2>&1 | head -3
@@ -125,7 +123,7 @@ jobs:
       - name: 'Arm A — same token, upload to DEVELOPMENT'
         if: always()
         run: |
-          export RAILWAY_TOKEN="$(cat "$TOK_FILE")"
+          export RAILWAY_TOKEN="$(cat "$RUNNER_TEMP/tok")"
           echo "::group::railway up → development (one attempt, no ladder)"
           timeout 400 railway up backend --path-as-root --no-gitignore \
             --service backend --environment development --project "$PROJECT" \
@@ -136,7 +134,7 @@ jobs:
       - name: 'Arm B — same token, upload to STAGING (the F2 edge)'
         if: always()
         run: |
-          export RAILWAY_TOKEN="$(cat "$TOK_FILE")"
+          export RAILWAY_TOKEN="$(cat "$RUNNER_TEMP/tok")"
           echo "::group::railway up → staging (one attempt, no ladder)"
           timeout 400 railway up backend --path-as-root --no-gitignore \
             --service backend --environment staging --project "$PROJECT" \
@@ -147,7 +145,7 @@ jobs:
       - name: 'Arm C — the trigger path, staging, commitSha pinned'
         if: always()
         run: |
-          export RAILWAY_TOKEN="$(cat "$TOK_FILE")"
+          export RAILWAY_TOKEN="$(cat "$RUNNER_TEMP/tok")"
           date -u +%Y-%m-%dT%H:%M:%S.000Z > "$RUNNER_TEMP/start.txt"
           START="$(cat "$RUNNER_TEMP/start.txt")"
           echo "arm_C_started=$START" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -158,7 +156,7 @@ jobs:
       - name: 'Arm C verdict — row, build, served sha, routes'
         if: always()
         run: |
-          export RAILWAY_TOKEN="$(cat "$TOK_FILE")"
+          export RAILWAY_TOKEN="$(cat "$RUNNER_TEMP/tok")"
           START="$(cat "$RUNNER_TEMP/start.txt")"
           echo "looking for a staging backend row created after $START"
           for i in $(seq 1 22); do
@@ -188,4 +186,4 @@ jobs:
 
       - name: 'Clean the token file'
         if: always()
-        run: rm -f "$TOK_FILE"
+        run: rm -f "$RUNNER_TEMP/tok"
