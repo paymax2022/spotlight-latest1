@@ -17,6 +17,11 @@ export default function SocialLayout() {
       <Stack.Screen name="send" />
       <Stack.Screen name="request" />
 
+      {/* Money requests — the receiver's side: the inbox they open, and the
+          request they act on. */}
+      <Stack.Screen name="requests/index" />
+      <Stack.Screen name="requests/[id]" />
+
       {/* Split */}
       <Stack.Screen name="split/create" />
       <Stack.Screen name="split/[id]" />
