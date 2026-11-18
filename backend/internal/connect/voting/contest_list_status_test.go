@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 
+	"spotlight/backend/internal/config"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -76,6 +78,125 @@ func TestListContestsHandler_RejectsUnknownStatusBeforeDB(t *testing.T) {
 		}
 		if !strings.Contains(w.Body.String(), "status") {
 			t.Errorf("status=%s: error should name the field, got %s", status, w.Body.String())
+		}
+	}
+}
+
+// The admin list is where a newly created contest becomes visible: contests are
+// born as drafts, and only the admin filter maps ""/all onto the three stored
+// statuses. Anything the member filter understands works the same here; the
+// member route keeping draft out (asserted above) is what protects voters from
+// reading an unpublished contest.
+func TestContestStatusFilterAdmin(t *testing.T) {
+	all := []string{"draft", "open", "closed"}
+	cases := []struct {
+		in      string
+		want    []string
+		wantErr bool
+	}{
+		{"", all, false},
+		{"all", all, false},
+		{"draft", []string{"draft"}, false},
+		{" Draft ", []string{"draft"}, false},
+		{"upcoming", []string{"draft"}, false},
+		{"active", []string{"open"}, false},
+		{"open", []string{"open"}, false},
+		{"closed", []string{"closed"}, false},
+		{"ended", []string{"closed"}, false},
+		{"garbage", nil, true},
+		{"open,closed", nil, true},
+	}
+	for _, tc := range cases {
+		got, err := contestStatusFilterAdmin(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%q: want an error, got %v", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%q: unexpected error %v", tc.in, err)
+			continue
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%q: got %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// The admin route's 400 has to name draft as an option, otherwise an operator
+// reading the error still believes the value they tried is unsupported.
+func TestListContestsAdminHandler_RejectsUnknownStatusBeforeDB(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	h := NewHandler(&Service{})
+	r.GET("/admin/contests", h.ListContestsAdmin)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/contests?status=garbage", nil))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d (%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "draft") {
+		t.Errorf("admin error should offer draft, got %s", w.Body.String())
+	}
+}
+
+// The admin contests list has no pager, so a page size that quietly collapses
+// back to the default reads as "these are all the contests that exist". An
+// over-large request is clamped to the ceiling instead; only an absent or
+// non-positive one takes the default.
+func TestContestListLimit(t *testing.T) {
+	cases := []struct {
+		in   int
+		want int
+	}{
+		{0, contestListDefaultLimit},
+		{-1, contestListDefaultLimit},
+		{10, 10},
+		{50, 50},
+		{200, 200},
+		{500, contestListMaxLimit},
+		{501, contestListMaxLimit},
+		{100000, contestListMaxLimit},
+	}
+	for _, tc := range cases {
+		if got := contestListLimit(tc.in); got != tc.want {
+			t.Errorf("limit %d: got %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+// The regression this whole port exists for. The admin console's
+// /admin/competitions/results calls GET /api/connect/admin/contests, and on the
+// deployed backend NO route matched it: gin's NoRoute handler answered
+// {"error":"No API route matches GET /api/connect/admin/contests"} and the page
+// rendered that sentence as its error. RegisterAdmin mounted only the eviction
+// sub-routes (/:id/evictions, /:id/admin-vote, …) — all of them behind
+// FEATURE_CONTEST_STAGE_EVICTION_ENABLED and none of them the bare list — so the
+// group existed while the list path did not.
+//
+// The assertion is made through the router with a guard that aborts 401, exactly
+// like an unauthenticated probe of production: a mounted route answers 401, an
+// absent one answers 404. It is checked with the eviction flag BOTH ways because
+// the list is not an eviction feature and must survive the flag being off.
+func TestRegisterAdmin_MountsTheContestListRoute(t *testing.T) {
+	for _, eviction := range []bool{false, true} {
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		guard := func(string) gin.HandlerFunc {
+			return func(c *gin.Context) {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
+			}
+		}
+		RegisterAdmin(r.Group("/api/connect/admin"), &Service{}, guard,
+			config.Config{FeatureContestStageEvictionEnabled: eviction})
+
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/connect/admin/contests", nil))
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("eviction flag %v: GET /api/connect/admin/contests answered %d (%s); want 401 — the route is not mounted",
+				eviction, w.Code, w.Body.String())
 		}
 	}
 }

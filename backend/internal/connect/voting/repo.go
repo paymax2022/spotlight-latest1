@@ -29,13 +29,31 @@ func (r *Repository) ListContests(ctx context.Context, limit int) ([]Contest, er
 	return r.ListContestsByStatus(ctx, limit, []string{"open", "closed"})
 }
 
+// A caller that names no limit gets contestListDefaultLimit; contestListMaxLimit
+// is a ceiling the request is CLAMPED to, not a tripwire back to the default.
+// Sending 500 used to silently return 50, which reads as "these are all the
+// contests" to an admin console with no pager.
+const (
+	contestListDefaultLimit = 50
+	contestListMaxLimit     = 500
+)
+
+// contestListLimit resolves a requested page size to what the query will use.
+func contestListLimit(limit int) int {
+	if limit <= 0 {
+		return contestListDefaultLimit
+	}
+	if limit > contestListMaxLimit {
+		return contestListMaxLimit
+	}
+	return limit
+}
+
 // ListContestsByStatus is ListContests narrowed to the given stored statuses.
 // statuses must come from contestStatusFilter (an allowlist); it is bound as a
 // parameter, never concatenated.
 func (r *Repository) ListContestsByStatus(ctx context.Context, limit int, statuses []string) ([]Contest, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
+	limit = contestListLimit(limit)
 	const q = `SELECT ` + contestColumns + `,
 			(SELECT COUNT(*) FROM contestants ct
 			  WHERE ct.connect_contest_id = connect_contests.id AND ct.is_active) AS contestant_count,
