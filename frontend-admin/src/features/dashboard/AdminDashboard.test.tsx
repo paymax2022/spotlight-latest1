@@ -143,4 +143,20 @@ describe('AdminDashboard — the backend rejected the session', () => {
     expect(section.getByText(/did not answer/i)).toBeTruthy();
     expect(section.queryByText(/session is no longer valid/i)).toBeNull();
   });
+
+  it('tells a forbidden account to ask a super admin, not to sign in again', async () => {
+    mockLoadAdminOverview.mockResolvedValue({ status: 'forbidden' });
+    mockGetAdminMenuCounts.mockResolvedValue(null);
+    render(<AdminDashboard />);
+
+    const section = await needsAttention();
+    expect(section.getByText(/not allowed to read the operations overview/i)).toBeTruthy();
+    expect(section.getByText(/ask a super admin for access/i)).toBeTruthy();
+    expect(section.queryByText(/session is no longer valid/i)).toBeNull();
+    expect(section.queryByText(/check the backend is running/i)).toBeNull();
+    expect(screen.getByText('access denied')).toBeTruthy();
+    // Every failure banner is a live region so assistive tech and the e2e
+    // suite can find it by role instead of by prose.
+    expect(screen.getByRole('alert')).toBeTruthy();
+  });
 });

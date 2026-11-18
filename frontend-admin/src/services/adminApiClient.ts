@@ -24,16 +24,20 @@ export async function getAdminMenuCounts(): Promise<AdminMenuCounts | null> {
  * instructions to the operator, so they must stay distinguishable:
  *  - ok:           render it (a PARTIAL answer — some modules `value: null` —
  *                  is still ok; one unavailable module must not blank the console)
- *  - unauthorized: the backend ANSWERED and rejected the session (401/403).
+ *  - unauthorized: the backend ANSWERED and rejected the session (401).
  *                  GoTrue no longer recognises the token — revoked by a password
  *                  reset or a sign-out elsewhere — even though it has not expired.
  *                  The remedy is to sign in again, not to go looking for a
  *                  backend outage.
+ *  - forbidden:    the backend ANSWERED but this signed-in account is not
+ *                  allowed to read the overview (403). Signing in again cannot
+ *                  fix it — the remedy is a super admin granting access.
  *  - unavailable:  no usable answer — network failure, 5xx, or the proxy's 504.
  */
 export type OverviewResult =
   | { status: 'ok'; overview: AdminOverview }
   | { status: 'unauthorized' }
+  | { status: 'forbidden' }
   | { status: 'unavailable' };
 
 export async function loadAdminOverview(): Promise<OverviewResult> {
@@ -44,7 +48,8 @@ export async function loadAdminOverview(): Promise<OverviewResult> {
       cache: 'no-store',
       headers: adminAuthHeaders(),
     });
-    if (response.status === 401 || response.status === 403) return { status: 'unauthorized' };
+    if (response.status === 401) return { status: 'unauthorized' };
+    if (response.status === 403) return { status: 'forbidden' };
     const payload = await response.json();
     if (!response.ok || !payload?.success || !Array.isArray(payload?.modules)) return { status: 'unavailable' };
     return {
