@@ -130,3 +130,35 @@ func TestValidateNormalizesBeforeChecking(t *testing.T) {
 		t.Fatalf("Validate(\"  @SUPPORT  \") = %v, want ErrReserved", err)
 	}
 }
+
+// TestIsValidShape pins the shape-only check for callers that ADDRESS a handle
+// rather than claim one — the wallet-to-wallet rail resolving a recipient.
+// Reserved and impersonation-prone names are shape-valid here on purpose: they
+// can never be in the directory (Claim refuses them), so an addressing caller
+// must get "no such handle" (404), not a 403 that leaks which names the platform
+// has fenced off. Validate keeps the full guards; both read one pattern.
+func TestIsValidShape(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"bisi", true},
+		{"ada_2", true},
+		{"1234567", true},
+		{"bi", false},                    // below the 3-char floor
+		{"_bisi", false},                 // must start alphanumeric
+		{"bi!si", false},                 // punctuation is not a handle
+		{"ada.eze", false},               // dots included
+		{strings.Repeat("a", 30), true},  // 30 is the ceiling
+		{strings.Repeat("a", 31), false}, // one past it
+		{"paymax", true},                 // reserved, but well-shaped
+		{"paymax_official", true},        // impersonation-prone, well-shaped
+		{"Bisi", false},                  // checked post-Normalize: uppercase is not shape
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := IsValidShape(tc.in); got != tc.want {
+			t.Errorf("IsValidShape(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
