@@ -59,8 +59,14 @@ staging's backend now runs main's tip). **Those laptop refusals are our
 bandwidth, not your fault, and we are withdrawing them from the differential.**
 What survives is the CI signature — sub-second, pre-row, from a runner that
 uploads the same 133 MB class to `development` in the same job — and the two
-queryable artifacts in "What episode 10 and the wire captures add". No token
-value appears here.
+queryable artifacts in "What episode 10, 11 and 12 add". **Episode 12 then
+removes our last own-side suspect:** the A/B ran, and the staging instance whose
+connected git source we disconnected refused exactly like the two that kept theirs
+(`16:44:57.617Z` and `16:45:21.001Z`), so `ServiceSource.repo` is not the
+discriminator; the one that is left is the credential path — a per-environment
+project token from a runner refuses pre-row on staging while this account's own
+login session is accepted on the same instances minutes later. No token value
+appears anywhere in this pack.
 
 ## The ask
 
@@ -215,17 +221,38 @@ both `SUCCESS`) — seven hours *before* this episode's fault window opened, so 
 legs have never been asked for an upload while the fault was live. The clean test
 of the source hypothesis is staging's own source, which we have not touched.
 
-**Status of that sentence as of 2026-11-18 16:25Z: the test is now running, and
-this section has to be read as provisional.** `frontend-admin`'s staging
-`source.repo` was set to `""` at ~15:52Z (`serviceInstanceUpdate` with
+**Status of that sentence as of 2026-11-18 16:47Z: the test has reported, and
+the answer is NO — this section's hypothesis is falsified.** `frontend-admin`'s
+staging `source.repo` was set to `""` at ~15:52Z (`serviceInstanceUpdate` with
 `input: {source: {repo: ""}}`; `input: {source: null}` is a silent no-op that
-still returns `true`), `backend` and `frontend-web` were left connected, and the
-three failed staging legs of a run were re-executed together — one job, both
-arms. Two of this section's premises are corrected below: the source property is
-not uniform across staging's instances (`frontend-admin` now reads `""`), and the
-laptop arm that was going to serve as a control for it turns out to have been
-bandwidth-limited, so it controls for nothing. See "What episode 10 and the wire
-captures add".
+still returns `true`), `backend` and `frontend-web` were left connected, and a
+branch-scoped CI run executed all three staging uploads serially inside one
+matrix — both arms, one job set, one runner class, one CLI pin, one secret. The
+disconnected instance refused in exactly the same way as the two connected ones:
+`16:44:57.617Z` and `16:45:21.001Z`, `error decoding response body` / `expected
+value at line 1 column 1`, zero `Indexing...` lines, no deployment row. Full
+numbers in episode 12. `frontend-admin`'s source has been restored
+(`serviceInstanceUpdate input:{source:{repo:"paymax2022/spotlight-latest1"}}` →
+readback `source{repo:"paymax2022/spotlight-latest1"}`, `rootDirectory
+"frontend-admin"`), so all three staging instances are back in their
+pre-experiment state and this pack is no longer describing a mutated config.
+
+Two premises of this section also need correcting on the record: the source
+property was never uniform across staging's instances during the experiment
+window, and the laptop arm that was going to serve as a control for it turns out
+to have been bandwidth-limited, so it controls for nothing. See "What episode 10,
+11 and 12 add".
+
+**What is left standing.** With the CLI pin, the archive shape, the checkout, the
+secret's validity, in-flight concurrency and now the connected git source all
+falsified from inside CI, the only discriminator this pack still has is the
+**credential path**: a per-environment project token from a runner refuses, while
+the same project's own CLI login session from a workstation passes initiate on the
+same instances within minutes (rows `a6cd8fd3…` `SUCCESS` 16:12:12Z and
+`162c1d04…` `SUCCESS` 15:18:18.823Z, both staging, both with `source.repo`
+connected). We are testing that now by minting a fresh, staging-scoped project
+token and repeating the identical serial probe with it, which separates "this
+token" from "project tokens as a class".
 
 So the specific thing we would like checked: **does upload-initiate behave
 differently for a service instance that has a `ServiceSource` — does it resolve
@@ -236,7 +263,7 @@ environment only, and recovery on its own timescale. We are ready to disconnect
 that source as a test, but we would rather ask than mutate a live environment on
 a theory.
 
-## What episode 10 and the wire captures add
+## What episode 10, 11 and 12 add
 
 Three runs on 2026-11-18 afternoon close the last structural gaps and change the
 shape of the ask.
@@ -288,6 +315,29 @@ rows from the differential.** They are documented here rather than deleted becau
 the pack's earlier claim that "no deployment row is created" needs the correction
 below, and because a reader who sees 524 in their own logs deserves the bandwidth
 arithmetic before they file it as a server fault.
+
+**Episode 12 — the A/B reports, and the git source is exonerated (16:40-16:46Z).**
+Run `44349761092`, workflow "F2 staging upload probe (branch-only, no production
+path)" on a diagnostic branch, `checkout ref: main`, `environment: staging`,
+`secrets.RAILWAY_TOKEN_STAGING`, `@railway/cli@5.40.1`, the same
+`scripts/ci/railway-deploy.sh` Release uses, `fail-fast: false` and
+`max-parallel: 1` so the three legs cannot overlap, `RETRY_ATTEMPTS=2` so the run
+finishes in minutes either way. The arms differ in exactly one instance property,
+re-measured immediately before and after:
+
+| leg (job id) | staging instance's `source.repo` at the time of the leg | attempts | what the CLI printed |
+|---|---|---|---|
+| `deploy Staging (backend)` (`134961865736`) | `paymax2022/spotlight-latest1` | 2/2 refused `16:40:25.871Z`, `16:40:52.371Z` | `Failed to fetch: error decoding response body` / `expected value at line 1 column 1`, no `Indexing...`, no row |
+| `deploy Staging (frontend-web)` (`134961866303`) | `paymax2022/spotlight-latest1` | 2/2 refused `16:41:28.384Z`, `16:41:50.773Z` | same, ~0.5 s after the command |
+| `deploy Staging (frontend-admin)` (`134961866826`) | **`""` — source disconnected for this test** | 2/2 refused `16:44:57.617Z`, `16:45:21.001Z` | same |
+
+So the instance whose git source we removed behaved identically to the two that
+kept theirs, in the same job, minutes apart. **`ServiceSource.repo` is not the
+discriminator**, and with it the last repo-side structural suspect is gone: what
+remains is that a project token from a runner is refused pre-row by staging's
+upload-initiate while the same account's own login session is accepted on the same
+instances within minutes. Six refusals added to the ledger; `frontend-admin`'s
+source restored and verified by readback, as recorded above.
 
 **One correction that does survive the withdrawal.** Every CI refusal in episodes
 1-10 created **no** deployment row and printed no `Indexing...` line. Each of the
@@ -568,7 +618,12 @@ uploading machine measures 11.217 Mbps uplink, so 133 MB is ~95 s of transfer
 against a ~100 s proxy ceiling, and each produced a `FAILED` row (the two we
 queried carry `snapshotId: null`) — a mid-transfer death, not the pre-row refusal this ledger
 otherwise records. They stay listed because the withdrawal is itself the finding
-someone reading their own 524 needs.
+someone reading their own 524 needs. And 16:40:10-16:45:23Z the twelfth episode — the same matrix on a branch,
+serial, two attempts each, with `frontend-admin`'s staging git source
+disconnected as the A/B against the two instances that kept theirs — refused 6
+times out of 6, the disconnected instance indistinguishable from the connected
+ones (`134961865736` / `134961866303` / `134961866826`), which is how
+`ServiceSource.repo` left the list of suspects.
 Not one staging deployment row was created on 2026-11-17: at 08:18Z the
 three `latestDeployment` records still dated from 2026-11-16 (`e4670d96`,
 `d5825eff`, `28946ae4`), and a fourth episode four hours later did not change
