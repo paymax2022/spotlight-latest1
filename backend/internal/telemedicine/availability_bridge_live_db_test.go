@@ -18,6 +18,7 @@ package telemedicine_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -67,6 +68,18 @@ func TestLiveDB_PublishedHoursBecomeTheBookableCalendar(t *testing.T) {
 	doctorID, doctorUserID, _ := seedApprovedDoctor(t, ctx, pool, led, 500_000)
 	seedPublishedWeek(t, ctx, pool, doctorUserID, 30, 0)
 
+	// The read refuses slots whose start has already passed on the doctor's
+	// own clock (expandSlots: slotMinutes <= nowMinutes), so today's own day
+	// shrinks as the clock advances and its count is time-of-day dependent.
+	// The doctor's clock is read BEFORE the calendar: the production read can
+	// then only have refused MORE than the captured minute, so the assertion
+	// below cannot race GetAvailability across a slot boundary. The old
+	// hard-coded "09:00/09:30 AM are refused" check was not clock-relative —
+	// it red-herrings every run landing between 23:00Z and ~08:30Z, when the
+	// Lagos clock has not passed 09:00 yet and production correctly keeps
+	// today's 09:00 AM slot.
+	today, nowMin := doctorLocalNow(t, ctx, pool)
+
 	slots, err := svc.GetAvailability(ctx, doctorID)
 	if err != nil {
 		t.Fatalf("GetAvailability: %v", err)
@@ -79,15 +92,17 @@ func TestLiveDB_PublishedHoursBecomeTheBookableCalendar(t *testing.T) {
 	if len(byDate) == 0 {
 		t.Fatal("a doctor with published hours got an empty calendar")
 	}
-	today := doctorToday(t, ctx, pool)
 	for date, day := range byDate {
-		// The read refuses slots that are already past, so today's own day
-		// shrinks as the clock advances and its count is time-of-day
-		// dependent. Every future day must carry the full 09:00–17:00
-		// half-hour grid; today is checked for window membership only.
+		// Every future day must carry the full 09:00–17:00 half-hour grid;
+		// today carries whatever the grid still has left, judged by the same
+		// clock-relative rule production applies.
 		if date <= today {
 			for _, s := range day {
-				if s.Time == "09:00 AM" || s.Time == "09:30 AM" {
+				m, perr := slotStartMinutes(s.Time)
+				if perr != nil {
+					t.Fatalf("slot %s: %v", slotLabel(s), perr)
+				}
+				if m <= nowMin {
 					t.Errorf("%s offers %s after the clock passed it — past slots must be refused", slotLabel(s), s.Time)
 				}
 			}
@@ -254,6 +269,26 @@ func doctorToday(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 		t.Fatalf("doctor's local now: %v", err)
 	}
 	return at.Format("2006-01-02")
+}
+
+// doctorLocalNow is doctorToday plus the minutes-past-midnight the bridge's own
+// refusal is computed on, in the same zone.
+func doctorLocalNow(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (string, int) {
+	t.Helper()
+	var at time.Time
+	if err := pool.QueryRow(ctx, `SELECT now() AT TIME ZONE 'Africa/Lagos'`).Scan(&at); err != nil {
+		t.Fatalf("doctor's local now: %v", err)
+	}
+	return at.Format("2006-01-02"), at.Hour()*60 + at.Minute()
+}
+
+// slotStartMinutes is the inverse of the "03:04 PM" label expandSlots writes.
+func slotStartMinutes(hhmm string) (int, error) {
+	at, err := time.Parse("03:04 PM", hhmm)
+	if err != nil {
+		return 0, fmt.Errorf("time %q is not an 03:04 PM label", hhmm)
+	}
+	return at.Hour()*60 + at.Minute(), nil
 }
 
 func dayLabels(day []telemedicine.Slot) []string {
