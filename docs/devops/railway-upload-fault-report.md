@@ -21,7 +21,11 @@ staging calls over 1,165 s while its own three development uploads returned
 deployment IDs **29.3, 35.1 and 57.7 s** before that same service was refused —
 the tightest same-basis pair on the record — and in which `frontend-admin`
 failed all nine of its staging calls although the commit contains no
-`frontend-admin/` file at all. No token value appears here.
+`frontend-admin/` file at all. Updated the same day at 12:37Z with episode 8:
+run `44296221501`, the very next release (tip `98bb394d0d`), refused 27 out of
+27 staging calls over 1,183 s while its own three development uploads returned
+deployment IDs 48.7-51.1 s before the same service was refused. No token value
+appears here.
 
 ## The ask
 
@@ -259,6 +263,27 @@ staging Postgres is reachable and at head, and says nothing about Railway.
 Production was again never attempted: `smoke Staging`, `migrate production
 database`, `deploy Production` and `smoke Production` all skipped.
 
+Episode 8 is run `44296221501`, the release of the very next `main` tip,
+`98bb394d0d` — the merge of the cashtag client parity (PR #1064: the BFF
+resolver, two screens' cashtag hunks and the mobile cashtag tests; no
+`backend/` and no `frontend-admin/` file in it either). Its gate
+(`134773823212`) cleared in 36m37s (11:36:28→12:13:05Z), development deployed
+and smoked fine — `Uploading...` accepted at 12:13:26.676Z (`b782c660`,
+frontend-admin), 12:13:27.214Z (`433552ad`, backend) and 12:13:37.288Z
+(`d15f8720`, frontend-web) — and then the three staging legs, started at
+12:14:03Z, refused nine-for-nine across 27 calls and 1,183 s
+(12:14:15.378-12:33:57.938Z) with the same decode error and **zero
+`Indexing...` and zero `Uploading...` lines in all three legs, counted**. The
+same-service pairs are 48.7 s (frontend-admin), 51.1 s (backend) and 49.5 s
+(frontend-web) — right at episode 5's 49 s, not tighter, so episode 7's 29.3 s
+stands as the tightest on the record. This run adds one more sampling fact:
+between episode 7's refused tip and this one, the cashtag stack had merged onto
+`main`, `frontend-web` changed, and `frontend-admin` again changed nothing and
+again failed 27-of-27 with the same transport refusal — the fault has now
+outlasted two different tips in one day, and every staging `latestDeployment`
+row is still dated 2026-11-16. Production was never attempted: `smoke Staging`
+(`134804645166`) and `smoke Production` (`134804648020`) skipped.
+
 ## Reproduction
 
 Push any commit to `paymax2022/spotlight-latest1:main` and watch
@@ -266,7 +291,7 @@ Push any commit to `paymax2022/spotlight-latest1:main` and watch
 fault is intermittent, so this may need several attempts, and a docs-only merge
 produces no attempt at all: run `44111967023` cleared its gate in 5m30s and
 skipped every deploy leg because no service changed, so a sample needs a commit
-that changes a service. Seven episodes are on the record: 16:23:32-16:38:15Z on
+that changes a service. Eight episodes are on the record: 16:23:32-16:38:15Z on
 2026-11-16, in which CI's staging calls were refused throughout (though a probe
 job was accepted twice inside that span, at
 16:34:47 and 16:34:50Z); 23:18:25-23:38:48Z the same day, in which all 27 were
@@ -290,7 +315,11 @@ and 11:07:30-11:26:56Z on 2026-11-18, in which a seventh release — a
 backend-only feature commit — was refused 27 times out of 27 while its own
 development legs returned deployment IDs 29.3-57.7 s before the same service was
 refused, and in which `frontend-admin`, a service that commit never touched,
-failed all nine of its calls exactly the same way.
+failed all nine of its calls exactly the same way; and 12:14:15-12:33:58Z the
+same day, in which the eighth release — the next tip, which touched
+`frontend-web` and not `frontend-admin` — was refused 27 times out of 27 while
+its own development legs returned deployment IDs 48.7-51.1 s before the same
+service was refused.
 Not one staging deployment row was created on 2026-11-17: at 08:18Z the
 three `latestDeployment` records still dated from 2026-11-16 (`e4670d96`,
 `d5825eff`, `28946ae4`), and a fourth episode four hours later did not change
@@ -316,7 +345,12 @@ for 24 h 27 min. Re-measured an eighth time at 2026-11-18 11:49:55Z, after all
 27 of episode 7's refusals and with no other staging attempt in between: the
 same three 2026-11-16 rows are still `latestDeployment` for all three services,
 so on backend's 17:06:29.046Z anchor the environment has now been dark for
-**42 h 43 min** across seven episodes. One method note: the
+**42 h 43 min** across seven episodes. Re-measured a ninth time at 2026-11-18
+12:36:59Z, after all 27 of episode 8's refusals: the same three 2026-11-16 rows
+are still `latestDeployment` for all three services, so the environment has now
+been dark for **43 h 30 min** across eight episodes — and since a successful
+upload would have created a newer row, those unchanged timestamps are themselves
+the proof that staging has accepted nothing at all in that span. One method note: the
 `serviceInstance(serviceId, environmentId){ latestDeployment }` probe still
 works for staging, but for the development and production environment IDs it now
 returns `latestDeployment: null` for this credential rather than a row — so
@@ -351,4 +385,9 @@ three staging jobs are `134758402152` / `134758402061` / `134758402040`, whose
 development legs are `134758048828` / `134758048709` / `134758048756`, and whose
 staging `db push` is `134758048845`; the docs-only run that followed,
 `44111967023`, is retained too, as the control showing a no-service change
-skips every leg.
+skips every leg. Episode 8 is run `44296221501`, a push to `main` at
+`98bb394d0d65109155cfa0366947f7a929bfca4b`, whose gate is `134773823212`, whose
+three staging jobs are `134793654794` / `134793654805` / `134793654687`, whose
+development legs are `134793153324` / `134793153321` / `134793153514`, whose
+staging `db push` is `134793153712`, and whose skipped `smoke Staging` and
+`smoke Production` are `134804645166` and `134804648020`.
