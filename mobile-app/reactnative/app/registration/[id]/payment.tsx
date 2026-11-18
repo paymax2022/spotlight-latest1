@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, Pressable, Platform, Linking,
+  View, Text, ScrollView, StyleSheet, Pressable, Platform,
 } from 'react-native';
 import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,6 +16,8 @@ import PrimaryButton from '@/components/PrimaryButton';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useDraft, useInitiateRegistrationPayment } from '@/features/registration/hooks/useRegistration';
+import { useGatewayCheckout } from '@/features/payments';
+import { normalizeApiError } from '@/utils/errorMapper';
 import { newRegistrationIdempotencyKey } from '@/features/registration/api/registration.client';
 import { useAuthStore } from '@/store/authStore';
 import type { RegistrationPaymentMethod } from '@/features/registration/types/registration.types';
@@ -27,7 +29,7 @@ import type { RegistrationPaymentMethod } from '@/features/registration/types/re
 // (test mode) via app/api/registration/applications/[id]/payment/*.
 const METHODS: { id: RegistrationPaymentMethod; label: string; desc: string; Icon: typeof Wallet; disabled?: boolean }[] = [
   { id: 'WALLET',   label: 'Spotlight Wallet', desc: 'Coming soon',   Icon: Wallet, disabled: true },
-  { id: 'PAYSTACK', label: 'Card / Bank / USSD', desc: 'Pay securely via Paystack hosted checkout',  Icon: CreditCard },
+  { id: 'PAYSTACK', label: 'Card / Bank / USSD', desc: 'Pay securely inside the app',  Icon: CreditCard },
 ];
 
 function fmt(ngn: number) {
@@ -47,6 +49,13 @@ export default function RegistrationPaymentScreen() {
   // retry of the same "Pay" attempt reuses it, so the initiate route can't be
   // tricked into opening two Paystack transactions for one fee.
   const idempotencyKeyRef = React.useRef(newRegistrationIdempotencyKey());
+
+  const checkout = useGatewayCheckout();
+  const busy = checkout.phase === 'initializing' || checkout.phase === 'awaiting';
+
+  useEffect(() => {
+    if (checkout.error) alertAsync({ title: 'Payment failed', message: checkout.error });
+  }, [checkout.error]);
 
   const draft = draftQuery.data?.draft;
   const feeNgn = Number(draft?.formData['payment.feeAmount'] ?? 0);
@@ -70,32 +79,59 @@ export default function RegistrationPaymentScreen() {
     );
   }
 
-  const handlePay = async () => {
+  const goToProcessing = (paid: { transactionId: string; reference: string }) => {
+    // The SDK callback is not proof of payment — this screen verifies against the
+    // server before the application counts as paid.
+    const params = `transactionId=${encodeURIComponent(paid.transactionId)}&reference=${encodeURIComponent(paid.reference)}`;
+    router.push(`/registration/${appId}/payment-processing?${params}` as never);
+  };
+
+  const payByCard = async () => {
+    let result;
     try {
-      const result = await initiate.mutateAsync({
+      result = await initiate.mutateAsync({
         amountKobo: feeKobo,
         method: selected,
         email: user?.email ?? '',
         name:  user?.fullName ?? '',
         idempotencyKey: idempotencyKeyRef.current,
       });
-
-      if (selected === 'WALLET') {
-        // Wallet: instant settlement — go straight to submit review.
-        router.replace(`/registration/${appId}/submit` as never);
-        return;
-      }
-
-      // Paystack: open hosted checkout, then navigate to processing/verification.
-      const params = `transactionId=${encodeURIComponent(result.transactionId)}&reference=${encodeURIComponent(result.reference)}`;
-      if (result.authorizationUrl) {
-        await Linking.openURL(result.authorizationUrl);
-      }
-      router.push(`/registration/${appId}/payment-processing?${params}` as never);
-    } catch (e: any) {
-      const msg = e?.response?.data?.error ?? e?.message ?? 'Could not start payment. Please try again.';
-      alertAsync({ title: 'Payment failed', message: msg });
+    } catch (error) {
+      // This route answers with customer-facing reasons (rate limit, nothing owed).
+      const { message } = normalizeApiError(error);
+      await alertAsync({ title: 'Payment failed', message });
+      return;
     }
+
+    // Mock mode mints no Paystack transaction at all, so there is nothing for the
+    // SDK to resume and no page to open — the server-side verify on the
+    // processing screen settles it. Never fabricate a checkout URL here: the one
+    // this route used to build pointed at a real Paystack domain with a reference
+    // Paystack never issued, so it always landed on their error page.
+    if (!result.authorizationUrl) {
+      goToProcessing(result);
+      return;
+    }
+
+    // The card rail pays inside the app: the server mints the Paystack
+    // transaction and the SDK resumes it. Opening the returned authorization_url
+    // in the browser instead left the payer on Paystack's own page — the step the
+    // web wizard never makes.
+    const paid = { transactionId: result.transactionId, reference: result.reference };
+    void checkout.start({
+      domain: 'registration_payment',
+      initialize: async () => ({ ...paid, authorizationUrl: result.authorizationUrl as string }),
+      onResolved: () => goToProcessing(paid),
+    });
+  };
+
+  const handlePay = () => {
+    if (selected === 'WALLET') {
+      // Wallet: instant settlement — go straight to submit review.
+      router.replace(`/registration/${appId}/submit` as never);
+      return;
+    }
+    void payByCard();
   };
 
   return (
@@ -155,9 +191,11 @@ export default function RegistrationPaymentScreen() {
         <PrimaryButton
           label={`Pay ${fmt(feeNgn)}`}
           onPress={handlePay}
-          loading={initiate.isPending}
+          loading={initiate.isPending || busy}
         />
       </View>
+
+      <checkout.Sheet />
     </SafeAreaView>
   );
 }

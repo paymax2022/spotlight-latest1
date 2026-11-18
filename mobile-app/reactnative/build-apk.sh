@@ -20,7 +20,10 @@ export JAVA_HOME
 # Expo picks its .env files from NODE_ENV. Set it explicitly: if it is unset,
 # @expo/env falls back to only `.env.local` and `.env` and silently skips
 # `.env.production` entirely.
-export NODE_ENV="${NODE_ENV:-production}"
+if [[ -n "${1:-}" ]]; then
+  export NODE_ENV="$1"
+fi
+NODE_ENV_EXPLICIT="${NODE_ENV:-}"
 
 # arm64-v8a only: the APK shipped 4 ABIs (armeabi-v7a, arm64-v8a, x86, x86_64),
 # i.e. four copies of libreactnative.so/libhermes.so/libjsc.so etc. Play Store
@@ -34,8 +37,12 @@ export REACT_NATIVE_ARCHS
 # "SDK location not found. Define a valid SDK location with an ANDROID_HOME
 # environment variable or by setting the sdk.dir path in .../local.properties".
 if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
-  for sdk_candidate in "$HOME/Library/Android/sdk" "$HOME/Android/Sdk" /usr/local/share/android-sdk; do
-    if [[ -d "$sdk_candidate" ]]; then
+  # Capture sdk.dir before the prebuild --clean below deletes the file: it is
+  # often the only place the SDK path is recorded, and the candidates underneath
+  # do not cover a custom install location.
+  SDK_DIR_FROM_PROPS="$(sed -n 's/^sdk\.dir=//p' android/local.properties 2>/dev/null | tail -1 || true)"
+  for sdk_candidate in "$SDK_DIR_FROM_PROPS" "$HOME/Library/Android/sdk" "$HOME/Android/Sdk" /usr/local/share/android-sdk; do
+    if [[ -n "$sdk_candidate" && -d "$sdk_candidate" ]]; then
       export ANDROID_HOME="$sdk_candidate"
       break
     fi
@@ -61,8 +68,8 @@ fi
 # upgrade an install signed with the real key. The keystore lives in $HOME --
 # never in android/, which `expo prebuild --clean` deletes in full, and never in
 # the repo, because it is the one file that must not leak. Credentials are read
-# into the environment here and passed to gradle as project properties; nothing
-# in this script prints them.
+# into the environment here for Gradle to read; nothing in this script prints
+# them.
 RELEASE_SIGNING_PROPS="${PAYMAX_RELEASE_SIGNING_PROPS:-$HOME/.android-keystores/paymax-release.properties}"
 if [[ -f "$RELEASE_SIGNING_PROPS" ]]; then
   set -a
@@ -100,9 +107,73 @@ fi
 cd "$(dirname "$0")"
 PROJECT_DIR="$PWD"
 
+# Auto-detect environment: if neither $1 nor NODE_ENV was explicitly given,
+# default to production if .env.production exists, or fallback to staging if .env.staging exists.
+if [[ -z "$NODE_ENV_EXPLICIT" ]]; then
+  if [[ -f .env.production ]]; then
+    export NODE_ENV="production"
+  elif [[ -f .env.staging ]]; then
+    export NODE_ENV="staging"
+    echo "ℹ️  NODE_ENV unset; defaulting to NODE_ENV=staging (.env.staging found)"
+  else
+    export NODE_ENV="production"
+  fi
+else
+  export NODE_ENV="$NODE_ENV_EXPLICIT"
+fi
+
 ENV_FILE=".env.${NODE_ENV}"
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "❌ $ENV_FILE not found — a release build has no API URLs to bake in." >&2
+  if [[ "$ENV_FILE" == ".env.production" && -f .env.staging ]]; then
+    echo "   Tip: To build staging, run: ./build-apk.sh staging (or NODE_ENV=staging ./build-apk.sh)" >&2
+  fi
+  exit 1
+fi
+
+# Refuse a staging-wired production release, and refuse it HERE rather than
+# trusting the bundle grep further down: EXPECTED_HOST is derived from
+# EXPECTED_API, which is read out of this same $ENV_FILE — so a .env.production
+# that names the staging API makes that check print its ✅ for the wrong host,
+# and EXPECTED_SUPABASE is only ever echoed below, never compared to anything.
+# Asserting the declaration is the one check in this script that is not
+# self-referential. Regenerate the file from the tracked eas.json profile:
+#   node scripts/export-eas-profile-env.mjs production
+# Read the declaration the way the loader reads it. @expo/env hands this file to
+# dotenv 16.4.7, whose LINE regex accepts an `export ` prefix and whitespace
+# around the separator, a `: value` form, one layer of quote characters, a `#`
+# comment (even with no space before it) and CR as a line terminator, and lets
+# the last assignment of a key win. Extracting less than that refuses builds
+# whose bundle would have carried production fine. One sed expression, not two
+# `-e`s: the second runs against what the first already substituted, so a value
+# that itself looks like a declaration gets read twice and passes on the second
+# read — a PASS dotenv would not give. The comparison stays against the exact
+# lowercase token: `Production` falls outside serverProfile.ts's allowlist and is
+# therefore safe at runtime, but it is a typo against the tracked profile, so
+# this script still refuses it.
+# `LC_ALL=C` stops a byte sequence that is illegal in the host locale from
+# killing sed inside `$(...)`: under `set -euo pipefail` that abort would end
+# the script HERE, before the remedy below can print. `|| true` is the same
+# defence for any other pipeline failure. Both leave an empty extraction, which
+# the comparison reads as "not production" — so a broken read refuses the build,
+# it never passes one.
+_declared_env="$(LC_ALL=C sed -nE \
+  's/^[[:space:]]*(export[[:space:]]+)?EXPO_PUBLIC_APP_ENV([[:space:]]*=[[:space:]]*|:[[:space:]]+)(.*)$/\3/p' \
+  "$ENV_FILE" \
+  | tail -1 \
+  | awk '{
+      sub(/\r.*$/, "")
+      sub(/[[:space:]]*#.*$/, "")
+      sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "")
+      q = substr($0, 1, 1)
+      if (length($0) > 1 && substr($0, length($0), 1) == q &&
+          (q == sprintf("%c", 34) || q == sprintf("%c", 39) || q == sprintf("%c", 96)))
+        $0 = substr($0, 2, length($0) - 2)
+      print
+    }' || true)"
+if [[ "$NODE_ENV" == "production" && "${_declared_env:-}" != "production" ]]; then
+  echo "❌ $ENV_FILE declares EXPO_PUBLIC_APP_ENV=${_declared_env:-<unset>}; a production release must declare production." >&2
+  echo "   Regenerate it from the tracked profile: node scripts/export-eas-profile-env.mjs production" >&2
   exit 1
 fi
 
@@ -117,14 +188,38 @@ if [[ -z "$EXPECTED_API" ]]; then
 fi
 
 # A higher-priority file would silently override $ENV_FILE. Refuse to build blind.
+# APP_ENV joins that list only for a production build, and the asymmetry is
+# deliberate: it is what the guard above reads, so a .env.production.local that
+# re-declares the plane would ship the runtime Remote/Local switch past both
+# checks. In every other mode declaring the plane is the documented override, and
+# including it there would abort the very build the remedy printed below suggests
+# ("rename it to .env.development.local"). The URL keys stay mode-blind either
+# way: a shadow that changes which API a bundle talks to is never intended.
+_shadow_keys='API_BASE_URL|SUPABASE_URL'
+if [[ "$NODE_ENV" == "production" ]]; then
+  _shadow_keys='API_BASE_URL|SUPABASE_URL|APP_ENV'
+fi
 for shadow in ".env.${NODE_ENV}.local" ".env.local"; do
-  if [[ -f "$shadow" ]] && grep -qE '^EXPO_PUBLIC_(API_BASE_URL|SUPABASE_URL)=' "$shadow"; then
-    echo "❌ $shadow sets API/Supabase URLs and OUTRANKS $ENV_FILE." >&2
+  if [[ -f "$shadow" ]] && grep -qE "^EXPO_PUBLIC_(${_shadow_keys})=" "$shadow"; then
+    echo "❌ $shadow sets an API/Supabase URL or the plane declaration and OUTRANKS $ENV_FILE." >&2
     echo "   Expo precedence: .env.<mode>.local > .env.local > .env.<mode> > .env" >&2
     echo "   Rename it to .env.development.local so it applies to dev only." >&2
     exit 1
   fi
 done
+
+# The plane interlock: $ENV_FILE must describe the same plane as eas.json's profile
+# of that name. Nothing else can catch it — .env.production is gitignored, so no
+# tracked file contradicts it; these scripts run local Gradle, so eas.json's own
+# `env` block never applies; and the artifact is stamped app-release-$NODE_ENV
+# whatever the file actually holds. Found 2026-11-15 with a .env.production carrying
+# the staging API host, the staging Supabase project and EXPO_PUBLIC_APP_ENV=staging
+# — which also enables the on-device server switch (serverProfile.ts) and would have
+# made the production module registry govern nothing in a store build.
+if ! node scripts/check-env-plane.mjs "$ENV_FILE"; then
+  echo "❌ $ENV_FILE disagrees with eas.json's $NODE_ENV profile — fix it before building." >&2
+  exit 1
+fi
 
 # Every *_USE_MOCK flag referenced anywhere in source must be "false" in
 # $ENV_FILE — a flag left unset defaults to MOCK (see client.ts per module), so
@@ -138,6 +233,39 @@ if ! node scripts/check-env-mocks.mjs "$ENV_FILE"; then
   exit 1
 fi
 
+# A release APK's configured base URLs must be reachable from a device. Checked
+# here, at the source of truth and before the build, rather than only by grepping
+# the finished bundle: Expo bakes exactly the values in $ENV_FILE (shadowing files
+# were refused above), and the historic failure was a loopback value baked as the
+# API base. `EXPO_PUBLIC_LOCAL_*` is exempt: those are the runtime server switch's
+# Local URL *templates*, whose host the developer edits on the device (see
+# src/lib/serverProfile.ts and the bundle check below for why they cannot be caught
+# by a string scan).
+LOOPBACK_RE='(localhost|127\.0\.0\.1|10\.0\.2\.2):[0-9]+'
+BAKED_LOOPBACK=""
+while IFS= read -r line; do
+  key="${line%%=*}"
+  [[ "$key" == EXPO_PUBLIC_LOCAL_* ]] && continue
+  pair="$(printf '%s' "${line#*=}" | grep -oE "$LOOPBACK_RE" | head -1 || true)"
+  if [[ -n "$pair" ]]; then
+    BAKED_LOOPBACK="${BAKED_LOOPBACK}${key} = ${pair}"$'\n'
+  fi
+done < <(grep -E '^EXPO_PUBLIC_[A-Z0-9_]+=' "$ENV_FILE" || true)
+
+if [[ -n "$BAKED_LOOPBACK" ]]; then
+  if [[ "${ALLOW_LOOPBACK_CONFIG:-0}" == "1" ]]; then
+    echo "⚠️  $ENV_FILE bakes loopback base URLs (ALLOW_LOOPBACK_CONFIG=1, install will not" >&2
+    echo "    reach the backend from a real device):" >&2
+    printf '%s' "$BAKED_LOOPBACK" | sed 's/^/      /' >&2
+  else
+    echo "❌ $ENV_FILE bakes loopback base URLs — a device cannot reach them:" >&2
+    printf '%s' "$BAKED_LOOPBACK" | sed 's/^/      /' >&2
+    echo "   This is the \"internet connection issue\" bug. Set the remote URLs in $ENV_FILE," >&2
+    echo "   or, for a deliberate on-device dev build, ALLOW_LOOPBACK_CONFIG=1 ./build-apk.sh." >&2
+    exit 1
+  fi
+fi
+
 echo "🔨 Building React Native APK..."
 echo "   JAVA_HOME: $JAVA_HOME"
 echo "   NODE_ENV:  $NODE_ENV  (env file: $ENV_FILE)"
@@ -148,10 +276,35 @@ echo "   Sentry:    $SENTRY_UPLOAD"
 echo "   Signing:   $SIGNING_DESC"
 echo ""
 
+EXPECTED_ANDROID_PACKAGE="com.spotlight.paymax"
+CONFIGURED_ANDROID_PACKAGE="$(node -e 'process.stdout.write(require("./app.json").expo.android.package)')"
+if [[ "$CONFIGURED_ANDROID_PACKAGE" != "$EXPECTED_ANDROID_PACKAGE" ]]; then
+  echo "❌ app.json Android package must be $EXPECTED_ANDROID_PACKAGE (found $CONFIGURED_ANDROID_PACKAGE)." >&2
+  exit 1
+fi
+
 if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" && ! -f android/local.properties ]]; then
   echo "❌ Android SDK not found. Set ANDROID_HOME, or put sdk.dir=<path> in android/local.properties." >&2
   exit 1
 fi
+
+# Keep generated native identifiers in sync with app.json on both APK and AAB
+# build paths; otherwise Gradle can package a stale applicationId.
+# --clean is what makes this deterministic. android/ is regenerated from app.json
+# plus plugins/, so a block written by a config plugin that no longer exists
+# cannot ride along. Without it, removing plugins/withAndroidVersionCode.js left
+# its `versionCode last+1` block in the existing build.gradle, which overrode
+# app.json and emitted versionCode 2 into a release meant to be 20.
+npx expo prebuild --platform android --no-install --clean
+GENERATED_ANDROID_PACKAGE="$(sed -nE "s/^[[:space:]]*applicationId ['\"]([^'\"]+)['\"].*/\\1/p" android/app/build.gradle | tail -1)"
+if [[ "$GENERATED_ANDROID_PACKAGE" != "$EXPECTED_ANDROID_PACKAGE" ]]; then
+  echo "❌ Generated Android applicationId is ${GENERATED_ANDROID_PACKAGE:-missing}; expected $EXPECTED_ANDROID_PACKAGE." >&2
+  exit 1
+fi
+
+# React Native caches autolinking config without hashing app.json, so a package
+# change can leave its generated entry point referring to the previous package.
+rm -rf android/build/generated/autolinking
 
 # -PreactNativeArchitectures is inert here (newArchEnabled=false makes RNGP skip
 # ndk.abiFilters entirely). -PreleaseAbis is what plugins/withAndroidSizeOptimizations.js
@@ -164,24 +317,17 @@ fi
 # the clean step a no-op instead of a failure.
 rm -rf android/app/.cxx
 
-# Signing credentials go through -P, not the environment: a warm gradle daemon
-# keeps the environment it was started with, so System.getenv() in the build
-# script can return a stale value, while project properties always travel with
-# the invocation. (-P values are readable via `ps` on this machine; that is the
-# accepted trade for a working daemon.) plugins/withAndroidReleaseSigning.js
-# reads exactly these names.
+# Use a single-use daemon so it inherits the current credentials from this
+# process rather than reusing a daemon with a stale environment. Avoiding -P
+# also keeps signing passwords out of command-line arguments and `ps`.
 if [[ "${ALLOW_DEBUG_SIGNING:-0}" == "1" ]]; then
   echo "⚠️  ALLOW_DEBUG_SIGNING=1 — the APK will be signed with the debug key and is NOT publishable."
 fi
 
 cd android
-./gradlew clean assembleRelease \
+./gradlew --no-daemon clean assembleRelease \
   -PreactNativeArchitectures="$REACT_NATIVE_ARCHS" \
-  -PreleaseAbis="$REACT_NATIVE_ARCHS" \
-  -PPAYMAX_RELEASE_STORE_FILE="${PAYMAX_RELEASE_STORE_FILE:-}" \
-  -PPAYMAX_RELEASE_KEY_ALIAS="${PAYMAX_RELEASE_KEY_ALIAS:-}" \
-  -PPAYMAX_RELEASE_STORE_PASSWORD="${PAYMAX_RELEASE_STORE_PASSWORD:-}" \
-  -PPAYMAX_RELEASE_KEY_PASSWORD="${PAYMAX_RELEASE_KEY_PASSWORD:-}"
+  -PreleaseAbis="$REACT_NATIVE_ARCHS"
 cd "$PROJECT_DIR"
 
 APK="$(find android/app/build/outputs/apk -name '*.apk' -type f | head -1 || true)"
@@ -189,6 +335,23 @@ if [[ -z "$APK" ]]; then
   echo "❌ Build reported success but produced no APK." >&2
   exit 1
 fi
+
+SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+if [[ -z "$SDK_DIR" && -f android/local.properties ]]; then
+  SDK_DIR="$(sed -n 's/^sdk\.dir=//p' android/local.properties | tail -1)"
+fi
+AAPT="$(ls -1 "$SDK_DIR"/build-tools/*/aapt 2>/dev/null | sort -V | tail -1 || true)"
+if [[ -z "$AAPT" ]]; then
+  echo "❌ aapt not found under ${SDK_DIR:-<no SDK dir>}/build-tools — cannot verify APK package." >&2
+  exit 1
+fi
+AAPT_REPORT="$("$AAPT" dump badging "$APK")"
+APK_PACKAGE="$(printf '%s\n' "$AAPT_REPORT" | sed -nE "s/^package: name='([^']+)'.*/\\1/p" | head -1)"
+if [[ "$APK_PACKAGE" != "$EXPECTED_ANDROID_PACKAGE" ]]; then
+  echo "❌ APK package is ${APK_PACKAGE:-missing}; expected $EXPECTED_ANDROID_PACKAGE." >&2
+  exit 1
+fi
+echo "   ✅ Android package: $APK_PACKAGE"
 
 echo ""
 echo "🔍 Verifying baked-in configuration: $APK"
@@ -214,16 +377,50 @@ else
   fail=1
 fi
 
-# 2. No loopback host may survive as a *configured base URL*. `getDevUrl()`
-#    legitimately contains the literals "127.0.0.1" and "10.0.2.2" as replace()
-#    arguments, so match host:port pairs, which only appear in baked config.
-if grep -aoE '(localhost|127\.0\.0\.1|10\.0\.2\.2):(8091|54321|3000|3001)' "$BUNDLE" | sort -u | grep -q .; then
+# 2. No loopback backend URL may survive as a *configured base URL*.
+#
+#    A plain "any loopback host:port" scan is no longer satisfiable: since PR #799
+#    (runtime Remote/Local server switch) the Local URL *templates* are
+#    compile-time constants — DEFAULT_LOCAL_* in src/lib/serverProfile.ts and
+#    resolveApiBaseUrl()'s default argument — so Metro interns "http://localhost:3000",
+#    ":8091" and ":54321" into EVERY release bundle, production included, where they
+#    are inert because isSwitchAvailable() only ever enables the switch for an
+#    explicitly non-production EXPO_PUBLIC_APP_ENV. So the pairs the app itself
+#    declares as Local templates are allowed here, and the check stays pointed at
+#    rogue loopback on a known backend port (the admin console's 3001 has no
+#    template excuse). `getDevUrl()` also contains the bare literals "127.0.0.1" and
+#    "10.0.2.2" as replace() arguments, which is why only host:port pairs match.
+#    What the values actually baked as *config* are is checked before the build
+#    above — that is the check that catches the original bug; a bundle scan cannot,
+#    because a baked loopback is indistinguishable from a template literal.
+LOCAL_TEMPLATE_PAIRS="$(grep -hoE '(localhost|127\.0\.0\.1|10\.0\.2\.2):[0-9]{1,5}' \
+  src/lib/serverProfile.ts src/lib/apiBaseUrl.ts | sort -u || true)"
+while IFS= read -r line; do
+  pair="$(printf '%s' "${line#*=}" | grep -oE '(localhost|127\.0\.0\.1|10\.0\.2\.2):[0-9]{1,5}' | head -1 || true)"
+  if [[ -n "$pair" ]]; then
+    LOCAL_TEMPLATE_PAIRS="${LOCAL_TEMPLATE_PAIRS}${LOCAL_TEMPLATE_PAIRS:+$'\n'}${pair}"
+  fi
+done < <(grep -E '^EXPO_PUBLIC_LOCAL_[A-Z0-9_]+=' "$ENV_FILE" || true)
+
+BACKEND_LOOPBACK="$(grep -aoE '(localhost|127\.0\.0\.1|10\.0\.2\.2):(3000|3001|8091|54321)([^0-9]|$)' "$BUNDLE" \
+  | sed -E 's/[^0-9]+$//' | sort -u || true)"
+ROGUE_LOOPBACK=""
+if [[ -n "$BACKEND_LOOPBACK" ]]; then
+  if [[ -z "$LOCAL_TEMPLATE_PAIRS" ]]; then
+    ROGUE_LOOPBACK="$BACKEND_LOOPBACK"
+  else
+    ROGUE_LOOPBACK="$(printf '%s\n' "$BACKEND_LOOPBACK" | grep -vxF -f <(printf '%s\n' "$LOCAL_TEMPLATE_PAIRS") || true)"
+  fi
+fi
+
+if [[ -n "$ROGUE_LOOPBACK" ]]; then
   echo "   ❌ Loopback backend URLs baked into the release bundle:" >&2
-  grep -aoE '(localhost|127\.0\.0\.1|10\.0\.2\.2):(8091|54321|3000|3001)' "$BUNDLE" | sort -u | sed 's/^/      /' >&2
+  printf '%s\n' "$ROGUE_LOOPBACK" | sed 's/^/      /' >&2
   echo "      A device cannot reach these — this is the \"internet connection issue\" bug." >&2
+  echo "      (Local server-switch templates are exempt; here: $(printf '%s\n' "$LOCAL_TEMPLATE_PAIRS" | sort -u | tr '\n' ' '))" >&2
   fail=1
 else
-  echo "   ✅ No loopback backend URLs in bundle"
+  echo "   ✅ No loopback backend URLs beyond the Local server-switch templates"
 fi
 
 # 3. Only the requested ABIs may ship. This is the backstop for the ABI filter:
@@ -266,6 +463,8 @@ else
   APKSIGNER_RC=0
   SIGNER_REPORT="$("$APKSIGNER" verify --print-certs "$APK" 2>&1)" || APKSIGNER_RC=$?
   SIGNER_DN="$(printf '%s\n' "$SIGNER_REPORT" | grep -m1 'certificate DN:' || true)"
+  SIGNER_SHA1="$(printf '%s\n' "$SIGNER_REPORT" | grep -m1 'certificate SHA-1 digest:' | sed 's/.*certificate SHA-1 digest:[[:space:]]*//' | tr -d ':' | tr '[:lower:]' '[:upper:]' || true)"
+  EXPECTED_UPLOAD_CERT_SHA1="A455D923C471689ED3127ED327548ABBDA1B2799"
   if [[ "$APKSIGNER_RC" -ne 0 || -z "$SIGNER_DN" ]]; then
     echo "   ❌ apksigner could not verify the APK's signature:" >&2
     printf '%s\n' "$SIGNER_REPORT" | sed 's/^/      /' >&2
@@ -279,8 +478,12 @@ else
       echo "      with the production key. Check $RELEASE_SIGNING_PROPS." >&2
       fail=1
     fi
+  elif [[ "$SIGNER_SHA1" != "$EXPECTED_UPLOAD_CERT_SHA1" ]]; then
+    echo "   ❌ Wrong upload certificate SHA-1: ${SIGNER_SHA1:-unavailable}" >&2
+    echo "      Play expects A4:55:D9:23:C4:71:68:9E:D3:12:7E:D3:27:54:8A:BB:DA:1B:27:99." >&2
+    fail=1
   else
-    echo "   ✅ Signed with: ${SIGNER_DN#*certificate DN: }"
+    echo "   ✅ Signed with Play upload certificate (SHA-1 A4:55:D9:23:C4:71:68:9E:D3:12:7E:D3:27:54:8A:BB:DA:1B:27:99): ${SIGNER_DN#*certificate DN: }"
   fi
 fi
 
@@ -290,7 +493,13 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 
+ARTIFACT_DIR="release-artifacts"
+mkdir -p "$ARTIFACT_DIR"
+STAMPED_APK="$ARTIFACT_DIR/app-release-${NODE_ENV}.apk"
+cp "$APK" "$STAMPED_APK"
+
 echo ""
 echo "✅ Build complete and verified!"
 echo "APK location:"
-find android/app/build/outputs/apk -name "*.apk" -type f
+echo "  $APK"
+echo "  $STAMPED_APK  (env-stamped copy, outside android/ — survives \`gradlew clean\` on the next build)"

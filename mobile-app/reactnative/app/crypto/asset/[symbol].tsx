@@ -105,11 +105,15 @@ export default function AssetDetailScreen() {
           </View>
         </View>
 
-        {/* Stats grid */}
+        {/* Stats grid — only what the feed actually publishes. No market cap: the
+            provider gives price and turnover, never a circulating supply. */}
         <View style={styles.statsGrid}>
-          <Stat label="24h change" value={formatPct(a.change24hPct)} tint={a.change24hPct >= 0 ? Colors.teal : Colors.error} />
-          <Stat label="Market cap" value={formatFiatCompact(a.marketCap.amount, a.marketCap.currency)} />
-          <Stat label="24h volume" value={formatFiatCompact(a.volume24h.amount, a.volume24h.currency)} />
+          {a.change24hPct != null ? (
+            <Stat label="24h change" value={formatPct(a.change24hPct)} tint={a.change24hPct >= 0 ? Colors.teal : Colors.error} />
+          ) : null}
+          {a.volume24h ? (
+            <Stat label="24h volume" value={formatFiatCompact(a.volume24h.amount, a.volume24h.currency)} />
+          ) : null}
           <Stat label="Min order" value={formatFiatObj(a.price.amount > 0 ? { amount: a.minOrderAmount, currency: a.price.currency } : a.price)} />
         </View>
 

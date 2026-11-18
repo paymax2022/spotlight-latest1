@@ -328,6 +328,14 @@ type ProviderProduct struct {
 	// adapter converts exactly these and nothing else, which is what keeps the
 	// client's scaling and the adapter's unscaling symmetric.
 	MoneyInputPaths []string
+	// NumberInputPaths and BooleanInputPaths are the dot-separated paths of every
+	// input whose OPTION LIST made the published schema a `select`, but whose
+	// answers the provider still types. A select carries its value as a label
+	// ("12", "true"), so the adapter coerces exactly these paths to the provider's
+	// type before sending them — MyCover's validator rejects
+	// "/payment_plan must be number" otherwise.
+	NumberInputPaths  []string
+	BooleanInputPaths []string
 
 	// NotPurchasable marks a product the AGGREGATOR's own configuration is
 	// broken for — no purchase config, or no commission-sharing formula. Such a
@@ -415,6 +423,73 @@ func collectMoneyPaths(fields any, prefix string, out *[]string) {
 			*out = append(*out, path)
 		}
 		collectMoneyPaths(f[schemaChildrenKey], path, out)
+	}
+}
+
+// schemaProviderTypeKey is the provider's own type token, preserved on every
+// published field. It outranks the internal render type here: a number or
+// boolean with an option list is published as `select` so clients draw a
+// dropdown, and only this token still says what the ANSWER must be.
+const schemaProviderTypeKey = "mycover_type"
+
+// NumberInputPaths returns the dot-separated paths of every input the provider
+// declared as number/integer, sorted. Nested shapes are included on the same
+// convention as MoneyInputPaths.
+func NumberInputPaths(schema map[string]any) []string {
+	return typedInputPaths(schema, "number", "integer")
+}
+
+// BooleanInputPaths returns the dot-separated paths of every input the provider
+// declared as boolean, sorted.
+func BooleanInputPaths(schema map[string]any) []string {
+	return typedInputPaths(schema, "boolean")
+}
+
+func typedInputPaths(schema map[string]any, types ...string) []string {
+	if schema == nil {
+		return nil
+	}
+	want := make(map[string]struct{}, len(types))
+	for _, t := range types {
+		want[t] = struct{}{}
+	}
+	var out []string
+	collectTypedPaths(schema[schemaFieldsKey], "", want, &out)
+	sort.Strings(out)
+	return out
+}
+
+func collectTypedPaths(fields any, prefix string, want map[string]struct{}, out *[]string) {
+	list, ok := fields.([]any)
+	if !ok {
+		return
+	}
+	for _, raw := range list {
+		f, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := f[schemaNameKey].(string)
+		if name == "" {
+			continue
+		}
+		path := name
+		if prefix != "" {
+			path = prefix + "." + name
+		}
+		t, _ := f[schemaProviderTypeKey].(string)
+		if t == "" {
+			// Schemas synced before the provider token was preserved still
+			// carry a numeric internal type; there is nothing it could mean
+			// other than a number.
+			if internal, _ := f[schemaTypeKey].(string); internal == "number" {
+				t = "number"
+			}
+		}
+		if _, ok := want[strings.ToLower(t)]; ok {
+			*out = append(*out, path)
+		}
+		collectTypedPaths(f[schemaChildrenKey], path, want, out)
 	}
 }
 

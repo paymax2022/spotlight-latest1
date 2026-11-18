@@ -31,7 +31,7 @@ export default function FreeFollowUpScreen() {
     if (!draft || !form) return;
     try {
       await save.mutateAsync({ draft: { freeFollowUp: form, completedSteps: [...new Set([...draft.completedSteps, 'free_follow_up' as const])] } });
-      router.push('/(doctor)/profile/setup/bank-account');
+      router.push('/(doctor)/profile/setup/preview');
     } catch { /* surfaced */ }
   };
 

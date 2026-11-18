@@ -15,6 +15,12 @@ import AddressAutocompleteInput from '@/components/AddressAutocompleteInput';
 import { useVet, useAvailability } from '@/features/health/vet/hooks';
 import { APPT_TYPE_META } from '@/features/health/vet/constants';
 import { formatNaira } from '@/features/health/constants/health.constants';
+import {
+  PackagePicker,
+  CONSULT_MODE_LABEL,
+  offerFromVetPackage,
+  type ConsultOffer,
+} from '@/features/consult';
 import type { AppointmentType } from '@/features/health/vet/types';
 
 export default function BookScreen() {
@@ -28,16 +34,29 @@ export default function BookScreen() {
   const [slotLabel, setSlotLabel] = useState<string>('');
   const [address, setAddress] = useState('');
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [offerId, setOfferId] = useState<string | null>(null);
 
-  // default type to vet's first supported once loaded
+  // default type to vet's first supported once loaded; vets who sell timed
+  // packages default to the tele flow those packages belong to
   React.useEffect(() => {
-    if (vet && !type) setType(vet.types[0]);
+    if (vet && !type) setType(vet.packages?.length ? 'tele' : vet.types[0]);
   }, [vet, type]);
+
+  const offers = useMemo(
+    () =>
+      (vet?.packages ?? [])
+        .map(offerFromVetPackage)
+        .filter((offer): offer is ConsultOffer => offer !== null),
+    [vet?.packages],
+  );
+  const selectedOffer =
+    type === 'tele' ? offers.find((offer) => offer.id === offerId) ?? offers[0] ?? null : null;
 
   const fee = useMemo(() => {
     if (!vet || !type) return 0;
+    if (type === 'tele' && selectedOffer) return selectedOffer.totalKobo;
     return type === 'home' ? vet.consultFeeKobo + vet.homeVisitFeeKobo : vet.consultFeeKobo;
-  }, [vet, type]);
+  }, [vet, type, selectedOffer]);
 
   if (isLoading) {
     return (
@@ -61,7 +80,11 @@ export default function BookScreen() {
     slots: d.slots.filter((s) => !type || s.type === type),
   }));
 
-  const canContinue = type && slotIso && (type !== 'home' || address.trim().length > 3);
+  const canContinue =
+    type &&
+    slotIso &&
+    (type !== 'tele' || offers.length === 0 || selectedOffer !== null) &&
+    (type !== 'home' || address.trim().length > 3);
 
   const onContinue = () => {
     router.push({
@@ -78,6 +101,12 @@ export default function BookScreen() {
         destLng: type === 'home' && coords ? String(coords.lng) : '',
         feeKobo: String(vet.consultFeeKobo),
         homeFeeKobo: String(vet.homeVisitFeeKobo),
+        packageId: selectedOffer?.id ?? '',
+        consultMode: type === 'tele' ? selectedOffer?.mode ?? 'video' : '',
+        packageLabel: selectedOffer
+          ? `${CONSULT_MODE_LABEL[selectedOffer.mode]} · ${selectedOffer.durationMinutes} min`
+          : '',
+        expectedTotalKobo: selectedOffer ? String(selectedOffer.totalKobo) : '',
       },
     });
   };
@@ -109,6 +138,17 @@ export default function BookScreen() {
             );
           })}
         </View>
+
+        {type === 'tele' && offers.length > 0 ? (
+          <>
+            <Text style={styles.sectionTitle}>Consultation package</Text>
+            <PackagePicker
+              offers={offers}
+              selectedId={selectedOffer?.id ?? null}
+              onSelect={(offer) => setOfferId(offer.id)}
+            />
+          </>
+        ) : null}
 
         {/* Slots */}
         <Text style={styles.sectionTitle}>Pick a time</Text>
@@ -159,7 +199,14 @@ export default function BookScreen() {
 
         {/* Fee preview */}
         <View style={[styles.feeCard, shadow1]}>
-          <Text style={styles.feeLabel}>Estimated fee</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.feeLabel}>{selectedOffer ? 'Selected package' : 'Estimated fee'}</Text>
+            {selectedOffer ? (
+              <Text style={styles.feeCaption}>
+                {CONSULT_MODE_LABEL[selectedOffer.mode]} · {selectedOffer.durationMinutes} min
+              </Text>
+            ) : null}
+          </View>
           <Text style={styles.feeVal}>{formatNaira(fee)}</Text>
         </View>
       </ScrollView>
@@ -193,6 +240,7 @@ const styles = StyleSheet.create({
   addrBlock: { marginTop: Spacing.xs },
   feeCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md },
   feeLabel: { ...Typography.titleMd, color: Colors.onSurface },
+  feeCaption: { ...Typography.caption, color: Colors.onSurfaceVariant, marginTop: 2 },
   feeVal: { ...Typography.titleMd, color: Colors.primary },
   footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.background },
 });

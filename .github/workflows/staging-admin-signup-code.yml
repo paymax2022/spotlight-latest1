@@ -65,7 +65,7 @@ jobs:
       PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
       SERVICE: frontend-admin
       ENVIRONMENT: staging
-      ADMIN_DOMAIN: frontend-admin-staging-ade6.up.railway.app
+      ADMIN_DOMAIN: frontend-admin-staging-new.up.railway.app
     steps:
       - name: Check the Railway token is present
         run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'

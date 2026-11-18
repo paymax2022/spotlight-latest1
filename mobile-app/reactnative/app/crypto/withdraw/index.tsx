@@ -59,6 +59,23 @@ export default function WithdrawEntryScreen() {
     );
   }
 
+  // A failed read is not an empty book: without this branch a server error would
+  // fall through to "Nothing to withdraw" and tell the member they hold nothing.
+  if (portfolio.isError || assets.isError) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Withdraw crypto" />
+        <StateView
+          kind="error"
+          title="Couldn't load your holdings"
+          message={(portfolio.error as Error)?.message ?? (assets.error as Error)?.message ?? 'Please try again.'}
+          actionLabel="Retry"
+          onAction={() => { portfolio.refetch(); assets.refetch(); }}
+        />
+      </SafeAreaView>
+    );
+  }
+
   const gate = eligibility.data?.gate;
   if (gate && gate !== 'eligible') {
     const copy =
@@ -87,7 +104,6 @@ export default function WithdrawEntryScreen() {
   const selectedAddress = addrList.find((a) => a.id === addressId) ?? null;
   const overHolding = amount > heldMinor;
   const error = overHolding ? `You only hold ${formatCrypto(heldMinor, asset.symbol, decimals)}.` : null;
-  const fiatValue = Math.round((amount / 10 ** decimals) * asset.price.amount);
   const disabled = !amount || !!error || !selectedAddress;
 
   const setMax = () => setInput((heldMinor / 10 ** decimals).toString());
@@ -108,7 +124,7 @@ export default function WithdrawEntryScreen() {
         {/* Manual-review notice */}
         <View style={styles.reviewNote}>
           <Clock size={15} color={Colors.onPrimaryFixedVariant} strokeWidth={2} />
-          <Text style={styles.reviewText}>Withdrawals are reviewed by compliance before broadcast, usually within 30 minutes.</Text>
+          <Text style={styles.reviewText}>Withdrawals are held and reviewed by compliance before they are broadcast. You’ll be notified once it’s approved.</Text>
         </View>
 
         {/* Asset chooser */}
@@ -151,6 +167,14 @@ export default function WithdrawEntryScreen() {
 
         {addresses.isLoading ? (
           <StateView kind="loading" compact />
+        ) : addresses.isError ? (
+          <StateView
+            kind="error"
+            title="Couldn't load your addresses"
+            message={(addresses.error as Error)?.message ?? 'Your saved destination addresses are unavailable right now.'}
+            actionLabel="Retry"
+            onAction={() => addresses.refetch()}
+          />
         ) : addrList.length === 0 ? (
           <Pressable style={styles.emptyAddr} onPress={() => router.push({ pathname: '/crypto/addresses/new', params: { symbol: position.symbol } })} accessibilityRole="button">
             <ShieldAlert size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
@@ -199,7 +223,11 @@ export default function WithdrawEntryScreen() {
             <Text style={styles.maxText}>MAX</Text>
           </Pressable>
         </View>
-        {error ? <Text style={styles.errorText}>{error}</Text> : <Text style={styles.fiatHint}>≈ {formatFiatObj({ amount: fiatValue, currency: 'NGN' })}</Text>}
+        {error ? (
+          <Text style={styles.errorText}>{error}</Text>
+        ) : amount > 0 ? (
+          <Text style={styles.fiatHint}>Network fee and cash value on the next screen</Text>
+        ) : null}
       </ScrollView>
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>

@@ -12,6 +12,42 @@ import {
   MOCK_POSITIONS,
   MOCK_TRANSACTIONS,
 } from './crypto.mock';
+import {
+  chartRangeToLimit,
+  mapAddress,
+  mapAddresses,
+  mapAlert,
+  mapAlerts,
+  mapAsset,
+  mapAssets,
+  mapChart,
+  mapDepositAddress,
+  mapOrder,
+  mapPortfolio,
+  mapPositions,
+  mapQuote,
+  mapScreening,
+  mapSwapOrder,
+  mapSwapQuote,
+  mapTransactionDetail,
+  mapTransactions,
+  mapWithdrawal,
+  mapWithdrawalEligibility,
+  mapWithdrawalQuote,
+  type AddressWire,
+  type AssetViewWire,
+  type DepositAddressWire,
+  type OrderWire,
+  type PortfolioViewWire,
+  type PositionViewWire,
+  type PricePointWire,
+  type QuoteWire,
+  type SwapOrderWire,
+  type SwapQuoteWire,
+  type WithdrawalEligibilityWire,
+  type WithdrawalQuoteWire,
+  type WithdrawalWire,
+} from './wire';
 import type {
   AddressScreening,
   CandlePoint,
@@ -33,6 +69,7 @@ import type {
   PriceAlert,
   QuoteRequest,
   SwapDraft,
+  SwapExecution,
   SwapQuote,
   SwapResult,
   WithdrawalDraft,
@@ -59,9 +96,12 @@ const unwrap = <T>(res: { data: unknown }): T => unwrapEnvelope<T>(res?.data);
  * 'quote_expired') on `cryptoType` so the special-case path still works.
  */
 function toCryptoError(err: unknown): Error {
-  const e = err as { response?: { data?: { type?: string; message?: string } }; message?: string };
+  const e = err as { response?: { data?: { type?: string; error?: string; message?: string } }; message?: string };
   const data = e?.response?.data;
-  const msg = data?.message ?? e?.message ?? 'Something went wrong. Please try again.';
+  // The Go API answers a refusal with {"success":false,"error":"…"} — that public
+  // message is the reason the member has to see. Falling back to axios's own
+  // "Request failed with status code 409" would report the transport, not the trade.
+  const msg = data?.error ?? data?.message ?? e?.message ?? 'Something went wrong. Please try again.';
   const out = new Error(msg) as Error & { cryptoType?: string };
   if (data?.type) out.cryptoType = data.type;       // e.g. 'quote_expired'
   return out;
@@ -84,22 +124,20 @@ export async function getEligibility(): Promise<CryptoEligibility> {
       message: 'You\'re verified and cleared to trade crypto.',
     };
   }
-  return unwrap<CryptoEligibility>(await api.get('/api/v1/invest/eligibility'));
+  // The crypto gate is its own route (watch.go). It used to borrow invest's stock
+  // eligibility, which answered about equities, not about this product.
+  return unwrap<CryptoEligibility>(await api.get('/api/v1/crypto/eligibility'));
 }
 
 export async function getAssets(): Promise<CryptoAsset[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_ASSETS]; }
-  return unwrap<CryptoAsset[]>(await api.get('/api/v1/crypto/assets'));
+  return mapAssets(unwrap<AssetViewWire[]>(await api.get('/api/v1/crypto/assets')));
 }
 
-// MISSING backend endpoint: GET /crypto/assets/:symbol (single-asset detail).
-// The backend only exposes the list route; find the asset client-side.
-export async function getAsset(symbol: string): Promise<CryptoAsset> {
-  if (USE_MOCK) { await delay(220); return requireAsset(symbol); }
-  const assets = await getAssets();
-  const found = assets.find((a) => a.id === symbol || a.symbol === symbol);
-  if (!found) throw new Error('Asset not found');
-  return found;
+export async function getAsset(ref: string): Promise<CryptoAsset> {
+  if (USE_MOCK) { await delay(220); return requireAsset(ref); }
+  // GET /crypto/assets/:id accepts an asset id OR a ticker symbol (handler.Asset).
+  return mapAsset(unwrap<AssetViewWire>(await api.get(`/api/v1/crypto/assets/${ref}`)));
 }
 
 /** Deterministic mock price history for the asset chart. */
@@ -117,23 +155,51 @@ export async function getChart(symbol: string, range: ChartRange): Promise<Candl
     const amp = asset.riskRating === 'high' ? 0.06 : asset.riskRating === 'medium' ? 0.035 : 0.004;
     return Array.from({ length: points }).map((_, i) => {
       const wobble = Math.sin((seed + i) / 3) * amp + Math.cos((seed + i) / 6) * amp * 0.6;
-      const drift = (asset.change24hPct / 100) * (i / points);
+      const drift = ((asset.change24hPct ?? 0) / 100) * (i / points);
       return {
         t: new Date(Date.now() - (points - i) * stepMs).toISOString(),
         price: Math.max(1, Math.round(base * (1 + wobble + drift - amp / 2))),
       };
     });
   }
-  // MISSING backend endpoint: GET /crypto/assets/:symbol/chart (price history).
-  return unwrap<CandlePoint[]>(await api.get(`/api/v1/crypto/assets/${symbol}/chart`, { params: { range } }));
+  // GET /crypto/assets/:id/chart (service.PriceHistory): the recorded fill snapshots
+  // for this asset, newest first, with the live quote prepended. The provider exposes
+  // no candle/history endpoint, so a real series only grows as trades are filled —
+  // the screen shows what was actually recorded rather than a synthetic curve.
+  const rows = unwrap<PricePointWire[]>(
+    await api.get(`/api/v1/crypto/assets/${symbol}/chart`, {
+      params: { limit: chartRangeToLimit(range) },
+    }),
+  );
+  return mapChart(rows);
 }
 
-// NOTE: the backend quote route is a GET on the asset (no swap/side inputs);
-// it re-prices server-side at execution time regardless, so this is display-only.
-
+/**
+ * A quote for the buy/sell preview. The server prices it AND projects the fill
+ * (same integer math the order uses), so the preview cannot promise money the order
+ * then fails to deliver. `amount` null means the member has not typed yet — there is
+ * nothing to quote, and the screens must show a prompt, not ₦0.00.
+ */
 export async function createQuote(req: QuoteRequest): Promise<CryptoQuote> {
-  if (USE_MOCK) { await delay(380); return buildQuote(requireAsset(req.assetId), req); }
-  return unwrap<CryptoQuote>(await api.get(`/api/v1/crypto/assets/${req.assetId}/quote`));
+  if (USE_MOCK) {
+    const typed = req.amount;
+    if (typed == null) throw new Error('Enter an amount to get a quote.');
+    await delay(380);
+    return buildQuote(requireAsset(req.assetId), { ...req, amount: typed });
+  }
+  if (req.amount == null || req.amount <= 0) {
+    throw new Error('Enter an amount to get a quote.');
+  }
+  try {
+    const w = unwrap<QuoteWire>(
+      await api.get(`/api/v1/crypto/assets/${req.assetId}/quote`, {
+        params: { side: req.side, basis: req.basis, amount: req.amount },
+      }),
+    );
+    return mapQuote(w, req);
+  } catch (err) {
+    throw toCryptoError(err);
+  }
 }
 
 // Money mutations → server-side pre-trade check + Idempotency-Key + provider ref.
@@ -178,7 +244,7 @@ export async function executeBuy(quote: CryptoQuote, idempotencyKey: string): Pr
       { asset_id: quote.assetId, cash_kobo: quote.totalFiat.amount },
       { headers: { 'Idempotency-Key': idempotencyKey } },
     );
-    return unwrap<CryptoOrder>(res);
+    return { ...mapOrder(unwrap<OrderWire>(res)), idempotencyKey };
   } catch (err) {
     throw toCryptoError(err);
   }
@@ -192,7 +258,7 @@ export async function executeSell(quote: CryptoQuote, idempotencyKey: string): P
       { asset_id: quote.assetId, units: quote.crypto.amount },
       { headers: { 'Idempotency-Key': idempotencyKey } },
     );
-    return unwrap<CryptoOrder>(res);
+    return { ...mapOrder(unwrap<OrderWire>(res)), idempotencyKey };
   } catch (err) {
     throw toCryptoError(err);
   }
@@ -206,59 +272,68 @@ export async function createSwapQuote(draft: SwapDraft): Promise<SwapQuote> {
     await delay(360);
     return buildSwapQuote(requireAsset(draft.fromAssetId), requireAsset(draft.toAssetId), draft.fromAmount);
   }
-  // POST /crypto/swap/quote → { from_asset_id, to_asset_id, from_units }.
+  // POST /crypto/swap/quote → { from_asset_id, to_asset_id, from_units }. The server
+  // prices both legs and returns the spread it retains; the reply is in integer minor
+  // units, so the decimals of both assets come from the catalogue to render a rate.
   try {
-    return unwrap<SwapQuote>(
+    const w = unwrap<SwapQuoteWire>(
       await api.post('/api/v1/crypto/swap/quote', {
         from_asset_id: draft.fromAssetId,
         to_asset_id: draft.toAssetId,
         from_units: draft.fromAmount,
       }),
     );
+    const catalogue = await getAssets();
+    const dec = (id: string, fallback: number) =>
+      catalogue.find((a) => a.id === id || a.symbol === id)?.decimals ?? fallback;
+    return mapSwapQuote(w, dec(w.from_asset_id, 8), dec(w.to_asset_id, 8), w.source);
   } catch (err) {
     throw toCryptoError(err);
   }
 }
 
-export async function executeSwap(quote: SwapQuote, idempotencyKey: string): Promise<SwapResult> {
+export async function executeSwap(exec: SwapExecution, idempotencyKey: string): Promise<SwapResult> {
   if (USE_MOCK) {
     await delay(1100);
-    if (new Date(quote.expiresAt).getTime() < Date.now()) {
-      const err = new Error('The swap quote expired before it could be filled.') as Error & { cryptoType?: string };
-      err.cryptoType = 'quote_expired';
-      throw err;
-    }
+    const q = buildSwapQuote(requireAsset(exec.fromAssetId), requireAsset(exec.toAssetId), exec.fromUnits);
     return {
       id: `so_${Date.now()}`,
       reference: `PMX-SW-${Date.now().toString().slice(-6)}`,
-      fromSymbol: quote.from.symbol,
-      toSymbol: quote.to.symbol,
+      fromSymbol: q.from.symbol,
+      toSymbol: q.to.symbol,
       status: 'Filled',
-      from: quote.from,
-      to: quote.to,
-      fee: quote.fee,
-      provider: quote.liquidityProvider,
+      from: q.from,
+      to: q.to,
+      fee: q.fee,
+      provider: q.liquidityProvider,
       providerReference: `LP-${Date.now().toString().slice(-5)}-SW`,
       idempotencyKey,
       transactionId: `cx_${Date.now()}`,
       createdAt: new Date().toISOString(),
     };
   }
-  // POST /crypto/swap → { from_asset_id, to_asset_id, from_units }. The server
-  // re-prices from these inputs (never trusts the client fee/rate) and returns the
-  // authoritative filled swap order. Idempotency-Key makes the POST retry-safe.
+  // POST /crypto/swap → { from_asset_id, to_asset_id, from_units, quotation_id }. The
+  // server re-prices from these inputs (never trusts a client fee or rate) and returns
+  // the authoritative filled swap order. Idempotency-Key makes the POST retry-safe.
+  //
+  // quotation_id is the firm exchange quotation the member reviewed, when the quote
+  // came from the exchange: the server confirms it and fails closed once its window
+  // has passed. Without it a Quidax swap would be booked on the internal ledger while
+  // the exchange never traded.
   try {
-    return unwrap<SwapResult>(
+    const w = unwrap<SwapOrderWire>(
       await api.post(
         '/api/v1/crypto/swap',
         {
-          from_asset_id: quote.fromAssetId,
-          to_asset_id: quote.toAssetId,
-          from_units: quote.from.amount,
+          from_asset_id: exec.fromAssetId,
+          to_asset_id: exec.toAssetId,
+          from_units: exec.fromUnits,
+          ...(exec.quotationId ? { quotation_id: exec.quotationId } : {}),
         },
         { headers: { 'Idempotency-Key': idempotencyKey } },
       ),
     );
+    return { ...mapSwapOrder(w), idempotencyKey };
   } catch (err) {
     throw toCryptoError(err);
   }
@@ -269,10 +344,10 @@ export async function getPortfolio(): Promise<CryptoPortfolio> {
     await delay(280);
     const positions = [...MOCK_POSITIONS];
     const totalValue = positions.reduce((s, p) => s + p.marketValue.amount, 0);
-    const totalCost = positions.reduce((s, p) => s + p.costBasis.amount, 0);
+    const totalCost = positions.reduce((s, p) => s + (p.costBasis?.amount ?? 0), 0);
     const gain = totalValue - totalCost;
     const day = positions.reduce(
-      (s, p) => s + Math.round((p.marketValue.amount * p.change24hPct) / 100), 0,
+      (s, p) => s + Math.round((p.marketValue.amount * (p.change24hPct ?? 0)) / 100), 0,
     );
     const prevValue = totalValue - day;
     return {
@@ -287,18 +362,15 @@ export async function getPortfolio(): Promise<CryptoPortfolio> {
       positions,
     };
   }
-  return unwrap<CryptoPortfolio>(await api.get('/api/v1/crypto/portfolio'));
+  return mapPortfolio(unwrap<PortfolioViewWire>(await api.get('/api/v1/crypto/portfolio')));
 }
 
 export async function getPositions(): Promise<Position[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_POSITIONS]; }
-  return unwrap<Position[]>(await api.get('/api/v1/crypto/portfolio/holdings'));
+  return mapPositions(unwrap<PositionViewWire[]>(await api.get('/api/v1/crypto/portfolio/holdings')));
 }
 
-// MISSING backend endpoints: no /crypto/transactions list/detail route — only
-// GET /crypto/orders (own order history) exists. Reusing it as the closest
-// backend ships GET /crypto/transactions/:id.
-
+/** Own order history (GET /crypto/orders), mapped out of the money-path wire shape. */
 export async function getTransactions(side?: 'buy' | 'sell'): Promise<CryptoTransactionSummary[]> {
   if (USE_MOCK) {
     await delay();
@@ -308,12 +380,9 @@ export async function getTransactions(side?: 'buy' | 'sell'): Promise<CryptoTran
       .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
       .map(({ allInRate, fees, totalFiat, provider, providerReference, liquidityProvider, custodyProvider, statusHistory, failureReason, ...summary }) => summary);
   }
-  const res = await api.get('/api/v1/crypto/orders');
-  const list = unwrap<CryptoTransactionSummary[]>(res);
-  // Ensure we have an array even if the response is null/undefined
-  const arr = Array.isArray(list) ? list : [];
-  if (side) return arr.filter((t) => t.side === side);
-  return arr;
+  const list = mapTransactions(unwrap<OrderWire[]>(await api.get('/api/v1/crypto/orders')));
+  if (side) return list.filter((t) => t.side === side);
+  return list;
 }
 
 export async function getTransaction(id: string): Promise<CryptoTransactionDetail> {
@@ -323,15 +392,18 @@ export async function getTransaction(id: string): Promise<CryptoTransactionDetai
     if (!found) throw new Error('Transaction not found');
     return found;
   }
-  const list = await getTransactions();
-  const found = (list as unknown as CryptoTransactionDetail[]).find((t) => t.id === id || t.reference === id);
-  if (!found) throw new Error('Transaction not found');
-  return found;
+  // GET /crypto/transactions/:id is object-level scoped: a foreign id is 404, never
+  // somebody else's fill.
+  try {
+    return mapTransactionDetail(unwrap<OrderWire>(await api.get(`/api/v1/crypto/transactions/${id}`)));
+  } catch (err) {
+    throw toCryptoError(err);
+  }
 }
 
-// caller's per-asset deposit address, generated + persisted on first request via
-// the custody provider seam (stable across calls). Mock keeps a deterministic
-// address so the same asset/network always renders the same QR offline.
+// GET /crypto/deposit-address: the caller's per-asset deposit address, persisted on
+// first allocation (stable across calls). Mock keeps a deterministic pseudo-address
+// so the same asset/network always renders the same QR offline.
 
 export async function getDepositAddress(symbol: string, networkId: string): Promise<DepositAddress> {
   if (USE_MOCK) {
@@ -354,7 +426,17 @@ export async function getDepositAddress(symbol: string, networkId: string): Prom
       custodyProvider: 'mock-custody',
     };
   }
-  return unwrap<DepositAddress>(await api.get('/api/v1/crypto/deposit-address', { params: { symbol, network: networkId } }));
+  // GET /crypto/deposit-address refuses with 503 until a custody provider allocates
+  // and reconciles addresses (service.ErrDepositsUnavailable). The screen shows that
+  // answer as-is: an address nobody controls would send a member's money nowhere.
+  try {
+    const w = unwrap<DepositAddressWire>(
+      await api.get('/api/v1/crypto/deposit-address', { params: { symbol, network: networkId } }),
+    );
+    return mapDepositAddress(w);
+  } catch (err) {
+    throw toCryptoError(err);
+  }
 }
 
 // Money-IN history (GAP-DEP-01 Slice 3). The backend journals a crypto_deposits row only once a
@@ -396,10 +478,9 @@ export async function getDeposit(id: string): Promise<CryptoDepositRecord> {
   return mapDeposit(unwrap<DepositWire>(await api.get(`/api/v1/crypto/deposits/${id}`)));
 }
 
-// resolved assets so the screens can render rows without a second round-trip.
-// The only live watchlist surface on the backend is invest's shared
-// reuses the "default" list id as its container. Shape differs slightly
-// (symbol-keyed here vs asset-id there) so this maps through best-effort.
+// GET/POST/DELETE /crypto/watchlist (watch.go). Rows come back as the same
+// AssetView the catalogue uses, so a watched row always shows the price the
+// catalogue row it came from shows.
 
 const MOCK_WATCHLIST = new Set<string>(['ast_btc', 'ast_sol']);
 
@@ -408,20 +489,26 @@ export async function getWatchlist(): Promise<CryptoAsset[]> {
     await delay(200);
     return MOCK_ASSETS.filter((a) => MOCK_WATCHLIST.has(a.id));
   }
-  return unwrap<CryptoAsset[]>(await api.get('/api/v1/invest/watchlists'));
+  return mapAssets(unwrap<AssetViewWire[]>(await api.get('/api/v1/crypto/watchlist')));
 }
 
 export async function addToWatchlist(assetId: string): Promise<void> {
   if (USE_MOCK) { await delay(180); MOCK_WATCHLIST.add(assetId); return; }
-  await api.post('/api/v1/invest/watchlists/default/stocks', { symbol: assetId });
+  try {
+    await api.post('/api/v1/crypto/watchlist', { assetId });
+  } catch (err) {
+    throw toCryptoError(err);
+  }
 }
 
 export async function removeFromWatchlist(assetId: string): Promise<void> {
   if (USE_MOCK) { await delay(180); MOCK_WATCHLIST.delete(assetId); return; }
-  await api.delete(`/api/v1/invest/watchlists/default/stocks/${assetId}`);
+  await api.delete(`/api/v1/crypto/watchlist/${assetId}`);
 }
 
-// Reuses invest's shared /invest/alerts surface (cross-asset price alerts).
+// GET/POST/DELETE /crypto/alerts (watch.go). The server validates condition,
+// target and currency and refuses an unknown or inactive asset, so a bad alert
+// never lands in the table.
 
 const ngn = (major: number) => Math.round(major * 100);
 const MOCK_ALERTS: PriceAlert[] = [
@@ -444,7 +531,7 @@ export async function getAlerts(): Promise<PriceAlert[]> {
     await delay();
     return [...MOCK_ALERTS].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  return unwrap<PriceAlert[]>(await api.get('/api/v1/invest/alerts'));
+  return mapAlerts(unwrap<PriceAlert[]>(await api.get('/api/v1/crypto/alerts')));
 }
 
 export async function createAlert(draft: NewPriceAlertDraft): Promise<PriceAlert> {
@@ -461,7 +548,7 @@ export async function createAlert(draft: NewPriceAlertDraft): Promise<PriceAlert
     MOCK_ALERTS.unshift(created);
     return created;
   }
-  return unwrap<PriceAlert>(await api.post('/api/v1/invest/alerts', draft));
+  return mapAlert(unwrap<PriceAlert>(await api.post('/api/v1/crypto/alerts', draft)));
 }
 
 export async function deleteAlert(id: string): Promise<void> {
@@ -471,15 +558,15 @@ export async function deleteAlert(id: string): Promise<void> {
     if (i >= 0) MOCK_ALERTS.splice(i, 1);
     return;
   }
-  await api.delete(`/api/v1/invest/alerts/${id}`);
+  await api.delete(`/api/v1/crypto/alerts/${id}`);
 }
 
 // Every destination is whitelisted + screened before first use. Addresses are
 // masked in the UI; the full value is only shown on the detail/confirm screens.
-// GET/POST/DELETE /crypto/addresses (whitelist) and POST/GET /crypto/withdrawals
-// (requested→pending→broadcast→confirmed|failed via a pluggable provider seam).
-// screenAddress + getWithdrawalEligibility remain mock (compliance surfaces the
-// backend does not expose yet); the whitelist itself is enforced server-side.
+// GET/POST/DELETE /crypto/addresses (whitelist), POST /crypto/addresses/screen
+// (pre-save check) and POST/GET /crypto/withdrawals (requested→pending→broadcast
+// →confirmed|failed via a pluggable provider seam) are all server-side; the
+// whitelist is enforced at execution, so a withdrawal to an unsaved address fails.
 
 const MOCK_ADDRESSES: CryptoAddress[] = [
   {
@@ -504,10 +591,16 @@ export async function getAddresses(symbol?: string): Promise<CryptoAddress[]> {
     const list = symbol ? MOCK_ADDRESSES.filter((a) => a.symbol === symbol) : MOCK_ADDRESSES;
     return [...list].sort((a, b) => +new Date(b.addedAt) - +new Date(a.addedAt));
   }
-  return unwrap<CryptoAddress[]>(await api.get('/api/v1/crypto/addresses', { params: { symbol } }));
+  return mapAddresses(unwrap<AddressWire[]>(
+    await api.get('/api/v1/crypto/addresses', { params: symbol ? { symbol } : undefined }),
+  ));
 }
 
-/** Screen an address for AML/sanctions risk before whitelisting (mock heuristic). */
+/**
+ * Screen an address before saving it. The server's check is a shape validation
+ * (an AML vendor is not wired on this plane), so a 'clear' verdict means "this is
+ * a well-formed address", not "this address is safe to send to".
+ */
 export async function screenAddress(address: string): Promise<AddressScreening> {
   if (USE_MOCK) {
     await delay(600);
@@ -517,7 +610,10 @@ export async function screenAddress(address: string): Promise<AddressScreening> 
     }
     return { risk: 'clear' };
   }
-  return unwrap<AddressScreening>(await api.post('/api/v1/crypto/addresses/screen', { address }));
+  const w = unwrap<{ risk: string; reason?: string }>(
+    await api.post('/api/v1/crypto/addresses/screen', { address }),
+  );
+  return mapScreening(w);
 }
 
 export async function addAddress(draft: NewAddressDraft): Promise<CryptoAddress> {
@@ -540,14 +636,14 @@ export async function addAddress(draft: NewAddressDraft): Promise<CryptoAddress>
   // POST /crypto/addresses → { symbol, label, network, address }. Server whitelists
   // the destination (allow-list) and screens it; withdrawals must target a saved one.
   try {
-    return unwrap<CryptoAddress>(
+    return mapAddress(unwrap<AddressWire>(
       await api.post('/api/v1/crypto/addresses', {
         symbol: draft.symbol,
         label: draft.label,
         network: draft.networkId,
         address: draft.address,
       }),
-    );
+    ));
   } catch (err) {
     throw toCryptoError(err);
   }
@@ -577,7 +673,9 @@ export async function getWithdrawalEligibility(): Promise<WithdrawalEligibility>
       message: 'Withdrawals are reviewed by compliance before broadcast.',
     };
   }
-  return unwrap<WithdrawalEligibility>(await api.get('/api/v1/crypto/withdrawals/eligibility'));
+  return mapWithdrawalEligibility(
+    unwrap<WithdrawalEligibilityWire>(await api.get('/api/v1/crypto/withdrawals/eligibility')),
+  );
 }
 
 /** Estimate the in-asset network fee + build a withdrawal preview. */
@@ -605,20 +703,25 @@ export async function quoteWithdrawal(draft: WithdrawalDraft): Promise<Withdrawa
   }
   // POST /crypto/withdrawals/quote → { symbol, network, units }. Returns the
   // in-asset network fee + net receive preview (server re-computes at fill time).
-  return unwrap<WithdrawalQuote>(
-    await api.post('/api/v1/crypto/withdrawals/quote', {
-      symbol: draft.symbol,
-      network: draft.networkId,
-      units: draft.amount,
-    }),
-  );
+  try {
+    return mapWithdrawalQuote(
+      unwrap<WithdrawalQuoteWire>(
+        await api.post('/api/v1/crypto/withdrawals/quote', {
+          symbol: draft.symbol,
+          network: draft.networkId,
+          units: draft.amount,
+        }),
+      ),
+    );
+  } catch (err) {
+    throw toCryptoError(err);
+  }
 }
 
 /** Initiate a withdrawal — server-side pre-check + Idempotency-Key + provider ref. */
 export async function initiateWithdrawal(
   draft: WithdrawalDraft,
   quote: WithdrawalQuote,
-  otp: string,
   idempotencyKey: string,
 ): Promise<WithdrawalResult> {
   if (USE_MOCK) {
@@ -636,18 +739,19 @@ export async function initiateWithdrawal(
       networkName: quote.networkName,
       providerReference: `CU-${Date.now().toString().slice(-5)}-WD`,
       idempotencyKey,
-      estimatedReviewMins: 30,
       createdAt: new Date().toISOString(),
     };
   }
   // POST /crypto/withdrawals → { symbol, address_id, units, fee_kobo }. The server
   // validates the address is a saved, active, whitelisted destination (allow-list),
   // debits+parks the holding units (no mint), charges the fiat fee to revenue, and
-  // drives the state machine requested→pending→broadcast via the provider seam.
-  // Idempotency-Key makes the POST retry-safe. (otp is a client-side confirmation
-  void otp;
+  // parks the request at pending_review. The member path STOPS there: a compliance
+  // officer approves the row before anything is dispatched to the provider, so this
+  // call never broadcasts. Idempotency-Key makes the POST retry-safe; the step-up PIN
+  // is verified centrally on the review screen before this is reached, because the
+  // endpoint itself takes no credential.
   try {
-    return unwrap<WithdrawalResult>(
+    const w = unwrap<WithdrawalWire>(
       await api.post(
         '/api/v1/crypto/withdrawals',
         {
@@ -659,6 +763,7 @@ export async function initiateWithdrawal(
         { headers: { 'Idempotency-Key': idempotencyKey } },
       ),
     );
+    return { ...mapWithdrawal(w), idempotencyKey };
   } catch (err) {
     throw toCryptoError(err);
   }

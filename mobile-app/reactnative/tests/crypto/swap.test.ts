@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import {
   secondsRemaining, countdownState, formatUnits, quoteLabel, receiveLabel,
   expiryLabel, feeLabel, spreadLabel, nextSwapStatus,
-} from '../../src/features/crypto/utils/swapDisplay.ts';
+} from '../../src/features/crypto/utils/swapDisplay';
 
 const NOW = Date.parse('2026-10-28T10:00:00Z');
 const at = (ms: number) => new Date(NOW + ms).toISOString();
@@ -73,7 +73,7 @@ describe('swap status machine', () => {
 import {
   executionLabel, executionTimedOut, resultHeadline, settlementLabel, refundLabel,
   orderDetailLines, pollUntilSettled, EXECUTION_TIMEOUT_MS, POLL_INTERVAL_MS, MAX_POLLS,
-} from '../../src/features/crypto/utils/swapDisplay.ts';
+} from '../../src/features/crypto/utils/swapDisplay';
 
 const SETTLED = { ledger_settled: true, settled_at: '2026-10-28T12:00:00Z' };
 
@@ -135,7 +135,7 @@ describe('pollUntilSettled', () => {
 });
 
 // ---- Task 1.2 fix: member-scoped settlement endpoint (not the admin reconciliation route) ----
-import { settlementPath, fetchSettlementOnce } from '../../src/features/crypto/utils/swapDisplay.ts';
+import { settlementPath, fetchSettlementOnce } from '../../src/features/crypto/utils/swapDisplay';
 
 describe('settlement endpoint', () => {
   test('path is the member-scoped swaps route, never the admin one', () => {

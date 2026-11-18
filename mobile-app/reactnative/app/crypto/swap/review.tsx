@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -15,45 +15,97 @@ import TextInputField from '@/components/TextInputField';
 import { AssetIcon } from '@/features/crypto/components';
 import { QuoteCountdown } from '@/features/crypto/components';
 import { VolatilityWarning } from '@/features/crypto/components';
-import { useAssets } from '@/features/crypto/hooks/useCrypto';
-import { buildSwapQuote, formatCrypto, formatFiatObj } from '@/features/crypto/utils/cryptoFormatters';
-import type { SwapQuote } from '@/features/crypto/types/crypto.types';
+import { useAssets, useSwapQuote } from '@/features/crypto/hooks/useCrypto';
+import { authorizePin } from '@/features/security/authorizePin';
+import { formatCrypto, formatFiatObj } from '@/features/crypto/utils/cryptoFormatters';
 
 export default function SwapReviewScreen() {
-  const params = useLocalSearchParams<{ from: string; to: string; amount: string }>();
+  const params = useLocalSearchParams<{
+    from: string; to: string; fromId: string; toId: string; amount: string;
+  }>();
   const assets = useAssets();
-  const fromAsset = assets.data?.find((a) => a.symbol === params.from);
-  const toAsset = assets.data?.find((a) => a.symbol === params.to);
   const amount = Number(params.amount);
 
-  const makeQuote = useCallback((): SwapQuote | null => {
-    if (!fromAsset || !toAsset) return null;
-    return buildSwapQuote(fromAsset, toAsset, amount);
-  }, [fromAsset, toAsset, amount]);
+  // One firm quote per visit to this screen. The server prices both legs and keeps the
+  // spread, so every number below is the server's, never a client-side calculation.
+  const quoteQ = useSwapQuote({
+    fromAssetId: params.fromId,
+    toAssetId: params.toId,
+    fromSymbol: params.from,
+    toSymbol: params.to,
+    fromAmount: amount,
+  });
+  const quote = quoteQ.data;
 
-  const [quote, setQuote] = useState<SwapQuote | null>(null);
-  const [expired, setExpired] = useState(false);
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState<string | undefined>();
+  const [authorizing, setAuthorizing] = useState(false);
 
-  React.useEffect(() => { if (fromAsset && toAsset && !quote) setQuote(makeQuote()); }, [fromAsset, toAsset, quote, makeQuote]);
+  const fromAsset = assets.data?.find((x) => x.id === params.fromId || x.symbol === params.from);
+  const toAsset = assets.data?.find((x) => x.id === params.toId || x.symbol === params.to);
 
-  const reQuote = () => { setQuote(makeQuote()); setExpired(false); };
-
-  if (assets.isLoading || !quote || !fromAsset || !toAsset) {
+  if (!fromAsset || !toAsset) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Review swap" />
-        <StateView kind={assets.isError ? 'error' : 'loading'} message="Preparing your quote…" title={assets.isError ? 'Could not prepare swap' : undefined} actionLabel={assets.isError ? 'Back' : undefined} onAction={assets.isError ? () => goBack('/crypto/swap') : undefined} />
+        <StateView
+          kind={assets.isError ? 'error' : 'loading'}
+          title={assets.isError ? 'Could not prepare this swap' : undefined}
+          message={assets.isError ? 'Please try again.' : 'Loading the market…'}
+          actionLabel={assets.isError ? 'Back' : undefined}
+          onAction={assets.isError ? () => goBack('/crypto/swap') : undefined}
+        />
       </SafeAreaView>
     );
   }
 
-  const confirm = () => {
-    if (expired) { reQuote(); setPin(''); return; }
+  // A refused quote is an error the member has to read, not a spinner: the pair is
+  // unpriced, the amount too small to convert, or the market declined it.
+  if (quoteQ.isError || amount <= 0 || Number.isNaN(amount)) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Review swap" />
+        <StateView
+          kind="error"
+          title="No rate for this swap"
+          message={(quoteQ.error as Error)?.message ?? 'Enter an amount and try again.'}
+          actionLabel="Back"
+          onAction={() => goBack('/crypto/swap')}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  if (!quote) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Review swap" />
+        <StateView kind="loading" message="Requesting the firm rate…" />
+      </SafeAreaView>
+    );
+  }
+
+  const confirm = async () => {
     if (pin.length < 4) { setPinError('Enter your 4-digit transaction PIN.'); return; }
+    setAuthorizing(true);
     setPinError(undefined);
-    router.push({ pathname: '/crypto/swap/processing', params: { from: params.from, to: params.to, amount: String(amount), expiresAt: quote.expiresAt } });
+    // /crypto/swap takes no PIN, so an unverified four digits must not reach it.
+    const failure = await authorizePin(pin);
+    setAuthorizing(false);
+    if (failure) {
+      setPin('');
+      setPinError(failure);
+      return;
+    }
+    router.push({
+      pathname: '/crypto/swap/processing',
+      params: {
+        from: fromAsset.symbol, to: toAsset.symbol,
+        fromId: fromAsset.id, toId: toAsset.id,
+        amount: String(amount),
+        ...(quote.quotationId ? { quotationId: quote.quotationId } : {}),
+      },
+    });
   };
 
   return (
@@ -61,7 +113,7 @@ export default function SwapReviewScreen() {
       <ScreenHeader title="Review swap" subtitle={`${fromAsset.symbol} → ${toAsset.symbol}`} />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-        <QuoteCountdown expiresAt={quote.expiresAt} onExpire={() => setExpired(true)} />
+        <QuoteCountdown expiresAt={quote.expiresAt} onExpire={() => quoteQ.refetch()} />
 
         {/* Swap hero */}
         <View style={styles.hero}>
@@ -89,6 +141,10 @@ export default function SwapReviewScreen() {
           <Row label="Swap fee" value={formatFiatObj(quote.fee)} muted />
           <View style={styles.divider} />
           <Row label="Value" value={formatFiatObj(quote.fiatValue)} emphasis />
+          <Text style={styles.rateNote}>
+            The swap fills at the market price of the moment it is placed, so the amount you
+            receive can move if this rate expires and you refresh it.
+          </Text>
         </View>
 
         <VolatilityWarning />
@@ -99,7 +155,7 @@ export default function SwapReviewScreen() {
             <Fingerprint size={18} color={Colors.primary} strokeWidth={2} />
             <Text style={styles.pinTitle}>Authorize with your PIN</Text>
           </View>
-          <Text style={styles.pinHint}>Confirm this swap with your 4-digit transaction PIN or biometrics.</Text>
+          <Text style={styles.pinHint}>Confirm this swap with your 4-digit transaction PIN.</Text>
           <TextInputField
             label="Transaction PIN"
             placeholder="Enter 4-digit PIN"
@@ -114,11 +170,7 @@ export default function SwapReviewScreen() {
       </ScrollView>
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>
-        {expired ? (
-          <PrimaryButton label="Quote expired — refresh" onPress={reQuote} />
-        ) : (
-          <PrimaryButton label={`Confirm swap`} onPress={confirm} />
-        )}
+        <PrimaryButton label="Confirm swap" onPress={() => { void confirm(); }} loading={authorizing} />
       </SafeAreaView>
     </SafeAreaView>
   );
@@ -154,6 +206,7 @@ const styles = StyleSheet.create({
   rowMuted: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   rowMutedValue: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   divider: { height: 1, backgroundColor: Colors.surfaceContainerHigh, marginVertical: 2 },
+  rateNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant, lineHeight: 18 },
   pinCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, padding: Spacing.md },
   pinHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.xs },
   pinTitle: { ...Typography.titleMd, color: Colors.onSurface },

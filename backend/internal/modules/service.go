@@ -44,7 +44,7 @@ func (s *Service) Env() Environment { return s.env }
 
 const selectModules = `
 	SELECT m.key, m.name, m.category, COALESCE(m.env_flag,''), COALESCE(m.description,''),
-	       m.lifecycle, COALESCE(m.access_level,'general'), m.created_at,
+	       m.lifecycle, COALESCE(m.access_level,'general'), COALESCE(m.readiness,'in_development'), m.created_at,
 	       COALESCE(e.environment,''), COALESCE(e.status,''), COALESCE(e.note,''),
 	       e.updated_at, COALESCE(e.updated_by::text,'')
 	  FROM public.platform_modules m
@@ -64,12 +64,12 @@ func (s *Service) List(ctx context.Context) ([]Module, error) {
 	var order []string
 	for rows.Next() {
 		var (
-			key, name, category, envFlag, desc, lifecycle, accessLevel string
-			createdAt                                                  time.Time
-			envName, status, note, updatedBy                           string
-			updatedAt                                                  *time.Time
+			key, name, category, envFlag, desc, lifecycle, accessLevel, readiness string
+			createdAt                                                             time.Time
+			envName, status, note, updatedBy                                      string
+			updatedAt                                                             *time.Time
 		)
-		if err := rows.Scan(&key, &name, &category, &envFlag, &desc, &lifecycle, &accessLevel, &createdAt,
+		if err := rows.Scan(&key, &name, &category, &envFlag, &desc, &lifecycle, &accessLevel, &readiness, &createdAt,
 			&envName, &status, &note, &updatedAt, &updatedBy); err != nil {
 			return nil, fmt.Errorf("modules: scan: %w", err)
 		}
@@ -78,7 +78,8 @@ func (s *Service) List(ctx context.Context) ([]Module, error) {
 			m = &Module{
 				Key: key, Name: name, Category: category, EnvFlag: envFlag,
 				Description: desc, Lifecycle: Lifecycle(lifecycle),
-				AccessLevel: AccessLevel(accessLevel), CreatedAt: createdAt,
+				AccessLevel: AccessLevel(accessLevel), Readiness: Readiness(readiness),
+				CreatedAt:      createdAt,
 				Environments:   map[Environment]EnvironmentState{},
 				EnvFlagEnabled: envFlag == "" || s.flag(envFlag),
 			}
@@ -155,8 +156,10 @@ func (s *Service) get(ctx context.Context, key string) (Module, error) {
 }
 
 // SetVisibility publishes or hides a module in one environment.
-// Guarded transition: the module must exist, the environment must be known, and
-// an archived module cannot be published. The state change and its audit row
+// Guarded transition: the module must exist, the environment must be known, an
+// archived module cannot be published, and a module cannot be published to
+// PRODUCTION until its readiness says it is ready — the interlock that keeps an
+// unfinished module out of the store build. The state change and its audit row
 // commit in ONE transaction, so there is no way to change what users see without
 // a record of who did it.
 // Idempotent: setting the status it already has re-writes the same value and
@@ -169,7 +172,15 @@ func (s *Service) SetVisibility(ctx context.Context, key string, env Environment
 	if err != nil {
 		return Module{}, err
 	}
-	if status == StatusVisible || status == StatusComingSoon {
+	// Hiding is never gated — it is the safe direction, and an incident response
+	// must not need two controls to agree. A 'visible' publish carries the
+	// readiness interlock; a 'coming_soon' teaser does not (AssertPublishableIn).
+	switch status {
+	case StatusVisible:
+		if err := m.AssertPublishableIn(env); err != nil {
+			return Module{}, err
+		}
+	case StatusComingSoon:
 		if err := m.AssertPublishable(); err != nil {
 			return Module{}, err
 		}
@@ -235,6 +246,47 @@ func (s *Service) SetLifecycle(ctx context.Context, key string, lc Lifecycle, no
 		return Module{}, fmt.Errorf("modules: set lifecycle: %w", err)
 	}
 	if err := s.audit(ctx, tx, key, "", action, string(m.Lifecycle), string(lc), note, actorID); err != nil {
+		return Module{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Module{}, fmt.Errorf("modules: commit: %w", err)
+	}
+	return s.get(ctx, key)
+}
+
+// SetReadiness records how far the module's own product work has come.
+//
+// It is the control that answers the question the per-environment toggles cannot:
+// "is this finished enough for real users?" Raising it publishes nothing — each
+// tier still needs its own decision. Lowering it DOES withdraw a module from
+// production, because VisibleIn requires 'ready' for that tier, and that is
+// deliberate: pulling a module out is the safe direction, and an admin reviewing a
+// live module and marking it 'testing' must not have to discover a second control
+// to make that review mean anything.
+//
+// The tier rows are never touched here, so raising readiness again restores
+// exactly the previous launch — the same no-decision-loss property archiving has.
+// As with SetLifecycle, the write and its audit row commit in one transaction:
+// "who declared this ready, and when" is the first question asked after a module
+// that was not ready reached the store build.
+func (s *Service) SetReadiness(ctx context.Context, key string, r Readiness, note, actorID string) (Module, error) {
+	m, err := s.get(ctx, key)
+	if err != nil {
+		return Module{}, err
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Module{}, fmt.Errorf("modules: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE public.platform_modules SET readiness=$2, updated_at=now() WHERE key=$1`,
+		key, string(r)); err != nil {
+		return Module{}, fmt.Errorf("modules: set readiness: %w", err)
+	}
+	if err := s.audit(ctx, tx, key, "", ActionReadiness, string(m.Readiness), string(r), note, actorID); err != nil {
 		return Module{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

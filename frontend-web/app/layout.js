@@ -1,6 +1,7 @@
 import "@/src/styles/tailwind.css"
 
 import NavTelemetry from "@/src/features/telemetry/NavTelemetry"
+import { SITE_URL } from "@/src/lib/site-url"
 import { Kumbh_Sans } from 'next/font/google'
 
 const kumbh = Kumbh_Sans({
@@ -10,14 +11,13 @@ const kumbh = Kumbh_Sans({
     variable: '--font-kumbh',
 })
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com'
 const siteTitle = 'Spotlight | National Youth Empowerment & Entertainment Platform'
 const siteDescription = 'Spotlight discovers, trains, promotes, and connects emerging talents through auditions, bootcamps, reality TV, public voting, media exposure, sponsorship, and post-show career pathways.'
 
 export const metadata = {
   // Resolves every relative URL-based metadata field (og:url, canonical,
   // og:image) site-wide — child segments may keep using relative paths.
-  metadataBase: new URL(siteUrl),
+  metadataBase: new URL(SITE_URL),
   title: siteTitle,
   description: siteDescription,
   openGraph: {

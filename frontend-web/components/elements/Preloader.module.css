@@ -1,0 +1,79 @@
+/* "The Light Cue" — Spotlight preloader. Ported from the standalone motion
+   study; the demo's failsafe fade and JS dismissal are dropped because React
+   unmounts this fallback when the route segment resolves. */
+
+.root {
+  position: fixed;
+  inset: 0;
+  /* Matches the template's own .preloader: above the header dropdowns and
+     offcanvas (99999), below the decorative custom cursor (10000000+). */
+  z-index: 9999999;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at 50% 45%, #301d3d 0%, #1d1327 40%, #130e19 76%);
+  color: #f5f0e9;
+  font: 600 11px/1.5 system-ui, sans-serif;
+}
+
+.lockup {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+}
+
+.lockup svg {
+  width: clamp(146px, 34vw, 214px);
+  height: auto;
+  overflow: visible;
+}
+
+.wordmark {
+  letter-spacing: 0.27em;
+  font-size: 14px;
+  padding-left: 0.27em;
+  margin: 12px 0 0;
+}
+
+.status {
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: #d1bed9;
+  margin: 9px 0 0;
+  font-size: 9px;
+}
+
+.rotor {
+  transform-origin: 90px 90px;
+  animation: sp-orbit 2.15s linear infinite;
+}
+
+.sweep {
+  animation: sp-scan 2.15s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes sp-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes sp-scan {
+  0%, 7% {
+    transform: translateX(-57px);
+    opacity: 0.15;
+  }
+  28%, 65% {
+    opacity: 1;
+  }
+  82%, 100% {
+    transform: translateX(57px);
+    opacity: 0.15;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rotor,
+  .sweep {
+    animation: none;
+  }
+}

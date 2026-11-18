@@ -1,17 +1,25 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getContestBySlug, getLeaderboard } from '@/src/server/openmic/persistence';
+import { publicBeatUrl } from '@/src/features/openmic/beat-storage';
 import OpenMicProgressTracker from '@/components/openmic/OpenMicProgressTracker';
 
 export const dynamic = 'force-dynamic';
 
-export default async function OpenMicContestDetailsPage({ params }: { params: { slug: string } }) {
-  const contest = await getContestBySlug(params.slug);
+export default async function OpenMicContestDetailsPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const contest = await getContestBySlug(slug);
   if (!contest) notFound();
   const leaderboard = await getLeaderboard(contest.id);
 
   const fmt = (iso?: string) =>
     iso ? new Date(iso).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' }) : 'TBA';
+
+  // The one place a beat URL becomes playable-or-not on this page: the rule is
+  // publicBeatUrl's, so an edition carrying a legacy owner-only path or an
+  // off-origin absolute URL renders the honest statement below instead of a
+  // player that fails for every visitor.
+  const beatSrc = contest.beat ? publicBeatUrl(contest.beat.previewUrl) : null;
 
   return (
     <section
@@ -92,11 +100,15 @@ export default async function OpenMicContestDetailsPage({ params }: { params: { 
                   {contest.beat.usageRules && (
                     <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13, marginBottom: 12 }}>{contest.beat.usageRules}</p>
                   )}
-                  {contest.beat.previewUrl ? (
+                  {beatSrc ? (
                     <audio controls style={{ width: '100%', marginTop: 8 }}>
-                      <source src={contest.beat.previewUrl} />
+                      <source src={beatSrc} />
                     </audio>
-                  ) : null}
+                  ) : (
+                    <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 0 }}>
+                      Playback will be available once this edition&#39;s beat is published.
+                    </p>
+                  )}
                 </>
               ) : (
                 <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 0 }}>Beat not uploaded yet for this edition.</p>

@@ -147,21 +147,19 @@ CREATE INDEX IF NOT EXISTS idx_event_checkin_event ON public.event_checkin_log (
 CREATE INDEX IF NOT EXISTS idx_event_checkin_ticket ON public.event_checkin_log (ticket_id, created_at DESC);
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 7. PLATFORM FEE SCHEDULE — prospective, effective-dated, admin-only.
+-- 7. PLATFORM FEE — owned by 20271400000000_events_commerce.sql.
 -- ════════════════════════════════════════════════════════════════════════════
-CREATE TABLE IF NOT EXISTS public.event_fee_settings (
-  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  fee_bps        int NOT NULL CHECK (fee_bps >= 0 AND fee_bps <= 10000),
-  effective_from timestamptz NOT NULL,
-  note           text NOT NULL DEFAULT '',
-  created_by     uuid REFERENCES auth.users(id),
-  created_at     timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (effective_from)
-);
-
-INSERT INTO public.event_fee_settings (fee_bps, effective_from, note)
-SELECT 1000, now(), 'Initial platform fee (10%)'
-WHERE NOT EXISTS (SELECT 1 FROM public.event_fee_settings);
+-- This file used to create event_fee_settings as an effective-dated schedule
+-- (uuid PK + effective_from NOT NULL). The commerce module reads the singleton
+-- instead (backend/internal/top5events: SELECT ... WHERE id = 1, updated_by,
+-- updated_at), and 20271400000000 defines exactly that. Because migrate-up
+-- replays every file in name order, the schedule ran first, its CREATE won the
+-- name, and 20271400000000's CREATE was then skipped — so its
+-- INSERT (id, fee_bps) VALUES (1, 1000) aborted the replay with
+-- "column id is of type uuid but expression is of type integer". Nothing ever
+-- read the schedule shape, so the definition that has no consumer is the one
+-- that goes. Its RLS enable and policies were removed here for the same reason;
+-- 20271400000000 re-establishes both for the table it owns.
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- 8. ORGANISER GOVERNANCE — suspension is a status, never a deletion.
@@ -232,7 +230,6 @@ CREATE INDEX IF NOT EXISTS idx_event_notifications_user ON public.event_notifica
 ALTER TABLE public.event_refunds                ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.event_moderation_decisions   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.event_checkin_log            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.event_fee_settings           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.event_support_cases          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.event_support_messages       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.event_notifications          ENABLE ROW LEVEL SECURITY;
@@ -268,13 +265,6 @@ CREATE POLICY event_checkin_read ON public.event_checkin_log
   );
 DROP POLICY IF EXISTS event_checkin_service ON public.event_checkin_log;
 CREATE POLICY event_checkin_service ON public.event_checkin_log
-  TO service_role USING (TRUE) WITH CHECK (TRUE);
-
-DROP POLICY IF EXISTS event_fee_settings_read ON public.event_fee_settings;
-CREATE POLICY event_fee_settings_read ON public.event_fee_settings
-  FOR SELECT TO authenticated USING (public.is_admin());
-DROP POLICY IF EXISTS event_fee_settings_service ON public.event_fee_settings;
-CREATE POLICY event_fee_settings_service ON public.event_fee_settings
   TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 DROP POLICY IF EXISTS event_support_cases_read ON public.event_support_cases;

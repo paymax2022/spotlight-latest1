@@ -13,9 +13,7 @@ import StateView from '@/components/StateView';
 import { AssetIcon } from '@/features/crypto/components';
 import { VolatilityWarning } from '@/features/crypto/components';
 import { useAssets, useCryptoPortfolio } from '@/features/crypto/hooks/useCrypto';
-import {
-  buildSwapQuote, formatCrypto, formatFiatObj, parseCryptoToMinor,
-} from '@/features/crypto/utils/cryptoFormatters';
+import { formatCrypto, parseCryptoToMinor } from '@/features/crypto/utils/cryptoFormatters';
 import { sanitizeMoneyInput } from '@/utils/money';
 
 const PERCENTS = [25, 50, 100];
@@ -41,19 +39,24 @@ export default function SwapEntryScreen() {
     tradable.find((a) => a.symbol === toSym && a.symbol !== fromAsset?.symbol) ??
     tradable.find((a) => a.symbol !== fromAsset?.symbol);
 
-  // Build the live preview quote (hook must run before any early return).
-  const quote = useMemo(() => {
-    if (!fromAsset || !toAsset) return null;
-    const amt = parseCryptoToMinor(input, fromAsset.decimals);
-    if (!amt) return null;
-    return buildSwapQuote(fromAsset, toAsset, amt);
-  }, [fromAsset, toAsset, input]);
+  // No preview quote here: a swap quote is a POST that can reserve a firm rate at the
+  // exchange for a few seconds, so it is requested once, on the review screen, after
+  // the member stops typing. Guessing the output from two catalogue prices would put
+  // the app in the money path it does not own.
 
   if (assets.isLoading || portfolio.isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Swap" />
         <StateView kind="loading" message="Loading…" />
+      </SafeAreaView>
+    );
+  }
+  if (assets.isError) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Swap" />
+        <StateView kind="error" title="Couldn't load the markets" message="Check your connection and try again." actionLabel="Retry" onAction={() => assets.refetch()} />
       </SafeAreaView>
     );
   }
@@ -72,7 +75,7 @@ export default function SwapEntryScreen() {
 
   const overHolding = amount > heldMinor;
   const error = overHolding ? `You only hold ${formatCrypto(heldMinor, fromAsset.symbol, decimals)}.` : null;
-  const disabled = !quote || amount <= 0 || !!error;
+  const disabled = amount <= 0 || !!error;
 
   const setPercent = (pct: number) => setInput(((heldMinor * pct) / 100 / 10 ** decimals).toString());
   const flip = () => { setFromSym(toAsset.symbol); setToSym(fromAsset.symbol); setInput(''); };
@@ -92,8 +95,15 @@ export default function SwapEntryScreen() {
   };
 
   const onContinue = () => {
-    if (!quote) return;
-    router.push({ pathname: '/crypto/swap/review', params: { from: fromAsset.symbol, to: toAsset.symbol, amount: String(amount) } });
+    if (amount <= 0) return;
+    // Ids travel for the quote + execution; symbols travel for the labels.
+    router.push({
+      pathname: '/crypto/swap/review',
+      params: {
+        from: fromAsset.symbol, to: toAsset.symbol,
+        fromId: fromAsset.id, toId: toAsset.id, amount: String(amount),
+      },
+    });
   };
 
   return (
@@ -148,7 +158,7 @@ export default function SwapEntryScreen() {
 
         {/* To */}
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>To (est.)</Text>
+          <Text style={styles.fieldLabel}>To</Text>
           <View style={styles.amountRow}>
             <Pressable style={styles.assetPick} onPress={cycleTo} accessibilityRole="button" accessibilityLabel="Change to asset">
               <AssetIcon symbol={toAsset.symbol} color={toAsset.iconColor} size={28} />
@@ -156,20 +166,16 @@ export default function SwapEntryScreen() {
               <ChevronDown size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
             </Pressable>
             <Text style={[styles.amountInput, styles.computed]} numberOfLines={1}>
-              {quote ? formatCrypto(quote.to.amount, toAsset.symbol, toAsset.decimals).replace(` ${toAsset.symbol}`, '') : '0.00'}
+              {amount > 0 ? 'Rate on review' : '0.00'}
             </Text>
           </View>
         </View>
 
-        {/* Live rate */}
-        {quote ? (
-          <View style={styles.rateLine}>
-            <Text style={styles.rateText}>1 {fromAsset.symbol} ≈ {quote.rate.toLocaleString('en-US', { maximumFractionDigits: 6 })} {toAsset.symbol}</Text>
-            <Text style={styles.rateSub}>≈ {formatFiatObj(quote.fiatValue)} · includes spread & fee</Text>
-          </View>
-        ) : (
-          <StateView kind="empty" icon="ArrowLeftRight" title="Enter an amount" message="We'll show a live rate before you confirm." compact />
-        )}
+        <View style={styles.rateLine}>
+          <Text style={styles.rateSub}>
+            We request the firm rate on the next screen, before you authorise anything.
+          </Text>
+        </View>
 
         <View style={styles.warn}>
           <VolatilityWarning compact />

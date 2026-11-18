@@ -29,6 +29,7 @@ export type ReferredBy = {
 export async function getUserReferredBy(id: string): Promise<ReferredBy> {
   const res = await fetch(`${adminApiBase()}/finance/admin/referrals/${encodeURIComponent(id)}/referred-by`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const p = await readOrThrow(res, 'Loading referrer');

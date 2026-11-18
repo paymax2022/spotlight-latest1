@@ -50,6 +50,23 @@ const (
 	StatusVisible    Status = "visible"
 )
 
+// Readiness describes the PRODUCT, not a deployment: how far the module itself
+// has come. It exists because publication alone cannot answer "is this safe to
+// put in front of users?" — a module that is hidden because it is finished and
+// being held back, and one that is hidden because it would not survive a real
+// user, were indistinguishable.
+//
+// It is deliberately NOT derived from any environment's status. A 'ready' module
+// is not automatically live anywhere; a module live in staging is not
+// automatically ready. Only the interlock in AssertPublishableIn connects them.
+type Readiness string
+
+const (
+	ReadinessInDevelopment Readiness = "in_development"
+	ReadinessTesting       Readiness = "testing"
+	ReadinessReady         Readiness = "ready"
+)
+
 // Lifecycle is module-wide. Archiving hides a module in every environment while
 // leaving its source in the tree — the point of the whole feature.
 type Lifecycle string
@@ -67,6 +84,11 @@ const (
 	ActionHide    Action = "hide"
 	ActionArchive Action = "archive"
 	ActionRestore Action = "restore"
+	// ActionReadiness records a readiness change. It is NOT a visibility event —
+	// no environment's display changes when this is written — but "who said this
+	// was ready, and when" is the first question an incident review asks about a
+	// module that was published to production on the strength of that claim.
+	ActionReadiness Action = "readiness"
 )
 
 var (
@@ -74,11 +96,16 @@ var (
 	ErrInvalidEnv       = errors.New("modules: unknown environment")
 	ErrInvalidStatus    = errors.New("modules: status must be 'hidden' or 'visible'")
 	ErrInvalidLifecycle = errors.New("modules: lifecycle must be 'active' or 'archived'")
+	ErrInvalidReadiness = errors.New("modules: readiness must be 'in_development', 'testing' or 'ready'")
 	// ErrArchivedModule is returned when someone tries to publish a module that is
 	// archived. Restore is a deliberate, separately-audited step: an archived
 	// module is one somebody decided to withdraw, and it should not come back as a
 	// side effect of a routine publish click.
 	ErrArchivedModule = errors.New("modules: cannot publish an archived module — restore it first")
+	// ErrNotReadyForProduction is the publish interlock: production is the tier
+	// where a half-finished module reaches people who have money in the product,
+	// so it needs an explicit readiness decision rather than only a click.
+	ErrNotReadyForProduction = errors.New("modules: cannot publish to production before readiness is 'ready' — mark the module ready first")
 )
 
 // EnvironmentState is one (module, environment) publication row.
@@ -98,7 +125,11 @@ type Module struct {
 	EnvFlag     string    `json:"env_flag,omitempty"`
 	Description string    `json:"description,omitempty"`
 	Lifecycle   Lifecycle `json:"lifecycle"`
-	CreatedAt   time.Time `json:"created_at"`
+	// Readiness is the product-development axis, module-wide rather than per
+	// environment: how far the module itself has come. Publishing to production is
+	// gated on it; nothing else reads it.
+	Readiness Readiness `json:"readiness"`
+	CreatedAt time.Time `json:"created_at"`
 	// Environments is keyed by Environment. A tier absent from the map has never
 	// been decided and is treated as hidden.
 	Environments map[Environment]EnvironmentState `json:"environments"`
@@ -115,13 +146,25 @@ type Module struct {
 
 // VisibleIn is the single visibility rule, in one place.
 // Fail-closed on every axis: an archived module, an environment never decided,
-// or an env flag that is off all yield false. Callers must not re-implement this
+// an env flag that is off, or a module whose product is not finished — all yield
+// false. Callers must not re-implement this
 // — a second copy is how the client and server drift apart.
+//
+// The production branch is what makes the admin's readiness field actually keep an
+// unfinished module out of the store build. The interlock in AssertPublishableIn
+// stops it being published; this stops it being SERVED, which also covers the case
+// where a module was launched as 'ready' and is later demoted while its production
+// row still says visible. The row is left alone on purpose, exactly as archiving
+// leaves per-environment rows alone: raising readiness restores the launch without
+// the operator having to re-decide anything.
 func (m Module) VisibleIn(env Environment) bool {
 	if m.Lifecycle != LifecycleActive {
 		return false
 	}
 	if !m.EnvFlagEnabled {
+		return false
+	}
+	if env == EnvProduction && m.Readiness != ReadinessReady {
 		return false
 	}
 	st, ok := m.Environments[env]
@@ -135,6 +178,11 @@ func (m Module) VisibleIn(env Environment) bool {
 // It deliberately applies the same lifecycle and env-flag gates as VisibleIn: an
 // archived module, or one whose environment flag is off, is not a teaser — it is simply
 // absent. So the two are mutually exclusive, and a module is at most one of them.
+//
+// Unlike VisibleIn it has NO readiness branch, and that is not an oversight. A
+// teaser is inert, so an unfinished module is precisely the thing worth teasing; and
+// gating it would push operators to mark modules 'ready' just to put a name on the
+// home grid, which is how a gate gets defeated.
 func (m Module) ComingSoonIn(env Environment) bool {
 	if m.Lifecycle != LifecycleActive {
 		return false
@@ -158,6 +206,33 @@ func (m Module) AssertPublishable() error {
 	return nil
 }
 
+// AssertPublishableIn is the publish interlock for ONE environment.
+//
+// Production is the only tier that gets an extra gate. An empty Readiness counts as
+// 'in_development', not as 'ready': a module row created before this column existed,
+// or one written by a partial migration, must not be able to reach live users.
+// Development and staging stay open at every readiness, because that is where a
+// module is supposed to be unfinished.
+//
+// Callers use this for a 'visible' publish only. A 'coming_soon' publish keeps the
+// plain AssertPublishable, because a teaser is inert and gating it would make
+// operators flip readiness to 'ready' just to put a name on the home grid — and an
+// axis people lie to get past is not a gate.
+//
+// Archive precedence is deliberate: AssertPublishable runs first, so an archived
+// module reports ErrArchivedModule rather than the readiness error. The fix for an
+// archived module is to restore it, and telling the operator to change a readiness
+// level would send them to the wrong control.
+func (m Module) AssertPublishableIn(env Environment) error {
+	if err := m.AssertPublishable(); err != nil {
+		return err
+	}
+	if env == EnvProduction && m.Readiness != ReadinessReady {
+		return ErrNotReadyForProduction
+	}
+	return nil
+}
+
 // ParseStatus validates a client-supplied status.
 func ParseStatus(s string) (Status, error) {
 	switch Status(s) {
@@ -169,6 +244,22 @@ func ParseStatus(s string) (Status, error) {
 		return StatusVisible, nil
 	}
 	return "", ErrInvalidStatus
+}
+
+// ParseReadiness validates a client-supplied readiness level.
+// There is no default here on purpose: an omitted "readiness" in a PATCH body
+// deserialises to "", which must be rejected rather than quietly accepted as any
+// level — least of all 'ready', which is the one value that opens production.
+func ParseReadiness(s string) (Readiness, error) {
+	switch Readiness(s) {
+	case ReadinessInDevelopment:
+		return ReadinessInDevelopment, nil
+	case ReadinessTesting:
+		return ReadinessTesting, nil
+	case ReadinessReady:
+		return ReadinessReady, nil
+	}
+	return "", ErrInvalidReadiness
 }
 
 // ParseLifecycle validates a client-supplied lifecycle.

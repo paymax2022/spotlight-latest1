@@ -8,7 +8,8 @@ interface Entry {
   stageName: string;
   songTitle: string;
   songUrl: string;
-  voteCount: number;
+  /** `null` when the edition's counts are private — see standings-visibility. */
+  voteCount: number | null;
   status: string;
 }
 
@@ -16,11 +17,15 @@ interface Props {
   contestId: string;
   contestSlug: string;
   entry: Entry;
-  rank: number;
-  totalVotes: number;
+  /** `null` when the standings are private. */
+  rank: number | null;
+  /** `null` when the counts are private. */
+  totalVotes: number | null;
   votePriceNgn: number;
   freeVoting: boolean;
   paidVoting: boolean;
+  showVoteCounts: boolean;
+  showLeaderboard: boolean;
 }
 
 const RANK_COLOR = ['#f59e0b', '#94a3b8', '#cd7f32'];
@@ -72,6 +77,7 @@ function shareBtnStyle(bg: string): React.CSSProperties {
 
 export default function OpenMicArtistVotingCard({
   contestId, contestSlug, entry, rank: initialRank, totalVotes: initialTotal, votePriceNgn, freeVoting, paidVoting,
+  showVoteCounts, showLeaderboard,
 }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -84,27 +90,37 @@ export default function OpenMicArtistVotingCard({
 
   // Subscribe to the contest SSE stream for real-time counts
   useEffect(() => {
+    // Every field this feed updates is a count, so a private-counts edition
+    // has nothing to receive — and the stream redacts them anyway.
+    if (!showVoteCounts) return;
     const es = new EventSource(`/api/open-mic/votes/stream?contestId=${encodeURIComponent(contestId)}`);
     es.onmessage = (e) => {
       try {
-        const msg = JSON.parse(e.data) as { type: string; entries: { id: string; voteCount: number }[] };
+        const msg = JSON.parse(e.data) as { type: string; entries: { id: string; voteCount?: number }[] };
         if (msg.type === 'snapshot' && Array.isArray(msg.entries)) {
+          const counts = msg.entries.map((r) => r.voteCount).filter((v): v is number => v !== undefined);
+          if (counts.length === 0) return;
           const me = msg.entries.find((r) => r.id === entry.id);
-          if (me) setLiveVoteCount(me.voteCount);
-          const total = msg.entries.reduce((s, r) => s + r.voteCount, 0);
-          setLiveTotalVotes(total);
+          setLiveVoteCount(me?.voteCount ?? null);
+          setLiveTotalVotes(counts.reduce((s, v) => s + v, 0));
           // Recompute rank from live data
-          const sorted = [...msg.entries].sort((a, b) => b.voteCount - a.voteCount);
+          const sorted = [...msg.entries].sort((a, b) => (b.voteCount ?? 0) - (a.voteCount ?? 0));
           const newRank = sorted.findIndex((r) => r.id === entry.id) + 1;
           if (newRank > 0) setRank(newRank);
         }
       } catch { /* ignore */ }
     };
     return () => es.close();
-  }, [contestId, entry.id]);
+  }, [contestId, entry.id, showVoteCounts]);
 
-  const pct = liveTotalVotes > 0 ? Math.round((liveVoteCount / liveTotalVotes) * 100) : 0;
-  const isTop3 = rank <= 3;
+  const pct = liveTotalVotes && liveTotalVotes > 0
+    ? Math.round(((liveVoteCount ?? 0) / liveTotalVotes) * 100)
+    : 0;
+  // `rank` is null while the standings are private; every medal styling
+  // below keys off the resolved index instead of the raw value.
+  const rankIndex = rank === null ? -1 : rank - 1;
+  const isTop3 = rankIndex >= 0 && rankIndex <= 2;
+  const rankColor = isTop3 ? RANK_COLOR[rankIndex] : null;
   const artistUrl = `/open-mic/${contestSlug}/entry/${entry.stageName.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-')}`;
 
   function togglePlay() {
@@ -122,31 +138,35 @@ export default function OpenMicArtistVotingCard({
     <>
       <div style={{
         background: 'linear-gradient(160deg,rgba(20,16,43,0.95) 0%,rgba(15,13,26,0.98) 100%)',
-        border: `1.5px solid ${isTop3 ? RANK_COLOR[Math.min(rank - 1, 2)] + '55' : 'rgba(255,255,255,0.1)'}`,
+        border: `1.5px solid ${rankColor ? rankColor + '55' : 'rgba(255,255,255,0.1)'}`,
         borderRadius: 24,
         overflow: 'hidden',
         boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
       }}>
 
-        {/* Rank banner */}
-        <div style={{
-          background: isTop3
-            ? `linear-gradient(90deg,${RANK_COLOR[Math.min(rank - 1, 2)]}22,transparent)`
-            : 'rgba(255,255,255,0.02)',
-          padding: '14px 20px',
-          display: 'flex', alignItems: 'center', gap: 10,
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-        }}>
-          {isTop3 && <span style={{ fontSize: 22 }}>{RANK_EMOJI[rank - 1]}</span>}
-          <span style={{
-            fontWeight: 800, fontSize: 12, padding: '3px 10px', borderRadius: 20,
-            background: isTop3 ? RANK_COLOR[Math.min(rank - 1, 2)] : 'rgba(255,255,255,0.08)',
-            color: rank === 1 ? '#000' : rank <= 3 ? '#fff' : 'rgba(255,255,255,0.5)',
-          }}>Rank #{rank}</span>
-          <span style={{ marginLeft: 'auto', color: 'rgba(255,255,255,0.3)', fontSize: 12 }}>
-            {pct}% of all votes
-          </span>
-        </div>
+        {/* Rank banner — a ranking statement, so it belongs to "Show Leaderboard" */}
+        {showLeaderboard && (
+          <div style={{
+            background: rankColor
+              ? `linear-gradient(90deg,${rankColor}22,transparent)`
+              : 'rgba(255,255,255,0.02)',
+            padding: '14px 20px',
+            display: 'flex', alignItems: 'center', gap: 10,
+            borderBottom: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            {isTop3 && <span style={{ fontSize: 22 }}>{RANK_EMOJI[rankIndex]}</span>}
+            <span style={{
+              fontWeight: 800, fontSize: 12, padding: '3px 10px', borderRadius: 20,
+              background: rankColor ?? 'rgba(255,255,255,0.08)',
+              color: rank === 1 ? '#000' : isTop3 ? '#fff' : 'rgba(255,255,255,0.5)',
+            }}>Rank #{rank}</span>
+            {showVoteCounts && (
+              <span style={{ marginLeft: 'auto', color: 'rgba(255,255,255,0.3)', fontSize: 12 }}>
+                {pct}% of all votes
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Artist info */}
         <div style={{ padding: '28px 24px 0' }}>
@@ -199,21 +219,23 @@ export default function OpenMicArtistVotingCard({
         </div>
 
         {/* Vote count */}
-        <div style={{ margin: '0 24px', padding: '16px 20px', background: 'rgba(255,255,255,0.03)', borderRadius: 14, border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginBottom: 0 }}>Total Votes</p>
-            <p style={{ fontSize: 24, color: '#f59e0b', fontWeight: 900, marginBottom: 0, lineHeight: 1 }}>
-              {liveVoteCount.toLocaleString()}
-            </p>
+        {showVoteCounts && (
+          <div style={{ margin: '0 24px', padding: '16px 20px', background: 'rgba(255,255,255,0.03)', borderRadius: 14, border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginBottom: 0 }}>Total Votes</p>
+              <p style={{ fontSize: 24, color: '#f59e0b', fontWeight: 900, marginBottom: 0, lineHeight: 1 }}>
+                {(liveVoteCount ?? 0).toLocaleString()}
+              </p>
+            </div>
+            <div style={{ height: 8, background: 'rgba(255,255,255,0.07)', borderRadius: 6, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', width: `${pct}%`,
+                background: `linear-gradient(90deg,${rankColor ?? '#6366f1'},${rankColor ? `${rankColor}88` : '#818cf8'})`,
+                borderRadius: 6, transition: 'width 0.6s ease',
+              }} />
+            </div>
           </div>
-          <div style={{ height: 8, background: 'rgba(255,255,255,0.07)', borderRadius: 6, overflow: 'hidden' }}>
-            <div style={{
-              height: '100%', width: `${pct}%`,
-              background: `linear-gradient(90deg,${isTop3 ? RANK_COLOR[Math.min(rank - 1, 2)] : '#6366f1'},${isTop3 ? RANK_COLOR[Math.min(rank - 1, 2)] + '88' : '#818cf8'})`,
-              borderRadius: 6, transition: 'width 0.6s ease',
-            }} />
-          </div>
-        </div>
+        )}
 
         {/* Vote button */}
         <div style={{ padding: '20px 24px' }}>
@@ -256,7 +278,7 @@ export default function OpenMicArtistVotingCard({
           freeVoting={freeVoting}
           paidVoting={paidVoting}
           onClose={() => setShowModal(false)}
-          onSuccess={(newCount) => { if (newCount) setLiveVoteCount(newCount); else setLiveVoteCount((v) => v + 1); }}
+          onSuccess={(newCount) => { if (newCount) setLiveVoteCount(newCount); else setLiveVoteCount((v) => (v ?? 0) + 1); }}
         />
       )}
     </>

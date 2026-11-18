@@ -1,8 +1,9 @@
 // The composite Film Academy tuition structure: every area of interest is
 // offered in five formats, and the same five prices apply to all areas.
-// Mirrors supabase/migrations/20271043000000_academy_area_pricing_options.sql.
+// Mirrors supabase/migrations/20271060000000_academy_area_pricing_options.sql.
 // This module is the single source for: seeding an area's option rows, the
-// admin's label/price editor, and validating + pricing an applicant's format.
+// admin's label/price editor, validating + pricing an applicant's format, and
+// stating the cap on a public page.
 
 export const ACADEMY_PRICING_KEYS = [
   'weekend_day',
@@ -36,7 +37,7 @@ export const ACADEMY_PRICING_STRUCTURE: AcademyPricingOption[] = [
 
 /** What an applicant pays at application time. */
 export const ACADEMY_DELIVERABLES = [
-  '2 movie projects',
+  '4 weeks with 80% Practical Movie projects',
   'Potential talent management contract and signing into Timeless Movies Production',
   'Assistance to produce your own movie, and to set up & manage a YouTube channel',
 ];
@@ -46,6 +47,19 @@ export const ACADEMY_FEE_EXCLUSIONS = [
   'Feeding',
   'Project fees: script print-out, make-up, props & set design, location (₦20,000 per movie project)',
 ];
+
+/**
+ * How many priced areas one application may carry, per batch.
+ *
+ * Enforced on the SERVER because the cap is a commercial rule, not a UI nicety:
+ * a form that stops at this number is not what decides. An application that
+ * slipped past it would be charged for every area it named.
+ *
+ * Applied to the DEDUPLICATED list, and travelled with the catalogue so a
+ * public page quotes the same cap instead of keeping its own copy. Existing
+ * applications above it are left alone — the cap governs new submissions.
+ */
+export const MAX_INTEREST_AREAS_PER_APPLICATION = 2;
 
 /**
  * The format priced for a client that never chose one (the old web form sends

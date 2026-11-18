@@ -791,14 +791,32 @@ func (s *Service) IsSplitParticipant(ctx context.Context, splitID, userID string
 	return b.OrganiserID == userID, nil
 }
 
+// PoolDraft is the create-form payload: the pool plus the display details
+// (description, goal, payout rule) the detail screen renders.
+type PoolDraft struct {
+	Title         string
+	Description   string
+	GoalKobo      int64
+	PayoutRule    string
+	BeneficiaryID *string
+}
+
 // CreatePool opens a group pool. Beneficiary defaults to the organiser.
-func (s *Service) CreatePool(ctx context.Context, organiserID, title string, beneficiaryID *string) (*GroupPool, error) {
-	p := &GroupPool{ID: uuid.New().String(), OrganiserID: organiserID, Title: title, BeneficiaryID: beneficiaryID, State: PoolOpen, CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	const ins = `INSERT INTO group_pools (id, organiser_id, title, beneficiary_id, state) VALUES ($1,$2,$3,$4,'OPEN')`
-	if _, err := s.db.Exec(ctx, ins, p.ID, p.OrganiserID, p.Title, p.BeneficiaryID); err != nil {
+func (s *Service) CreatePool(ctx context.Context, organiserID string, d PoolDraft) (*GroupPool, error) {
+	if d.GoalKobo < 0 {
+		return nil, errors.New("social: pool goal must be non-negative")
+	}
+	p := &GroupPool{
+		ID: uuid.New().String(), OrganiserID: organiserID, Title: d.Title,
+		Description: d.Description, GoalKobo: d.GoalKobo, PayoutRule: d.PayoutRule,
+		BeneficiaryID: d.BeneficiaryID, State: PoolOpen, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	const ins = `INSERT INTO group_pools (id, organiser_id, title, description, goal_kobo, payout_rule, beneficiary_id, state)
+	             VALUES ($1,$2,$3,$4,$5,$6,$7,'OPEN')`
+	if _, err := s.db.Exec(ctx, ins, p.ID, p.OrganiserID, p.Title, p.Description, p.GoalKobo, p.PayoutRule, p.BeneficiaryID); err != nil {
 		return nil, fmt.Errorf("social: create pool: %w", err)
 	}
-	s.log(organiserID, "", "social.pool.create", "group_pool", p.ID, nil, nil)
+	s.log(organiserID, "", "social.pool.create", "group_pool", p.ID, nil, map[string]any{"goal_kobo": d.GoalKobo})
 	return p, nil
 }
 
@@ -1091,6 +1109,79 @@ func (s *Service) GetPool(ctx context.Context, callerID, poolID string) (*GroupP
 	return s.callerPool(ctx, callerID, poolID)
 }
 
+// PoolContributor is one positive contribution row on a pool detail read.
+type PoolContributor struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Handle     string `json:"handle"`
+	AmountKobo int64  `json:"amount_kobo"`
+}
+
+// PoolDetail is the mobile GET /pools/:id contract shape: the pool plus its
+// derived balance and contributor roster.
+type PoolDetail struct {
+	ID            string            `json:"id"`
+	OrganiserID   string            `json:"organiser_id"`
+	Title         string            `json:"title"`
+	Description   string            `json:"description"`
+	Status        string            `json:"status"`
+	GoalKobo      int64             `json:"goal_kobo"`
+	PayoutRule    string            `json:"payout_rule"`
+	BeneficiaryID *string           `json:"beneficiary_id,omitempty"`
+	RaisedKobo    int64             `json:"raised_kobo"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+	Contributors  []PoolContributor `json:"contributors"`
+}
+
+// GetPoolDetail is the member pool read behind GET /pools/:id. It starts at
+// callerPool, so a caller with no stake receives the uniform ErrNotFound —
+// the balance and roster below are visible only to a stakeholder.
+func (s *Service) GetPoolDetail(ctx context.Context, callerID, poolID string) (*PoolDetail, error) {
+	p, err := s.callerPool(ctx, callerID, poolID)
+	if err != nil {
+		return nil, err
+	}
+	const balQ = `SELECT COALESCE(SUM(amount_kobo),0) FROM pool_contributions WHERE pool_id=$1`
+	var raised int64
+	if err := s.db.QueryRow(ctx, balQ, poolID).Scan(&raised); err != nil {
+		return nil, fmt.Errorf("social: pool detail balance: %w", err)
+	}
+	// Positive rows only: the payout drain is a negative row on the
+	// beneficiary, not a contributor.
+	const cQ = `SELECT c.id::text,
+	                   COALESCE(NULLIF(trim(up.full_name), ''), ch.handle, ''),
+	                   COALESCE(ch.handle, ''), c.amount_kobo
+	            FROM pool_contributions c
+	            LEFT JOIN user_profiles up ON up.id = c.user_id
+	            LEFT JOIN cashtag_handles ch ON ch.user_id = c.user_id
+	            WHERE c.pool_id=$1 AND c.amount_kobo > 0
+	            ORDER BY c.created_at
+	            LIMIT 200`
+	rows, err := s.db.Query(ctx, cQ, poolID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	contribs := []PoolContributor{}
+	for rows.Next() {
+		var c PoolContributor
+		if err := rows.Scan(&c.ID, &c.Name, &c.Handle, &c.AmountKobo); err != nil {
+			return nil, err
+		}
+		contribs = append(contribs, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return &PoolDetail{
+		ID: p.ID, OrganiserID: p.OrganiserID, Title: p.Title, Status: string(p.State),
+		Description: p.Description, GoalKobo: p.GoalKobo, PayoutRule: p.PayoutRule,
+		BeneficiaryID: p.BeneficiaryID, RaisedKobo: raised,
+		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, Contributors: contribs,
+	}, nil
+}
+
 // GetPoolOversight is the ADMIN read behind GET /api/social/admin/pools/:id:
 // the pool row, the derived balance, and the full contribution roster (who
 // put in what, incl. the negative drain row once paid out) — the money detail
@@ -1187,10 +1278,12 @@ func (s *Service) getSplit(ctx context.Context, splitID string) (*SplitBill, err
 }
 
 func (s *Service) getPool(ctx context.Context, poolID string) (*GroupPool, error) {
-	const q = `SELECT id, organiser_id, title, beneficiary_id, state, created_at, updated_at FROM group_pools WHERE id=$1`
+	const q = `SELECT id, organiser_id, title, description, goal_kobo, payout_rule, beneficiary_id, state, created_at, updated_at
+	           FROM group_pools WHERE id=$1`
 	var p GroupPool
 	var state string
-	if err := s.db.QueryRow(ctx, q, poolID).Scan(&p.ID, &p.OrganiserID, &p.Title, &p.BeneficiaryID, &state, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	if err := s.db.QueryRow(ctx, q, poolID).Scan(&p.ID, &p.OrganiserID, &p.Title, &p.Description,
+		&p.GoalKobo, &p.PayoutRule, &p.BeneficiaryID, &state, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -1393,6 +1486,9 @@ type GroupPool struct {
 	ID            string    `json:"id"`
 	OrganiserID   string    `json:"organiser_id"`
 	Title         string    `json:"title"`
+	Description   string    `json:"description"`
+	GoalKobo      int64     `json:"goal_kobo"`
+	PayoutRule    string    `json:"payout_rule"`
 	BeneficiaryID *string   `json:"beneficiary_id,omitempty"` // defaults to organiser at payout
 	State         PoolState `json:"state"`
 	CreatedAt     time.Time `json:"created_at"`

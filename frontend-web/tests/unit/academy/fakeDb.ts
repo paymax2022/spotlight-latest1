@@ -26,6 +26,14 @@ export function fakeDb(tables: Record<string, Row[]>, failing: string[] = []) {
         upsert(patch: Row) { updates.push({ table, patch }); return Promise.resolve({ error: null }); },
         eq(col: string, val: unknown) { rows = rows.filter((r) => r[col] === val); return builder; },
         in(col: string, vals: unknown[]) { rows = rows.filter((r) => vals.includes(r[col])); return builder; },
+        not(col: string, operator: string, val: unknown) {
+          if (operator === 'is' && val === null) {
+            rows = rows.filter((r) => r[col] !== null && r[col] !== undefined);
+          } else if (operator === 'eq') {
+            rows = rows.filter((r) => r[col] !== val);
+          }
+          return builder;
+        },
         order(col: string) {
           rows.sort((a, b) => Number(a[col] ?? 0) - Number(b[col] ?? 0));
           return builder;

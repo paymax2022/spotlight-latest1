@@ -136,3 +136,27 @@ task-tracker.json
 
 # Film Academy assessment bank = the answer key. Never commit it (public repo); see tests/fixtures/academy/README.md.
 frontend-web/tests/fixtures/academy/*.csv
+
+# superpowers worktrees
+.worktrees/
+
+# Signing material. build-apk.sh/build-aab.sh both document that the release key
+# lives in $HOME (~/.android-keystores/paymax-release.properties) because
+# `expo prebuild --clean` wipes android/ — which .gitignore already excludes. A
+# keystore that appears inside the module is therefore a stray, and this tree is
+# committed from by several sessions at once: one `git add` would publish a
+# private key into a public repo, where deleting the file afterwards is not a
+# revert. Ignore the class, not the one filename seen on 2026-11-11.
+*.keystore
+*.jks
+*.p12
+
+# Stamped local build outputs, same class as release-artifacts/ above. Gradle
+# regenerates these on every run, and 103MB of them sat untracked-and-unignored
+# in the mobile module.
+mobile-app/reactnative/build-*.apk
+mobile-app/reactnative/build-*.aab
+
+# Disposable `next build` outputs from verification runs (distDir overrides).
+# 742MB of .next-verify2 was indistinguishable from source in `git status`.
+frontend-web/.next-verify*/

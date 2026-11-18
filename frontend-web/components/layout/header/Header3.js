@@ -97,8 +97,8 @@ export default function Header3({
                                             </span>
                                         </Link>
                                     </div>
-                                    <div className="header__hamburger d-lg-none my-auto">
-                                        <div className="sidebar__toggle" onClick={handleOffCanvas}>
+                                    <div className="header__hamburger my-auto">
+                                        <div className="sidebar__toggle" data-drawer-toggle="offcanvas" onClick={handleOffCanvas}>
                                             <i className="fas fa-bars" />
                                         </div>
                                     </div>

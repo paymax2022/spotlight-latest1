@@ -92,7 +92,7 @@ export default function PreCallScreen() {
           <PrimaryButton label="Re-run device check" variant="secondary" onPress={doRunCheck} loading={runCheck.isPending} style={styles.btn} />
           <PrimaryButton
             label={callMode === 'video' ? 'Join video call' : 'Join audio call'}
-            onPress={() => router.replace(`/(doctor)/consult/${appointmentId}/call?mode=${callMode}`)}
+            onPress={() => router.replace(`/(doctor)/consult/${appointmentId}/room?mode=${callMode}`)}
             disabled={!current.ready}
             style={styles.btn}
           />

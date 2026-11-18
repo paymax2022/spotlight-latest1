@@ -49,6 +49,8 @@ import {
   doctorPost,
   doctorPut,
 } from '@/api/doctor.client';
+import { mapAppointmentWire, mapSettingsUpdateBody, orNull } from '@/features/doctor/mapping';
+import type { AppointmentWire } from '@/features/doctor/mapping';
 
 // Simulate network latency so loading states are exercised in the UI.
 const wait = <T>(value: T, ms = 350): Promise<T> =>
@@ -286,17 +288,23 @@ export async function getAvailability(doctorId?: string): Promise<AvailabilitySc
   return doctorGet<AvailabilitySchedule>('/availability', { doctorId });
 }
 
+// Live `/appointments` answers appointments rows (internal/doctor
+// repository.go appointmentColumns): real data, but no `initials`/`avatarColor`
+// and a `consultType` the screens index into an icon map, so every row goes
+// through mapAppointmentWire before a screen sees it.
 export async function getAppointments(status?: ConsultStatus): Promise<DoctorAppointment[]> {
   if (DOCTOR_USE_MOCK) {
     const list = status ? DEMO_APPOINTMENTS.filter((a) => a.status === status) : DEMO_APPOINTMENTS;
     return wait(list);
   }
-  return doctorGet<DoctorAppointment[]>('/appointments', { status });
+  const rows = await doctorGet<AppointmentWire[]>('/appointments', { status });
+  return rows.map(mapAppointmentWire);
 }
 
-export async function getAppointment(id: string): Promise<DoctorAppointment | undefined> {
-  if (DOCTOR_USE_MOCK) return wait(DEMO_APPOINTMENTS.find((a) => a.id === id));
-  return doctorGet<DoctorAppointment | undefined>(`/appointments/${id}`);
+export async function getAppointment(id: string): Promise<DoctorAppointment | null> {
+  if (DOCTOR_USE_MOCK) return wait(orNull(DEMO_APPOINTMENTS.find((a) => a.id === id)));
+  const wire = await doctorGet<AppointmentWire | null>(`/appointments/${id}`);
+  return orNull(wire && mapAppointmentWire(wire));
 }
 
 export async function getPatientProfile(patientId: string): Promise<PatientMedicalProfile> {
@@ -454,5 +462,7 @@ export async function createSupportTicket(input: CreateSupportTicketInput): Prom
 
 export async function updateSettings(input: UpdateDoctorSettingsInput): Promise<DoctorSettings> {
   if (DOCTOR_USE_MOCK) return wait({ ...DEMO_SETTINGS, ...input.settings }, 500);
-  return doctorPut<DoctorSettings>('/settings', input, input.idempotencyKey);
+  // Go's UpdateSettingsRequest is flat; the nested `settings` wrapper bound
+  // nothing, so every toggle returned 200 while writing zero columns.
+  return doctorPut<DoctorSettings>('/settings', mapSettingsUpdateBody(input), input.idempotencyKey);
 }

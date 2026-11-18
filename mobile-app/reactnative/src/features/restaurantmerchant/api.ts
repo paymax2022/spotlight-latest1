@@ -59,6 +59,10 @@ function mapStore(r: any): MerchantStore {
     createdAt: r.created_at,
     geoLat: typeof r.geo_lat === 'number' ? r.geo_lat : null,
     geoLng: typeof r.geo_lng === 'number' ? r.geo_lng : null,
+    // Read back with the pin, so reopening an outlet still shows the confirmation the
+    // owner saw when they set it. Absent on an older payload reads as "no code", which
+    // is what it is — the pin itself is the coordinates, not this string.
+    plusCode: typeof r.plus_code === 'string' && r.plus_code ? r.plus_code : null,
     // Left undefined when the server omits it, so the UI can tell "not loaded"
     // from a genuine ₦0 and never shows a price the owner did not set.
     packagingFeeKobo: typeof r.packaging_fee_kobo === 'number' ? r.packaging_fee_kobo : undefined,
@@ -90,9 +94,6 @@ function mapKYB(r: any, documents: string[] = []): RestaurantKYB {
     tin: r?.tin ?? '',
     contactEmail: r?.contact_email ?? '',
     contactPhone: r?.contact_phone ?? '',
-    bankCode: r?.bank_code ?? '',
-    accountNumber: r?.account_number ?? '',
-    accountName: r?.account_name ?? '',
     status: r?.status ?? 'draft',
     decisionReason: r?.decision_reason ?? undefined,
     documents,
@@ -110,7 +111,7 @@ let seq = 0;
 // in the offline demo would be noise, not a warning).
 let mockKYB: RestaurantKYB = {
   restaurantId: mockStore.id, legalName: '', businessType: '', rcNumber: '', tin: '',
-  contactEmail: '', contactPhone: '', bankCode: '', accountNumber: '', accountName: '',
+  contactEmail: '', contactPhone: '',
   status: 'approved', documents: [],
 };
 const nextId = (p: string) => `${p}-${(seq += 1)}`;
@@ -359,7 +360,6 @@ export async function getEarnings(): Promise<MerchantEarnings> {
 export type SaveKYBInput = Pick<
   RestaurantKYB,
   'legalName' | 'businessType' | 'rcNumber' | 'tin' | 'contactEmail' | 'contactPhone'
-  | 'bankCode' | 'accountNumber' | 'accountName'
 >;
 
 export async function getKYB(id: string): Promise<RestaurantKYB> {
@@ -377,9 +377,6 @@ export async function saveKYB(id: string, input: SaveKYBInput): Promise<Restaura
     tin: input.tin,
     contact_email: input.contactEmail,
     contact_phone: input.contactPhone,
-    bank_code: input.bankCode,
-    account_number: input.accountNumber,
-    account_name: input.accountName,
   };
   const raw = unwrap<any>(await api.put(`${BASE}/${enc(id)}/kyb`, body));
   return mapKYB(raw?.kyb ?? raw);
@@ -500,14 +497,16 @@ export async function submitKYB(id: string): Promise<RestaurantKYB> {
   return mapKYB(raw?.kyb ?? raw);
 }
 
-// Admin-managed taxonomy (read-only for owners). Returns [] in mock mode AND
-// when the backend FEATURE_RESTAURANT_ADMIN_CATEGORIES flag is off (route 404s).
-// The 404 is a documented default-off state, not a bug — the caller falls back
-// to the legacy per-category add — so swallow it quietly instead of letting
-// axios log a console-level HTTP error. Any OTHER status is still thrown so
-// genuine server errors stay visible.
-export async function getMenuTaxonomy(): Promise<TaxonomyCategory[]> {
-  if (USE_MOCK) return [];
+// Admin-managed taxonomy (read-only for owners). `null` means the route is not
+// mounted (FEATURE_RESTAURANT_ADMIN_CATEGORIES off: 404, or mock mode), so the
+// caller may fall back to the legacy per-category add. An ARRAY — even an empty
+// one — means taxonomy is mounted and owns category management; the backend
+// 403s any owner category write in that mode. The 404 is a documented default-off
+// state, not a bug, so swallow it quietly instead of letting axios log a
+// console-level HTTP error. Any OTHER status is still thrown so genuine server
+// errors stay visible.
+export async function getMenuTaxonomy(): Promise<TaxonomyCategory[] | null> {
+  if (USE_MOCK) return null;
   let raw: unknown;
   try {
     raw = unwrap<any>(await api.get(`${BASE}/menu-taxonomy/categories`, {
@@ -517,7 +516,7 @@ export async function getMenuTaxonomy(): Promise<TaxonomyCategory[]> {
       skipAuthRedirect: true,
     }));
   } catch (e: any) {
-    if (e?.response?.status === 404) return [];
+    if (e?.response?.status === 404) return null;
     throw e;
   }
   const list: any[] = Array.isArray(raw) ? raw : [];

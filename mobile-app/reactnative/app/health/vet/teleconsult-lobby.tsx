@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useMutation } from '@tanstack/react-query';
 import { CheckCircle2, Wifi, Volume2, Video } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -13,6 +14,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import EmergencyBanner from '@/features/health/components/EmergencyBanner';
 import { useAppointment, useConsult } from '@/features/health/vet/hooks';
 import { VET_EMERGENCY_DISCLAIMER } from '@/features/health/vet/constants';
+import { openVetConsultSession, useConsultSession } from '@/features/consult';
 
 const CHECKS = [
   { icon: Wifi, label: 'Network connection looks good' },
@@ -22,8 +24,51 @@ const CHECKS = [
 
 export default function TeleconsultLobbyScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: appt, isLoading, isError, refetch } = useAppointment(id);
+  const appointmentId = String(id);
+  const { data: appt, isLoading, isError, refetch } = useAppointment(appointmentId);
   const { data: consult } = useConsult(appt ? (appt.consultId ?? appt.id) : '');
+
+  // Open the one timed session pinned to this appointment. When the engine's
+  // media rail is unavailable the mutation fails and the legacy VideoSDK room
+  // stays reachable — that is the rollback path the spec requires.
+  const open = useMutation({ mutationFn: () => openVetConsultSession(appointmentId) });
+
+  useEffect(() => {
+    open.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appointmentId]);
+
+  const session = open.data;
+  const poll = useConsultSession(session?.id);
+  const state = poll.data?.state ?? session?.state;
+  const timed = Boolean(session);
+  const ready = timed ? state === 'live' : Boolean(consult?.providerReady);
+  // Hold Join until the open-session call has actually answered. `isPending` is
+  // false while the mutation is still `idle`, so a warm-cache mount would paint
+  // an enabled button before the effect fires and a fast tap could land in the
+  // legacy room after the engine created a timed one.
+  const routingSettled = open.isSuccess || open.isError;
+
+  const status = !timed
+    ? consult?.providerReady
+      ? 'Your vet is ready to start'
+      : 'Waiting for your vet to join…'
+    : state === 'live'
+      ? 'Your vet is ready to start'
+      : state === 'ended' || state === 'cancelled'
+        ? 'This consultation has ended'
+        : 'Waiting for your vet to join…';
+
+  const join = () => {
+    if (timed) {
+      router.replace({ pathname: '/health/vet/timed-consult', params: { appointmentId } });
+      return;
+    }
+    router.replace({
+      pathname: '/health/vet/teleconsult',
+      params: { id: appt?.consultId ?? appt?.id ?? appointmentId, appointmentId },
+    });
+  };
 
   if (isLoading) {
     return (
@@ -42,8 +87,6 @@ export default function TeleconsultLobbyScreen() {
     );
   }
 
-  const ready = consult?.providerReady ?? false;
-
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Consult lobby" subtitle={appt.vetName} />
@@ -56,31 +99,45 @@ export default function TeleconsultLobbyScreen() {
           <Text style={styles.sub}>Tele-consult for {appt.petName}</Text>
           <View style={[styles.statusChip, ready ? styles.statusOn : styles.statusOff]}>
             <Text style={[styles.statusText, { color: ready ? Colors.teal : Colors.onSurfaceVariant }]}>
-              {ready ? 'Your vet is ready to start' : 'Waiting for your vet to join…'}
+              {status}
             </Text>
           </View>
+          {open.isError ? (
+            <Text style={styles.fallback}>
+              The live timed room is unavailable right now, so the standard room opens instead.
+            </Text>
+          ) : null}
         </View>
 
         <EmergencyBanner message={VET_EMERGENCY_DISCLAIMER} />
 
-        <Text style={styles.sectionTitle}>Pre-call checks</Text>
-        <View style={styles.checks}>
-          {CHECKS.map((c) => (
-            <View key={c.label} style={styles.checkRow}>
-              <View style={styles.checkIcon}>
-                <c.icon size={16} color={Colors.teal} strokeWidth={2} />
-              </View>
-              <Text style={styles.checkText}>{c.label}</Text>
-              <CheckCircle2 size={18} color={Colors.teal} strokeWidth={2} />
+        {session?.mode === 'chat' ? (
+          <Text style={styles.sectionTitle}>
+            This is a timed chat consultation — video and audio are not used.
+          </Text>
+        ) : (
+          <>
+            <Text style={styles.sectionTitle}>Pre-call checks</Text>
+            <View style={styles.checks}>
+              {CHECKS.map((c) => (
+                <View key={c.label} style={styles.checkRow}>
+                  <View style={styles.checkIcon}>
+                    <c.icon size={16} color={Colors.teal} strokeWidth={2} />
+                  </View>
+                  <Text style={styles.checkText}>{c.label}</Text>
+                  <CheckCircle2 size={18} color={Colors.teal} strokeWidth={2} />
+                </View>
+              ))}
             </View>
-          ))}
-        </View>
+          </>
+        )}
       </ScrollView>
 
       <View style={styles.footer}>
         <PrimaryButton
-          label={ready ? 'Join consult' : 'Join when ready'}
-          onPress={() => router.replace({ pathname: '/health/vet/teleconsult', params: { id: appt.consultId ?? appt.id, appointmentId: appt.id } })}
+          label={!routingSettled ? 'Opening your room…' : ready ? 'Join consult' : 'Join when ready'}
+          onPress={join}
+          disabled={!routingSettled}
         />
       </View>
     </SafeAreaView>
@@ -102,6 +159,7 @@ const styles = StyleSheet.create({
   statusOn: { backgroundColor: Colors.iconBgTeal },
   statusOff: { backgroundColor: Colors.surfaceContainerHigh },
   statusText: { ...Typography.labelMd },
+  fallback: { ...Typography.caption, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: Spacing.sm, paddingHorizontal: Spacing.md },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface },
   checks: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.sm },
   checkRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.sm },

@@ -38,4 +38,10 @@ jobs:
           cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
       - run: npm ci
       - name: Typecheck
+        env:
+          # The mobile whole-app `tsc --noEmit` aborts in V8 with
+          # FatalProcessOutOfMemory (exit 134) at the runner's default heap, and
+          # needs the same 4 GB it needs locally. A ceiling, not an allocation:
+          # the smaller typechecks never approach it.
+          NODE_OPTIONS: --max-old-space-size=4096
         run: ${{ inputs.typecheck-command }}

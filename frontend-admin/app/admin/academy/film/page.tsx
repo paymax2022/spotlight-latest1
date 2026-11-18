@@ -26,8 +26,9 @@ import {
 } from '../_ui';
 import * as svc from '@/services/filmAcademyAdminService';
 import { parseFormatPriceInput, FORMAT_PRICE_HINT } from './formatPrice';
+import { TopicsTab } from './TopicsTab';
 
-type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'assessment' | 'bank' | 'exams' | 'settings';
+type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress' | 'submissions' | 'assessment' | 'bank' | 'exams' | 'topics' | 'settings';
 
 const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'batches',     label: 'Batches',      hint: 'Cohorts the app offers on /film-academy' },
@@ -39,6 +40,7 @@ const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'assessment',  label: 'Import',       hint: 'Stage the 256 MCQ bank (preview → commit as drafts)' },
   { key: 'bank',        label: 'Question Bank',hint: 'SME review queue — approve to make a question exam-eligible' },
   { key: 'exams',       label: 'Exams',        hint: 'Author exams and publish them once the approved pool covers the draw' },
+  { key: 'topics',      label: 'Topic Mastery',hint: 'TMFA gates, curriculum import, media, holds, practicals, mastery, pilot' },
   { key: 'settings',    label: 'Settings',     hint: 'Fees and areas used by the apply form' },
 ];
 
@@ -113,6 +115,7 @@ export default function FilmAcademyAdminPage() {
       {tab === 'assessment'   ? <ImportTab onNotice={setNotice} /> : null}
       {tab === 'bank'         ? <QuestionBankTab onNotice={setNotice} /> : null}
       {tab === 'exams'        ? <ExamsTab onNotice={setNotice} /> : null}
+      {tab === 'topics'       ? <TopicsTab onNotice={setNotice} /> : null}
       {tab === 'settings'     ? <SettingsTab onNotice={setNotice} /> : null}
     </Page>
   );
@@ -1265,7 +1268,8 @@ function SettingsTab({ onNotice }: NoticeProp) {
         </StateBlock>
 
         <AuditNote>
-          What every tuition buys: 2 movie projects; a potential talent management contract and
+          What every tuition buys: 4 weeks with 80% Practical Movie projects; a potential talent
+          management contract and
           signing into Timeless Movies Production; assistance to produce your own movie and to set
           up &amp; manage a YouTube channel. Tuition excludes feeding and project fees (script
           print-out, make-up, props &amp; set design, location — ₦20,000 per movie project). This is

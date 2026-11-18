@@ -14,6 +14,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/internal/escrow"
 	"spotlight/backend/internal/finance/tiers"
+	"spotlight/backend/internal/health/consultengine"
 	healthvet "spotlight/backend/internal/health/vet"
 )
 
@@ -155,6 +156,12 @@ type bookRequest struct {
 	DestLng          *float64 `json:"destLng"`
 	IntakeResponseID *string  `json:"intakeResponseId"`
 	IdempotencyKey   string   `json:"idempotencyKey"`
+	// Tele-consult pricing. packageId selects one of the vet's published timed
+	// packages; consultMode is the requested mode for a legacy (service-priced)
+	// tele booking; expectedTotalKobo is the total the app showed the owner.
+	PackageID         string `json:"packageId"`
+	ConsultMode       string `json:"consultMode"`
+	ExpectedTotalKobo int64  `json:"expectedTotalKobo"`
 }
 
 // validateBook checks the request and returns the parsed slot start and visit type.
@@ -244,17 +251,24 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	var serviceID string
-	err := h.db.QueryRow(ctx, `
-		SELECT id::text FROM vet_services
-		WHERE provider_id = $1::uuid AND visit_type = $2 AND active
-		ORDER BY price_kobo ASC, created_at ASC LIMIT 1`, req.VetID, visit).Scan(&serviceID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		fail(c, http.StatusUnprocessableEntity, "this vet does not offer "+visitWire(visit)+" visits")
-		return
-	}
-	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
-		return
+	if strings.TrimSpace(req.PackageID) == "" {
+		err := h.db.QueryRow(ctx, `
+			SELECT id::text FROM vet_services
+			WHERE provider_id = $1::uuid AND visit_type = $2 AND active
+			ORDER BY price_kobo ASC, created_at ASC LIMIT 1`, req.VetID, visit).Scan(&serviceID)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			// A tele vet may sell timed packages instead of a visit service.
+			// Leave the id empty and let healthvet.Book distinguish
+			// ErrPackageRequired from "this vet does not offer TELE".
+			if visit != "TELE" {
+				fail(c, http.StatusUnprocessableEntity, "this vet does not offer "+visitWire(visit)+" visits")
+				return
+			}
+		case err != nil:
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
 	if open, aerr := h.slotIsOpen(ctx, req.VetID, start, visit); aerr != nil {
@@ -271,7 +285,9 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 
 	a, err := h.svc.Book(ctx, uid, healthvet.BookInput{
 		ProviderID: req.VetID, PetID: req.PetID, ServiceID: serviceID,
-		VisitType: healthvet.VisitType(visit), SlotStart: start, SlotEnd: start.Add(slotLength),
+		PackageID: req.PackageID, ConsultMode: req.ConsultMode,
+		ExpectedTotalKobo: req.ExpectedTotalKobo,
+		VisitType:         healthvet.VisitType(visit), SlotStart: start, SlotEnd: start.Add(slotLength),
 		IdempotencyKey: idem,
 	})
 	if err != nil {
@@ -280,6 +296,9 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 			fail(c, http.StatusForbidden, err.Error())
 		case errors.Is(err, escrow.ErrTierGateUnwired):
 			fail(c, http.StatusServiceUnavailable, err.Error())
+		case errors.Is(err, healthvet.ErrPackageRequired), errors.Is(err, healthvet.ErrPackageInvalid),
+			errors.Is(err, healthvet.ErrConsultModeInvalid), errors.Is(err, healthvet.ErrQuoteMismatch):
+			fail(c, http.StatusUnprocessableEntity, err.Error())
 		default:
 			fail(c, http.StatusUnprocessableEntity, err.Error())
 		}
@@ -312,6 +331,39 @@ func nullableStr(p *string) any {
 		return nil
 	}
 	return *p
+}
+
+// OpenConsultSession — POST /appointments/:id/consult-session. Either the pet
+// owner or the vet's owner may open the room; a stranger gets the same 404 a
+// missing appointment returns, so existence is never confirmed.
+func (h *Handler) OpenConsultSession(c *gin.Context) {
+	uid, ok := caller(c)
+	if !ok {
+		return
+	}
+	id, ok := pathUUID(c, "appointment id")
+	if !ok {
+		return
+	}
+	sess, err := h.svc.OpenConsultSession(c.Request.Context(), uid, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, healthvet.ErrAppointmentNotFound):
+			fail(c, http.StatusNotFound, "appointment not found")
+		case errors.Is(err, healthvet.ErrConsultNotOpenable):
+			fail(c, http.StatusConflict, err.Error())
+		case errors.Is(err, healthvet.ErrConsultUnavailable),
+			errors.Is(err, consultengine.ErrMediaUnavailable),
+			errors.Is(err, consultengine.ErrEscrowUnavailable):
+			fail(c, http.StatusServiceUnavailable, err.Error())
+		case errors.Is(err, consultengine.ErrInvalid), errors.Is(err, consultengine.ErrState):
+			fail(c, http.StatusConflict, err.Error())
+		default:
+			fail(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "session": sess})
 }
 
 // CancelAppointment — POST /appointments/:id/cancel. healthvet.Cancel moves the

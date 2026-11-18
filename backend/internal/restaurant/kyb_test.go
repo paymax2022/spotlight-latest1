@@ -40,13 +40,31 @@ func fullSoleProp() KYB {
 	return KYB{
 		LegalName: "Mama Put Ltd", BusinessType: "sole_proprietor",
 		ContactEmail: "owner@mamaput.ng", ContactPhone: "08012345678",
-		BankCode: "058", AccountNumber: "0123456789", AccountName: "Mama Put",
 	}
 }
 
 func TestValidateKYBForSubmit_SolePropOK(t *testing.T) {
 	if p := validateKYBForSubmit(fullSoleProp(), nil); len(p) != 0 {
 		t.Fatalf("a complete sole-proprietor KYB should submit cleanly, got %v", p)
+	}
+}
+
+// Business verification proves WHO the business is; where its money lands is a
+// separate, self-service concern (restaurant_bank_accounts + the withdrawal lane).
+// Payouts are credited to the merchant's wallet, so a missing or malformed bank
+// triple must never block an application.
+func TestValidateKYBForSubmit_IgnoresBankFields(t *testing.T) {
+	for name, k := range map[string]KYB{
+		"no bank details": fullSoleProp(),
+		"half-filled settlement account": func() KYB {
+			k := fullSoleProp()
+			k.AccountNumber = "12345" // not a NUBAN, no bank code, no name
+			return k
+		}(),
+	} {
+		if p := validateKYBForSubmit(k, nil); len(p) != 0 {
+			t.Errorf("%s: bank details are not part of KYB, got %v", name, p)
+		}
 	}
 }
 
@@ -74,9 +92,6 @@ func TestValidateKYBForSubmit_FieldChecks(t *testing.T) {
 		{"missing legal name", func(k *KYB) { k.LegalName = "" }, "legal_name"},
 		{"bad email", func(k *KYB) { k.ContactEmail = "not-an-email" }, "contact_email"},
 		{"missing phone", func(k *KYB) { k.ContactPhone = "" }, "contact_phone"},
-		{"short account number", func(k *KYB) { k.AccountNumber = "12345" }, "account_number"},
-		{"non-numeric account number", func(k *KYB) { k.AccountNumber = "12345abcde" }, "account_number"},
-		{"missing bank code", func(k *KYB) { k.BankCode = "" }, "bank_code"},
 		{"invalid business type", func(k *KYB) { k.BusinessType = "cooperative" }, "business_type"},
 	}
 	for _, c := range cases {
@@ -90,17 +105,7 @@ func TestValidateKYBForSubmit_FieldChecks(t *testing.T) {
 	}
 }
 
-func TestNUBANAndEmail(t *testing.T) {
-	for _, ok := range []string{"0123456789", "9999999999"} {
-		if !isNUBAN(ok) {
-			t.Errorf("%q should be a valid NUBAN", ok)
-		}
-	}
-	for _, bad := range []string{"", "123", "01234567890", "12345678a9"} {
-		if isNUBAN(bad) {
-			t.Errorf("%q should be an invalid NUBAN", bad)
-		}
-	}
+func TestKYBEmailCheck(t *testing.T) {
 	for _, ok := range []string{"a@b.co", "owner@mama.put.ng"} {
 		if !looksLikeEmail(ok) {
 			t.Errorf("%q should look like an email", ok)

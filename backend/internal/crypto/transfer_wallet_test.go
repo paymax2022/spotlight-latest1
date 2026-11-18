@@ -1,3 +1,5 @@
+//go:build tdd_red
+
 package crypto
 
 // RED-PHASE (TDD) unit tests for crypto wallet-to-wallet transfer

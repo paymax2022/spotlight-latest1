@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { loginAs } from '../helpers/auth';
-import { mockBillsCatalog } from '../helpers/bills';
+import { mockBillsCatalog, selectAirtimeNetwork } from '../helpers/bills';
 import { mockWallet } from '../helpers/wallet';
 
 test.describe('Bills E2E - Security and authorization', () => {
@@ -12,7 +12,7 @@ test.describe('Bills E2E - Security and authorization', () => {
 
   test('payment confirmation requires transaction PIN before debit', async ({ page }) => {
     await page.goto('/services/airtime');
-    await page.getByText('MTN').first().click();
+    await selectAirtimeNetwork(page, 'MTN');
     await page.getByPlaceholder('801 234 5678').fill('08031234567');
     await page.getByText('₦500').first().click();
     await page.getByText('Review Purchase').click();

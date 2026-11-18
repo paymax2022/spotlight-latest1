@@ -1,7 +1,13 @@
 # Supabase go-live runbook — local → live + PostGIS
 
-Target project ref: **`ptczqwfokydsdafpscex`**
-Project URL: **`https://ptczqwfokydsdafpscex.supabase.co`**
+Target project ref: **`nmseefdlliejmdbxytej`** (`spotlight-prod`, eu-north-1)
+Project URL: **`https://nmseefdlliejmdbxytej.supabase.co`**
+
+> The environment-to-ref map lives in
+> [`docs/devops/staging-environment-setup.md`](devops/staging-environment-setup.md)
+> and is authoritative: production `nmseefdlliejmdbxytej`, staging
+> `wnicsubiznmishkmunsv`. Earlier revisions of this runbook named
+> `ptczqwfokydsdafpscex`, a project since retired; do not configure from those.
 
 > This migrates the 272 local migrations (incl. the referral/stays work) to the
 > live project and enables PostGIS. Do it on a **fresh/empty** project or a
@@ -40,7 +46,7 @@ Optional belt-and-suspenders: **Dashboard → Database → Extensions → enable
 ## 2. Link the project and push migrations
 ```bash
 cd /path/to/spotlight/new           # repo root (has supabase/)
-supabase link --project-ref ptczqwfokydsdafpscex        # prompts for DB password
+supabase link --project-ref nmseefdlliejmdbxytej        # prompts for DB password
 
 # Preview what will be applied (no writes):
 supabase migration list             # shows local vs remote
@@ -50,7 +56,7 @@ supabase db push
 ```
 If you prefer not to `link`, push directly:
 ```bash
-supabase db push --db-url "postgresql://postgres:[DB_PASSWORD]@db.ptczqwfokydsdafpscex.supabase.co:5432/postgres"
+supabase db push --db-url "postgresql://postgres:[DB_PASSWORD]@db.nmseefdlliejmdbxytej.supabase.co:5432/postgres"
 ```
 `db push` runs each pending migration in timestamp order and records them in
 `supabase_migrations.schema_migrations`.
@@ -88,10 +94,10 @@ a couple of `stays_deals` rows for the landing feed (see
 
 **frontend-web/.env** (also the proxy target for mobile):
 ```
-NEXT_PUBLIC_SUPABASE_URL=https://ptczqwfokydsdafpscex.supabase.co
+NEXT_PUBLIC_SUPABASE_URL=https://nmseefdlliejmdbxytej.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<PUBLISHABLE_KEY>
 SUPABASE_SERVICE_ROLE_KEY=<SECRET_KEY>
-DATABASE_URL=postgresql://postgres:[DB_PASSWORD]@db.ptczqwfokydsdafpscex.supabase.co:5432/postgres
+DATABASE_URL=postgresql://postgres:[DB_PASSWORD]@db.nmseefdlliejmdbxytej.supabase.co:5432/postgres
 GO_BACKEND_URL=http://localhost:8091          # the Go backend (8091, not 8080)
 FEATURE_REFERRALS_ENABLED=true
 FEATURE_STAYS_ENABLED=true
@@ -99,7 +105,7 @@ FEATURE_STAYS_ENABLED=true
 
 **backend/.env** (Go API):
 ```
-DATABASE_URL=postgresql://postgres:[DB_PASSWORD]@db.ptczqwfokydsdafpscex.supabase.co:5432/postgres?sslmode=require
+DATABASE_URL=postgresql://postgres:[DB_PASSWORD]@db.nmseefdlliejmdbxytej.supabase.co:5432/postgres?sslmode=require
 FEATURE_REFERRALS_ENABLED=true
 FEATURE_STAYS_ENABLED=true
 FEATURE_REFERRAL_REWARDS_ENABLED=true
@@ -111,7 +117,7 @@ REFERRAL_REWARDS_INTERNAL_SECRET=<random-secret>
 **mobile-app/reactnative/.env** (Expo):
 ```
 EXPO_PUBLIC_API_BASE_URL=<frontend-web URL, e.g. https://app.spotlight.ng>
-EXPO_PUBLIC_SUPABASE_URL=https://ptczqwfokydsdafpscex.supabase.co
+EXPO_PUBLIC_SUPABASE_URL=https://nmseefdlliejmdbxytej.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=<PUBLISHABLE_KEY>
 EXPO_PUBLIC_REFERRAL_USE_MOCK=false
 EXPO_PUBLIC_STAYS_USE_MOCK=false
@@ -133,6 +139,10 @@ EXPO_PUBLIC_STAYS_USE_MOCK=false
 ---
 
 ## Run results — executed 2026-07-06 (project ptczqwfokydsdafpscex, empty project)
+
+> Historical record: that run happened against `ptczqwfokydsdafpscex`, which was
+> the live project at the time and has since been retired. The ref above in this
+> runbook is the current production project, not the one these results ran on.
 
 ### FINAL: all 273 migrations applied (0 pending) — full local→remote sync ✅
 First pass applied 242/273; the other 31 exposed **pre-existing defects** (would

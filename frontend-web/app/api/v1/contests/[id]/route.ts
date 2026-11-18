@@ -1,6 +1,6 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { createAdminClient } from '@/lib/supabase/server';
-import { getRemainingFreeVotes } from '@/src/server/voting/free-vote.service';
+import { getRemainingFreeVotes, mapSettingsRow } from '@/src/server/voting/free-vote.service';
 import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 
 function getIp(request: Request): string {
@@ -44,9 +44,12 @@ export async function GET(
     if (error) throw error;
     if (!contest) return errorResponse('Contest not found', 404);
 
+    // Full row, not a projection: the vote modal on /voting needs the whole
+    // settings object (cooldown, paid limits, visibility) and mapSettingsRow
+    // reads every column. Only an active settings row counts as configured.
     const { data: settings } = await supabase
       .from('voting_settings')
-      .select('voting_enabled, voting_ends_at, free_votes_per_day, free_voting_enabled')
+      .select('*')
       .eq('contest_id', id)
       .eq('status', 'active')
       .maybeSingle();
@@ -99,6 +102,7 @@ export async function GET(
       isTrending: vis.showVoteCount ? totalVotes > 10_000 : false,
       votingEnabled: settings?.voting_enabled ?? false,
       freeVotingEnabled: settings?.free_voting_enabled ?? false,
+      votingSettings: settings ? mapSettingsRow(settings) : null,
       freeVotesRemaining,
       userVoteCount: 0,
       // Visibility controls (respected by the app).

@@ -71,22 +71,52 @@ type AdminDispatchOrder struct {
 
 // AdminApplication mirrors the restaurant merchant record for the onboarding/KYC
 // review queue. The `restaurants` table is the merchant record; `is_open` gates
-// order placement, so onboarding approval == opening the restaurant. Onboarding
-// status is derived from is_open (no separate KYC column exists on `restaurants`
-// yet — see report; a richer KYC record would live on onb_application).
+// order placement, so onboarding approval == opening the restaurant. The filed KYB
+// lives on `restaurant_kyb` (one row per outlet) and the owner's name on
+// `user_profiles`, both joined here — the queue is the reviewer's only sight of them.
 type AdminApplication struct {
 	ID             string `json:"id"`
 	RestaurantName string `json:"restaurant_name"`
 	OwnerID        string `json:"owner_id"`
+	OwnerName      *string `json:"owner_name,omitempty"`
+	Email          *string `json:"email,omitempty"`
+	Phone          *string `json:"phone,omitempty"`
 	Address        string `json:"address,omitempty"`
+	// The KYB the merchant actually filed. The console's review panel was built
+	// against fixture rows carrying these fields while the queue read only
+	// `restaurants`, so a reviewer saw an empty panel and approved or rejected an
+	// outlet without its legal name or business type ever appearing. Nil means
+	// "not filed", which is not the same as an empty string.
+	LegalName     *string `json:"legal_name,omitempty"`
+	BusinessType  *string `json:"business_type,omitempty"`
+	CACNumber     *string `json:"cac_number,omitempty"` // restaurant_kyb.rc_number; only filed by a registered business
+	// Legacy settlement details. Outlets are now paid into the owner's wallet and
+	// pick the destination bank per withdrawal, so KYB no longer collects these and
+	// SaveKYB no longer writes them. They stay readable for applications filed
+	// before that change, and the console labels them as such — a reviewer must not
+	// reject a modern application over rows that were never asked for.
+	BankName      *string `json:"bank_name,omitempty"`  // payment_banks.name resolved from restaurant_kyb.bank_code
+	BankAccountNumber *string `json:"bank_account_number,omitempty"`
+	BankAccountName   *string `json:"bank_account_name,omitempty"`
+	// Tri-state: true verified, false name mismatch, nil never checked. Rendered as
+	// three different badges by the console, so a nil must not serialise as false.
+	BankAccountVerified          *bool       `json:"bank_account_verified,omitempty"`
+	BankAccountVerifiedAt        *time.Time  `json:"bank_account_verified_at,omitempty"`
+	BankAccountVerificationError *string     `json:"bank_account_verification_error,omitempty"`
 	Status         string `json:"status"` // pending|in_review|approved|rejected (FOOD-010: derived from the REAL restaurant_kyb state, not is_open)
 	// KYBStatus is the raw restaurants.kyb_status (E2E-PROV-020): Status alone
 	// maps both "never submitted" (NULL) and "submitted, awaiting review" to
 	// 'pending', which made them indistinguishable in the queue.
 	KYBStatus   *string               `json:"kyb_status,omitempty"`
 	Documents   []AdminApplicationDoc `json:"documents"` // restaurant_kyb_documents, keys signed for the reviewer
-	SubmittedAt time.Time             `json:"submitted_at"`
-	ReviewNote  *string               `json:"review_note,omitempty"`
+	// SubmittedAt is the KYB submission when one exists, else when the storefront
+	// record was created — the queue ages applications on it, so reporting the
+	// storefront date as the submission date made a never-filed outlet look dated.
+	SubmittedAt time.Time `json:"submitted_at"`
+	ReviewedAt  *time.Time `json:"reviewed_at,omitempty"` // restaurant_kyb.decided_at
+	// ReviewNote is the reviewer's last reason (restaurant_kyb.decision_reason) —
+	// what tells a re-reviewer that a bounce already happened and what it was for.
+	ReviewNote *string `json:"review_note,omitempty"`
 }
 
 // AdminPayoutRun is a READ-ONLY reconciliation view of settled food-delivery
@@ -174,9 +204,35 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 	// opened it, and the frontend's in_review/rejected filters never matched
 	// anything since this backend never emitted those values. Status is now
 	// derived from the real kyb_status snapshot.
+	// Every NULLIF below is deliberate: an unfiled KYB column is stored as '', and
+	// the console renders an empty string as the red "missing" flag, so a sole
+	// proprietor would be shown as failing a check that never applied to them.
 	const q = `
-		SELECT r.id, r.name, r.owner_id, COALESCE(r.address,''), r.kyb_status, r.created_at
+		SELECT r.id, r.name, r.owner_id,
+		       NULLIF(COALESCE(up.full_name,''),''),
+		       -- What the merchant filed on the application wins over the account
+		       -- record: the reviewer corresponds with the contact they nominated.
+		       COALESCE(NULLIF(COALESCE(k.contact_email,''),''), NULLIF(COALESCE(up.email,''),''), NULLIF(COALESCE(au.email,''),'')),
+		       COALESCE(NULLIF(COALESCE(k.contact_phone,''),''), NULLIF(COALESCE(up.phone,''),'')),
+		       COALESCE(r.address,''),
+		       r.kyb_status,
+		       NULLIF(COALESCE(k.legal_name,''),''),
+		       NULLIF(COALESCE(k.business_type,''),''),
+		       NULLIF(COALESCE(k.rc_number,''),''),
+		       NULLIF(COALESCE(pb.name,''),''),
+		       NULLIF(COALESCE(k.account_number,''),''),
+		       NULLIF(COALESCE(k.account_name,''),''),
+		       k.bank_account_verified,
+		       k.bank_account_verified_at,
+		       NULLIF(COALESCE(k.bank_account_verification_error,''),''),
+		       COALESCE(k.submitted_at, r.created_at),
+		       k.decided_at,
+		       NULLIF(COALESCE(k.decision_reason,''),'')
 		FROM restaurants r
+		LEFT JOIN restaurant_kyb k ON k.restaurant_id = r.id
+		LEFT JOIN user_profiles up ON up.id = r.owner_id
+		LEFT JOIN auth.users au ON au.id = r.owner_id
+		LEFT JOIN payment_banks pb ON pb.code = k.bank_code
 		ORDER BY r.created_at DESC`
 	// One query for every outlet's documents, rather than one per row. A failure
 	// here degrades to "no documents listed" instead of failing the whole queue:
@@ -195,13 +251,18 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 	for rows.Next() {
 		var a AdminApplication
 		var kybStatus *string
-		if err := rows.Scan(&a.ID, &a.RestaurantName, &a.OwnerID, &a.Address, &kybStatus, &a.SubmittedAt); err != nil {
+		if err := rows.Scan(
+			&a.ID, &a.RestaurantName, &a.OwnerID, &a.OwnerName, &a.Email, &a.Phone,
+			&a.Address, &kybStatus,
+			&a.LegalName, &a.BusinessType, &a.CACNumber,
+			&a.BankName, &a.BankAccountNumber, &a.BankAccountName,
+			&a.BankAccountVerified, &a.BankAccountVerifiedAt, &a.BankAccountVerificationError,
+			&a.SubmittedAt, &a.ReviewedAt, &a.ReviewNote,
+		); err != nil {
 			return nil, err
 		}
 		a.Status = kybStatusToApplicationStatus(kybStatus)
 		a.KYBStatus = kybStatus
-		// No KYC review-note column exists on `restaurants` yet (see report); the
-		// review note supplied on reject is delivered to the owner, not persisted.
 		if status != "" && a.Status != status {
 			continue
 		}
@@ -442,14 +503,25 @@ func namesRadicallyDiffer(storefront, legal, accountName string) bool {
 }
 
 // AdminNameMatchWarning reports whether the application's names look unrelated
-// (FOOD-UAT-A-011). The schema has no owner_full_name / business_name columns, so the
-// comparison is storefront name + KYB legal_name vs the settlement account_name — the
-// pairing that matters for payouts. Advisory only: it never blocks a decision.
+// (FOOD-UAT-A-011). The comparison is storefront name + KYB legal_name vs the
+// holder name on the payout account this owner's wallet would actually pay (their
+// default, else the most recent) — the pairing that matters for payouts, now that
+// KYB carries identity only and the destination is chosen per withdrawal. An owner
+// with no registered destination has nothing to compare and never warns.
+// Advisory only: it never blocks a decision.
 func (s *Service) AdminNameMatchWarning(ctx context.Context, restaurantID string) bool {
 	var storefront, legal, acct string
 	err := s.db.QueryRow(ctx,
-		`SELECT COALESCE(r.name,''), COALESCE(k.legal_name,''), COALESCE(k.account_name,'')
-		   FROM restaurants r LEFT JOIN restaurant_kyb k ON k.restaurant_id = r.id WHERE r.id=$1`,
+		`SELECT COALESCE(r.name,''), COALESCE(k.legal_name,''), COALESCE(ba.account_name,'')
+		   FROM restaurants r
+		   LEFT JOIN restaurant_kyb k ON k.restaurant_id = r.id
+		   LEFT JOIN LATERAL (
+		       SELECT account_name FROM restaurant_bank_accounts
+		        WHERE user_id = r.owner_id
+		        ORDER BY is_default DESC, created_at DESC
+		        LIMIT 1
+		   ) ba ON TRUE
+		  WHERE r.id=$1`,
 		restaurantID).Scan(&storefront, &legal, &acct)
 	if err != nil {
 		return false

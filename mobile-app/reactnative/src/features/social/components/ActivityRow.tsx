@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { ArrowDownToLine, ArrowUpFromLine, HandCoins, Split, Users } from 'lucide-react-native';
+import { ArrowDownToLine, ArrowUpFromLine, HandCoins, Split, Users, Receipt } from 'lucide-react-native';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
@@ -13,10 +13,15 @@ const KIND_META: Record<ActivityKind, { Icon: typeof HandCoins; verb: string; si
   request:  { Icon: HandCoins,        verb: 'Requested',sign: '' },
   split:    { Icon: Split,            verb: 'Split',    sign: '' },
   pool:     { Icon: Users,            verb: 'Pool',     sign: '' },
+  // A kind this build doesn't know yet (the backend grows the feed first).
+  // Renders the amount honestly with no verb rather than blanking the row or
+  // crashing on an undefined lookup.
+  other:    { Icon: Receipt,          verb: 'Activity', sign: '' },
 };
 
 export default function ActivityRow({ item, onPress }: { item: ActivityItem; onPress?: () => void }) {
-  const meta = KIND_META[item.kind];
+  // Belt and braces for a value that bypassed the API-layer vocabulary map.
+  const meta = KIND_META[item.kind] ?? KIND_META.other;
   const declined = item.status === 'declined';
   const pending = item.status === 'pending';
   const amountColor = item.kind === 'received' ? SocialColors.ok : SocialColors.text;

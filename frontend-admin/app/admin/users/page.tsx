@@ -65,6 +65,7 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [errored, setErrored] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [selected, setSelected] = useState<AdminUser | null>(null);
   const [saving, setSaving] = useState(false);
@@ -75,6 +76,7 @@ export default function AdminUsersPage() {
   const load = async (filters: AdminUserFilters) => {
     setLoading(true);
     setErrored(false);
+    setErrorMessage('');
     try {
       const rows = await listAdminUsers(filters);
       setUsers(rows);
@@ -83,6 +85,7 @@ export default function AdminUsersPage() {
       setErrored(true);
       setUsers([]);
       const detail = err instanceof Error ? err.message : '';
+      setErrorMessage(detail);
       toast.error(`Failed to load users${detail ? ` - ${detail}` : ''}. Check your permissions and try again.`);
     } finally {
       setLoading(false);
@@ -249,7 +252,7 @@ export default function AdminUsersPage() {
               {loading ? (
                 <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={5}>Loading…</td></tr>
               ) : errored ? (
-                <tr><td style={tdCell} colSpan={5}><Button variant="outline" sm onClick={() => void load(applied)}>Retry</Button> <span style={{ color: colors.danger }}>— failed to load.</span></td></tr>
+                <tr><td style={tdCell} colSpan={5}><Button variant="outline" sm onClick={() => void load(applied)}>Retry</Button> <span style={{ color: colors.danger }}>— failed to load{errorMessage ? `: ${errorMessage}` : '.'}</span></td></tr>
               ) : slice.length === 0 ? (
                 <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={5}>No users match the current filters.</td></tr>
               ) : (

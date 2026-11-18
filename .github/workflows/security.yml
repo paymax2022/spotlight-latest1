@@ -117,6 +117,10 @@ jobs:
       # 0.24.0 NEVER EXISTED — the tag 404s, so this step failed at "Set up job"
       # and trivy scanned nothing at all while the run still showed a job for it.
       # Upstream tags are v-prefixed; v0.36.0 is the current release.
+      # NOTE: the action unsets TRIVY_SEVERITY whenever format=sarif, unless this
+      # input is true (entrypoint.sh of v0.36.0) — so `severity` silently applied
+      # only to the exit code, not the report, and exit-code:1 fired on MEDIUM/UNKNOWN
+      # findings. That is why this job stayed red after the HIGH backlog was cleared.
       - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
@@ -126,6 +130,7 @@ jobs:
           exit-code: "1"
           format: sarif
           output: trivy-fs.sarif
+          limit-severities-for-sarif: true
       - if: always()
         uses: github/codeql-action/upload-sarif@v4
         with:

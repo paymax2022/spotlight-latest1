@@ -25,6 +25,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/internal/finance/ledger"
 )
 
 func TestErrMap_AuthZSentinels(t *testing.T) {
@@ -52,7 +54,7 @@ func TestLiveDB_SocialPoolReads_NonStakeholder_NotFound(t *testing.T) {
 	beneficiary := socialTestUser(t, pool)
 	outsider := socialTestUser(t, pool)
 
-	p, err := svc.CreatePool(ctx, organiser, "authz-pool", &beneficiary)
+	p, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "authz-pool", BeneficiaryID: &beneficiary})
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}
@@ -84,6 +86,92 @@ func TestLiveDB_SocialPoolReads_NonStakeholder_NotFound(t *testing.T) {
 	}
 	if got, err := svc.GetPool(ctx, beneficiary, p.ID); err != nil || got.ID != p.ID {
 		t.Fatalf("beneficiary GetPool = %+v err=%v, want the pool", got, err)
+	}
+}
+
+// The goal and display copy entered on the create form must survive the
+// round trip. POST /pools used to persist only the title, so the detail
+// screen's hero silently dropped a ₦100,000 goal (showed ₦0 with no progress).
+func TestLiveDB_SocialCreatePool_PersistsGoalAndDetails(t *testing.T) {
+	pool := socialTestPool(t)
+	ctx := context.Background()
+	svc := socialService(pool)
+	organiser := socialTestUser(t, pool)
+
+	const rule = "Organiser withdraws on the event date."
+	draft := PoolDraft{
+		Title:       "birthday",
+		Description: "for Tunde",
+		GoalKobo:    100_000_00,
+		PayoutRule:  rule,
+	}
+	p, err := svc.CreatePool(ctx, organiser, draft)
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	if p.GoalKobo != 100_000_00 || p.Description != "for Tunde" || p.PayoutRule != rule {
+		t.Fatalf("created pool = %+v, want goal 10000000, description and payout rule persisted", p)
+	}
+
+	got, err := svc.GetPoolDetail(ctx, organiser, p.ID)
+	if err != nil {
+		t.Fatalf("GetPoolDetail: %v", err)
+	}
+	if got.GoalKobo != 100_000_00 || got.Description != "for Tunde" || got.PayoutRule != rule {
+		t.Fatalf("detail = %+v, want the create-form goal/description/payout rule reflected", got)
+	}
+
+	rows, err := svc.ListPools(ctx, organiser, 10)
+	if err != nil {
+		t.Fatalf("ListPools: %v", err)
+	}
+	if len(rows) != 1 || rows[0].GoalKobo != 100_000_00 {
+		t.Fatalf("ListPools = %+v, want the pool at its 10000000 goal", rows)
+	}
+}
+
+// GetPoolDetail (the member GET /pools/:id read) inherits callerPool's
+// stake-scoping, and its roster must expose positive contribution rows only —
+// the negative payout drain is not a contributor.
+func TestLiveDB_SocialGetPoolDetail_ScopedWithRoster(t *testing.T) {
+	pool := socialTestPool(t)
+	ctx := context.Background()
+	svc := socialService(pool)
+	led := ledger.NewService(ledger.NewRepository(pool), nil)
+
+	organiser := socialTestUser(t, pool)
+	contributor := fundedContributor(t, ctx, pool, led, 1_000_00)
+	outsider := socialTestUser(t, pool)
+
+	p, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "detail-pool", BeneficiaryID: nil})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	if _, err := svc.ContributePool(ctx, contributor, p.ID, 400_00, "c-"+shortTag()); err != nil {
+		t.Fatalf("contribute: %v", err)
+	}
+
+	got, err := svc.GetPoolDetail(ctx, contributor, p.ID)
+	if err != nil {
+		t.Fatalf("contributor GetPoolDetail err = %v, want nil", err)
+	}
+	if got.ID != p.ID || got.Status != string(PoolOpen) || got.RaisedKobo != 400_00 {
+		t.Fatalf("detail = %+v, want pool %s OPEN raised 40000", got, p.ID)
+	}
+	if len(got.Contributors) != 1 || got.Contributors[0].AmountKobo != 400_00 {
+		t.Fatalf("contributors = %+v, want the single 40000 contribution", got.Contributors)
+	}
+	// The organiser (stakeholder, not a contributor) reads it too.
+	if _, err := svc.GetPoolDetail(ctx, organiser, p.ID); err != nil {
+		t.Fatalf("organiser GetPoolDetail err = %v, want nil", err)
+	}
+
+	// Outsider: uniform ErrNotFound, same as a pool id that never existed.
+	if _, err := svc.GetPoolDetail(ctx, outsider, p.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("outsider GetPoolDetail err = %v, want ErrNotFound", err)
+	}
+	if _, err := svc.GetPoolDetail(ctx, outsider, uuid.NewString()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("random-id GetPoolDetail err = %v, want ErrNotFound", err)
 	}
 }
 

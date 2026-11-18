@@ -79,7 +79,7 @@ func TestLiveDB_CryptoBuySellJourney(t *testing.T) {
 	ctx := context.Background()
 	pool := livePool(t)
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := NewService(pool, led, NewMockPriceProvider())
+	svc := NewService(pool, led, testsupport.StaticPriceProvider{PriceKoboPerUnit: 100_000})
 
 	admin := uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
@@ -163,7 +163,7 @@ func TestLiveDB_CryptoBuyTier0RefusedZeroLegs(t *testing.T) {
 	ctx := context.Background()
 	pool := livePool(t)
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := NewService(pool, led, NewMockPriceProvider())
+	svc := NewService(pool, led, testsupport.StaticPriceProvider{PriceKoboPerUnit: 100_000})
 
 	admin := uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {

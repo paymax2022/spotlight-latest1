@@ -48,11 +48,15 @@ interface AssetRowProps {
 /** Discovery/list row: glyph · name/symbol · price · 24h change (docs → asset list). */
 export function AssetRow({ asset, onPress }: AssetRowProps) {
   const paused = asset.status !== 'active' || !asset.buyEnabled;
+  // The server prices nothing until a feed quotes the symbol. Showing "₦0.00"
+  // would read as a real market price, so an unpriced asset says so plainly.
+  const unpriced = asset.price.amount <= 0;
+  const priceLabel = unpriced ? 'No price yet' : formatFiatObj(asset.price);
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${asset.name}, ${formatFiatObj(asset.price)}`}
+      accessibilityLabel={`${asset.name}, ${priceLabel}`}
       style={({ pressed }) => [assetRowStyles.row, pressed && assetRowStyles.pressed]}
     >
       <AssetIcon symbol={asset.symbol} color={asset.iconColor} />
@@ -61,7 +65,7 @@ export function AssetRow({ asset, onPress }: AssetRowProps) {
         <Text style={assetRowStyles.symbol}>{asset.symbol}</Text>
       </View>
       <View style={assetRowStyles.right}>
-        <Text style={assetRowStyles.price} numberOfLines={1}>{formatFiatObj(asset.price)}</Text>
+        <Text style={[assetRowStyles.price, unpriced && assetRowStyles.unpriced]} numberOfLines={1}>{priceLabel}</Text>
         {paused
           ? <Text style={assetRowStyles.paused}>Paused</Text>
           : <PriceChange pct={asset.change24hPct} />}
@@ -78,6 +82,7 @@ const assetRowStyles = StyleSheet.create({
   symbol: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 1 },
   right: { alignItems: 'flex-end', gap: 3 },
   price: { ...Typography.labelLg, color: Colors.onSurface },
+  unpriced: { color: Colors.onSurfaceVariant },
   paused: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
 });
 
@@ -100,11 +105,9 @@ export function CryptoQuoteBreakdown({ quote, decimals }: CryptoQuoteBreakdownPr
 
       <View style={cryptoQuoteBreakdownStyles.divider} />
 
-      {quote.fees
-        .filter((f) => f.amount.amount > 0)
-        .map((f) => (
-          <Row key={f.type} label={CRYPTO_FEE_LABEL[f.type] ?? f.type} value={formatFiatObj(f.amount)} muted />
-        ))}
+      {quote.fees.map((f) => (
+        <Row key={f.type} label={CRYPTO_FEE_LABEL[f.type] ?? f.type} value={formatFiatObj(f.amount)} muted />
+      ))}
 
       <View style={cryptoQuoteBreakdownStyles.divider} />
 
@@ -117,7 +120,9 @@ export function CryptoQuoteBreakdown({ quote, decimals }: CryptoQuoteBreakdownPr
       <View style={cryptoQuoteBreakdownStyles.routeNote}>
         <Info size={13} color={Colors.onSurfaceVariant} strokeWidth={2} />
         <Text style={cryptoQuoteBreakdownStyles.routeText}>
-          Filled at the locked price by our liquidity partner. The final amount can vary slightly if you re-quote after expiry.
+          This price is the live market price when the quote was built. The order fills at the
+          market price of the moment it is placed, so the amount you receive can move if you
+          re-quote after the timer runs out.
         </Text>
       </View>
     </View>
@@ -329,13 +334,20 @@ const holdingRowStyles = StyleSheet.create({
 });
 
 interface PriceChangeProps {
-  pct: number;
+  // Undefined when the feed has no 24h open to compare against — the component then
+  // says so instead of showing a fake 0.00%.
+  pct?: number;
   showIcon?: boolean;
   textStyle?: TextStyle;
 }
 
 /** Signed 24h change — teal when up, error-red when down (semantic tokens). */
 export function PriceChange({ pct, showIcon = false, textStyle }: PriceChangeProps) {
+  if (pct == null) {
+    return (
+      <Text style={[priceChangeStyles.text, { color: Colors.onSurfaceVariant }, textStyle]}>—</Text>
+    );
+  }
   const up = pct >= 0;
   const color = up ? Colors.teal : Colors.error;
   const Icon = up ? TrendingUp : TrendingDown;

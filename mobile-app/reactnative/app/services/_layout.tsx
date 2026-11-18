@@ -1,7 +1,7 @@
 import { Stack } from 'expo-router';
 import { View } from 'react-native';
 import ModuleTabBar from '@/components/ModuleTabBar';
-import { UTILITY_TABS, TRANSFER_TABS } from '@/constants/moduleTabs';
+import { UTILITY_TABS, TRANSFER_TABS, FOOD_TABS } from '@/constants/moduleTabs';
 
 export default function ServicesLayout() {
   return (
@@ -25,10 +25,14 @@ export default function ServicesLayout() {
       <Stack.Screen name="transactions/[id]" />
       <Stack.Screen name="paystack/[reference]" />
     </Stack>
-    {/* The two sets are disjoint, and a bar renders nothing when the current
-        path is not one of its tabs, so only ever one of these draws. */}
+    {/* The three sets are disjoint, and a bar renders nothing when the current
+        path is not one of its tabs, so only ever one of these draws. The food bar
+        is here because /services/food — the Food module's nav entry — belongs to
+        no other set: its own footer lives in app/food's layout, which this route
+        never renders. */}
     <ModuleTabBar tabs={UTILITY_TABS} />
     <ModuleTabBar tabs={TRANSFER_TABS} alsoVisibleOn={['/services/transactions']} />
+    <ModuleTabBar tabs={FOOD_TABS} />
   </View>
   );
 }

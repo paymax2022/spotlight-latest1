@@ -7,6 +7,8 @@
 // uploads → presigned R2 PUT; mutations pass the Idempotency-Key header below.
 
 import { Colors } from '@/constants/tokens';
+import { dashboardTilesFromWire, mapRequestWire, orNull } from '@/features/doctor/mapping';
+import type { AppointmentRequestWire, DashboardTilesWire } from '@/features/doctor/mapping';
 import {
   DEMO_APPOINTMENTS,
   DEMO_EARNINGS,
@@ -75,6 +77,7 @@ import type {
 // Re-export the shared money formatter so Batch 1 screens can import it here too.
 export { formatKobo } from '@/api/doctor.api';
 import { DOCTOR_USE_MOCK, doctorGet, doctorPost, doctorPut, doctorUploadFile } from '@/api/doctor.client';
+import { mapAnnouncementWire, type AnnouncementWire } from '@/features/doctor/mapping';
 import type { VerificationStatus } from '@/types/doctor';
 
 // Simulate network latency so loading states are exercised in the UI.
@@ -326,15 +329,21 @@ export const DEMO_DASHBOARD: DoctorDashboardData = {
 };
 
 // Live GET /dashboard returns the flat DashboardSummary projection
-// ({appointmentCounts, unreadNotifications, walletBalanceKobo, currency}) — not
+// ({appointmentCounts, unreadNotifications, walletBalanceKobo, currency,
+// todaysAppointments, upcomingAppointments, satisfactionPct, todayDate}) — not
 // the rich DoctorDashboardData the screens render. Normalize here: seed the
 // concrete tiles/lists from the wire and neutral-default the rest, so an empty
 // account shows zeroed tiles instead of crashing on missing `earnings`.
-interface DashboardWire {
-  appointmentCounts?:   Record<string, number>;
-  unreadNotifications?: number;
-  walletBalanceKobo?:   number;
-  currency?:            string;
+//
+// The four tile fields are the server's own counts, in the doctor's timezone
+// (internal/doctor DashboardDayCounts). They used to be literal `0`s here,
+// which is why three of the four tiles read zero on a real account — `0` is not
+// nullish, so the screen's `?? todays.length` fallback could never fire.
+interface DashboardWire extends DashboardTilesWire {
+  appointmentCounts?:    Record<string, number>;
+  unreadNotifications?:  number;
+  walletBalanceKobo?:    number;
+  currency?:             string;
 }
 
 export async function getDashboard(): Promise<DoctorDashboardData> {
@@ -343,12 +352,14 @@ export async function getDashboard(): Promise<DoctorDashboardData> {
   const balance = wire.walletBalanceKobo ?? 0;
   const counts = wire.appointmentCounts ?? {};
   const pending = counts.pending ?? 0;
+  const tiles = dashboardTilesFromWire(wire);
   return {
     presence: 'offline',
     acceptsInstant: false,
+    todayDate: tiles.todayDate,
     counts: {
-      todaysAppointments: 0,
-      upcomingAppointments: 0,
+      todaysAppointments: tiles.todaysAppointments,
+      upcomingAppointments: tiles.upcomingAppointments,
       pendingRequests: pending,
       waitingRoom: 0,
       followUpRequests: 0,
@@ -371,18 +382,18 @@ export async function getDashboard(): Promise<DoctorDashboardData> {
       consultsThisMonth: 0,
       payouts: [],
     },
-    satisfactionPct: 0,
+    satisfactionPct: tiles.satisfactionPct,
   };
 }
 
-export async function getAnnouncement(): Promise<PlatformAnnouncement | undefined> {
+export async function getAnnouncement(): Promise<PlatformAnnouncement | null> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_ANNOUNCEMENT);
   // GET /announcements/latest wraps the payload as `{announcement: …|null}`;
   // the shared unwrap only strips a `data` envelope, so read the inner field
   // here — otherwise a null announcement surfaces as a truthy object with an
   // undefined `tone`, crashing the banner's TONE lookup.
-  const wire = await doctorGet<{ announcement?: PlatformAnnouncement | null }>('/announcements/latest');
-  return wire.announcement ?? undefined;
+  const wire = await doctorGet<AnnouncementWire>('/announcements/latest');
+  return mapAnnouncementWire(wire);
 }
 
 export async function setPresence(input: SetPresenceInput): Promise<SetPresenceResult> {
@@ -528,14 +539,20 @@ export async function getConsultationQueue(): Promise<ConsultationQueueItem[]> {
   return doctorGet<ConsultationQueueItem[]>('/queue');
 }
 
+// Live `/appointment-requests` answers appointments rows (repository_ops.go
+// requestForAppointment), whose nested appointment has no avatar fields and
+// whose consultType the card indexes into an icon map — so both go through
+// mapRequestWire, the same finish mapHeaderAvatar gives the profile header.
 export async function getAppointmentRequests(): Promise<AppointmentRequest[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_APPOINTMENT_REQUESTS);
-  return doctorGet<AppointmentRequest[]>('/appointment-requests');
+  const rows = await doctorGet<AppointmentRequestWire[]>('/appointment-requests');
+  return rows.map(mapRequestWire);
 }
 
-export async function getAppointmentRequest(id: string): Promise<AppointmentRequest | undefined> {
-  if (DOCTOR_USE_MOCK) return wait(DEMO_APPOINTMENT_REQUESTS.find((r) => r.id === id));
-  return doctorGet<AppointmentRequest | undefined>(`/appointment-requests/${id}`);
+export async function getAppointmentRequest(id: string): Promise<AppointmentRequest | null> {
+  if (DOCTOR_USE_MOCK) return wait(orNull(DEMO_APPOINTMENT_REQUESTS.find((r) => r.id === id)));
+  const wire = await doctorGet<AppointmentRequestWire | null>(`/appointment-requests/${id}`);
+  return orNull(wire && mapRequestWire(wire));
 }
 
 // Consultation countdown helper. Computes minutes until the slot and derives the

@@ -3,7 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Image } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowLeft, AtSign, Send, HandCoins, Split, Users, History } from 'lucide-react-native';
+import { ArrowLeft, AtSign, Send, HandCoins, Split, Users, History, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -13,20 +13,26 @@ import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
 import CashtagAvatar from '@/features/social/components/CashtagAvatar';
 import ActivityRow from '@/features/social/components/ActivityRow';
-import { useMyCashtag, useActivity } from '@/features/social/hooks';
+import RequestRow from '@/features/social/components/RequestRow';
+import { useMyCashtag, useActivity, useRequests } from '@/features/social/hooks';
+import { buildInbox } from '@/features/social/lib/requests';
 import { SocialColors, formatNaira } from '@/features/social/constants/social.constants';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function SocialHome() {
   const me = useMyCashtag();
   const activity = useActivity();
+  // The receiver's side of a request has to be visible on the way in, or the
+  // person who owes the money never finds the screen that lets them pay it.
+  const requestsQuery = useRequests();
+  const inbox = buildInbox(requestsQuery.data ?? []);
   const [activeNav, setActiveNav] = useState<'send' | 'request' | 'split' | 'pool' | 'activity'>('send');
 
   const loading = me.isLoading && activity.isLoading;
   const errored = me.isError && activity.isError;
   const noCashtag = !!me.data && !me.data.handle;
 
-  const refetchAll = () => { me.refetch(); activity.refetch(); };
+  const refetchAll = () => { me.refetch(); activity.refetch(); requestsQuery.refetch(); };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -80,6 +86,32 @@ export default function SocialHome() {
             <QuickAction icon={Users} label="Pool" onPress={() => router.push('/social/pool/create')} />
           </View>
 
+          {/* Money people are asking this account for — actionable, so it comes
+              before the feed rather than buried in it. */}
+          {inbox.pendingCount > 0 ? (
+            <View style={styles.toPayCard}>
+              <Pressable
+                onPress={() => router.push('/social/requests')}
+                accessibilityRole="button"
+                style={styles.toPayHead}
+              >
+                <View style={styles.toPayIcon}>
+                  <HandCoins size={18} color={SocialColors.danger} strokeWidth={2} />
+                </View>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={styles.toPayTitle}>
+                    {inbox.pendingCount === 1 ? '1 request to pay' : `${inbox.pendingCount} requests to pay`}
+                  </Text>
+                  <Text style={styles.toPaySub}>{formatNaira(inbox.toPayKobo)} waiting on you</Text>
+                </View>
+                <ChevronRight size={20} color={SocialColors.muted} />
+              </Pressable>
+              {inbox.toPay.slice(0, 2).map((req) => (
+                <RequestRow key={req.id} req={req} onPress={() => router.push(`/social/requests/${req.id}`)} />
+              ))}
+            </View>
+          ) : null}
+
           {/* Activity */}
           <SectionHeader title="Recent activity" actionLabel="See all" onAction={() => router.push('/social/activity')} style={styles.sectionHeader} />
           {(activity.data?.length ?? 0) === 0 ? (
@@ -100,7 +132,9 @@ export default function SocialHome() {
       {/* Bottom Navigation */}
       <View style={styles.bottomNav}>
         <NavButton icon={Send} label="Send" active={activeNav === 'send'} onPress={() => router.push('/social/send')} />
-        <NavButton icon={HandCoins} label="Request" active={activeNav === 'request'} onPress={() => router.push('/social/request')} />
+        {/* The nav item is the inbox — everything asked of you and everything
+            you asked for. Creating a new request stays on the quick action. */}
+        <NavButton icon={HandCoins} label="Requests" active={activeNav === 'request'} onPress={() => router.push('/social/requests')} />
         <NavButton icon={Split} label="Split" active={activeNav === 'split'} onPress={() => router.push('/social/split/create')} />
         <NavButton icon={Users} label="Pool" active={activeNav === 'pool'} onPress={() => router.push('/social/pool/create')} />
         <NavButton icon={History} label="Activity" active={activeNav === 'activity'} onPress={() => router.push('/social/activity')} />
@@ -143,6 +177,11 @@ const styles = StyleSheet.create({
   noticeText: { ...Typography.bodySm, color: SocialColors.warnText, flex: 1 },
   noticeAction: { ...Typography.labelMd, color: SocialColors.warnText },
   actionsRow: { flexDirection: 'row', gap: Spacing.sm },
+  toPayCard: { backgroundColor: SocialColors.surface, borderRadius: Radius.lg, paddingHorizontal: Spacing.cardPadding, paddingVertical: Spacing.sm, gap: Spacing.xs, ...shadow1, borderWidth: 1, borderColor: SocialColors.warnBg },
+  toPayHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.xs },
+  toPayIcon: { width: 36, height: 36, borderRadius: Radius.full, backgroundColor: SocialColors.warnBg, alignItems: 'center', justifyContent: 'center' },
+  toPayTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  toPaySub: { ...Typography.bodySm, color: SocialColors.muted },
   action: { flex: 1, alignItems: 'center', gap: 6, backgroundColor: SocialColors.surface, borderRadius: Radius.lg, paddingVertical: Spacing.md, ...shadow1 },
   actionIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: SocialColors.surfaceAlt, alignItems: 'center', justifyContent: 'center' },
   actionLabel: { ...Typography.labelSm, color: SocialColors.text },
@@ -151,6 +190,6 @@ const styles = StyleSheet.create({
   bottomNav: { flexDirection: 'row', backgroundColor: SocialColors.surface, borderTopWidth: 1, borderTopColor: SocialColors.border, paddingHorizontal: Spacing.xs, paddingVertical: Spacing.sm },
   navButton: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: Spacing.sm },
   navButtonActive: { opacity: 1 },
-  navLabel: { ...Typography.labelXs, color: SocialColors.muted },
+  navLabel: { ...Typography.labelSm, color: SocialColors.muted },
   navLabelActive: { color: SocialColors.brand },
 });

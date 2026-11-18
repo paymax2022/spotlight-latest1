@@ -1,6 +1,5 @@
 import type { MetadataRoute } from 'next';
-
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
+import { SITE_URL } from '@/src/lib/site-url';
 
 type ChangeFrequency = 'always' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'never';
 
@@ -49,7 +48,6 @@ const ROUTES: Array<{ path: string; changeFrequency: ChangeFrequency; priority: 
   { path: '/project', changeFrequency: 'monthly', priority: 0.6 },
   { path: '/restaurant', changeFrequency: 'monthly', priority: 0.6 },
   { path: '/season-2', changeFrequency: 'monthly', priority: 0.6 },
-  { path: '/service', changeFrequency: 'monthly', priority: 0.6 },
   { path: '/service-details', changeFrequency: 'monthly', priority: 0.6 },
   { path: '/services', changeFrequency: 'monthly', priority: 0.7 },
   { path: '/sponsor', changeFrequency: 'monthly', priority: 0.7 },

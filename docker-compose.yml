@@ -35,6 +35,15 @@ services:
       # Customer taxonomy browsing (needs the flag above). Off = customers see the legacy
       # food home / menu; merchant and admin taxonomy are unaffected.
       FEATURE_RESTAURANT_TAXONOMY_BROWSE: "true"
+      # The provider portal capabilities route is mounted unconditionally and answers
+      # 503 "provider portal disabled" while this is off (capabilities.go Register,
+      # staging-module-flags.yml sets it for staging). The mobile ProviderRouteGuard
+      # reads GET /health/provider-portal/me to decide whether any /food/restaurant,
+      # /health/* or /stays/host console renders, and it treats every rejection as a
+      # failed check — so with the flag off locally those consoles showed "Couldn't
+      # check your provider access" with a Retry that could never succeed. Same
+      # local/staging flag-parity class as FEATURE_REFERRALS_ENABLED above.
+      FEATURE_PROVIDER_PORTAL_ENABLED: "true"
       # Point at the host-side local Supabase Postgres (supabase start → port 54322).
       # Override in CI/prod with a real DATABASE_URL.
       DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable

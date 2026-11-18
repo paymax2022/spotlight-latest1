@@ -10,7 +10,7 @@
 // imported here and `realityTvWizardSchemaErrors` runs it over the exact flat
 // payload the wizard PATCHes, which is the same function submitRegistration
 // re-runs server-side.
-import { deriveAge, validateStepData } from './validation';
+import { deriveAge, isValidNigerianPhone, normaliseNigerianPhone, validateStepData } from './validation';
 import { buildRealityTvShowSteps } from './forms/reality-tv-show';
 import type { RegistrationDraft, RegistrationStepKey } from './types';
 
@@ -45,8 +45,6 @@ export interface RealityTvWizardForm {
   guardian_address: string;
   guardian_digitalSignature: string;
   guardian_consentGranted: boolean;
-  guardian_idUploadUrl: string;
-  guardian_idUploadName: string;
 
   // Wizard step 2 — Your Talent
   talent_primarySkill: string[];
@@ -129,7 +127,6 @@ export const REALITY_TV_WIZARD_INITIAL: RealityTvWizardForm = {
   guardian_fullName: '', guardian_relationship: '', guardian_phone: '',
   guardian_email: '', guardian_address: '', guardian_digitalSignature: '',
   guardian_consentGranted: false,
-  guardian_idUploadUrl: '', guardian_idUploadName: '',
 
   talent_primarySkill: [], talent_experienceYears: '', talent_skillLevel: '',
   talent_previousCompetitions: '', talent_strengths: '', talent_careerGoal: '',
@@ -173,10 +170,26 @@ export const REALITY_TV_UPLOAD_FIELDS = [
   'media.profilePhoto',
   'media.introVideo',
   'identity.idUpload',
-  'guardian.idUpload',
 ] as const;
 
 export type RealityTvUploadMeta = Record<string, Record<string, unknown>>;
+
+// Minor applicants answer this with a select, not free text. Kept here rather
+// than on the schema field so the server (and the mobile client, which still
+// posts free text) does not start rejecting valid answers like "Mum".
+export const GUARDIAN_RELATIONSHIP_OPTIONS = [
+  'Mother',
+  'Father',
+  'Guardian',
+  'Sibling',
+  'Grandparent',
+  'Other relative',
+  'Other',
+] as const;
+
+function phone(value: string): string {
+  return normaliseNigerianPhone(value) || value.trim();
+}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
@@ -219,18 +232,17 @@ export function realityTvWizardFormToFlat(
     'personal.stateOfOrigin': f.personal_stateOfOrigin,
     'personal.stateOfResidence': f.personal_stateOfResidence,
     'personal.city': f.personal_city,
-    'personal.primaryPhone': f.personal_primaryPhone,
-    'personal.whatsapp': f.personal_whatsapp,
+    'personal.primaryPhone': phone(f.personal_primaryPhone),
+    'personal.whatsapp': phone(f.personal_whatsapp),
     'personal.address': f.personal_address,
 
     'guardian.fullName': f.guardian_fullName,
     'guardian.relationship': f.guardian_relationship,
-    'guardian.phone': f.guardian_phone,
+    'guardian.phone': phone(f.guardian_phone),
     'guardian.email': f.guardian_email,
     'guardian.address': f.guardian_address,
     'guardian.digitalSignature': f.guardian_digitalSignature,
     'guardian.consentGranted': f.guardian_consentGranted,
-    'guardian.idUpload': f.guardian_idUploadUrl,
 
     'talent.primarySkill': f.talent_primarySkill,
     'talent.experienceYears': f.talent_experienceYears === '' ? '' : Number(f.talent_experienceYears),
@@ -281,8 +293,8 @@ export function realityTvWizardFormToFlat(
 
     'emergency.fullName': f.emergency_fullName,
     'emergency.relationship': f.emergency_relationship,
-    'emergency.phone': f.emergency_phone,
-    'emergency.altPhone': f.emergency_altPhone,
+    'emergency.phone': phone(f.emergency_phone),
+    'emergency.altPhone': phone(f.emergency_altPhone),
     'emergency.state': f.emergency_state,
     'emergency.city': f.emergency_city,
 
@@ -364,8 +376,6 @@ export function realityTvWizardHydrate(saved: Record<string, unknown>): {
     guardian_address: str(saved['guardian.address']),
     guardian_digitalSignature: str(saved['guardian.digitalSignature']),
     guardian_consentGranted: bool(saved['guardian.consentGranted']),
-    guardian_idUploadUrl: str(saved['guardian.idUpload']),
-    guardian_idUploadName: metaFileName(saved, 'guardian.idUpload'),
 
     talent_primarySkill: strArr(saved['talent.primarySkill']),
     talent_experienceYears: str(saved['talent.experienceYears']),
@@ -520,11 +530,11 @@ export function realityTvWizardSchemaErrors(
  * still run the real validator. These checks exist to highlight fields on
  * the step the user is currently on.
  */
-// Kept in sync with validation.ts's E164ish_RE / EMAIL_RE so a malformed
+// Kept in sync with validation.ts's phone rule / EMAIL_RE so a malformed
 // value is flagged on the step the input lives on instead of surfacing later
 // as a mapped server error on a step the user already left.
-const TEL_RE = /^\+?[0-9][0-9\-\s]{6,}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
+const PHONE_ERROR = 'Enter a valid Nigerian mobile number, e.g. 0801 234 5678';
 
 export function validateRealityTvWizardStep(
   step: number,
@@ -540,7 +550,10 @@ export function validateRealityTvWizardStep(
     if (!f.personal_stateOfResidence) e.personal_stateOfResidence = 'State is required';
     if (!f.personal_city) e.personal_city = 'City / town is required';
     if (!f.personal_primaryPhone.trim()) e.personal_primaryPhone = 'Phone number is required';
-    else if (!TEL_RE.test(f.personal_primaryPhone.trim())) e.personal_primaryPhone = 'Enter a valid phone number';
+    else if (!isValidNigerianPhone(f.personal_primaryPhone)) e.personal_primaryPhone = PHONE_ERROR;
+    if (f.personal_whatsapp.trim() && !isValidNigerianPhone(f.personal_whatsapp)) {
+      e.personal_whatsapp = PHONE_ERROR;
+    }
     if (!f.personal_address.trim()) e.personal_address = 'Residential address is required';
     // The persisted value is the upload URL — a locally-held File that never
     // uploaded is not a valid answer (the schema `file` check reads the URL).
@@ -551,7 +564,7 @@ export function validateRealityTvWizardStep(
       if (!f.guardian_fullName.trim()) e.guardian_fullName = 'Guardian name is required';
       if (!f.guardian_relationship.trim()) e.guardian_relationship = 'Guardian relationship is required';
       if (!f.guardian_phone.trim()) e.guardian_phone = 'Guardian phone is required';
-      else if (!TEL_RE.test(f.guardian_phone.trim())) e.guardian_phone = 'Enter a valid phone number';
+      else if (!isValidNigerianPhone(f.guardian_phone)) e.guardian_phone = PHONE_ERROR;
       if (!f.guardian_email.trim()) e.guardian_email = 'Guardian email is required';
       else if (!EMAIL_RE.test(f.guardian_email.trim())) e.guardian_email = 'Enter a valid email address';
       if (!f.guardian_address.trim()) e.guardian_address = 'Guardian address is required';
@@ -571,8 +584,12 @@ export function validateRealityTvWizardStep(
   }
   if (step === 3) {
     if (!f.category_uniqueStory.trim()) e.category_uniqueStory = 'Tell us what makes you a great TV contestant';
-    if (!f.identity_idType) e.identity_idType = 'Select your ID type';
-    if (!f.identity_idUploadUrl) e.identity_idUploadUrl = 'A government-issued ID upload is required';
+    // Minors are verified through guardian consent, so the identity section
+    // (and its required values) does not apply to them.
+    if (!realityTvWizardIsMinor(f.personal_dateOfBirth)) {
+      if (!f.identity_idType) e.identity_idType = 'Select your ID type';
+      if (!f.identity_idUploadUrl) e.identity_idUploadUrl = 'A government-issued ID upload is required';
+    }
     if (!f.audition_format) e.audition_format = 'Select your preferred audition format';
     if (!f.media_rightsConfirmed) e.media_rightsConfirmed = 'You must confirm content rights';
     if (!f.publicProfile_publicVotingConsent) e.publicProfile_publicVotingConsent = 'This consent is required';
@@ -586,7 +603,7 @@ export function validateRealityTvWizardStep(
     if (!f.medical_emergencyTreatmentConsent) e.medical_emergencyTreatmentConsent = 'This consent is required';
     if (!f.emergency_fullName.trim()) e.emergency_fullName = 'Emergency contact name is required';
     if (!f.emergency_phone.trim()) e.emergency_phone = 'Emergency contact phone is required';
-    else if (!TEL_RE.test(f.emergency_phone.trim())) e.emergency_phone = 'Enter a valid phone number';
+    else if (!isValidNigerianPhone(f.emergency_phone)) e.emergency_phone = PHONE_ERROR;
     if (!f.emergency_relationship) e.emergency_relationship = 'Relationship is required';
     if (!f.emergency_state) e.emergency_state = 'Emergency contact state is required';
     if (!f.emergency_city) e.emergency_city = 'Emergency contact city is required';
@@ -618,7 +635,6 @@ const FLAT_ERROR_KEY_OVERRIDES: Record<string, keyof RealityTvWizardForm> = {
   'media.profilePhoto': 'media_profilePhotoUrl',
   'media.introVideo': 'media_introVideoUrl',
   'identity.idUpload': 'identity_idUploadUrl',
-  'guardian.idUpload': 'guardian_idUploadUrl',
   // The wizard keeps the audition link under its legacy 'media_performanceLink'
   // form key while emitting the schema's 'audition.onlineLink' flat key.
   'audition.onlineLink': 'media_performanceLink',

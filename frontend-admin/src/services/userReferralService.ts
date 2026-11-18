@@ -38,6 +38,7 @@ export type ReferralCase = {
 export async function getUserReferralCase(id: string): Promise<ReferralCase> {
   const res = await fetch(`${adminApiBase()}/finance/admin/referrals/${encodeURIComponent(id)}`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading referral summary');

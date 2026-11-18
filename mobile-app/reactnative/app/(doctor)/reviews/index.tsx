@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, Modal, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Star, Clock, CheckCircle2, Smile, X, ChevronRight, Award, TrendingUp, Lightbulb, PawPrint } from 'lucide-react-native';
+import { Star, Clock, CheckCircle2, Smile, X, ChevronRight, Award, TrendingUp, Lightbulb } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -10,9 +10,9 @@ import { router } from 'expo-router';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
 import TextInputField from '@/components/TextInputField';
-import { TeleHeader, RatingStars, DoctorAvatar } from '@/features/telemedicine/components';
+import { TeleHeader, RatingStars } from '@/features/telemedicine/components';
 import { SectionCard, StateView, ReviewCard, MetricTile } from '@/features/doctor/components';
-import { useReputation, useReportReview, useQualityScore, useConsultationFeedback, useDisputeReview, useRequestReviewRemoval } from '@/features/doctor/hooks';
+import { useReputation, useReportReview, useQualityScore, useDisputeReview, useRequestReviewRemoval } from '@/features/doctor/hooks';
 import {
   REVIEW_REPORT_REASONS,
   REVIEW_DISPUTE_REASON_OPTIONS,
@@ -21,27 +21,22 @@ import {
   QUALITY_SCORE_GRADE_TONES,
 } from '@/features/doctor/constants';
 import type { RatingBreakdown } from '@/types/doctor.phase2';
-import type { ConsultationFeedback, ReviewDisputeReason } from '@/types/doctor.batch6';
+import type { ReviewDisputeReason } from '@/types/doctor.batch6';
 
-type ReviewTab = 'patients' | 'vet';
 const DISPUTE_LABELS = REVIEW_DISPUTE_REASON_OPTIONS.map((o) => o.label);
 
 export default function ReviewsScreen() {
   const { data: reputation, isLoading, isError, refetch } = useReputation();
   const { data: quality } = useQualityScore();
-  const { data: feedback = [] } = useConsultationFeedback();
   const report = useReportReview();
   const dispute = useDisputeReview();
   const removal = useRequestReviewRemoval();
 
-  const [tab, setTab] = useState<ReviewTab>('patients');
   const [reportTarget, setReportTarget] = useState<string | null>(null);
   const [reportReason, setReportReason] = useState('');
   const [disputeTarget, setDisputeTarget] = useState<string | null>(null);
   const [disputeReason, setDisputeReason] = useState('');
   const [disputeDetail, setDisputeDetail] = useState('');
-
-  const vetFeedback = useMemo(() => feedback.filter((f) => f.channel === 'vet'), [feedback]);
 
   const closeReport = () => { setReportTarget(null); setReportReason(''); };
   const submitReport = async () => {
@@ -119,41 +114,24 @@ export default function ReviewsScreen() {
             <RepLink icon={Lightbulb} label="Improve" onPress={() => router.push('/(doctor)/reviews/improvements')} />
           </View>
 
-          {/* Channel tabs */}
-          <View style={styles.tabs}>
-            <Pressable onPress={() => setTab('patients')} style={[styles.tab, tab === 'patients' && styles.tabActive]} accessibilityRole="button" accessibilityLabel="Patient reviews">
-              <Text style={[styles.tabText, tab === 'patients' && styles.tabTextActive]}>Patient reviews</Text>
-            </Pressable>
-            <Pressable onPress={() => setTab('vet')} style={[styles.tab, tab === 'vet' && styles.tabActive]} accessibilityRole="button" accessibilityLabel="Vet client reviews">
-              <Text style={[styles.tabText, tab === 'vet' && styles.tabTextActive]}>Vet clients</Text>
-            </Pressable>
-          </View>
-
-          {tab === 'patients' ? (
-            reputation.reviews.length === 0 ? (
-              <StateView variant="empty" icon={Star} title="No reviews yet" message="Patient reviews will appear here." />
-            ) : (
-              <View style={styles.list}>
-                {reputation.reviews.map((r) => (
-                  <View key={r.id}>
-                    <ReviewCard review={r} onReport={() => setReportTarget(r.id)} />
-                    {!r.reported && (
-                      <Pressable style={styles.disputeLink} onPress={() => setDisputeTarget(r.id)} accessibilityRole="button" accessibilityLabel="Dispute this review">
-                        <Text style={styles.disputeLinkText}>Dispute review</Text>
-                      </Pressable>
-                    )}
-                  </View>
-                ))}
-              </View>
-            )
+          {/* A human doctor's reviews are patient reviews. Veterinary feedback has
+              its own screen in the Vet module, so this list needs no channel
+              switch. Pinned by scripts/ci/check-doctor-vet-boundary.py. */}
+          {reputation.reviews.length === 0 ? (
+            <StateView variant="empty" icon={Star} title="No reviews yet" message="Patient reviews will appear here." />
           ) : (
-            vetFeedback.length === 0 ? (
-              <StateView variant="empty" icon={PawPrint} title="No vet client reviews" message="Vet client feedback will appear here." />
-            ) : (
-              <View style={styles.list}>
-                {vetFeedback.map((f) => <FeedbackCard key={f.id} feedback={f} />)}
-              </View>
-            )
+            <View style={styles.list}>
+              {reputation.reviews.map((r) => (
+                <View key={r.id}>
+                  <ReviewCard review={r} onReport={() => setReportTarget(r.id)} />
+                  {!r.reported && (
+                    <Pressable style={styles.disputeLink} onPress={() => setDisputeTarget(r.id)} accessibilityRole="button" accessibilityLabel="Dispute this review">
+                      <Text style={styles.disputeLinkText}>Dispute review</Text>
+                    </Pressable>
+                  )}
+                </View>
+              ))}
+            </View>
           )}
         </ScrollView>
       )}
@@ -192,28 +170,6 @@ export default function ReviewsScreen() {
         </View>
       </Modal>
     </SafeAreaView>
-  );
-}
-
-function FeedbackCard({ feedback: f }: { feedback: ConsultationFeedback }) {
-  const date = new Date(f.createdAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' });
-  return (
-    <View style={styles.fbCard}>
-      <View style={styles.fbHeader}>
-        <DoctorAvatar initials={f.patient.initials} color={f.patient.avatarColor} size={40} />
-        <View style={styles.fbBody}>
-          <Text style={styles.fbName} numberOfLines={1}>{f.patient.name}</Text>
-          <Text style={styles.fbMeta}>{f.consultRef} · {date}</Text>
-        </View>
-        <RatingStars rating={f.rating} size={14} />
-      </View>
-      {!!f.comment && <Text style={styles.fbComment}>{f.comment}</Text>}
-      {f.tags.length > 0 && (
-        <View style={styles.tagRow}>
-          {f.tags.map((t) => <View key={t} style={styles.tag}><Text style={styles.tagText}>{t}</Text></View>)}
-        </View>
-      )}
-    </View>
   );
 }
 
@@ -262,23 +218,9 @@ const styles = StyleSheet.create({
   linkRow:      { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md },
   repLink:      { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: Spacing.sm, paddingVertical: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
   repLinkText:  { ...Typography.labelSm, color: Colors.onSurface, fontWeight: '600', flex: 1 },
-  tabs:         { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md },
-  tab:          { flex: 1, height: 38, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
-  tabActive:    { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  tabText:      { ...Typography.labelMd, color: Colors.onSurfaceVariant, fontWeight: '600' },
-  tabTextActive:{ color: Colors.onPrimary },
   list:         { gap: Spacing.sm },
   disputeLink:  { alignSelf: 'flex-start', paddingTop: Spacing.xs, paddingHorizontal: Spacing.sm },
   disputeLinkText: { ...Typography.labelSm, color: Colors.primary, fontWeight: '600' },
-  fbCard:       { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, gap: Spacing.sm },
-  fbHeader:     { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  fbBody:       { flex: 1, gap: 2 },
-  fbName:       { ...Typography.labelLg, color: Colors.onSurface },
-  fbMeta:       { ...Typography.caption, color: Colors.onSurfaceVariant },
-  fbComment:    { ...Typography.bodyMd, color: Colors.onSurface },
-  tagRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs },
-  tag:          { paddingHorizontal: 10, height: 26, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
-  tagText:      { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   backdrop:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' },
   sheet:        { backgroundColor: Colors.surfaceContainerLowest, borderTopLeftRadius: Radius.xl, borderTopRightRadius: Radius.xl, padding: Spacing.lg, paddingBottom: 40 },
   sheetHandle:  { width: 40, height: 4, borderRadius: 2, backgroundColor: Colors.surfaceContainerHigh, alignSelf: 'center', marginBottom: Spacing.md },

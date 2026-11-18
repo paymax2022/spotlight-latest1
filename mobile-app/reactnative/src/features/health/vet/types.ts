@@ -94,11 +94,22 @@ export interface Vet {
   homeVisitFeeKobo: number;
   /** Lowest active clinic price; 0 when none (older backends omit it). */
   clinicFeeKobo: number;
+  /** Priced timed tele-consult options. Empty when the vet sells none. */
+  packages?: VetPackage[];
   types: AppointmentType[];
   species: PetSpecies[];
   specialties: string[];
   availableNow: boolean;
   active: boolean;
+}
+
+/** One timed tele-consult price point, as the public listing and the vet's
+ *  own profile send it. The engine re-prices from the id on booking. */
+export interface VetPackage {
+  id: string;
+  mode: string;
+  durationMinutes: number;
+  priceKobo: number;
 }
 
 export interface VetQuery {
@@ -167,6 +178,12 @@ export interface CreateAppointmentInput {
   destLng?: number;
   intakeResponseId?: string;
   idempotencyKey: string;
+  /** Tele only: one of the vet's published timed packages. */
+  packageId?: string;
+  /** Tele only: requested mode when no package is chosen ("" means video). */
+  consultMode?: VetConsultMode;
+  /** Tele only: the total checkout showed, so the server can refuse a re-price. */
+  expectedTotalKobo?: number;
 }
 
 export interface RescheduleInput {
@@ -326,6 +343,10 @@ export interface ProviderProfile {
   consultFeeKobo: number;
   homeVisitFeeKobo: number;
   types: AppointmentType[];
+  /** health_providers row id — the owner id the consult engine keys packages on. */
+  providerId?: string;
+  /** Timed tele-consult price points published for this vet. */
+  packages?: VetPackage[];
   species: PetSpecies[];
   credential: ProviderCredential;
   /** Clinic location. Address parts feed the public listing; the point puts the vet on the map. */

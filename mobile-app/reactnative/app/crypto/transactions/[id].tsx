@@ -100,20 +100,22 @@ export default function CryptoTransactionDetailScreen() {
           ))}
         </View>
 
-        {/* Provider traceability */}
+        {/* Provider traceability — only rows the server actually reports. The
+            internal fill plane names no broker and publishes no exchange fill id,
+            so those rows are absent rather than blank. */}
         <Text style={styles.sectionTitle}>Details</Text>
         <View style={styles.card}>
           <Row label="Reference" value={t.reference} copyable />
           <Row label="Date" value={formatDateTime(t.createdAt)} />
-          <Row label="Provider reference" value={t.providerReference} copyable />
-          <Row label="Liquidity partner" value={t.liquidityProvider} />
-          <Row label="Custody partner" value={t.custodyProvider} />
+          {t.providerReference ? <Row label="Provider reference" value={t.providerReference} copyable /> : null}
+          {t.liquidityProvider ? <Row label="Liquidity partner" value={t.liquidityProvider} /> : null}
+          {t.custodyProvider ? <Row label="Custody partner" value={t.custodyProvider} /> : null}
         </View>
 
         <View style={styles.secureNote}>
           <ShieldCheck size={15} color={Colors.teal} strokeWidth={2} />
           <Text style={styles.secureText}>
-            Every order is recorded against a provider reference and a double-entry ledger record, so your balances always reconcile.
+            This order is recorded against a double-entry ledger record with its own reference, so your balances always reconcile.
           </Text>
         </View>
       </ScrollView>

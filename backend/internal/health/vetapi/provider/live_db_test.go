@@ -616,8 +616,8 @@ func (f *liveFx) seedConsult(apptID, provider, state, diagnosis string) string {
 func TestLive_ClinicLocation(t *testing.T) {
 	f := newLiveFx(t)
 	ctx := t.Context()
-	if _, err := f.pool.Exec(ctx, `INSERT INTO doctor_vet_profiles (user_id, profile_draft)
-		VALUES ($1, '{"draft":{"bio":"keep me","speciesTreated":["DOG"],"personalInfo":{"firstName":"Ade","title":"Dr"},"affiliations":[{"name":"Lekki Vet Clinic","isPrimary":true}]}}'::jsonb)`, f.vetUser); err != nil {
+	if _, err := f.pool.Exec(ctx, `INSERT INTO doctor_vet_profiles (user_id, is_published, verification, profile_draft)
+		VALUES ($1, true, 'approved', '{"draft":{"bio":"keep me","speciesTreated":["DOG"],"personalInfo":{"firstName":"Ade","title":"Dr"},"affiliations":[{"name":"Lekki Vet Clinic","isPrimary":true}]}}'::jsonb)`, f.vetUser); err != nil {
 		t.Fatal(err)
 	}
 

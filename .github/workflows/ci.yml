@@ -20,17 +20,37 @@ name: CI — CLAUDE.md gates
 #   - OpenAPI: YAML validity for every contract in contracts/
 #   - migrations: additive-only guard (no DROP / RENAME / type-narrowing)
 #
-# Pushes run CI checks only. Railway deployment is an explicit manual release
-# action, and is locked to the matching promotion branch/environment pair.
+# CI ONLY. This workflow deploys nothing. Deployment lives in release.yml, which
+# fires on every push to main and drives development, staging and production from
+# that one commit.
 
 on:
-  # CI runs only on the deployable promotion branches. Railway performs native
-  # GitHub deployments from these branches after its per-environment branch mapping
-  # is configured: develop -> Development, staging -> Staging, prod -> Production.
+  # An earlier comment here claimed Railway performs native GitHub deployments from
+  # develop/staging/prod once "its per-environment branch mapping is configured". That
+  # sentence sent a reader looking for a mapping nobody had built. Measured 2026-11-16
+  # with `railway service list --json` across all three environments: development and
+  # production report `source.repo: null` for every service, so a branch push there
+  # cannot deploy anything at all and `railway up` is the only route. Staging is
+  # different and was mis-stated before: its `backend`, `frontend-web` and
+  # `frontend-admin` DO carry a connected source on paymax2022/spotlight-latest1.
+  # They still do not deploy from `main` — main moved at 2026-11-15 21:49 +01:00 and
+  # the latest staging deployments are 10:55 and 10:39 the same day, i.e. hours
+  # earlier — so whatever branch that connector watches, it is not main, and the
+  # branches it might watch are frozen. Consequence for this file and release.yml:
+  # release.yml's `railway up` is the intended writer, and nobody may push to
+  # `develop` / `staging` / `prod` again without turning that connector into a second
+  # writer of the staging environment.
+  #
+  # What this file owns is the evidence release.yml waits on: the required checks in
+  # .github/required-checks.txt. release-gates.py polls those names before it will let
+  # anything deploy, so a rename here is a rename of a required check.
+  #
   # Docs-only PUSHES are skipped to conserve private-repository Actions minutes.
   #
   # `pull_request` deliberately has NO paths-ignore. This workflow's jobs are
-  # required status checks on develop AND main (.github/required-checks.txt),
+  # required status checks on the gated branches named in
+  # .github/required-checks.txt — currently `main` alone, since develop/staging/prod
+  # are gone from the triggers below —
   # and GitHub reports a path-SKIPPED required check as perpetually "Expected —
   # waiting for status", not as passed. With a paths-ignore here, a docs-only
   # PR would never start this workflow and could never merge. Docs-only PRs are
@@ -38,36 +58,25 @@ on:
   #
   # `main` IS included: AUD-TEST-003 — merges land on main (it's the default
   # branch) and AUD-BE-001 shipped a compile break because no required check
-  # ran on main-bound PRs. The deploy lanes below still only fire via
-  # workflow_dispatch, so a main push here is CI-only.
+  # ran on main-bound PRs.
+  #
+  # develop/staging/prod are gone from both lists: releases come from main alone,
+  # so once the promotion branches stop receiving work those entries only ever
+  # fired on a stale merge, burning minutes to test a tree nobody deploys.
   push:
-    branches: [develop, staging, prod, main]
+    branches: [main]
+    # A docs-only push produces no run of this workflow, and release-gates.py
+    # grants `noop_docs_only` only after proving every file this commit changed
+    # sits in the globs below — test-release-gates.py pins the gate's copy.
     paths-ignore:
       - '**.md'
       - 'docs/**'
   pull_request:
-    branches: [develop, staging, prod, main]
-  # Manual dispatch still works for re-running this pipeline against any
-  # branch, but `main` is covered by push/pull_request above (AUD-TEST-003).
-  # Both deploy inputs are
-  # optional: leave them blank to run CI only (against whichever branch you
-  # pick in the dispatch UI/API `ref`), or fill both in to also deploy — the
-  # deploy jobs below still gate strictly on confirm_deploy being the exact
-  # string 'DEPLOY', so a CI-only dispatch can never trigger a release.
+    branches: [main]
+  # Kept as a bare trigger: dispatching ci.yml re-runs the CI lanes by hand. It no
+  # longer takes inputs — deployment moved to release.yml, which is where the
+  # dispatch-with-a-ref rollback input lives now.
   workflow_dispatch:
-    inputs:
-      deploy_environment:
-        description: 'Railway environment to deploy (leave unset to just run CI)'
-        required: false
-        type: choice
-        options:
-          - development
-          - staging
-          - production
-      confirm_deploy:
-        description: 'Type DEPLOY to confirm the selected release (leave blank to just run CI)'
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -115,6 +124,23 @@ jobs:
       working-directory: mobile-app/reactnative
       typecheck-command: npx tsc --noEmit -p tsconfig.json
 
+  # Nothing in CI ran the mobile module suite before this job: `test:modules` is
+  # referenced by no workflow, so the registry contract it locks (every tile key
+  # has a platform_modules row, none unmapped) was only ever checked on a laptop.
+  # Deliberately NOT folded into the whole-app tsc lane above by raising its
+  # Node: that job is a REQUIRED check named in .github/required-checks.txt and
+  # branch protection, and `--experimental-strip-types` needs Node >= 22.6 while
+  # the reusable defaults to 20 — changing a required lane's runtime to add an
+  # optional test is the bigger risk. Non-required on purpose: a red here is a
+  # signal, not a merge block.
+  mobile-module-tests:
+    name: mobile (module visibility tests)
+    uses: ./.github/workflows/_reusable-node-typecheck.yml
+    with:
+      working-directory: mobile-app/reactnative
+      node-version: '22'
+      typecheck-command: npm run test:modules
+
   backend:
     name: backend (go build + vet)
     uses: ./.github/workflows/_reusable-go-verify.yml
@@ -127,11 +153,35 @@ jobs:
     name: migrations (additive-only guard)
     uses: ./.github/workflows/_reusable-migration-guard.yml
 
+  # Its own job, not a step inside the hygiene runner below, on purpose: the
+  # hygiene comment weighs a runner start against sub-second work, and that
+  # trade is right for the hygiene checks. This one gates a production outage
+  # class, so it needs a check name the deploy jobs can require by name and an
+  # operator can read red without opening a log — `needs:` can only reference
+  # job ids, never step names.
+  prod-flag-parity:
+    name: prod-flag-parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The guard's own reproduction runs first: a parity check that silently
+      # stopped being able to detect drift would otherwise stay green, and this
+      # job is the only thing standing between a renamed gate and a 503.
+      - name: Prove the parity guard still detects each drift shape
+        run: bash scripts/ci/test-prod-flag-parity.sh
+      - name: Check production module flags cover every BFF gate
+        run: bash scripts/ci/check-prod-flag-parity.sh
+
   # Cheap repo-wide gates share one runner: each is sub-second, and a separate
   # job per gate would cost a full runner start for no benefit (see the
   # paths-ignore note above on conserving private-repo Actions minutes).
-  # The job id stays `secret-hygiene` — it is internal, and the deploy jobs below
-  # reference it in `needs:`.
+  # The job id stays `secret-hygiene` — it is internal; the `name:` below is the
+  # check-run. Both this job and the `migration-guard` job above are REQUIRED
+  # CHECKS (.github/required-checks.txt), so a PR cannot merge while they are red.
+  # release.yml additionally waits on them before it will deploy anything — the
+  # required-check names are the contract between CI and the release chain, so
+  # renaming either job renames a required check and blocks every PR until
+  # required-checks.txt is updated in the same commit.
   secret-hygiene:
     name: hygiene (client secrets + live-DB test gate + migration versions)
     runs-on: ubuntu-latest
@@ -166,6 +216,41 @@ jobs:
       # rejection of brace patterns. Sub-second, so it shares this runner.
       - name: Test the module router
         run: python3 scripts/ci/test-changed-modules.py
+      # The release gate is the only thing between a push to main and a
+      # production deploy, and it decides by polling an API — so its verdict
+      # logic is extracted where fixtures can drive it. Sub-second, no network,
+      # so it shares this runner rather than getting a lane of its own.
+      - name: Test the release gate
+        run: python3 scripts/ci/test-release-gates.py
+      # The release chain's upload step. Railway's upload-initiate request answered
+      # a non-JSON body on 2026-11-16 and halted all three staging legs of run
+      # 43886555996 — a blip on their side that reads as a broken chain on ours, and
+      # because smoke-staging gates production it blocks production too. The retry
+      # is the fix; this proves it bites against a stub CLI (and that its bound
+      # holds), so dropping it goes red here rather than on a release. No network:
+      # the stub is on PATH.
+      - name: Test the deploy upload retry
+        run: bash scripts/ci/test-railway-deploy-retry.sh
+      # RN-PLANE-001: a store build bakes mobile-app/reactnative/.env.production,
+      # which is gitignored and which eas.json cannot correct — the build scripts run
+      # local Gradle, so the profile's env never applies. Found with that file naming
+      # the staging plane, which put the shipped app under the staging module registry
+      # and re-enabled the on-device server switch. This is the only lane that can
+      # check it: no RN unit spec runs in CI.
+      - name: Test the RN env plane interlock
+        run: node scripts/ci/check-rn-env-plane.mjs
+
+      # Product rule, not a style preference: a veterinarian onboards through the
+      # landing page Vet module, so the Doctor app must not offer a route into the
+      # legacy (doctor)/vet subtree or a `veterinarian` provider-type card. Nothing
+      # else enforces it, and the screens it guards render identically either way.
+      - name: Check the Doctor app has no vet entry point
+        run: python3 scripts/ci/check-doctor-vet-boundary.py
+      # The guard is a text scan, so it can go green by matching nothing once the
+      # tree moves. This pins that it fires, stays quiet when clean, and fails
+      # loudly when the directory it scans is gone.
+      - name: Test the doctor/vet boundary guard
+        run: python3 scripts/ci/test-doctor-vet-boundary.py
 
   # Which module lanes does this change need? One shared filter file
   # (.github/module-filters.json) drives the gating below, so a module's paths
@@ -444,320 +529,3 @@ jobs:
       - name: Lint workflows
         run: actionlint -no-color -oneline -shellcheck= -pyflakes=
 
-  # Railway deployment is deliberately manual. The repository variable remains
-  # an emergency kill switch, while the inputs and branch tests prevent an
-  # environment from being deployed from the wrong promotion branch.
-  deploy-development:
-    name: deploy Development (${{ matrix.service }})
-    # The module lanes are CONDITIONAL (`if: needs.changes.outputs.X == 'true'`),
-    # and GitHub skips a job whose dependency was skipped — so a plain `needs:`
-    # on them would skip every deploy, since most lanes sit out any given change.
-    # `!cancelled()` opts out of that implicit gating; the two `contains` tests
-    # then re-impose the part we actually want — no dependency may be red.
-    # Without them, `!cancelled()` would deploy straight through a failed gate.
-    if: >-
-      !cancelled() &&
-      !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled') &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.deploy_environment == 'development' &&
-      inputs.confirm_deploy == 'DEPLOY' &&
-      github.ref == 'refs/heads/develop' &&
-      vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs:
-      - frontend-web
-      - frontend-admin
-      - backend
-      - openapi
-      - migration-guard
-      - secret-hygiene
-      - workflow-lint
-      - changes
-      - association
-      - connect
-      - crowdfunding
-      - crypto-backend
-      - doctor
-      - fx
-      - health
-      - insurance
-      - maps
-      - realtor
-      - referral
-      - stays
-      - top5
-      - visitor-election
-    runs-on: ubuntu-latest
-    environment: development
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: backend
-            path: backend
-          - service: frontend-web
-            path: frontend-web
-          - service: frontend-admin
-            path: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '20'
-      - name: Install Railway CLI
-        run: npm install --global @railway/cli@5.40.1
-      # Railway builds backend/Dockerfile itself from the directory `railway up`
-      # uploads, so we cannot pass it --build-arg. Writing the SHA into the build
-      # context is the way in: the Dockerfile reads BUILD_COMMIT and bakes it into
-      # the binary via -ldflags, and GET /api/v1/public/build then reports it.
-      # Without this a deployed server cannot say what it is running — /public/health
-      # returns the same bytes on every build, so it can never distinguish
-      # "deployed" from "did not deploy".
-      - name: Stamp the build commit (backend image only)
-        if: matrix.service == 'backend'
-        run: printf '%s' "${{ github.sha }}" > backend/BUILD_COMMIT
-      - name: Deploy ${{ matrix.service }}
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
-        run: |
-          railway up ${{ matrix.path }} --path-as-root --no-gitignore \
-            --service ${{ matrix.service }} \
-            --environment development \
-            --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
-            --detach \
-            --message "${{ github.sha }}"
-          for attempt in {1..40}; do
-            status="$(railway deployment list --service ${{ matrix.service }} --environment development --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -r --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first | .status // empty')"
-            case "$status" in
-              SUCCESS) exit 0 ;;
-              FAILED|CRASHED|REMOVED) echo "Railway deployment ended with $status"; exit 1 ;;
-              *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
-            esac
-          done
-          echo "Timed out waiting for Railway deployment"
-          exit 1
-
-  deploy-staging:
-    name: deploy Staging (${{ matrix.service }})
-    # See deploy-development for why `!cancelled()` + the `contains` tests.
-    if: >-
-      !cancelled() &&
-      !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled') &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.deploy_environment == 'staging' &&
-      inputs.confirm_deploy == 'DEPLOY' &&
-      github.ref == 'refs/heads/staging' &&
-      vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs:
-      - frontend-web
-      - frontend-admin
-      - backend
-      - openapi
-      - migration-guard
-      - secret-hygiene
-      - workflow-lint
-      - changes
-      - association
-      - connect
-      - crowdfunding
-      - crypto-backend
-      - doctor
-      - fx
-      - health
-      - insurance
-      - maps
-      - realtor
-      - referral
-      - stays
-      - top5
-      - visitor-election
-    runs-on: ubuntu-latest
-    environment: staging
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: backend
-            path: backend
-            root_flag: --path-as-root
-          # The staging frontend services carry a Railway `rootDirectory` of
-          # their own folder, so they must be uploaded from the repo root —
-          # but with NO positional path argument at all: `railway up .` dies
-          # client-side with "prefix not found" during indexing (CLI bug with
-          # an explicit `.` when rootDirectory is set), and
-          # `frontend-web --path-as-root` makes Railway look for `frontend-*/`
-          # inside an archive that already IS that folder.
-          - service: frontend-web
-            path: ''
-            root_flag: ''
-          - service: frontend-admin
-            path: ''
-            root_flag: ''
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '20'
-      - name: Install Railway CLI
-        run: npm install --global @railway/cli@5.40.1
-      # Railway builds backend/Dockerfile itself from the directory `railway up`
-      # uploads, so we cannot pass it --build-arg. Writing the SHA into the build
-      # context is the way in: the Dockerfile reads BUILD_COMMIT and bakes it into
-      # the binary via -ldflags, and GET /api/v1/public/build then reports it.
-      # Without this a deployed server cannot say what it is running — /public/health
-      # returns the same bytes on every build, so it can never distinguish
-      # "deployed" from "did not deploy".
-      - name: Stamp the build commit (backend image only)
-        if: matrix.service == 'backend'
-        run: printf '%s' "${{ github.sha }}" > backend/BUILD_COMMIT
-      - name: Deploy ${{ matrix.service }}
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
-        run: |
-          railway up ${{ matrix.path }} ${{ matrix.root_flag }} --no-gitignore \
-            --service ${{ matrix.service }} \
-            --environment staging \
-            --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
-            --detach \
-            --message "${{ github.sha }}"
-          for attempt in {1..40}; do
-            row="$(railway deployment list --service ${{ matrix.service }} --environment staging --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -c --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first // {}')"
-            status="$(echo "$row" | jq -r '.status // empty')"
-            id="$(echo "$row" | jq -r '.id // empty')"
-            case "$status" in
-              SUCCESS) exit 0 ;;
-              FAILED|CRASHED|REMOVED)
-                echo "Railway deployment ended with $status"
-                # This deployment never became the one serving traffic, so
-                # `railway logs --deployment` (which targets the CURRENT/active
-                # deployment) reports the OLD, still-running deployment's logs
-                # instead — silently pointing at the wrong process. Target this
-                # exact deployment id so a crash-after-build actually surfaces
-                # its own reason instead of unrelated old traffic.
-                #
-                # Filtered, never dumped: application logs can contain anything,
-                # and a raw dump into a job log is how a secret escapes (see the
-                # --kv incident documented in staging-inspect.yml's header).
-                echo "--- crash signatures for deployment $id ---"
-                # `railway logs --help`: DEPLOYMENT_ID is a bare POSITIONAL
-                # argument, not a value for --deployment (which is a boolean
-                # flag selecting deploy-logs over build-logs) — `--deployment
-                # "$id"` silently failed with "No service linked" because $id
-                # was consumed as if it were --deployment's value, leaving
-                # --service/--environment/--project all unset. `--latest`
-                # ("show logs from the latest deployment, even if it failed or
-                # is still building") is simpler and more robust than passing
-                # the id at all, so use that instead of the positional form.
-                # stderr is KEPT (redacted below, never discarded): a CLI usage
-                # error looks identical to "zero log lines exist" otherwise,
-                # and those are very different problems to chase.
-                railway logs --deployment --latest --service "${{ matrix.service }}" \
-                  --environment staging --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
-                  --lines 300 > dep.log 2>&1 || true
-                echo "  fetched $(wc -l < dep.log) log lines for this deployment"
-                echo "  --- raw output (redacted) ---"
-                sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' dep.log | head -20
-                if grep -qaiE "panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT" dep.log; then
-                  grep -aiE "panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT" dep.log | tail -60
-                else
-                  # No known crash signature — most likely a startup HANG that
-                  # never reached "listening" before Railway's healthcheck timed
-                  # it out, which prints no panic at all. Show whatever DID print
-                  # (redacted, same doctrine as staging-inspect.yml) so a stuck
-                  # init step is visible instead of a bare "no match".
-                  echo "  no crash signature matched — last lines emitted before the deployment ended:"
-                  tail -40 dep.log | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g'
-                fi
-                exit 1
-                ;;
-              *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
-            esac
-          done
-          echo "Timed out waiting for Railway deployment"
-          exit 1
-
-  deploy-production:
-    name: deploy Production (${{ matrix.service }})
-    # See deploy-development for why `!cancelled()` + the `contains` tests.
-    if: >-
-      !cancelled() &&
-      !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled') &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.deploy_environment == 'production' &&
-      inputs.confirm_deploy == 'DEPLOY' &&
-      github.ref == 'refs/heads/prod' &&
-      vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs:
-      - frontend-web
-      - frontend-admin
-      - backend
-      - openapi
-      - migration-guard
-      - secret-hygiene
-      - workflow-lint
-      - changes
-      - association
-      - connect
-      - crowdfunding
-      - crypto-backend
-      - doctor
-      - fx
-      - health
-      - insurance
-      - maps
-      - realtor
-      - referral
-      - stays
-      - top5
-      - visitor-election
-    runs-on: ubuntu-latest
-    environment: production
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: backend
-            path: backend
-          - service: frontend-web
-            path: frontend-web
-          - service: frontend-admin
-            path: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '20'
-      - name: Install Railway CLI
-        run: npm install --global @railway/cli@5.40.1
-      # Railway builds backend/Dockerfile itself from the directory `railway up`
-      # uploads, so we cannot pass it --build-arg. Writing the SHA into the build
-      # context is the way in: the Dockerfile reads BUILD_COMMIT and bakes it into
-      # the binary via -ldflags, and GET /api/v1/public/build then reports it.
-      # Without this a deployed server cannot say what it is running — /public/health
-      # returns the same bytes on every build, so it can never distinguish
-      # "deployed" from "did not deploy".
-      - name: Stamp the build commit (backend image only)
-        if: matrix.service == 'backend'
-        run: printf '%s' "${{ github.sha }}" > backend/BUILD_COMMIT
-      - name: Deploy ${{ matrix.service }}
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
-        run: |
-          railway up ${{ matrix.path }} --path-as-root --no-gitignore \
-            --service ${{ matrix.service }} \
-            --environment production \
-            --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
-            --detach \
-            --message "${{ github.sha }}"
-          for attempt in {1..40}; do
-            status="$(railway deployment list --service ${{ matrix.service }} --environment production --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -r --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first | .status // empty')"
-            case "$status" in
-              SUCCESS) exit 0 ;;
-              FAILED|CRASHED|REMOVED) echo "Railway deployment ended with $status"; exit 1 ;;
-              *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
-            esac
-          done
-          echo "Timed out waiting for Railway deployment"
-          exit 1

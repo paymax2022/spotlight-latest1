@@ -66,7 +66,7 @@ export default function BookingSuccessScreen() {
         {intakeReady ? (
           <PrimaryButton
             label="Join consultation"
-            onPress={() => router.replace(`/services/telemedicine/consult/${params.appointmentId}`)}
+            onPress={() => router.replace(`/services/telemedicine/consult/${params.appointmentId}/room`)}
           />
         ) : (
           <PrimaryButton

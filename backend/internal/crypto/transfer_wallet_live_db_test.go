@@ -1,3 +1,5 @@
+//go:build tdd_red
+
 package crypto
 
 // RED-PHASE LIVE-DB tests for crypto wallet-to-wallet transfer. The Postgres

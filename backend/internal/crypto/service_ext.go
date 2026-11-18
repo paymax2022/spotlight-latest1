@@ -61,8 +61,8 @@ func (s *Service) SwapQuoteQuidax(ctx context.Context, userID, fromAssetID, toAs
 	quotationID, expiresAt, err := s.swap.CreateQuotation(
 		ctx,
 		quidaxUserID,
-		from.Symbol,  // "NGN", "BTC", etc.
-		to.Symbol,    // "BTC", "ETH", etc.
+		from.Symbol, // "NGN", "BTC", etc.
+		to.Symbol,   // "BTC", "ETH", etc.
 		fromUnits,
 	)
 	if err != nil {
@@ -102,7 +102,7 @@ func (s *Service) SwapQuoteQuidax(ctx context.Context, userID, fromAssetID, toAs
 		FromPriceKobo: fromPrice,
 		ToPriceKobo:   toPrice,
 		CashKobo:      cashKobo,
-		SpreadKobo:    0,      // Quidax handles spread internally
+		SpreadKobo:    0, // Quidax handles spread internally
 		SpreadBps:     0,
 		QuotationID:   quotationID,
 		ExpiresAt:     expiresAt,
@@ -456,16 +456,25 @@ func (s *Service) DeleteAddress(ctx context.Context, userID, id string) error {
 	return nil
 }
 
-// DepositAddress returns (issuing + persisting on first request) the caller's
-// deposit address for an asset. Generated deterministically via the provider seam
-// so it is stable across calls.
+// DepositAddress returns the caller's persisted crypto deposit address for an asset.
+// It NEVER invents one. Money-IN needs an address the platform actually controls and
+// can attribute back to this user; until the custody allocation is wired (the
+// provider-driven deposit plane in internal/cryptosvc, which provisions a Quidax
+// sub-account per user and re-queries it to credit deposits), this refuses with
+// ErrDepositsUnavailable so the app can say so instead of showing a dead address.
 func (s *Service) DepositAddress(ctx context.Context, userID, assetID, network string) (*DepositAddress, error) {
 	a, err := s.repo.GetAsset(ctx, assetID)
 	if err != nil {
 		return nil, err
 	}
-	provider := "mock-custody"
-	return s.repo.GetOrCreateDepositAddress(ctx, userID, a, network, provider, deriveDepositAddress)
+	d, err := s.repo.GetDepositAddress(ctx, userID, a)
+	if errors.Is(err, ErrNotFound) {
+		return nil, ErrDepositsUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	return d, nil
 }
 
 // ScreenAddress runs a lightweight pre-save validation on a candidate destination
@@ -1169,12 +1178,12 @@ func (s *Service) SwapSettlement(ctx context.Context, userID, orderID string) (*
 
 // ReconciliationReport is the admin reconciliation report for swap orders.
 type ReconciliationReport struct {
-	TotalOrders   int64       `json:"total_orders"`
-	SettledOrders int64       `json:"settled_orders"`
-	PendingOrders int64       `json:"pending_orders"`
-	FailedOrders  int64       `json:"failed_orders"`
-	Details       []any       `json:"details,omitempty"` // detailed reconciliation per order if requested
-	GeneratedAt   time.Time   `json:"generated_at"`
+	TotalOrders   int64     `json:"total_orders"`
+	SettledOrders int64     `json:"settled_orders"`
+	PendingOrders int64     `json:"pending_orders"`
+	FailedOrders  int64     `json:"failed_orders"`
+	Details       []any     `json:"details,omitempty"` // detailed reconciliation per order if requested
+	GeneratedAt   time.Time `json:"generated_at"`
 }
 
 // ReconcileSwapOrders generates a reconciliation report for swap orders (admin).

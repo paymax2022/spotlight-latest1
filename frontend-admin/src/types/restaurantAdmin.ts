@@ -149,6 +149,21 @@ export interface UpdateRestaurantRequest {
   logo_url?: string | null;
 }
 
+/** One cuisine tag an operator can attach to a restaurant. */
+export interface CuisineOption {
+  id: string;
+  name: string;
+  slug: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+/** GET/PUT /api/restaurant/admin/restaurants/:id/cuisines. */
+export interface RestaurantCuisineAssignment {
+  available: CuisineOption[];
+  selected: string[];
+}
+
 export interface CreateMenuItemRequest {
   category_id: string;
   name: string;
@@ -420,9 +435,17 @@ export interface RestaurantApplication {
   owner_name?: string;
   email?: string;
   phone?: string;
-  cuisine?: string;
   address?: string;
+  /** What the merchant filed on restaurant_kyb. Absent = nothing filed yet, which
+   *  is different from filed-and-empty, so the panel must not render a placeholder
+   *  for a check that never applied (a sole proprietor is never asked for a CAC). */
+  legal_name?: string;
+  business_type?: string;
   cac_number?: string;
+  /** Legacy settlement details from before outlets were paid into the owner's
+   *  wallet and chose a destination bank per withdrawal. KYB no longer collects
+   *  them, so a missing value on a recent application is expected, not a gap —
+   *  only applications filed before the change can carry them. */
   bank_account_name?: string;
   bank_account_number?: string;
   bank_name?: string;

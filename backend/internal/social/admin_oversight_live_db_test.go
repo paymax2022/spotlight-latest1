@@ -111,7 +111,7 @@ func TestLiveDB_SocialAdminPoolOversight_NonStakeholderReads(t *testing.T) {
 	contributor := fundedContributor(t, ctx, pool, led, 10_000_00)
 	admin := socialTestUser(t, pool) // ops identity — NO stake in the pool
 
-	p, err := svc.CreatePool(ctx, organiser, "oversight-pool", nil)
+	p, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "oversight-pool", BeneficiaryID: nil})
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestLiveDB_SocialPayoutPool_NonStakeholder_NotFound(t *testing.T) {
 	contributor := fundedContributor(t, ctx, pool, led, 10_000_00)
 	outsider := socialTestUser(t, pool)
 
-	p, err := svc.CreatePool(ctx, organiser, "oracle-payout", nil)
+	p, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "oracle-payout", BeneficiaryID: nil})
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}

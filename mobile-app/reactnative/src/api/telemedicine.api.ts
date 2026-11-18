@@ -305,6 +305,7 @@ export async function bookAppointment(input: BookAppointmentInput): Promise<Book
     doctor_id:           input.doctorId,
     scheduled_at:        input.scheduledAt,
     consultation_type:   input.consultType,
+    package_id:          input.packageId || undefined,
     notes:               input.reason,
     idempotency_key:     idempotencyKey,
     expected_total_kobo: input.expectedTotalKobo ?? 0,

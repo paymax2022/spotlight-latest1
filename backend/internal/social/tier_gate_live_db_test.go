@@ -251,7 +251,7 @@ func TestLiveDB_SocialContributePool_Tier0Refused_Tier1Succeeds(t *testing.T) {
 	organiser := socialTestUser(t, pool)
 	contributor := socialTestUser(t, pool)
 	setKycTier(t, pool, organiser, 1)
-	p, err := svc.CreatePool(ctx, organiser, "trip", nil)
+	p, err := svc.CreatePool(ctx, organiser, PoolDraft{Title: "trip", BeneficiaryID: nil})
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}

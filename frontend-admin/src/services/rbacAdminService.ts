@@ -26,41 +26,41 @@ function authHeaders(json = false): Record<string, string> {
 }
 
 export async function listRoles(): Promise<Role[]> {
-  const res = await fetch(`${adminApiBase()}/admin/roles`, { cache: 'no-store', headers: authHeaders() });
+  const res = await fetch(`${adminApiBase()}/admin/roles`, { cache: 'no-store', credentials: 'include', headers: authHeaders() });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok || !payload?.success || !Array.isArray(payload?.roles)) return [];
   return payload.roles as Role[];
 }
 
 export async function createRole(input: Partial<Role>): Promise<Role | null> {
-  const res = await fetch(`${adminApiBase()}/admin/roles`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify(input) });
+  const res = await fetch(`${adminApiBase()}/admin/roles`, { method: 'POST', credentials: 'include', headers: authHeaders(true), body: JSON.stringify(input) });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok || !payload?.success || !payload?.role) return null;
   return payload.role as Role;
 }
 
 export async function updateRole(id: string, input: Partial<Role>): Promise<Role | null> {
-  const res = await fetch(`${adminApiBase()}/admin/roles/${encodeURIComponent(id)}`, { method: 'PATCH', headers: authHeaders(true), body: JSON.stringify(input) });
+  const res = await fetch(`${adminApiBase()}/admin/roles/${encodeURIComponent(id)}`, { method: 'PATCH', credentials: 'include', headers: authHeaders(true), body: JSON.stringify(input) });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok || !payload?.success || !payload?.role) return null;
   return payload.role as Role;
 }
 
 export async function cloneRole(id: string, name: string, slug: string): Promise<Role | null> {
-  const res = await fetch(`${adminApiBase()}/admin/roles/${encodeURIComponent(id)}/clone`, { method: 'POST', headers: authHeaders(true), body: JSON.stringify({ name, slug }) });
+  const res = await fetch(`${adminApiBase()}/admin/roles/${encodeURIComponent(id)}/clone`, { method: 'POST', credentials: 'include', headers: authHeaders(true), body: JSON.stringify({ name, slug }) });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok || !payload?.success || !payload?.role) return null;
   return payload.role as Role;
 }
 
 export async function deleteRole(id: string): Promise<boolean> {
-  const res = await fetch(`${adminApiBase()}/admin/roles/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+  const res = await fetch(`${adminApiBase()}/admin/roles/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'include', headers: authHeaders() });
   const payload = await res.json().catch(() => ({}));
   return Boolean(res.ok && payload?.success);
 }
 
 export async function listPermissions(): Promise<Permission[]> {
-  const res = await fetch(`${adminApiBase()}/admin/permissions`, { cache: 'no-store', headers: authHeaders() });
+  const res = await fetch(`${adminApiBase()}/admin/permissions`, { cache: 'no-store', credentials: 'include', headers: authHeaders() });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok || !payload?.success || !Array.isArray(payload?.permissions)) return [];
   return payload.permissions as Permission[];
@@ -68,7 +68,7 @@ export async function listPermissions(): Promise<Permission[]> {
 
 export async function createPermission(input: Partial<Permission>): Promise<Permission | null> {
 	const res = await fetch(`${adminApiBase()}/admin/permissions`, {
-		method: 'POST', headers: authHeaders(true), body: JSON.stringify(input)
+		method: 'POST', credentials: 'include', headers: authHeaders(true), body: JSON.stringify(input)
 	});
 	const payload = await res.json().catch(() => ({}));
 	if (!res.ok || !payload?.success || !payload?.permission) return null;
@@ -77,7 +77,7 @@ export async function createPermission(input: Partial<Permission>): Promise<Perm
 
 export async function updatePermission(id: string, input: Partial<Permission>): Promise<Permission | null> {
 	const res = await fetch(`${adminApiBase()}/admin/permissions/${encodeURIComponent(id)}`, {
-		method: 'PATCH', headers: authHeaders(true), body: JSON.stringify(input)
+		method: 'PATCH', credentials: 'include', headers: authHeaders(true), body: JSON.stringify(input)
 	});
 	const payload = await res.json().catch(() => ({}));
 	if (!res.ok || !payload?.success || !payload?.permission) return null;
@@ -86,14 +86,14 @@ export async function updatePermission(id: string, input: Partial<Permission>): 
 
 export async function deletePermission(id: string): Promise<boolean> {
 	const res = await fetch(`${adminApiBase()}/admin/permissions/${encodeURIComponent(id)}`, {
-		method: 'DELETE', headers: authHeaders()
+		method: 'DELETE', credentials: 'include', headers: authHeaders()
 	});
 	const payload = await res.json().catch(() => ({}));
 	return Boolean(res.ok && payload?.success);
 }
 
 export async function getPermissionMatrix(): Promise<PermissionMatrix | null> {
-  const res = await fetch(`${adminApiBase()}/admin/permissions/matrix`, { cache: 'no-store', headers: authHeaders() });
+  const res = await fetch(`${adminApiBase()}/admin/permissions/matrix`, { cache: 'no-store', credentials: 'include', headers: authHeaders() });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok || !payload?.success || !payload?.matrix) return null;
   return payload.matrix as PermissionMatrix;
@@ -101,7 +101,7 @@ export async function getPermissionMatrix(): Promise<PermissionMatrix | null> {
 
 export async function assignPermissionToRole(roleId: string, permissionId: string): Promise<boolean> {
   const res = await fetch(`${adminApiBase()}/admin/roles/${encodeURIComponent(roleId)}/permissions`, {
-    method: 'POST', headers: authHeaders(true), body: JSON.stringify({ permissionId })
+    method: 'POST', credentials: 'include', headers: authHeaders(true), body: JSON.stringify({ permissionId })
   });
   const payload = await res.json().catch(() => ({}));
   return Boolean(res.ok && payload?.success);
@@ -109,7 +109,7 @@ export async function assignPermissionToRole(roleId: string, permissionId: strin
 
 export async function removePermissionFromRole(roleId: string, permissionId: string): Promise<boolean> {
   const res = await fetch(`${adminApiBase()}/admin/roles/${encodeURIComponent(roleId)}/permissions/${encodeURIComponent(permissionId)}`, {
-    method: 'DELETE', headers: authHeaders()
+    method: 'DELETE', credentials: 'include', headers: authHeaders()
   });
   const payload = await res.json().catch(() => ({}));
   return Boolean(res.ok && payload?.success);

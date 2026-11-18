@@ -1,0 +1,103 @@
+openapi: 3.0.3
+info:
+  title: Telemedicine admin - platform announcements
+  version: 1.0.0
+  description: |
+    Authoring surface for the banner every provider portal shows on sign-in.
+    Mounted under `/api/v1/telemedicine/admin`.
+
+    * Reads need `telemedicine.admin.view`; publishing needs
+      `telemedicine.admin.manage`.
+    * One publication fans out one unread `doctor_notifications` row per
+      provider account (`notif_type = 'system'`, `group_key = 'announcement'`),
+      which is the exact row the provider-side banner read filters on. The
+      campaign id lives in `detail.campaign_id`, so the history below groups
+      the same rows the banner reads instead of a second table that could
+      disagree with the first.
+    * The audience is every `doctor_profiles` row, deliberately not the
+      patient-facing `doctors` directory: unpublishing a profile for a
+      compliance reason must not also mute the operator who has to answer for
+      it.
+    * The publication is recorded in `admin_audit_logs` (no single doctor to
+      trail against, so not `doctor_compliance_audit`).
+    * Success envelope: `{ "data": ... }`. Error envelope: `{ "error": "..." }`.
+servers:
+  - url: /api/v1/telemedicine/admin
+security:
+  - bearerAuth: []
+paths:
+  /announcements:
+    get:
+      operationId: listAnnouncements
+      summary: Published campaigns, newest first
+      description: |
+        One entry per publication. `recipients` is the number of provider rows
+        that campaign fanned out to, counted from those rows.
+      parameters: [ { $ref: '#/components/parameters/limit' } ]
+      responses:
+        '200': { $ref: '#/components/responses/CampaignList' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: publishAnnouncement
+      summary: Author a notice and fan it out to every provider
+      description: |
+        `title` and `body` are required and trimmed; `tone` must be one the
+        banner palette can render. `ctaLabel` and `ctaRoute` come as a pair —
+        a button that goes nowhere is refused. `dismissible` defaults to true.
+      requestBody: { $ref: '#/components/requestBodies/Publish' }
+      responses:
+        '200': { $ref: '#/components/responses/Published' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+  requestBodies:
+    Publish:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [title, body, tone]
+            properties:
+              title: { type: string, minLength: 1, maxLength: 200 }
+              body: { type: string, minLength: 1, maxLength: 2000 }
+              tone: { type: string, enum: [info, success, warning] }
+              dismissible: { type: boolean, default: true }
+              ctaLabel: { type: string, maxLength: 60 }
+              ctaRoute: { type: string, maxLength: 200 }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { type: object, properties: { error: { type: string } } } } }
+    CampaignList:
+      description: OK
+      content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/Campaign' } } } } } }
+    Published:
+      description: OK
+      content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Published' } } } } }
+  schemas:
+    Campaign:
+      type: object
+      properties:
+        id: { type: string, format: uuid, description: The campaign id carried in every recipient row. }
+        title: { type: string }
+        body: { type: string }
+        tone: { type: string, enum: [info, success, warning] }
+        recipients: { type: integer, format: int64 }
+        publishedAt: { type: string, format: date-time }
+    Published:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        body: { type: string }
+        tone: { type: string, enum: [info, success, warning] }
+        dismissible: { type: boolean }
+        recipients: { type: integer, format: int64 }
+        publishedAt: { type: string, format: date-time }

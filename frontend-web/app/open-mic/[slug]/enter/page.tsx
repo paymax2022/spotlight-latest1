@@ -6,8 +6,9 @@ import OpenMicAuthGate from '@/components/openmic/OpenMicAuthGate';
 
 export const dynamic = 'force-dynamic';
 
-export default async function OpenMicContestEntryPage({ params }: { params: { slug: string } }) {
-  const contest = await getContestBySlug(params.slug);
+export default async function OpenMicContestEntryPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const contest = await getContestBySlug(slug);
   if (!contest) notFound();
 
   return (

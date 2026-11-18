@@ -25,6 +25,12 @@ export interface TransferRecipient {
   displayName: string;
   maskedPhone: string;
   avatarUrl: string | null;
+  /**
+   * Normalised `@handle`, present only when the sender addressed the
+   * recipient by cashtag. Null for a phone/email preview, so the review screen
+   * can echo what was typed instead of a number the sender never entered.
+   */
+  handle?: string | null;
 }
 
 export interface WalletTransfer {

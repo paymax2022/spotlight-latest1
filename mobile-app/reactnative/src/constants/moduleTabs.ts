@@ -10,6 +10,7 @@ import {
   Smartphone, Wifi, Zap, Tv, FileText,
   ReceiptText, TrendingUp, Settings, ArrowLeftRight, LifeBuoy,
   Search, Pill, PawPrint, Stethoscope,
+  Building2, Plus, LayoutDashboard, MessageSquare, FolderOpen, Tag, Plane,
 } from 'lucide-react-native';
 import type { ModuleTab } from '@/components/ModuleTabBar';
 
@@ -52,9 +53,18 @@ export const FILM_ACADEMY_TABS: readonly ModuleTab[] = [
  * own rule: it only ever draws on a screen that's actually in `tabs`. The
  * rider and restaurant-owner consoles under /food/rider and /food/restaurant
  * are separate personas with their own navigation, not part of this bar.
+ *
+ * `matchPaths` carries /services/food — the module's nav entry, a screen of the
+ * services stack rather than of app/food, yet it IS discovery. Without the claim
+ * the entry screen drew no footer at all: the services layout mounts only the
+ * utility and transfer bars, and this list was mounted solely by app/food's own
+ * layout, which is not in that path.
  */
 export const FOOD_TABS: readonly ModuleTab[] = [
-  { href: '/food',        label: 'Discover', icon: Compass },
+  {
+    href: '/food', label: 'Discover', icon: Compass,
+    matchPaths: ['/services/food'],
+  },
   { href: '/food/orders', label: 'Orders',   icon: ReceiptText },
 ] as const;
 
@@ -184,4 +194,34 @@ export const TRANSFER_TABS: readonly ModuleTab[] = [
   { href: '/services/beneficiaries', label: 'Saved',   icon: Users },
   { href: '/services/transactions',  label: 'History', icon: ReceiptText },
   { href: '/services/support',       label: 'Help',    icon: LifeBuoy },
+] as const;
+
+/** Stays host console — the hotelier's own properties and listing a new one. */
+export const STAYS_HOST_TABS: readonly ModuleTab[] = [
+  { href: '/stays/host',        label: 'Properties', icon: Building2 },
+  { href: '/stays/host/create', label: 'List',       icon: Plus },
+] as const;
+
+/** Doctor console — the same five destinations as the (doctor)/(tabs) bar. */
+export const DOCTOR_TABS: readonly ModuleTab[] = [
+  { href: '/(doctor)/(tabs)',              label: 'Dashboard',    icon: LayoutDashboard },
+  { href: '/(doctor)/(tabs)/appointments', label: 'Appointments', icon: CalendarDays },
+  { href: '/(doctor)/(tabs)/messages',     label: 'Messages',     icon: MessageSquare },
+  { href: '/(doctor)/(tabs)/records',      label: 'Records',      icon: FolderOpen },
+  { href: '/(doctor)/(tabs)/earnings',     label: 'Earnings',     icon: Wallet },
+] as const;
+
+/** Telemedicine — the hub, the doctor directory, and the patient's appointments. */
+export const TELEMEDICINE_TABS: readonly ModuleTab[] = [
+  { href: '/services/telemedicine',              label: 'Home',         icon: Stethoscope },
+  { href: '/services/telemedicine/doctors',      label: 'Doctors',      icon: Users },
+  { href: '/services/telemedicine/appointments', label: 'Appointments', icon: CalendarDays },
+] as const;
+
+/** Stays traveller — explore, deals and saved places, and bookings. */
+export const STAYS_TABS: readonly ModuleTab[] = [
+  { href: '/stays',        label: 'Explore', icon: Compass },
+  { href: '/stays/deals',  label: 'Deals',   icon: Tag },
+  { href: '/stays/saved',  label: 'Saved',   icon: Bookmark },
+  { href: '/stays/trips',  label: 'Trips',   icon: Plane },
 ] as const;

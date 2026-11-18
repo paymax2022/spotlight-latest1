@@ -25,6 +25,10 @@ const (
 	RoleParticipant Role = "participant"
 	// RoleViewer may only subscribe.
 	RoleViewer Role = "viewer"
+	// RolePeer is one side of a 1:1 consult: publish audio/video, subscribe, send data.
+	RolePeer Role = "peer"
+	// RolePeerAdmin is RolePeer plus LiveKit room administration (the provider side).
+	RolePeerAdmin Role = "peer_admin"
 )
 
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
@@ -113,6 +117,11 @@ func grantFor(room string, role Role) (*auth.VideoGrant, bool) {
 		g.CanPublish, g.CanPublishData = boolp(false), boolp(true)
 	case RoleViewer:
 		g.CanPublish, g.CanPublishData = boolp(false), boolp(false)
+	case RolePeer:
+		g.CanPublish, g.CanPublishData = boolp(true), boolp(true)
+	case RolePeerAdmin:
+		g.CanPublish, g.CanPublishData = boolp(true), boolp(true)
+		g.RoomAdmin = true
 	default:
 		return nil, false
 	}

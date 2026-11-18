@@ -328,9 +328,9 @@ export type CreateOpenMicContestInput = {
  * by assertOpenMicAdmin), reached through the web proxy like every other read
  * above.
  *
- * NOT ported: the "upload a beat file" control. This form keeps the "paste a
- * beat URL" path (already the primary path in the original UI) and drops the
- * file-picker; paste a pre-hosted URL instead.
+ * Ported here in full except the beat file-picker, which `uploadOpenMicBeat`
+ * below now provides: a pasted URL is not a playable value, because the public
+ * beat reader only serves /api/open-mic/beats/… paths.
  */
 export async function createOpenMicContest(
   input: CreateOpenMicContestInput,
@@ -347,4 +347,37 @@ export async function createOpenMicContest(
   if (res.status === 403) throw new Error('Create contest failed: 403 — this account cannot create Open Mic contests.');
   if (!res.ok && !json.errors) throw new Error(`Create contest failed: ${json.error || res.status}`);
   return { success: Boolean(json.success), contest: json.contest, errors: json.errors };
+}
+
+/**
+ * Upload the official beat mp3. This is the one write the Path-A port skipped:
+ * the note above createOpenMicContest claimed the web proxy could not carry a
+ * binary body, and app/api/web-proxy/[...path]/route.ts has since been fixed to
+ * forward request.arrayBuffer() verbatim with the caller's Content-Type, so the
+ * multipart boundary survives and the file lands intact.
+ *
+ * Returns the two root-relative reader paths served by GET /api/open-mic/beats/[fileKey];
+ * the caller files them as the contest's beat URLs. Throws with the server's own wording
+ * so the form can show why an upload was refused.
+ */
+export async function uploadOpenMicBeat(
+  file: File,
+  contestId?: string,
+): Promise<{ previewUrl: string; downloadUrl: string }> {
+  const body = new FormData();
+  body.append('file', file);
+  const qs = contestId ? `?contestId=${encodeURIComponent(contestId)}` : '';
+  const res = await fetch(`${webBase()}/api/admin/open-mic/beats${qs}`, {
+    method: 'POST',
+    body,
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    success?: boolean; error?: string; beat?: { previewUrl?: string; downloadUrl?: string };
+  };
+  if (res.status === 401) throw new Error('Beat upload failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Beat upload failed: 403 — this account cannot edit Open Mic contests.');
+  if (!res.ok || !json.success) throw new Error(`Beat upload failed: ${json.error || res.status}`);
+  const downloadUrl = String(json.beat?.downloadUrl || '');
+  if (!downloadUrl) throw new Error('Beat upload failed: the server returned no beat URL.');
+  return { previewUrl: String(json.beat?.previewUrl || downloadUrl), downloadUrl };
 }

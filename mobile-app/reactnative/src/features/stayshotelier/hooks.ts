@@ -183,7 +183,7 @@ export function useAvailability(propertyId: string, from: string, to: string) {
 export function useSetRoomAvailability(propertyId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ roomTypeId, ...input }: { roomTypeId: string; from: string; to: string; allotment: number; stopSell: boolean }) =>
+    mutationFn: ({ roomTypeId, ...input }: { roomTypeId: string; from: string; to: string; allotment: number }) =>
       hotelier.setRoomAvailability(propertyId, roomTypeId, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'availability', propertyId] }),
   });

@@ -34,12 +34,13 @@ button {
 }
 
 input:focus {
-    color: $white;
     outline: none;
 }
 
 input {
-    color: $white;
+    /* Shipped as `color: $white`, which erased typed text on every light
+       surface. Each surface now sets (or inherits) its own text colour. */
+    color: inherit;
 }
 
 h1,

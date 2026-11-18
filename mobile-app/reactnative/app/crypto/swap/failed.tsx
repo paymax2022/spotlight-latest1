@@ -10,11 +10,18 @@ import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
 
 export default function SwapFailedScreen() {
-  const p = useLocalSearchParams<{ from: string; to: string; amount: string; reason: string; kind: string }>();
+  const p = useLocalSearchParams<{
+    from: string; to: string; fromId: string; toId: string; amount: string; reason: string; kind: string;
+  }>();
   const expired = p.kind === 'quote_expired';
 
+  // The retry carries the asset ids as well as the symbols — the review screen quotes
+  // by id, and a rate is only honest if it is asked for the same pair that failed.
   const retry = () =>
-    router.replace({ pathname: '/crypto/swap/review', params: { from: p.from, to: p.to, amount: p.amount } });
+    router.replace({
+      pathname: '/crypto/swap/review',
+      params: { from: p.from, to: p.to, fromId: p.fromId, toId: p.toId, amount: p.amount },
+    });
 
   return (
     <SafeAreaView style={styles.safe}>

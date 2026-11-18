@@ -67,7 +67,7 @@ func (h *AdminUsersHandler) List(c *gin.Context) {
 	rows, err := h.svc.ListAdminUsers(filterFromQuery(c))
 	if err != nil {
 		log.Printf("[admin_users.list] internal error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	actor, _ := middleware.GetAuthenticatedUser(c)
@@ -81,7 +81,7 @@ func (h *AdminUsersHandler) Export(c *gin.Context) {
 	rows, err := h.svc.ListAdminUsers(filterFromQuery(c))
 	if err != nil {
 		log.Printf("[admin_users.export] internal error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": httperr.Msg(c, http.StatusInternalServerError, err)})
 		return
 	}
 	actor, _ := middleware.GetAuthenticatedUser(c)
@@ -277,13 +277,64 @@ func (h *AdminUsersHandler) BulkAssignRoleToUsers(c *gin.Context) {
 }
 
 func (h *AdminUsersHandler) applyScopeFilter(ctx context.Context, actorID string, users []domain.AdminUser) []domain.AdminUser {
+	if strings.TrimSpace(actorID) == "" {
+		return nil
+	}
+	roles, _ := h.svc.GetUserRoles(ctx, actorID)
+	for _, r := range roles {
+		if r == "super-admin" || r == "system-admin" {
+			return users
+		}
+	}
+	scopes, _ := h.svc.GetUserScopes(actorID)
+	allowedStates := map[string]struct{}{}
+	allowedPrograms := map[string]struct{}{}
+	allowedContests := map[string]struct{}{}
+	allowedSchools := map[string]struct{}{}
+	sets := map[string]map[string]struct{}{
+		"state":   allowedStates,
+		"program": allowedPrograms,
+		"contest": allowedContests, //nolint:goconst // self-describing scope-type key
+		"school":  allowedSchools,
+	}
+	for _, s := range scopes {
+		id := strings.ToLower(strings.TrimSpace(s.ScopeID))
+		if id == "" {
+			continue
+		}
+		if set, ok := sets[s.ScopeType]; ok {
+			set[id] = struct{}{}
+		}
+	}
+	if len(allowedStates) == 0 && len(allowedPrograms) == 0 && len(allowedContests) == 0 && len(allowedSchools) == 0 {
+		return users
+	}
 	out := make([]domain.AdminUser, 0, len(users))
 	for _, u := range users {
-		if h.canAccessUser(ctx, actorID, u) {
+		if checkTargetScopeMatch(u, allowedStates, allowedPrograms, allowedContests, allowedSchools) {
 			out = append(out, u)
 		}
 	}
 	return out
+}
+
+func checkTargetScopeMatch(target domain.AdminUser, allowedStates, allowedPrograms, allowedContests, allowedSchools map[string]struct{}) bool {
+	for _, check := range []struct {
+		set map[string]struct{}
+		val string
+	}{
+		{allowedStates, target.State},
+		{allowedPrograms, target.ProgramID},
+		{allowedContests, target.ContestID},
+		{allowedSchools, target.SchoolID},
+	} {
+		if len(check.set) > 0 {
+			if _, ok := check.set[strings.ToLower(strings.TrimSpace(check.val))]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (h *AdminUsersHandler) canAccessUser(ctx context.Context, actorID string, target domain.AdminUser) bool {
@@ -319,20 +370,5 @@ func (h *AdminUsersHandler) canAccessUser(ctx context.Context, actorID string, t
 	if len(allowedStates) == 0 && len(allowedPrograms) == 0 && len(allowedContests) == 0 && len(allowedSchools) == 0 {
 		return true
 	}
-	for _, check := range []struct {
-		set map[string]struct{}
-		val string
-	}{
-		{allowedStates, target.State},
-		{allowedPrograms, target.ProgramID},
-		{allowedContests, target.ContestID},
-		{allowedSchools, target.SchoolID},
-	} {
-		if len(check.set) > 0 {
-			if _, ok := check.set[strings.ToLower(strings.TrimSpace(check.val))]; ok {
-				return true
-			}
-		}
-	}
-	return false
+	return checkTargetScopeMatch(target, allowedStates, allowedPrograms, allowedContests, allowedSchools)
 }

@@ -48,6 +48,7 @@ paths = [
     '''^backend/internal/config/env_parity_test\.go$''',               # sk_test_/sk_live_ env-parity fixtures asserting required-var detection — fake keys; earlier commits in this file's history carried a longer suffix the stripe rule matched
     '''^backend/internal/stepup/store_live_test\.go$''',               # tokenHash fixture: a 16-char hex run repeated 4x to fill a 64-char sha256-hex column ("Any 64-char value" per the test's own comment); never a real token hash. Flagged generic-api-key (entropy 4.0) in 648d33098.
     '''^backend/internal/crypto/provider_quidax_test\.go$''',          # test fixtures: example_webhook_secret_key, example_test_api_key, example_invalid_signature_123 for HMAC verification tests
+    '''^backend/internal/telemedicine/handler_avatar_test\.go$''',      # fake R2 creds (AKIAEXAMPLE / secretEXAMPLE — documentation placeholders) plus the local `key :=` object-key fixture, whose `[]string{…, key, "X-Amz-Signature="}` line hit generic-api-key at entropy 3.875 in a72275194. No real credential: the test asserts the shape of a presigned URL, never a usable secret.
 
     # -- Docs / templates with placeholder tokens --------------------------
     '''^MARKETPLACE_QUICK_START\.md$''',
@@ -59,6 +60,20 @@ paths = [
                                     #   cluster-a-identity-rbac.md) hit generic-api-key on entropy ~3.65;
                                     #   no actual secrets, all evidence lines reference code paths and
                                     #   HTTP verbs. Full triage: PR #849 (2026-10-21).
+    '''^docs/qa/estate-uat-443/live-2026-10-26/probe-bff-goldenpath\.out$''',
+                                    # Estate UAT 443 golden-path transcript, introduced 7de27b513
+                                    #   (2026-10-27). The 9 generic-api-key hits (lines 19,22,24,25,
+                                    #   26,27,30,61,67; entropy 3.60-3.67) are all `accessCodeId`/`id`
+                                    #   values — Postgres primary keys echoed in response bodies from a
+                                    #   run whose own header records base=http://127.0.0.1:3000 against
+                                    #   the seeded fixture estate 0a1e5701-0000-4000-8000-000000000001.
+                                    #   Row identifiers, not credentials; useless without the local DB.
+                                    #   Suppressed by exact path rather than a UUID-shaped secret regex,
+                                    #   which would blanket-allow every real token embedded in a UUID
+                                    #   format. Path (not commit) matcher because the file is still
+                                    #   tracked at HEAD and the scan walks ancestry, so editing the
+                                    #   transcript would leave the historical copy red — and the
+                                    #   transcript is dated evidence we do not rewrite.
     '''^frontend-web/src/server/voting-bridge/README\.md$''',
     '''^IMPLEMENTATION_CHECKLIST\.md$''', # curl-auth-header hits on "Bearer YOUR_TOKEN" example snippets (entropy 3.12)
     '''^tools/loadtest/integration/write-env\.sh$''',   # emits placeholder Paystack key values into generated local .env files — placeholders, not credentials

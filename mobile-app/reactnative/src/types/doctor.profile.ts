@@ -176,8 +176,7 @@ export type ProfileBuilderStep =
   | 'work_experience'      // 16
   | 'pricing'              // 17
   | 'free_follow_up'       // 18
-  | 'availability'         // 19 (handled by existing useAvailability)
-  | 'bank_account';        // 20 — final wizard step
+  | 'availability';        // 19 (handled by existing useAvailability) — last wizard step
 
 export interface DoctorProfileDraft {
   id:               string;             // draft id

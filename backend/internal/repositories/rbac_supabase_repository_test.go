@@ -53,8 +53,8 @@ func TestListAdminUsers_ScopedFiltersPushedDown(t *testing.T) {
 func TestListAdminUsers_NoScopedFilterKeepsLeftEmbed(t *testing.T) {
 	q := listAdminUsersQuery(t, domain.AdminUserFilter{Status: "active"})
 
-	if sel := q.Get("select"); !strings.Contains(sel, "profiles!left") {
-		t.Fatalf("unscoped listing must keep !left embed, select=%q", sel)
+	if sel := q.Get("select"); !strings.Contains(sel, "profiles(") || strings.Contains(sel, "profiles!inner") {
+		t.Fatalf("unscoped listing must keep default left join profiles embed, select=%q", sel)
 	}
 	if q.Get("profiles.state") != "" {
 		t.Fatalf("no scoped filter expected, got profiles.state=%q", q.Get("profiles.state"))

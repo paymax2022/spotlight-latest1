@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // service_account_tail.go — business logic + DTOs/projections for the Wave-2
@@ -414,9 +416,17 @@ func (s *Service) Logout(ctx context.Context, userID string) error {
 	return nil
 }
 
-// DismissAnnouncement records a dismissal in the compliance audit (no doctor
-// announcements table exists in this module).
+// DismissAnnouncement marks the notice read so the banner does not return on the
+// next refetch, and keeps the compliance audit breadcrumb. Dismissing something
+// already read, or an id this doctor does not own, is a no-op: the button is an
+// affordance, not a claim about state.
 func (s *Service) DismissAnnouncement(ctx context.Context, userID, announcementID string) error {
+	if _, err := uuid.Parse(announcementID); err != nil {
+		return nil
+	}
+	if err := s.repo.MarkNotificationRead(ctx, userID, announcementID); err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
 	_ = s.repo.InsertAudit(ctx, userID, "announcement.dismiss", "announcement", announcementID, "", nil)
 	return nil
 }

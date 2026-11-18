@@ -38,6 +38,7 @@ function toQuery(filters: AdminUserFilters): string {
 async function statusAction(id: string, action: 'suspend' | 'unsuspend' | 'lock' | 'unlock'): Promise<boolean> {
   const res = await fetch(`${adminApiBase()}/admin/users/${encodeURIComponent(id)}/${action}`, {
     method: 'PATCH',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await res.json().catch(() => ({}));
@@ -59,9 +60,17 @@ export class AdminUsersRequestError extends Error {
 }
 
 export async function readOrThrow(res: Response, what: string): Promise<Record<string, unknown>> {
-  const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  let payload: Record<string, unknown> = {};
+  let rawText = '';
+  try {
+    rawText = await res.text();
+    payload = (JSON.parse(rawText) || {}) as Record<string, unknown>;
+  } catch {
+    // rawText may be HTML or non-JSON plain text
+  }
   if (!res.ok || payload?.success === false) {
-    const detail = typeof payload?.error === 'string' && payload.error ? `: ${payload.error}` : '';
+    const serverErr = typeof payload?.error === 'string' && payload.error ? payload.error : rawText.slice(0, 100).trim();
+    const detail = serverErr ? `: ${serverErr}` : '';
     throw new AdminUsersRequestError(res.status, `${what} failed (HTTP ${res.status})${detail}`);
   }
   return payload;
@@ -71,6 +80,7 @@ export async function listAdminUsers(filters: AdminUserFilters): Promise<AdminUs
   const qs = toQuery(filters);
   const res = await fetch(`${adminApiBase()}/admin/users${qs ? `?${qs}` : ''}`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading users');
@@ -83,6 +93,7 @@ export async function listAdminUsers(filters: AdminUserFilters): Promise<AdminUs
 export async function getAdminUser(id: string): Promise<AdminUser | null> {
   const res = await fetch(`${adminApiBase()}/admin/users/${encodeURIComponent(id)}`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   // A missing user is a normal answer, not a failure.
@@ -94,6 +105,7 @@ export async function getAdminUser(id: string): Promise<AdminUser | null> {
 export async function updateAdminUser(id: string, patch: Record<string, unknown>): Promise<AdminUser | null> {
   const res = await fetch(`${adminApiBase()}/admin/users/${encodeURIComponent(id)}`, {
     method: 'PATCH',
+    credentials: 'include',
     headers: authHeaders(),
     body: JSON.stringify(patch),
   });
@@ -112,6 +124,7 @@ const enc = encodeURIComponent;
 export async function getUserRoles(id: string): Promise<string[]> {
   const res = await fetch(`${adminApiBase()}/admin/users/${enc(id)}/roles`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading user roles');
@@ -121,6 +134,7 @@ export async function getUserRoles(id: string): Promise<string[]> {
 export async function assignUserRole(id: string, roleId: string): Promise<boolean> {
   const res = await fetch(`${adminApiBase()}/admin/users/${enc(id)}/roles`, {
     method: 'POST',
+    credentials: 'include',
     headers: authHeaders(),
     body: JSON.stringify({ roleId }),
   });
@@ -131,6 +145,7 @@ export async function assignUserRole(id: string, roleId: string): Promise<boolea
 export async function removeUserRole(id: string, roleId: string): Promise<boolean> {
   const res = await fetch(`${adminApiBase()}/admin/users/${enc(id)}/roles/${enc(roleId)}`, {
     method: 'DELETE',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await res.json().catch(() => ({}));
@@ -140,6 +155,7 @@ export async function removeUserRole(id: string, roleId: string): Promise<boolea
 export async function getLoginActivity(id: string): Promise<Record<string, unknown>[]> {
   const res = await fetch(`${adminApiBase()}/admin/login-activity?actorUser=${enc(id)}&limit=50`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading login activity');
@@ -149,6 +165,7 @@ export async function getLoginActivity(id: string): Promise<Record<string, unkno
 export async function getSecurityEvents(id: string): Promise<Record<string, unknown>[]> {
   const res = await fetch(`${adminApiBase()}/admin/security-events?actorUser=${enc(id)}&limit=50`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading security events');
@@ -163,6 +180,7 @@ export async function getUserNavigation(
 ): Promise<{ enabled: boolean; events: UserNavigationEvent[] }> {
   const res = await fetch(`${adminApiBase()}/admin/users/${encodeURIComponent(id)}/navigation`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   if (res.status === 404) return { enabled: false, events: [] };
@@ -187,6 +205,7 @@ export type AdminAuditEntry = {
 export async function getAuditLogsForUser(userId: string, limit = 50): Promise<AdminAuditEntry[]> {
   const res = await fetch(`${adminApiBase()}/admin/audit-logs?targetUser=${enc(userId)}&limit=${limit}`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading admin actions');
@@ -207,6 +226,7 @@ export type UserSession = {
 export async function getUserSessions(userId: string): Promise<UserSession[]> {
   const res = await fetch(`${adminApiBase()}/admin/users/${enc(userId)}/sessions`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading sessions');
@@ -227,6 +247,7 @@ export type UserModule = {
 export async function getUserModules(userId: string): Promise<UserModule[]> {
   const res = await fetch(`${adminApiBase()}/admin/users/${enc(userId)}/modules`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: authHeaders(),
   });
   const payload = await readOrThrow(res, 'Loading modules');

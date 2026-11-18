@@ -11,13 +11,11 @@ import { useUsedIdTypes } from '@/features/kycverify/hooks';
 import type { KycTier } from '@/features/kycverify/types';
 import { ID_FORMATS, validateIdNumber } from '@/features/kycverify/idFormats';
 import IdNumberField from '@/features/kycverify/components/IdNumberField';
-import DojahRequirement from '@/features/kycverify/components/DojahRequirement';
 
 /**
  * K5 — ID number entry. The field enforces the exact shape Dojah's endpoint for
  * this identifier expects (see idFormats.ts, which mirrors the Go adapter's
- * routes), and the screen states that requirement plus the masked request before
- * anything is sent.
+ * routes).
  *
  * We do NOT collect the holder's name or date of birth: Dojah returns the
  * authoritative legal name + DOB from the registry lookup and the backend
@@ -67,7 +65,6 @@ export default function KycIdNumberScreen() {
             }}
             error={showError}
           />
-          <DojahRequirement idType={idType} idNumber={validation.normalized} />
         </ScrollView>
 
         <SafeAreaView edges={['bottom']} style={styles.footer}>

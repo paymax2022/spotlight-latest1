@@ -66,6 +66,25 @@ export interface GateRule {
   exact?: boolean;
 }
 
+/**
+ * The Food module's rules, exported so the funnel contract is testable: a layout
+ * file imports React Native and cannot be read by node:test.
+ *
+ * /food/restaurant/manage is deliberately absent. It hosts the create-store form,
+ * and the `restaurant` capability is derived from restaurants.owner_id — so
+ * gating it would require the record the screen is the only way to earn. Same
+ * reasoning ADR-PR915 gives for leaving /marketplace/sell ungated. Owner data
+ * (the queue console, earnings, staff, order triage) stays gated; the API scopes
+ * every one of those calls regardless.
+ */
+export const FOOD_PROVIDER_RULES: readonly GateRule[] = [
+  { type: 'restaurant', prefix: '/food/restaurant', exact: true },
+  { type: 'restaurant', prefix: '/food/restaurant/earnings' },
+  { type: 'restaurant', prefix: '/food/restaurant/staff' },
+  { type: 'restaurant', prefix: '/food/restaurant/order' },
+  { type: 'rider', prefix: '/food/rider' },
+];
+
 export type GateDecision =
   | { kind: 'allow' }
   | { kind: 'pending'; type: ProviderType }

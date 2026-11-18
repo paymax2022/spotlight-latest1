@@ -11,6 +11,7 @@ import ProfileMenuItem from '@/components/ProfileMenuItem';
 import { TeleHeader, DoctorAvatar, RatingStars } from '@/features/telemedicine/components';
 import { SectionCard, ToggleRow, InfoRow, StateView } from '@/features/doctor/components';
 import { useDoctorProfile, useSettings, useUpdateSettings, useLogout } from '@/features/doctor/hooks';
+import { mapHeaderAvatar } from '@/features/doctor/mapping';
 import type { DoctorSettings } from '@/types/doctor';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
@@ -63,13 +64,15 @@ export default function DoctorSettingsScreen() {
     );
   }
 
+  const avatar = mapHeaderAvatar(profile);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <TeleHeader title="Settings" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         {/* Profile header */}
         <View style={styles.profileCard}>
-          <DoctorAvatar initials={profile.initials} color={profile.avatarColor} size={64} online={profile.isOnline} />
+          <DoctorAvatar uri={avatar.uri} initials={avatar.initials} color={avatar.color} size={64} online={profile.isOnline} />
           <View style={styles.profileBody}>
             <Text style={styles.name} numberOfLines={1}>{profile.name}</Text>
             <Text style={styles.title} numberOfLines={1}>{profile.title}</Text>

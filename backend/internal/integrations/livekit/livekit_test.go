@@ -534,3 +534,32 @@ func TestWebhookBodyIsBounded(t *testing.T) {
 		t.Fatalf("an oversized webhook body must be refused, got %d", w.Code)
 	}
 }
+
+func TestPeerRoleMayPublishSubscribeAndSendData(t *testing.T) {
+	c := newTestClient(t, "wss://rtc.example.com")
+	tok, err := c.JoinToken(JoinRequest{Room: "consult-vet-s1", Identity: "u1", Role: RolePeer})
+	if err != nil {
+		t.Fatalf("join token: %v", err)
+	}
+	v := verify(t, tok.JWT).Video
+	if !isTrue(v.CanPublish) || !isTrue(v.CanSubscribe) || !isTrue(v.CanPublishData) {
+		t.Fatalf("peer grants publish=%v subscribe=%v data=%v, want all true",
+			isTrue(v.CanPublish), isTrue(v.CanSubscribe), isTrue(v.CanPublishData))
+	}
+	if v.RoomAdmin {
+		t.Fatal("a plain peer must not be room admin")
+	}
+}
+
+func TestPeerAdminRoleAlsoGetsRoomAdmin(t *testing.T) {
+	c := newTestClient(t, "wss://rtc.example.com")
+	tok, err := c.JoinToken(JoinRequest{Room: "consult-vet-s1", Identity: "doc", Role: RolePeerAdmin})
+	if err != nil {
+		t.Fatalf("join token: %v", err)
+	}
+	v := verify(t, tok.JWT).Video
+	if !isTrue(v.CanPublish) || !isTrue(v.CanPublishData) || !v.RoomAdmin {
+		t.Fatalf("peer admin grants publish=%v data=%v admin=%v, want all true",
+			isTrue(v.CanPublish), isTrue(v.CanPublishData), v.RoomAdmin)
+	}
+}

@@ -40,7 +40,7 @@ import {
   usePurchasePolicy,
 } from '@/features/insurance/live/hooks';
 import { coverPeriodLabel, nairaFromKobo } from '@/features/insurance/live/money';
-import type { Field, InsuranceError } from '@/features/insurance/live/types';
+import type { Field, InsuranceError, Product, Quote } from '@/features/insurance/live/types';
 
 export default function ReviewAndConfirm() {
   const { draft: draftId } = useLocalSearchParams<{ draft?: string }>();
@@ -238,12 +238,14 @@ export default function ReviewAndConfirm() {
           ))}
         </View>
 
-        {quote.terms ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Terms</Text>
-            <Text style={styles.terms}>{quote.terms}</Text>
-          </View>
-        ) : null}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Terms</Text>
+          {formatTerms(quote.terms, product).map((t, idx) => (
+            <Text key={idx} style={styles.terms}>
+              {t}
+            </Text>
+          ))}
+        </View>
 
         {purchase.isError ? <InsuranceErrorBanner error={purchase.error} /> : null}
 
@@ -311,6 +313,46 @@ function formatWhen(iso: string): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+function formatTerms(rawTerms: Quote['terms'], product: Product): string[] {
+  if (typeof rawTerms === 'string' && rawTerms.trim() && rawTerms !== '[object Object]') {
+    return [rawTerms.trim()];
+  }
+
+  const termsObj = rawTerms && typeof rawTerms === 'object' ? (rawTerms as Record<string, any>) : null;
+  const lines: string[] = [];
+
+  const periodDays = termsObj?.cover_period_days ?? product.coverPeriodDays;
+  if (periodDays) {
+    lines.push(`• Cover duration: ${coverPeriodLabel(periodDays)}`);
+  }
+
+  const isRenewable = termsObj?.renewable ?? product.isRenewable;
+  lines.push(`• Policy renewal: ${isRenewable ? 'Renewable at end of period' : 'One-off non-renewable cover'}`);
+
+  const isClaimable = termsObj?.claimable ?? product.isClaimable;
+  lines.push(
+    `• Claims: ${
+      isClaimable
+        ? 'Claims can be filed directly in-app with your certificate.'
+        : 'Claims are processed directly through the underwriter.'
+    }`,
+  );
+
+  const isCert = termsObj?.certificateable ?? product.isCertificateable;
+  lines.push(
+    `• Documentation: ${
+      isCert ? 'Official policy certificate issued upon purchase confirmation.' : 'Cover confirmation issued upon payment.'
+    }`,
+  );
+
+  const underwriterName = product.underwriter || 'the underwriter';
+  lines.push(
+    `Full policy wording and terms are issued by ${underwriterName}. Cover commences immediately upon successful payment confirmation.`,
+  );
+
+  return lines;
 }
 
 const styles = StyleSheet.create({

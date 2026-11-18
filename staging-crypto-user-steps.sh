@@ -7,7 +7,7 @@
 #
 # Account: patrick.egbuji@gmail.com on STAGING only. Login password is read from the file below.
 set -u
-W=https://frontend-web-staging-ec46.up.railway.app
+W=https://frontend-web-staging-new.up.railway.app
 ID='patrick.egbuji@gmail.com'
 PWFILE=/private/tmp/claude-501/-Users-paymax-Desktop-wordpress-spotlight-new--claude-worktrees-objective-curie-85dcb1/6b7c200c-b5cc-47f7-97cd-11e79424b807/scratchpad/staging-reset-password.txt
 H='Content-Type: application/json'

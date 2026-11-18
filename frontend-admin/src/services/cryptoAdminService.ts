@@ -22,9 +22,11 @@ import type {
 // /api/v1/admin/crypto (internal/crypto/routes.go) with matching methods —
 // GET addresses/assets/orders/reconciliation/swaps/withdrawals, POST assets,
 // POST withdrawals/:id/decision, POST addresses/:id/decision.
-// It mattered most for adminDecideWithdrawal: approving a crypto withdrawal
-// mutated an in-memory array and reported success, so the operator believed a
-// payout had been released.
+// Reads may render fixtures; every write in this file refuses in fixture mode,
+// because an approval here is indistinguishable from a release: a withdrawal
+// decision asks the custody provider to broadcast and an address approval makes
+// an destination withdrawable. Reporting either as done would be a lie to the
+// operator, not a placeholder.
 const USE_MOCK = (process.env.NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
 function base(): string {
@@ -98,8 +100,8 @@ export async function adminListAssets(): Promise<CryptoAsset[]> {
   return body?.assets ?? [];
 }
 
-// POST /admin/crypto/assets — create or update (upsert by symbol) a catalogue
-// the console still requires an operator note client-side for traceability and
+// POST /admin/crypto/assets — create or update (upsert by symbol) a catalogue asset.
+// The console still requires an operator note client-side for traceability and
 // surfaces it in the confirmation message (kept local — not sent unless the
 // backend contract adds an audit field).
 export async function adminConfigAsset(input: CryptoAssetConfigRequest): Promise<CryptoAsset> {
@@ -115,9 +117,11 @@ export async function adminConfigAsset(input: CryptoAssetConfigRequest): Promise
   return body?.asset ?? body;
 }
 
-// NOTE: the admin withdrawal routes are NOT yet wired server-side (only member
-// /api/v1/crypto/withdrawals* exist). These fetch paths target the PLANNED admin
-// USE_MOCK (default true) serves fixtures so the surface renders standalone.
+// Withdrawal review. These paths exist server-side (internal/crypto/routes.go:
+// GET /admin/crypto/withdrawals, POST /admin/crypto/withdrawals/:id/decision),
+// so the default live mode drives the real queue. Approving here is what asks the
+// custody provider to broadcast — the member path only ever parks a request at
+// pending_review — which is why fixture mode refuses rather than pretend.
 
 const MOCK_WITHDRAWALS: CryptoWithdrawal[] = [
   {
@@ -168,19 +172,13 @@ export async function adminListWithdrawals(status = '', limit = 50, offset = 0):
   return body?.withdrawals ?? [];
 }
 
-// POST /admin/crypto/withdrawals/:id/decision — approve (requested→pending) or
-// reject (requested→failed). Operator note is mandatory and audited.
+// POST /admin/crypto/withdrawals/:id/decision — approve or reject a parked
+// withdrawal. Approving is the only thing in this console that asks the custody
+// provider to broadcast, so it is irreversible: fixture mode refuses rather than
+// report a release that never happened. Operator note is mandatory and audited.
 export async function adminDecideWithdrawal(id: string, input: CryptoWithdrawalDecisionRequest): Promise<CryptoWithdrawal> {
   if (!input.note || !input.note.trim()) throw new Error('An operator note is required to decide a withdrawal.');
-  if (USE_MOCK) {
-    await delay();
-    const w = MOCK_WITHDRAWALS.find((x) => x.id === id);
-    if (!w) throw new Error('Withdrawal not found.');
-    w.status = input.decision === 'approve' ? 'pending' : 'failed';
-    if (input.decision === 'reject') w.failure_reason = input.note.trim();
-    w.updated_at = new Date().toISOString();
-    return { ...w };
-  }
+  if (USE_MOCK) throw new Error(`Deciding a withdrawal ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${base()}/withdrawals/${encodeURIComponent(id)}/decision`, {
     method: 'POST',
     headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crypto:withdrawal-decision', id) },
@@ -271,18 +269,11 @@ export async function adminListAddresses(review = '', limit = 100, offset = 0): 
 }
 
 // POST /admin/crypto/addresses/:id/decision — approve or reject an allow-list
-// entry. Note is mandatory and audited.
+// entry. Approval is what makes an address withdrawable, so fixture mode refuses
+// rather than report a permission it did not grant. Note is mandatory and audited.
 export async function adminDecideAddress(id: string, input: CryptoAddressDecisionRequest): Promise<CryptoAddress> {
   if (!input.note || !input.note.trim()) throw new Error('An operator note is required to review an address.');
-  if (USE_MOCK) {
-    await delay();
-    const a = MOCK_ADDRESSES.find((x) => x.id === id);
-    if (!a) throw new Error('Address not found.');
-    a.review_status = input.decision === 'approve' ? 'approved' : 'rejected';
-    a.is_active = input.decision === 'approve';
-    if (input.decision === 'approve') a.verified_at = new Date().toISOString();
-    return { ...a };
-  }
+  if (USE_MOCK) throw new Error(`Reviewing an allow-list address ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${base()}/addresses/${encodeURIComponent(id)}/decision`, {
     method: 'POST',
     headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crypto:address-decision', id) },

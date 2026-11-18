@@ -23,7 +23,7 @@ export default function EditOrgPage() {
   const dash = useDashboard();
   const [formData, setFormData] = useState<EditFormData>({
     name: dash.data?.card.organisationName ?? '',
-    description: dash.data?.card.organisationDescription ?? '',
+    description: '',
     acronym: dash.data?.card.organisationAcronym ?? '',
   });
   const [isSaving, setIsSaving] = useState(false);

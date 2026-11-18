@@ -1,0 +1,614 @@
+/* Spotlight SME Pitch Contest — port of the standalone pitch mockup, scoped to
+   .smePitch so it can sit inside the shared <Layout> chrome. */
+.smePitch {
+  color-scheme: light;
+  --night: #180f20;
+  --plum: #361c48;
+  --paper: #f8f1e8;
+  --ink: #24162a;
+  --copper: #ffbb92;
+  --muted: #66576a;
+  --line: #d9c9d5;
+  --serif: Georgia, serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+/* Two site-wide sheets fight this page's reference design, and both win on raw
+   specificity, so each is answered with !important:
+   - src/styles/tailwind.css ("Force Infotek typography globally") pins
+     div/p/span/a/li/button/input/h1-h6 to Kumbh Sans, killing the mock's
+     system-ui body face and its Georgia display face.
+   - public/assets/css/main.css paints every heading with the site's dark
+     header ink and title-cases it, which is unreadable on the plum bands. */
+.smePitch,
+.smePitch div,
+.smePitch p,
+.smePitch span,
+.smePitch a,
+.smePitch li,
+.smePitch small,
+.smePitch label,
+.smePitch legend,
+.smePitch button,
+.smePitch input,
+.smePitch summary,
+.smePitch h3 {
+  font-family: system-ui, sans-serif !important;
+}
+
+.smePitch h1,
+.smePitch h2,
+.smePitch .route span {
+  font-family: var(--serif) !important;
+}
+
+.smePitch h1,
+.smePitch h2,
+.smePitch h3,
+.smePitch h4,
+.smePitch h5,
+.smePitch h6 {
+  color: inherit;
+  text-transform: none;
+}
+
+.smePitch *,
+.smePitch *::before,
+.smePitch *::after {
+  box-sizing: border-box;
+}
+
+.smePitch h1,
+.smePitch h2,
+.smePitch h3,
+.smePitch p,
+.smePitch figure {
+  margin: 0;
+}
+
+.smePitch a {
+  color: inherit;
+}
+
+.smePitch button,
+.smePitch input {
+  font-size: inherit;
+}
+
+.smePitch button {
+  cursor: pointer;
+}
+
+.smePitch :focus-visible {
+  outline: 3px solid #c988f4;
+  outline-offset: 4px;
+}
+
+.smePitch .wrap {
+  width: min(1240px, calc(100% - 80px));
+  margin-inline: auto;
+}
+
+/* Anchor jumps need scroll-padding on the scroll container itself, and the
+   chrome stacked above the page is measured in JS (--sme-chrome-top). */
+html:has(.smePitch) {
+  scroll-behavior: smooth;
+  scroll-padding-top: var(--sme-chrome-top, 145px);
+}
+
+.smePitch .skip {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 200;
+  background: #fff;
+  color: var(--ink);
+  padding: 8px 12px;
+  text-decoration: none;
+  transform: translateY(-180%);
+}
+
+.smePitch .skip:focus {
+  transform: none;
+}
+
+/* main.css makes #header-sticky position:fixed once scrolled, which drops it out
+   of flow and yanks the page up by its own height mid-scroll. The spacer puts
+   that height back in the same frame so nothing jumps. */
+.smePitch .header-spacer {
+  height: var(--sme-rail-top, 92px);
+}
+
+.smePitch .section-rail {
+  position: sticky;
+  top: var(--sme-rail-top, 92px);
+  z-index: 5;
+  background: var(--night);
+  color: var(--paper);
+  border-block: 1px solid #e1c2e333;
+}
+
+.smePitch .section-rail .wrap {
+  min-height: 58px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+}
+
+.smePitch .section-rail nav {
+  display: flex;
+  gap: 24px;
+  font-size: 14px;
+}
+
+.smePitch .section-rail a {
+  text-decoration: none;
+}
+
+.smePitch .section-rail nav a:hover {
+  text-decoration: underline;
+}
+
+.smePitch .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 9px 16px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 780;
+  text-decoration: none;
+}
+
+.smePitch .primary {
+  background: var(--copper);
+  color: #2b172b;
+}
+
+.smePitch .primary:hover {
+  background: #ffdbbd;
+}
+
+.smePitch .outlined {
+  border-color: currentColor;
+}
+
+.smePitch .outlined:hover {
+  background: #ad7aae20;
+}
+
+.smePitch .eyebrow {
+  color: #743b81;
+  font-size: 11px;
+  font-weight: 820;
+  letter-spacing: 0.16em;
+}
+
+.smePitch .hero .eyebrow,
+.smePitch .process .eyebrow,
+.smePitch .readiness .eyebrow {
+  color: #f1c8e8;
+}
+
+.smePitch .eyebrow::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  background: #c17a61;
+  display: inline-block;
+  margin-right: 9px;
+  transform: rotate(45deg);
+}
+
+.smePitch h1,
+.smePitch h2 {
+  font-weight: 400;
+  letter-spacing: -0.068em;
+  line-height: 0.99;
+}
+
+.smePitch h1 {
+  font-size: clamp(49px, 7vw, 105px);
+  margin-top: 13px;
+}
+
+.smePitch h1 em {
+  color: var(--copper);
+  font-weight: 400;
+}
+
+.smePitch h2 {
+  font-size: clamp(36px, 5.4vw, 72px);
+  margin: 10px 0 16px;
+}
+
+.smePitch .hero {
+  color: var(--paper);
+  background: radial-gradient(ellipse at 74% 0%, #502860, transparent 65%), var(--night);
+  padding: 44px 0 24px;
+}
+
+.smePitch .hero-title {
+  display: grid;
+  grid-template-columns: 1.75fr 1fr;
+  align-items: end;
+  gap: 20px;
+  padding-bottom: 23px;
+}
+
+.smePitch .hero-side p {
+  max-width: 330px;
+  margin-bottom: 15px;
+  color: #f0dbef;
+}
+
+.smePitch .reel-window {
+  overflow: hidden;
+  border: 1px solid #f2bedd70;
+}
+
+.smePitch .reel-track {
+  display: flex;
+  transition: transform 0.65s cubic-bezier(0.22, 0.75, 0.25, 1);
+}
+
+.smePitch .reel figure {
+  flex: 0 0 100%;
+  background: #24182a;
+}
+
+.smePitch .reel img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2;
+  object-fit: contain;
+}
+
+.smePitch .reel-controls,
+.smePitch .reel-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.smePitch .reel-controls {
+  justify-content: space-between;
+  padding-top: 10px;
+  font-size: 13px;
+}
+
+.smePitch .reel-controls small,
+.smePitch .reel-index {
+  color: var(--copper);
+  letter-spacing: 0.1em;
+}
+
+.smePitch .reel-index {
+  margin-right: 7px;
+}
+
+.smePitch .reel-buttons button {
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid #f0bbd17a;
+  background: none;
+  color: var(--paper);
+  border-radius: 4px;
+  padding: 4px 9px;
+}
+
+.smePitch .reel-buttons button:hover {
+  background: #ffffff20;
+}
+
+.smePitch .intro,
+.smePitch .ecosystem,
+.smePitch .end,
+.smePitch .process,
+.smePitch .readiness {
+  padding-block: 73px;
+}
+
+.smePitch .intro,
+.smePitch .end,
+.smePitch .ready-grid {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 38px;
+  align-items: center;
+}
+
+.smePitch .intro > div:nth-child(2),
+.smePitch .lead,
+.smePitch .fine {
+  color: var(--muted);
+  max-width: 660px;
+}
+
+.smePitch .intro p + p {
+  margin-top: 10px;
+}
+
+.smePitch .process,
+.smePitch .readiness {
+  background: var(--plum);
+  color: var(--paper);
+}
+
+.smePitch .process .lead,
+.smePitch .readiness .lead {
+  color: #ead9ea;
+}
+
+.smePitch .route {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 17px;
+  list-style: none;
+  padding: 0;
+  margin: 28px 0 0;
+}
+
+.smePitch .route li {
+  position: relative;
+  border-top: 1px solid #c79dca;
+  padding-top: 14px;
+}
+
+.smePitch .route li:not(:last-child)::after {
+  content: '→';
+  position: absolute;
+  top: -12px;
+  right: -5px;
+  color: var(--copper);
+  background: var(--plum);
+  padding-left: 4px;
+}
+
+.smePitch .route span {
+  font-size: 33px;
+  color: var(--copper);
+}
+
+.smePitch .route h3,
+.smePitch .matrix h3 {
+  margin: 6px 0;
+  font-size: 19px;
+  line-height: 1.18;
+}
+
+.smePitch .route p {
+  color: #e6d5e7;
+  font-size: 14px;
+}
+
+.smePitch .matrix {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 24px 0 12px;
+}
+
+.smePitch .matrix article {
+  padding: 19px;
+  background: #fffaf4;
+  border: 1px solid var(--line);
+  border-top: 3px solid #78468a;
+}
+
+.smePitch .matrix article:nth-child(-n + 2) {
+  border-top-color: #b15e47;
+}
+
+.smePitch .matrix span {
+  color: #743b81;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.smePitch .matrix p {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.smePitch .matrix a {
+  display: inline-block;
+  margin-top: 7px;
+  font-size: 13px;
+  color: #743b81;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.smePitch .fine {
+  font-size: 13px;
+}
+
+.smePitch .readiness fieldset {
+  border: 1px solid #caa4cd80;
+  padding: 13px 16px;
+}
+
+.smePitch .readiness legend {
+  padding: 0 6px;
+  color: var(--copper);
+  font-weight: 750;
+}
+
+.smePitch .readiness label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  border-bottom: 1px solid #c7a2ca44;
+  background: none;
+  border-radius: 0;
+  margin: 0;
+  font-weight: 400;
+  color: inherit;
+  text-align: left;
+}
+
+.smePitch .readiness label:last-child {
+  border-bottom: 0;
+}
+
+.smePitch .readiness input {
+  accent-color: var(--copper);
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.smePitch .progress {
+  width: min(370px, 100%);
+  height: 13px;
+  accent-color: var(--copper);
+  border: none;
+  display: block;
+}
+
+.smePitch .progress-copy {
+  margin-top: 15px;
+  color: var(--copper);
+  font-weight: 750;
+}
+
+.smePitch .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The mock padded the <details>; padding the <summary> instead keeps the same
+   rhythm while making the whole row a 53px tap target. */
+.smePitch .faq details {
+  border-top: 1px solid var(--line);
+}
+
+.smePitch .faq details:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.smePitch .faq summary {
+  cursor: pointer;
+  font-weight: 760;
+  padding: 14px 0;
+}
+
+.smePitch .faq p {
+  margin: 0 0 14px;
+  color: var(--muted);
+}
+
+@media (max-width: 900px) {
+  .smePitch .wrap {
+    width: calc(100% - 44px);
+  }
+
+  .smePitch .route {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .smePitch .route li:nth-child(3)::after {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .smePitch .wrap {
+    width: calc(100% - 28px);
+  }
+
+  html:has(.smePitch) {
+    scroll-padding-top: calc(var(--sme-chrome-top, 145px) + 12px);
+  }
+
+  .smePitch .section-rail nav {
+    display: none;
+  }
+
+  .smePitch .section-rail .wrap {
+    min-height: 52px;
+  }
+
+  .smePitch .hero {
+    padding-top: 25px;
+  }
+
+  .smePitch .hero-title,
+  .smePitch .intro,
+  .smePitch .end,
+  .smePitch .ready-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .smePitch .hero-title h1 {
+    font-size: clamp(39px, 10vw, 59px);
+  }
+
+  .smePitch .hero-side p {
+    margin: 4px 0 10px;
+  }
+
+  .smePitch .matrix,
+  .smePitch .route {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .smePitch .route li:nth-child(3)::after {
+    display: block;
+  }
+
+  .smePitch .route li:nth-child(even)::after {
+    display: none;
+  }
+
+  .smePitch .intro,
+  .smePitch .ecosystem,
+  .smePitch .end,
+  .smePitch .process,
+  .smePitch .readiness {
+    padding-block: 43px;
+  }
+
+  .smePitch .reel-controls small {
+    display: none;
+  }
+
+  .smePitch .reel-index {
+    display: block;
+  }
+
+  .smePitch .matrix article {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 360px) {
+  .smePitch .matrix {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has(.smePitch) {
+    scroll-behavior: auto;
+  }
+
+  .smePitch .reel-track {
+    transition: none;
+  }
+}

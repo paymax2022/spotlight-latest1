@@ -244,6 +244,10 @@ export default function AirtimeScreen() {
               <Text style={styles.apiError}>Could not load networks. Tap to retry.</Text>
             </Pressable>
           ) : (
+            // Logo only: the four brands are recognised by their marks, and the
+            // caption beneath each was a biller name ("MTN Airtime"), not a
+            // service. The name still reaches a screen reader through
+            // accessibilityLabel and the chosen one through Payment Summary.
             <View style={styles.providerGrid}>
               {networks.filter((n) => n.isActive).map((net) => {
                 const active = selectedNetwork?.id === net.id;
@@ -251,13 +255,17 @@ export default function AirtimeScreen() {
                   <Pressable
                     key={net.id}
                     onPress={() => { setSelectedNetwork(net); setFormError(''); }}
+                    accessibilityRole="button"
+                    accessibilityLabel={net.name}
+                    accessibilityState={{ selected: active }}
                     style={[styles.providerCard, active && styles.providerCardActive]}
                   >
-                    <ProviderLogo code={net.code} name={net.name} logoUri={resolveProviderImage(providerLogos, net.code, net.name)} />
-                    <Text style={[styles.providerName, active && styles.providerNameActive]} numberOfLines={1}>
-                      {net.name}
-                    </Text>
-                    {active && <CheckCircle2 size={16} color={Colors.primary} strokeWidth={2.2} />}
+                    <ProviderLogo code={net.code} name={net.name} size={44} logoUri={resolveProviderImage(providerLogos, net.code, net.name)} />
+                    {active && (
+                      <View style={styles.providerCheck}>
+                        <CheckCircle2 size={15} color={Colors.onPrimary} strokeWidth={2.6} />
+                      </View>
+                    )}
                   </Pressable>
                 );
               })}
@@ -382,7 +390,7 @@ export default function AirtimeScreen() {
                     logoUri={resolveProviderImage(providerLogos, selectedNetwork.code, selectedNetwork.name)}
                   />
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.confirmProviderName} numberOfLines={1}>{selectedNetwork.name} Airtime</Text>
+                    <Text style={styles.confirmProviderName} numberOfLines={1}>{selectedNetwork.name}</Text>
                     {pendingPayload?.phoneNumber ? (
                       <Text style={styles.confirmProviderSub}>{pendingPayload.phoneNumber}</Text>
                     ) : null}
@@ -488,12 +496,9 @@ const styles = StyleSheet.create({
   card:       { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.lg },
   sectionTitle:{ ...Typography.titleMd, color: Colors.onSurface },
   providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
-  providerCard:{ width: '48%', minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.md, gap: Spacing.sm },
+  providerCard:{ flexGrow: 1, flexBasis: '21%', aspectRatio: 1, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center' },
   providerCardActive:{ borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
-  providerIcon:{ width: 34, height: 34, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
-  providerInitial:{ ...Typography.labelLg, fontWeight: '800' },
-  providerName:{ ...Typography.labelMd, color: Colors.onSurface },
-  providerNameActive:{ color: Colors.onPrimaryFixed },
+  providerCheck:{ position: 'absolute', top: 5, right: 5, backgroundColor: Colors.primary, borderRadius: Radius.full, padding: 1.5 },
   amountGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginVertical: Spacing.md },
   amountPill: { minWidth: 88, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: Radius.full, alignItems: 'center', borderWidth: 1, borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLow },
   amountPillActive:{ backgroundColor: Colors.primaryContainer, borderColor: Colors.primaryContainer },

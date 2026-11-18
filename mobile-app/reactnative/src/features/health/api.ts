@@ -33,6 +33,17 @@ import {
   mockGetHealthProfile,
 } from './api/preconsult.mock';
 import {
+  attachmentKindFor,
+  mapDraftEnvelope,
+  mapHealthProfileEnvelope,
+  mapIntakeBundle,
+  mapPresignEnvelope,
+  mapSubmitEnvelope,
+  serverConsentVersion,
+  toServerAnswers,
+  type ServerBundle,
+} from './intakeMapping';
+import {
   MOCK_SUBJECTS,
   MOCK_RECORDS,
   MOCK_CONSENTS,
@@ -262,27 +273,43 @@ export async function getIntake(appointmentId: string): Promise<ApptIntakeBundle
       },
     };
   }
-  const { data } = await api.get<ApptIntakeBundle>(
+  // The Go handler answers {"success":true,"data":PatientView} — the axios body is
+  // the envelope, not the payload, and the payload is snake_case (intakeMapping).
+  const { data } = await api.get<{ success: boolean; data: ServerBundle }>(
     `${HEALTH_API_BASE}/intake/appointments/${appointmentId}`,
   );
-  return data;
+  return mapIntakeBundle(data?.data);
 }
 
-/** Autosave the in-progress draft (debounced by the wizard). */
+/**
+ * Autosave the in-progress draft (debounced by the wizard).
+ * `allowedNames` is the active schema's own field names, which the wizard holds.
+ * The LIVE branch filters answers to them because intake.validate rejects an
+ * unknown key outright — a stale offline draft or the M12 attachment refs would
+ * otherwise 400 the save. Mock mode keeps its own (richer) vocabulary untouched.
+ */
 export async function saveIntakeDraftForAppt(
   appointmentId: string,
   answers: IntakeResponseValues,
-  consentVersion?: string,
+  consentVersion?: string | number,
+  allowedNames?: string[],
 ): Promise<PreConsultIntake> {
   if (USE_MOCK) {
     await delay(120);
-    return mockSaveDraft(appointmentId, answers, consentVersion);
+    return mockSaveDraft(appointmentId, answers, consentVersion as string | undefined);
   }
-  const { data } = await api.put<PreConsultIntake>(
+  // `consent_version` is omitted entirely when there is none to record: the server
+  // keeps whatever it already stored, so a keystroke autosave cannot wipe the
+  // agreement the patient just gave (M2).
+  const version = serverConsentVersion(consentVersion);
+  const { data } = await api.put<{ success: boolean; intake: unknown }>(
     `${HEALTH_API_BASE}/intake/appointments/${appointmentId}/draft`,
-    { answers, consent_version: consentVersion },
+    {
+      answers: allowedNames ? toServerAnswers(answers, allowedNames) : answers,
+      ...(version === undefined ? {} : { consent_version: version }),
+    },
   );
-  return data;
+  return mapDraftEnvelope(data);
 }
 
 /**
@@ -293,20 +320,24 @@ export async function saveIntakeDraftForAppt(
 export async function submitApptIntake(
   appointmentId: string,
   answers: IntakeResponseValues,
-  consentVersion: string,
+  consentVersion: string | number,
+  allowedNames?: string[],
 ): Promise<SubmitIntakeResult> {
   if (USE_MOCK) {
     await delay(480);
-    return mockSubmitIntake(appointmentId, answers, consentVersion);
+    return mockSubmitIntake(appointmentId, answers, consentVersion as string);
   }
-  const { data } = await api.post<SubmitIntakeResult>(
+  const { data } = await api.post<{ success: boolean; data: unknown }>(
     `${HEALTH_API_BASE}/intake/appointments/${appointmentId}/submit`,
-    { answers, consent_version: consentVersion },
+    {
+      answers: allowedNames ? toServerAnswers(answers, allowedNames) : answers,
+      consent_version: serverConsentVersion(consentVersion),
+    },
   );
-  return data;
+  return mapSubmitEnvelope(data);
 }
 
-/** Presign an attachment upload (M12), then the client PUTs the file to the URL. */
+/** Presign an attachment upload (M12); the caller then PUTs the file and records it. */
 export async function presignAttachment(
   appointmentId: string,
   file: { fieldId: string; fileName: string; mimeType: string },
@@ -325,11 +356,46 @@ export async function presignAttachment(
       },
     };
   }
-  const { data } = await api.post<{ uploadUrl: string; attachment: IntakeAttachment }>(
+  // Server field names differ from the wizard's: it takes contentType, not mimeType.
+  const { data } = await api.post<{ success: boolean; data: unknown }>(
     `${HEALTH_API_BASE}/intake/appointments/${appointmentId}/attachments/presign`,
-    file,
+    { kind: attachmentKindFor(file.mimeType), fileName: file.fileName, contentType: file.mimeType },
   );
-  return data;
+  const { uploadUrl, storageKey, contentType } = mapPresignEnvelope(data);
+  if (!uploadUrl || !storageKey) throw new Error('preconsult: presign returned no upload');
+  return {
+    uploadUrl,
+    // The storage key doubles as the id: it is unique per object and the server
+    // returns it again on the next load, so a reload reconciles without a uuid.
+    attachment: {
+      id: storageKey,
+      fieldId: file.fieldId,
+      fileName: file.fileName,
+      mimeType: contentType || file.mimeType,
+      storageKey,
+    },
+  };
+}
+
+/**
+ * Record an attachment the client has already PUT to the presigned URL (M12).
+ * The server only accepts a key it issued for this patient + appointment, so this
+ * runs strictly after a successful upload. Mock mode has no server row to write.
+ */
+export async function recordAttachment(
+  appointmentId: string,
+  attachment: IntakeAttachment,
+): Promise<PreConsultIntake> {
+  if (USE_MOCK) return Promise.reject(new Error('recordAttachment is a no-op in mock mode'));
+  const { data } = await api.post<{ success: boolean; intake: unknown }>(
+    `${HEALTH_API_BASE}/intake/appointments/${appointmentId}/attachments`,
+    {
+      kind: attachmentKindFor(attachment.mimeType),
+      storage_key: attachment.storageKey,
+      content_type: attachment.mimeType,
+    },
+  );
+  return mapDraftEnvelope(data);
 }
 
 /** M17 — longitudinal health profile (pre-fills future intakes). */
@@ -338,8 +404,8 @@ export async function getHealthProfile(): Promise<HealthProfile> {
     await delay();
     return mockGetHealthProfile();
   }
-  const { data } = await api.get<HealthProfile>(`${HEALTH_API_BASE}/intake/health-profile`);
-  return data;
+  const { data } = await api.get<unknown>(`${HEALTH_API_BASE}/intake/health-profile`);
+  return mapHealthProfileEnvelope(data);
 }
 
 export async function getProviders(vertical?: HealthProvider['vertical']): Promise<HealthProvider[]> {
