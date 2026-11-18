@@ -239,6 +239,81 @@ environment only, and recovery on its own timescale. We are ready to disconnect
 that source as a test, but we would rather ask than mutate a live environment on
 a theory.
 
+## The CI arm reproduced cleanly on a fresh commit, 2026-11-18 18:10-18:29Z — and two more of our own explanations died with it
+
+This is the run we have been waiting for since the fault began. Release run `44359708940` (`main`
+`5ec5870ce8c9234609829a730a4c442594a6481e`) is the **first** run in this whole episode whose gate returned
+`proceed` rather than being cancelled or `superseded`-no-op'd by the merge train, so its staging legs
+opened for the first time in roughly two days — and all three refused, 9 attempts out of 9, without
+creating a single deployment row.
+
+| leg | outcome | window |
+| --- | --- | --- |
+| `release gate` | **success** (verdict `proceed`) | 17:34:15 → 18:09Z |
+| `migrate staging database` | **success** (`supabase db push` applied) | 18:09 → 18:10Z |
+| `deploy Development (frontend-admin)` | **success** | 18:09:26 → 18:11:03 |
+| `deploy Development (backend)` | **success** | 18:09:26 → 18:12:38 |
+| `deploy Development (frontend-web)` | **success** | 18:09:27 → 18:13:05 |
+| `deploy Staging (frontend-web)` | **failure** — 9/9 refusals | 18:10:06 → 18:28:51 |
+| `deploy Staging (backend)` | **failure** — 9/9 refusals | 18:10:06 → 18:29:02 |
+| `deploy Staging (frontend-admin)` | **failure** — 9/9 refusals | 18:10:06 → 18:29:35 |
+| `smoke Staging` / production trio | skipped (by design: no upload, no smoke) | 18:29:36 |
+
+Every one of the 27 staging attempts printed the same four lines and nothing else:
+
+```
+Failed to fetch: error decoding response body
+
+Caused by:
+    0: error decoding response body
+    1: expected value at line 1 column 1
+```
+
+with no `Indexing...`, no `Uploading...`, and — checked independently through the API, not just from the
+logs — **no deployment row created**: at 18:12Z, mid-ladder, all three staging instances still reported
+their 17:16-17:18Z rows. The retry ladder itself behaved exactly as designed (the `frontend-web` leg slept
+68/121/169/131/129/153/173/150 s, ≈ 18.5 min end to end), which retires the idea that our budget is too
+short: it covered more than the 883 s continuous-fault window measured in episode 11, and all 27 attempts
+still refused.
+
+**Three things this run settles, and the first two are our own hypotheses losing.**
+
+1. **Archive size does not discriminate inside CI.** The `backend` leg ran
+   `railway up backend --path-as-root … --detach --verbose --message 5ec5870ce…`, i.e. the ~7.5 MB
+   directory archive that this report's size-boundary row records as *accepted* from a laptop, and it was
+   refused 9/9 in the same minutes that the 133 MB frontend archives were refused. So within the CI arm
+   small and large behave identically; the 7,511,269 B / 133,527,512 B boundary is a property of *our
+   laptop's uplink* (524 from Cloudflare), not of Railway's upload-initiate.
+2. **`--verbose` produces no extra detail on this arm.** We added it in #1074 expecting the request URL,
+   the `bytes:` count and the origin status code. In CI it printed none of those — the step output jumps
+   straight from `=== deploying backend to staging (5ec5870ce…) ===` / `stamped backend/BUILD_COMMIT` to
+   `Failed to fetch: error decoding response body`. The `status code 524` we can surface is the *laptop*
+   failure; the CI refusal gives the CLI nothing to print, which is itself evidence that no HTTP response
+   with a status ever reached the client. We therefore still cannot hand you a status code for the arm
+   that matters, and no flag on our side will change that — it needs a server-side lookup.
+3. **Nothing else moved.** Same runner image as the three successful development legs minutes earlier,
+   same pinned `@railway/cli@5.40.1`, same script, same commit, same project; the only differences remain
+   the environment (`staging`) and the environment-scoped token.
+
+**Positive control repeated on the same commit, 18:31-18:34Z, this time with an explicit sha.** Fifteen
+minutes after CI gave up on `5ec5870ce`, the same three staging services were deployed to that exact
+commit through the dashboard lane —
+`serviceInstanceDeploy(serviceId:$s, environmentId:$e, commitSha:"5ec5870ce…")` → `true` ×3, rows
+`b6a58148` (18:33:12), `5b5b847f` (18:33:39), `52d7f9e6` (18:34:07), each **SUCCESS with a `snapshotId`**
+(`b3e271cf` / `f1080258` / `82807a5e`), each with `meta.commitHash = 5ec5870ce…`, `meta.branch = main`,
+`meta.reason = deploy`. Serving was confirmed from outside:
+`https://backend-staging-new.up.railway.app/api/v1/public/build` →
+`{"commit":"5ec5870ce8c9234609829a730a4c442594a6481e","source":"env","started_at":"2026-11-18T18:33:44Z"}`,
+and both frontend hosts returned 200 (`/` and `/admin/login`). Staging is therefore **not** behind main
+because of our pipeline — it is behind only in the sense that it can no longer be reached by upload.
+
+The distinction we need from you has narrowed to one thing: `POST /up`-equivalent initiate, called with a
+**project token scoped to the staging environment**, refuses before producing a row; every other way of
+starting a deployment of that same commit to those same instances — user-session upload, repo-lane
+`serviceInstanceDeploy`, with or without a pinned `commitSha` — succeeds.
+
+
+
 ## Cost to us
 
 `release.yml` promotes `main → development → staging → production`, with
