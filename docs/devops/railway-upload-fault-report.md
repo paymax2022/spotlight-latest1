@@ -24,7 +24,21 @@ failed all nine of its staging calls although the commit contains no
 `frontend-admin/` file at all. Updated the same day at 12:37Z with episode 8:
 run `44296221501`, the very next release (tip `98bb394d0d`), refused 27 out of
 27 staging calls over 1,183 s while its own three development uploads returned
-deployment IDs 48.7-51.1 s before the same service was refused. No token value
+deployment IDs 48.7-51.1 s before the same service was refused. Updated
+15:52Z with episode 9: run `44323824351` (tip `6057b0d3c`, the menu-visibility
+squash merge — one migration re-slotted above the registry schema, the
+services-grid/module-keys gating and its three unit-test files, a new
+non-required CI job, two docs files; no `backend/` and no `frontend-admin/`
+file in it), refused 27 out of 27
+staging calls over 1,134-1,201 s while its own development uploads were
+accepted **25.8-33.3 s** before the same service was refused — backend's
+25.8 s the tightest pair yet — and its staging `supabase db push` applied the
+new migration; in the same minutes, uploads to the same staging services from
+outside CI were being accepted (a local backend deploy succeeded at 15:00:33Z
+and a second, carrying the released tip itself, succeeded at 15:18Z; the other
+local attempts failed later at build on the submitting machine), so the
+refusal is
+CI-path-specific, not an environment outage. No token value
 appears here.
 
 ## The ask
@@ -284,6 +298,75 @@ outlasted two different tips in one day, and every staging `latestDeployment`
 row is still dated 2026-11-16. Production was never attempted: `smoke Staging`
 (`134804645166`) and `smoke Production` (`134804648020`) skipped.
 
+Episode 9 is run `44323824351`, the release of tip `6057b0d3c` — the menu
+visibility change (one migration re-slotted above the registry schema, the
+services-grid/module-keys gating and its three unit-test files, a new
+non-required CI job, two docs files; no `backend/` and no `frontend-admin/`
+file in it). Its
+gate (`134869605743`) cleared in 30m51s (14:24:04→14:54:55Z) and returned
+`proceed`. Development deployed and smoked fine — `Uploading...` accepted at
+14:55:14.514Z (frontend-web), 14:55:17.727Z (frontend-admin) and 14:55:22.210Z
+(backend), all three `smoke Development` legs passed — and the run's
+`migrate staging database / supabase db push (staging)` (`134889897933`)
+connected at 14:55:21Z, logged `Applying migration
+20271600000000_mobile_menu_modules.sql...` at 14:55:25Z and finished at
+14:55:27Z — a Supabase call, per episode 4, but this time it moved data: the
+live staging payload behind `/api/v1/modules/visibility` went from 34 keys
+(last pre-migration read 14:41Z) to 38 keys (read 14:58Z, re-measured 15:09Z),
+which is what
+that migration exists to do. The three staging legs, started at 14:55:33Z,
+then refused nine-for-nine across 27 calls — backend 14:55:48.000-15:15:07.888Z
+(1,160 s), frontend-web 14:55:47.777-15:14:41.980Z (1,134 s), frontend-admin
+14:55:47.837-15:15:48.364Z (1,201 s) — with the same decode error and **zero
+`Indexing...` and zero `Uploading...` lines in all three legs, counted**. Same
+service, same runner, same CLI build, same project, same service ID:
+
+| service | development `Uploading...` accepted | staging first refusal | apart |
+|---|---|---|---|
+| backend | 14:55:22.210Z | 14:55:48.000Z | **25.8 s** |
+| frontend-admin | 14:55:17.727Z | 14:55:47.837Z | 30.1 s |
+| frontend-web | 14:55:14.514Z | 14:55:47.777Z | 33.3 s |
+
+backend's 25.8 s beats episode 7's 29.3 s and is the tightest pair on the
+record. Production was again never attempted: `smoke Staging`,
+`migrate production database`, `deploy Production` and `smoke Production` all
+skipped at 15:15:50Z.
+
+Episode 9 adds one fact the eight earlier episodes could not: **in the same
+minutes, staging's upload-initiate answered normally for uploads that came from
+outside CI.** Local deploys created staging-scoped rows at 14:23:32-35Z
+(`f2A-/f2B-058101df…`, the recovery-probe branch), 15:00:33Z (backend
+`e907664a`, **SUCCESS**, labeled `diag-verbose-1`) and 15:07:09-15:08:19Z
+(three rows from a local refresh automation, all failing later at build with
+`Failed to create code snapshot` — a packaging fault on the submitting machine,
+not the transport refusal), and at 15:18:18Z backend `162c1d04` was **BUILDING**
+from tip `6057b0d3c` itself (it has since concluded **SUCCESS** — staging
+backend now runs the released tip, deployed locally). Same environment, same
+services, same CLI —
+accepted locally while CI was refused 27 of 27 inside one window, which moves
+the suspicion from "the staging environment is rejecting uploads" to "the
+refusal tracks the caller's path". The staging `latestDeployment` records at
+15:07-15:20Z are all local rows, none from CI; frontend-web's newest SUCCESS
+remains `d5825eff` (2026-11-16 16:11:27Z) and frontend-admin's `e4670d96`
+(2026-11-16 15:56:15Z) — dark 46 h 56 m and 47 h 24 m at those anchors — while
+backend's newest SUCCESS in that window was the local `e907664a` at 15:00:33Z,
+ending a 45 h 54 m dark span that CI never got to end.
+
+One attribution trap worth recording, because the pack's own method relies on
+timing: `Service.deployments(first: N)` is **not** environment-scoped — its
+14:55:14-22Z rows (cliMessage `6057b0d3c…`, SUCCESS, imageDigest present) are
+this run's own *development* deployments, created 0.1-0.2 s after each
+development leg's `Uploading...` line, and reading them as staging successes
+would invert the story. Staging-scoped reads need
+`serviceInstance(serviceId, environmentId){ latestDeployment }` or
+`deployments(input: {environmentId, serviceId})` — introspection says
+`DeploymentListInput` takes environmentId/serviceId/projectId/status and no
+page-size field, so that call returns the full history. Finally, this
+afternoon also re-probed episode 8's own run (`gh run rerun --failed`, attempt
+2, legs 13:40:29-14:00:18Z): all three staging legs refused 9/9 again, zero
+`Indexing`/`Uploading` lines — one run has now refused 54 staging calls across
+two attempts in a single day.
+
 ## Reproduction
 
 Push any commit to `paymax2022/spotlight-latest1:main` and watch
@@ -291,7 +374,7 @@ Push any commit to `paymax2022/spotlight-latest1:main` and watch
 fault is intermittent, so this may need several attempts, and a docs-only merge
 produces no attempt at all: run `44111967023` cleared its gate in 5m30s and
 skipped every deploy leg because no service changed, so a sample needs a commit
-that changes a service. Eight episodes are on the record: 16:23:32-16:38:15Z on
+that changes a service. Nine episodes are on the record: 16:23:32-16:38:15Z on
 2026-11-16, in which CI's staging calls were refused throughout (though a probe
 job was accepted twice inside that span, at
 16:34:47 and 16:34:50Z); 23:18:25-23:38:48Z the same day, in which all 27 were
@@ -319,7 +402,13 @@ failed all nine of its calls exactly the same way; and 12:14:15-12:33:58Z the
 same day, in which the eighth release — the next tip, which touched
 `frontend-web` and not `frontend-admin` — was refused 27 times out of 27 while
 its own development legs returned deployment IDs 48.7-51.1 s before the same
-service was refused.
+service was refused; and 14:55:47-15:15:48Z the same day, in which the ninth
+release — the menu-visibility tip — was refused 27 times out of 27 while its
+own development legs returned deployment IDs 25.8-33.3 s before the same
+service was refused, its own `migrate staging database` leg applied a real
+migration, and uploads to the same staging services from outside CI were
+accepted inside the window (one backend SUCCESS at 15:00:33Z, the rest failing
+at build on the submitting machine).
 Not one staging deployment row was created on 2026-11-17: at 08:18Z the
 three `latestDeployment` records still dated from 2026-11-16 (`e4670d96`,
 `d5825eff`, `28946ae4`), and a fourth episode four hours later did not change
@@ -350,7 +439,19 @@ so on backend's 17:06:29.046Z anchor the environment has now been dark for
 are still `latestDeployment` for all three services, so the environment has now
 been dark for **43 h 30 min** across eight episodes — and since a successful
 upload would have created a newer row, those unchanged timestamps are themselves
-the proof that staging has accepted nothing at all in that span. One method note: the
+the proof that staging has accepted nothing at all in that span. Re-measured a
+tenth time at 15:07-15:33Z on 2026-11-18, after all 27 of episode 9's refusals:
+the staging-scoped `latestDeployment` records are now backend `162c1d04`
+(tip `6057b0d3c`, created by a local deploy at 15:18:18Z — `BUILDING` when
+probed 15:20Z, **SUCCESS** by 15:33Z), frontend-web `76e58284` (FAILED, local,
+15:07:44Z) and frontend-admin `c674cd77` (FAILED, local, 15:20:27Z) — none of
+them created by CI. frontend-web's newest SUCCESS remains `d5825eff`
+(2026-11-16 16:11:27Z) and frontend-admin's `e4670d96` (2026-11-16 15:56:15Z),
+so those two services were dark 46 h 56 m and 47 h 24 m at those anchors;
+backend's newest SUCCESS is the local `162c1d04` (before it `e907664a` at
+15:00:33Z — the first staging row since 2026-11-16, closing a 45 h 54 m dark
+span that nine CI episodes never closed). Both staging successes came from
+local uploads in CI's refusal window; CI itself created no row. One method note: the
 `serviceInstance(serviceId, environmentId){ latestDeployment }` probe still
 works for staging, but for the development and production environment IDs it now
 returns `latestDeployment: null` for this credential rather than a row — so
@@ -390,4 +491,14 @@ skips every leg. Episode 8 is run `44296221501`, a push to `main` at
 three staging jobs are `134793654794` / `134793654805` / `134793654687`, whose
 development legs are `134793153324` / `134793153321` / `134793153514`, whose
 staging `db push` is `134793153712`, and whose skipped `smoke Staging` and
-`smoke Production` are `134804645166` and `134804648020`.
+`smoke Production` are `134804645166` and `134804648020`; that run's
+`--failed` re-run attempt the same afternoon (episode 9's probe) re-ran staging
+jobs `134842442814` / `134842442841` / `134842443078` (13:40:29-14:00:18Z) and
+re-concluded `failure` at 14:00:36Z. Episode 9 is run `44323824351`, a push to
+`main` at `6057b0d3cedf78db54d9bfe6e46c1031106f5e6b`, whose gate is
+`134869605743`, whose three staging jobs are `134890280555` / `134890280564` /
+`134890280857`, whose development legs are `134889896799` / `134889896983` /
+`134889897024`, whose staging `db push` is `134889897933`, and whose skipped
+`smoke Staging`, `migrate production database`, `deploy Production` and
+`smoke Production` are `134904132748` / `134904134661` / `134904136046` /
+`134904138560`.
