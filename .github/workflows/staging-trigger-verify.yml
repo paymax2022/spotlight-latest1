@@ -45,8 +45,11 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        # The BRANCH's tree, not the input sha's: this job runs the script that
+        # lives on this branch, and `inputs.sha` is only the commit Railway is told
+        # to build. Checking out the target would find no script to run.
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ github.sha }}
 
       - name: Install Railway CLI (the version the legs pin)
         run: npm install --global @railway/cli@5.40.1
