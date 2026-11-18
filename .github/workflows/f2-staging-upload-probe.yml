@@ -1,67 +1,51 @@
-name: F2 staging upload probe (token scope discriminator)
+name: F2 staging upload probe (branch-only, no production path)
 
-# Why this file exists.
+# Diagnostic only. Runs on pushes to `f2-staging-token-probe` and nowhere else;
+# it never reads a production secret and never passes `--environment production`.
+# Delete this file with its branch.
 #
-# Release's `deploy Staging (*)` legs die before the upload even starts:
-# `railway up` prints `Failed to fetch: error decoding response body` /
-# `expected value at line 1 column 1` in under a second, with zero
-# `Indexing...` lines, so Railway refused the code-snapshot call and no
-# deployment row is ever created. 9 attempts per leg, ~19 minutes per leg.
+# What is still open about F2, and what this measures.
 #
-# Everything the repo controls has now been measured out of the equation:
+# Release's `deploy Staging (*)` legs die before the upload starts:
+# `Failed to fetch: error decoding response body` / `expected value at line 1
+# column 1`, zero `Indexing...` lines, 9 attempts, ~19 minutes, no deployment row.
+# Measured cells so far (all the same command shape
+# `railway up backend --path-as-root --no-gitignore --service backend
+#  --environment <env> --project <id> --detach --message <sha>`):
 #
-#   * the pinned CLI is NOT it — `@railway/cli@5.40.1`, Release's exact pin, ran
-#     the exact same command against staging from a laptop and produced
-#     `Indexing... Uploading...` and deployment 8f3446d0 = SUCCESS
-#     (2026-11-18 14:03Z, build = main's tip).
-#   * the stale GitHub DeploymentTriggers that pointed at the unused
-#     `staging-Old` environment were deleted on 2026-11-18; the laptop upload
-#     worked afterwards, Release's did not. Not the cause.
-#   * the token is not simply dead — `Staging inspect` (run 44320572419,
-#     2026-11-18 14:06Z, `environment: staging`, same secret) called
-#     `railway domain list`, `variable list` and `deployment list` against
-#     staging with it and every read returned data with zero decode errors.
-#   * an invalid token does not produce this signature either — a deliberate
-#     garbage RAILWAY_TOKEN gets the CLI's clean `Unauthorized. Please check
-#     that your RAILWAY_TOKEN is valid …`, not a JSON decode error.
-#   * runner-side uploads are possible: `deploy Development (*)` legs run the
-#     identical command on the identical image and succeed every release.
+#   auth      host    CLI      env         result
+#   session   macOS   5.71.0   staging     SUCCESS  31f94499  13:42Z 11-18
+#   session   macOS   5.40.1   staging     SUCCESS  8f3446d0  14:03Z 11-18
+#   session   Linux   5.40.1   staging     SUCCESS  7cdb5b31  14:1xZ 11-18
+#   secret    CI      5.40.1   development SUCCESS  every release run
+#   secret    CI      5.40.1   staging     FAIL     27/27, 11-17 .. 11-18
+#   secret    CI      5.74.1*  staging     SUCCESS  diagA/diagB 16:34Z 11-16
+#             (* that diagnostic run printed `railway 5.74.1` between its own
+#              attempts, i.e. the CLI had auto-updated itself off the 5.40.1
+#              pin mid-job, which is why that cell is not a clean
+#              same-version comparison.)
 #
-# That leaves exactly one untested intersection: RAILWAY_TOKEN_STAGING *the
-# code-snapshot call*. Reads work with it; dev uploads work with a different
-# token; staging uploads work with a different credential. This workflow
-# separates "what the staging token is allowed to do" from "which environment
-# it is being pointed at", in one run, on the same image Release uses.
+# So platform is out, the staging environment is out, and the staging secret is
+# not simply invalid (it performs every read from a runner, and a deliberate
+# garbage token produces the CLI's clean `Unauthorized`, not a decode error). The
+# one variable that has never been held still is the CLI version, on the CI side,
+# with the staging secret. This file measures exactly that: pinned 5.40.1 first,
+# then the current CLI after `railway upgrade --yes`, both against staging.
 #
-# Verdicts:
-#   probe A (staging token -> development) SUCCEEDS and
-#   probe B (staging token -> staging)     FAILS
-#       => the token can create snapshots; Railway's staging side refuses this
-#          token for that environment. Escalate to Railway with both logs.
-#   probe A FAILS too
-#       => RAILWAY_TOKEN_STAGING lacks the scope/permission the upload needs.
-#          Fix = create a fresh full-scope Railway token and replace the secret;
-#          no repo change required.
-#
-# Writes only to development and staging. It has no production path at all, and
-# it is `workflow_dispatch`-only, so it cannot run on a push to main.
-#
-# Delete this file once one Release run shows a real `Indexing... / Uploading...`
-# on the staging legs.
-
-run-name: F2 staging upload probe (${{ inputs.cli_version }})
+#   cell A fails and cell B succeeds  => Release's pin is the fault. Fix = raise
+#       the `@railway/cli@5.40.1` pin in release.yml (three places) to a version
+#       that survives the current upload API. Repo-side, shippable, no secrets.
+#   both cells fail                   => the pin is innocent and the staging
+#       secret's own permission on the code-snapshot call is the last variable
+#       left. Fix = create a fresh Railway token and replace
+#       RAILWAY_TOKEN_STAGING.
+#   cell A succeeds                   => the fault is intermittent, and the retry
+#       wrapper in scripts/ci/railway-deploy.sh is the right mitigation.
 
 on:
-  workflow_dispatch:
-    inputs:
-      cli_version:
-        description: 'Railway CLI version to install (Release pins 5.40.1)'
-        type: string
-        default: '5.40.1'
-      ref:
-        description: 'Commit to build and upload'
-        type: string
-        default: 'main'
+  push:
+    branches:
+      - f2-staging-token-probe
 
 permissions:
   contents: read
@@ -72,78 +56,89 @@ concurrency:
 
 jobs:
   probe:
-    name: probe upload auth (${{ inputs.cli_version }})
+    name: staging upload, pinned vs current CLI
     runs-on: ubuntu-latest
-    # Same GitHub environment as Release's staging legs, so secret resolution is
-    # identical to the path being diagnosed.
+    # Same GitHub environment as Release's staging legs, so secret resolution
+    # matches the path being diagnosed.
     environment: staging
     env:
       PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
-      CLI_VERSION: ${{ inputs.cli_version }}
-      UPLOAD_MESSAGE: f2-probe
+      RAILWAY_HTTP_TIMEOUT: '600'
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
 
       - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
-      - name: Install the CLI under test
+      - name: Install Release's exact pin
         run: |
-          npm install --global "@railway/cli@${CLI_VERSION}" >/dev/null
+          set -uo pipefail
+          npm install --global @railway/cli@5.40.1 >/dev/null 2>&1
           railway --version
 
-      - name: Control read with RAILWAY_TOKEN_STAGING (proves the token authenticates)
+      - name: Cell A - staging secret, pinned 5.40.1, environment staging
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
         run: |
-          set +e
-          out="$(railway deployment list --service backend --environment staging \
-                  --project "$PROJECT" --limit 1 2>&1)"; rc=$?
-          echo "$out" | sed 's/^/    /'
-          echo "read_exit=$rc"
-          case "$out" in
-            *"error decoding response body"*) echo "::notice::CONTROL READ DECODED-ERROR" ;;
-            *Unauthorized*) echo "::notice::CONTROL READ UNAUTHORIZED" ;;
-            *) echo "::notice::CONTROL READ OK" ;;
+          set -uo pipefail
+          printf '%s' "$GITHUB_SHA" > backend/BUILD_COMMIT
+          start=$(date +%s%3N)
+          railway up backend --path-as-root --no-gitignore \
+            --service backend --environment staging --project "$PROJECT" \
+            --detach --message "f2A-$GITHUB_SHA" > /tmp/a.log 2>&1
+          rc=$?
+          echo "exit=$rc elapsed_ms=$(( $(date +%s%3N) - start ))"
+          sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' /tmp/a.log
+          case "$(cat /tmp/a.log)" in
+            *Indexing*)                       echo "::notice::CELL_A_UPLOADED" ;;
+            *"error decoding response body"*) echo "::notice::CELL_A_DECODE_ERROR (Release signature reproduced)" ;;
+            *Unauthorized*)                   echo "::notice::CELL_A_UNAUTHORIZED" ;;
+            *)                                echo "::notice::CELL_A_OTHER exit=$rc" ;;
           esac
 
-      - name: Probe A - RAILWAY_TOKEN_STAGING uploading to DEVELOPMENT
+      - name: Raise the CLI to the current release
+        run: |
+          set -uo pipefail
+          railway upgrade --yes 2>&1 | tail -5 || npm install --global @railway/cli@latest >/dev/null 2>&1
+          railway --version
+
+      - name: Cell B - staging secret, current CLI, environment staging
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
-          RAILWAY_HTTP_TIMEOUT: '600'
         run: |
-          set +e
+          set -uo pipefail
           printf '%s' "$GITHUB_SHA" > backend/BUILD_COMMIT
-          out="$(railway up backend --path-as-root --no-gitignore \
-                  --service backend --environment development --project "$PROJECT" \
-                  --detach --message "$UPLOAD_MESSAGE" 2>&1)"; rc=$?
-          echo "$out" | sed 's/^/    /'
-          echo "exit=$rc"
-          case "$out" in
-            *Indexing*)                 echo "::notice::PROBE_A_UPLOADED (token can create snapshots)" ;;
-            *"error decoding response body"*) echo "::notice::PROBE_A_DECODE_ERROR" ;;
-            *Unauthorized*)             echo "::notice::PROBE_A_UNAUTHORIZED" ;;
-            *)                          echo "::notice::PROBE_A_OTHER" ;;
+          start=$(date +%s%3N)
+          railway up backend --path-as-root --no-gitignore \
+            --service backend --environment staging --project "$PROJECT" \
+            --detach --message "f2B-$GITHUB_SHA" > /tmp/b.log 2>&1
+          rc=$?
+          echo "exit=$rc elapsed_ms=$(( $(date +%s%3N) - start ))"
+          sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' /tmp/b.log
+          case "$(cat /tmp/b.log)" in
+            *Indexing*)                       echo "::notice::CELL_B_UPLOADED (pin bump is the fix)" ;;
+            *"error decoding response body"*) echo "::notice::CELL_B_DECODE_ERROR (pin is innocent)" ;;
+            *Unauthorized*)                   echo "::notice::CELL_B_UNAUTHORIZED" ;;
+            *)                                echo "::notice::CELL_B_OTHER exit=$rc" ;;
           esac
 
-      - name: Probe B - RAILWAY_TOKEN_STAGING uploading to STAGING (reproduce Release)
+      - name: Cell C - staging secret, current CLI, environment development (control)
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
-          RAILWAY_HTTP_TIMEOUT: '600'
         run: |
-          set +e
+          set -uo pipefail
           printf '%s' "$GITHUB_SHA" > backend/BUILD_COMMIT
-          out="$(railway up backend --path-as-root --no-gitignore \
-                  --service backend --environment staging --project "$PROJECT" \
-                  --detach --message "$UPLOAD_MESSAGE" 2>&1)"; rc=$?
-          echo "$out" | sed 's/^/    /'
-          echo "exit=$rc"
-          case "$out" in
-            *Indexing*)                 echo "::notice::PROBE_B_UPLOADED (staging upload works from a runner)" ;;
-            *"error decoding response body"*) echo "::notice::PROBE_B_DECODE_ERROR (Release signature reproduced)" ;;
-            *Unauthorized*)             echo "::notice::PROBE_B_UNAUTHORIZED" ;;
-            *)                          echo "::notice::PROBE_B_OTHER" ;;
+          start=$(date +%s%3N)
+          railway up backend --path-as-root --no-gitignore \
+            --service backend --environment development --project "$PROJECT" \
+            --detach --message "f2C-$GITHUB_SHA" > /tmp/c.log 2>&1
+          rc=$?
+          echo "exit=$rc elapsed_ms=$(( $(date +%s%3N) - start ))"
+          sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' /tmp/c.log
+          case "$(cat /tmp/c.log)" in
+            *Indexing*)                       echo "::notice::CELL_C_UPLOADED (this token can upload elsewhere)" ;;
+            *"error decoding response body"*) echo "::notice::CELL_C_DECODE_ERROR (token cannot upload anywhere)" ;;
+            *Unauthorized*)                   echo "::notice::CELL_C_UNAUTHORIZED" ;;
+            *)                                echo "::notice::CELL_C_OTHER exit=$rc" ;;
           esac
