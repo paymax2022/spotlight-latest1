@@ -231,6 +231,18 @@ jobs:
       # the stub is on PATH.
       - name: Test the deploy upload retry
         run: bash scripts/ci/test-railway-deploy-retry.sh
+      # The staging legs' replacement transport (2026-11-18): Railway's
+      # git-connected `serviceInstanceDeploy`, taken up because the upload initiate
+      # refuses intermittently (F2) — the retry above cannot help a fault that is
+      # not a blip but a window. A different transport means different answers, and
+      # two of the selectors inherited from the upload lane were silently wrong on
+      # it: the list JSON has no `gmtCreate` to filter on, and a git row's
+      # `meta.cliMessage` is null with the commit in `meta.commitHash`. This pins the
+      # row identity, the data=false and refusal paths, and the rule that SUCCESS is
+      # not done until the instance says it serves the sha. No network: the stub and
+      # a stub `curl` are on PATH.
+      - name: Test the staging trigger lane
+        run: bash scripts/ci/test-railway-trigger-deploy.sh
       # RN-PLANE-001: a store build bakes mobile-app/reactnative/.env.production,
       # which is gitignored and which eas.json cannot correct — the build scripts run
       # local Gradle, so the profile's env never applies. Found with that file naming
