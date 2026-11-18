@@ -146,7 +146,13 @@ test.describe('Wallet transfer — KYC-blocked PIN sheet', () => {
     await expect(page.getByRole('button', { name: /Verify my account|Raise my limit/ })).toHaveCount(0);
   });
 
-  test('a shortfall still goes to the top-up dialog, not to KYC', async ({ page }) => {
+  // Scoped to what this change owns. A 402 shortfall must NOT be dressed up as a
+  // tier refusal — that is the false-positive this detector could most easily
+  // create, since both arrive as a server sentence under the dots. What the
+  // member is then offered (the funding dialog) belongs to the wallet-top-up
+  // change and is asserted there, not here: `promptWalletTopUp` has no call site
+  // in this tree, so expecting its button here tests somebody else's work.
+  test('a shortfall stays a balance problem, not a KYC problem', async ({ page }) => {
     await mockTransferFailure(page, 402, {
       success: false,
       error: 'Insufficient wallet balance',
@@ -154,9 +160,7 @@ test.describe('Wallet transfer — KYC-blocked PIN sheet', () => {
     });
     await openPinSheet(page);
 
-    // The shortfall belongs to the funding dialog, not to KYC: confirmAsync's
-    // confirm label is the button that opens /wallet/add.
-    await expect(page.getByRole('button', { name: 'Top up wallet' })).toBeVisible();
+    await expect(page.getByText(/Insufficient wallet balance/)).toBeVisible();
     await expect(page.getByRole('button', { name: /Verify my account|Raise my limit/ })).toHaveCount(0);
   });
 });
