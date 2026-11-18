@@ -61,6 +61,7 @@
     "test:wallet": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/wallet/*.spec.ts\"",
     "test:events": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/events/*.spec.ts\"",
     "test:services": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/services/*.spec.ts\"",
+    "test:transfers": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/transfers/*.spec.ts\"",
     "test:stays": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/stays/*.spec.ts\"",
     "check:env-mocks": "node scripts/check-env-mocks.mjs",
     "check:env-mocks:staging": "node scripts/check-env-mocks.mjs .env.staging",
