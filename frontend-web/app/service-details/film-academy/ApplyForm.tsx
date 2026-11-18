@@ -7,6 +7,7 @@ import { authHeaders } from '@/src/lib/auth/client';
 import { createClient } from '@/src/lib/supabase/client';
 import { loadPaystackClient } from '@/src/lib/payments';
 import { formatNaira, formatProgrammeDate, intakePhase, scheduleLabel } from './format';
+import { ACADEMY_PAYMENTS } from './contact';
 import styles from './apply.module.css';
 
 type Batch = {
@@ -86,10 +87,12 @@ interface Props {
 }
 
 /**
- * The admissions application, priced and validated by /api/academy/apply — the
- * same endpoint the mobile app uses. Every commercial number here (fees, the
- * per-application area cap, deliverables, exclusions) is server-owned; the
- * client only mirrors it, and the server recomputes the charge at submit.
+ * The admissions application, validated by /api/academy/apply — the same
+ * endpoint the mobile app uses. The charge decision (registration_type) and the
+ * per-application area cap, deliverables and exclusions are server-owned; the
+ * client mirrors them. The programme payment terms (ACADEMY_PAYMENTS) are
+ * academy-supplied copy: tuition is settled offline, weekly, so applying
+ * charges nothing unless a paid registration is configured.
  */
 export default function ApplyForm({ prefillBatch, onClose }: Props) {
   const router = useRouter();
@@ -107,8 +110,8 @@ export default function ApplyForm({ prefillBatch, onClose }: Props) {
   const [pricingStructure, setPricingStructure] = useState<PricingFormat[]>([]);
   const [deliverables, setDeliverables] = useState<string[]>([]);
   const [feeExclusions, setFeeExclusions] = useState<string[]>([]);
-  // Presence in this map means the area is selected, keyed to the price line
-  // tapped. An empty key only occurs on a server without the format table.
+  // Presence in this map means the area is selected, keyed to the training
+  // format tapped. An empty key only occurs on a server without the format table.
   const [areaSelections, setAreaSelections] = useState<Record<string, string>>({});
   const [openAreaSlug, setOpenAreaSlug] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -320,7 +323,7 @@ export default function ApplyForm({ prefillBatch, onClose }: Props) {
     if (!form.full_name.trim()) return 'Your full name is required.';
     if (!form.email.trim() || !emailPattern.test(form.email.trim())) return 'A valid email address is required.';
     if (!form.phone.trim()) return 'A phone number is required.';
-    if (form.areas_of_interest.length === 0) return 'Open a training, then tap its price line to choose it.';
+    if (form.areas_of_interest.length === 0) return 'Open a training, then tap the training format you want.';
     if (form.areas_of_interest.length > maxInterestAreas) {
       return `Choose at most ${maxInterestAreas} areas of study for this intake.`;
     }
@@ -625,8 +628,17 @@ export default function ApplyForm({ prefillBatch, onClose }: Props) {
                 </b>
               </div>
               <div className={styles.breakdownRow}>
-                <span>Paid today</span>
-                <b>{formatNaira(payNow)}</b>
+                {registrationFeeRequired ? (
+                  <>
+                    <span>Paid today</span>
+                    <b>{formatNaira(payNow)}</b>
+                  </>
+                ) : (
+                  <>
+                    <span>Registration</span>
+                    <b>Free</b>
+                  </>
+                )}
               </div>
             </dl>
             <div className={styles.doneActions}>
@@ -788,10 +800,10 @@ export default function ApplyForm({ prefillBatch, onClose }: Props) {
           <div>
             <p className={styles.label}>02 / Areas of study</p>
             <p className={styles.hint}>
-              Open a training, then tap the format you want.{' '}
+              Open a training, then tap the training format you want.{' '}
               {registrationFeeRequired
                 ? 'Your first tuition payment is taken with the application fee when you submit.'
-                : 'Nothing is charged to apply — admissions invoices tuition after review.'}
+                : `Registration is free — nothing is charged to apply. Tuition (${formatNaira(ACADEMY_PAYMENTS.tuitionNgn)}) can be paid in instalments of ${formatNaira(ACADEMY_PAYMENTS.weeklyNgn)} weekly, at the venue or by transfer to ${ACADEMY_PAYMENTS.bankName}, ${ACADEMY_PAYMENTS.accountNumber}.`}
             </p>
             <p className={`${styles.hint} ${atLimit ? styles.hintStrong : ''}`}>
               {atLimit
@@ -816,7 +828,6 @@ export default function ApplyForm({ prefillBatch, onClose }: Props) {
                   const chosen = hasFormats
                     ? (area.pricing_options ?? []).find((o) => o.key === areaSelections[area.slug])
                     : undefined;
-                  const fee = Number(area.fee_ngn ?? 0);
                   const blocked = !active && atLimit;
                   return (
                     <div
@@ -835,9 +846,9 @@ export default function ApplyForm({ prefillBatch, onClose }: Props) {
                         <span className={styles.areaText}>
                           <span className={styles.areaName}>{area.label}</span>
                           {chosen ? (
-                            <span className={styles.areaChosen}>{chosen.label} — {formatNaira(Number(chosen.price_ngn))}</span>
-                          ) : !hasFormats && fee > 0 ? (
-                            <span className={styles.areaChosen}>{formatNaira(fee)}</span>
+                            // Format only — the programme tuition is flat, so
+                            // the per-format price figures are not shown.
+                            <span className={styles.areaChosen}>{chosen.label}</span>
                           ) : null}
                         </span>
                         {hasFormats && <Chevron />}
@@ -863,7 +874,6 @@ export default function ApplyForm({ prefillBatch, onClose }: Props) {
                                       {o.label}
                                       {o.note ? <small>{o.note}</small> : null}
                                     </span>
-                                    <span className={styles.priceValue}>{formatNaira(Number(o.price_ngn))}</span>
                                   </button>
                                 );
                               })}
@@ -879,53 +889,69 @@ export default function ApplyForm({ prefillBatch, onClose }: Props) {
           </div>
 
           <div className={styles.total}>
-            <div className={styles.totalHead}>
-              <span>Pay now</span>
-              <strong className={styles.totalFigure}>{formatNaira(payNow)}</strong>
-            </div>
-            <p className={styles.totalNote}>
-              {registrationFeeRequired ? (
-                <>
+            {registrationFeeRequired ? (
+              <>
+                <div className={styles.totalHead}>
+                  <span>Pay now</span>
+                  <strong className={styles.totalFigure}>{formatNaira(payNow)}</strong>
+                </div>
+                <p className={styles.totalNote}>
                   {applicationFeeDue > 0
                     ? `Application fee ${formatNaira(applicationFeeDue)}${settings.application_fee_refundable ? '' : ' (non-refundable)'} + `
                     : ''}
                   {instalmentCount > 1 ? 'your first tuition instalment' : 'tuition'}. Lessons open as soon as you pay.
-                </>
-              ) : (
-                'Nothing is charged to apply. Tuition is recorded against your application and invoiced by admissions.'
-              )}
-            </p>
+                </p>
 
-            {tuitionTotal > 0 && (
-              <div className={styles.breakdown}>
-                <div className={`${styles.breakdownRow} ${styles.breakdownLead}`}>
-                  <span>Total tuition{instalmentCount > 1 ? ` · ${instalmentCount} instalments` : ''}</span>
-                  <b>{formatNaira(tuitionTotal)}</b>
-                </div>
-                {availableAreas
-                  .filter((a) => form.areas_of_interest.includes(a.slug) && priceOf(a) > 0)
-                  .map((a) => (
-                    <div key={a.slug} className={`${styles.breakdownRow} ${styles.breakdownSub}`}>
-                      <span>{a.label}</span>
-                      <b>{formatNaira(priceOf(a))}</b>
+                {tuitionTotal > 0 && (
+                  <div className={styles.breakdown}>
+                    <div className={`${styles.breakdownRow} ${styles.breakdownLead}`}>
+                      <span>Total tuition{instalmentCount > 1 ? ` · ${instalmentCount} instalments` : ''}</span>
+                      <b>{formatNaira(tuitionTotal)}</b>
                     </div>
-                  ))}
-                {balanceOutstanding > 0 && (
-                  <div className={styles.breakdownRow}>
-                    <span>
-                      {`Balance after today · ${instalmentCount - 1} instalment${instalmentCount === 2 ? '' : 's'}`}
-                    </span>
-                    <b>{formatNaira(balanceOutstanding)}</b>
+                    {availableAreas
+                      .filter((a) => form.areas_of_interest.includes(a.slug) && priceOf(a) > 0)
+                      .map((a) => (
+                        <div key={a.slug} className={`${styles.breakdownRow} ${styles.breakdownSub}`}>
+                          <span>{a.label}</span>
+                          <b>{formatNaira(priceOf(a))}</b>
+                        </div>
+                      ))}
+                    {balanceOutstanding > 0 && (
+                      <div className={styles.breakdownRow}>
+                        <span>
+                          {`Balance after today · ${instalmentCount - 1} instalment${instalmentCount === 2 ? '' : 's'}`}
+                        </span>
+                        <b>{formatNaira(balanceOutstanding)}</b>
+                      </div>
+                    )}
+                    <p className={styles.totalNote}>
+                      {registrationFeeRequired && instalmentCount > 1
+                        ? 'The first instalment is paid now; the rest fall due on your plan.'
+                        : registrationFeeRequired
+                          ? 'The full tuition is paid now.'
+                          : 'Recorded against your application — admissions invoices it after review.'}
+                    </p>
                   </div>
                 )}
+              </>
+            ) : (
+              <>
+                <div className={styles.totalHead}>
+                  <span>Programme tuition</span>
+                  <strong className={styles.totalFigure}>{formatNaira(ACADEMY_PAYMENTS.tuitionNgn)}</strong>
+                </div>
                 <p className={styles.totalNote}>
-                  {registrationFeeRequired && instalmentCount > 1
-                    ? 'The first instalment is paid now; the rest fall due on your plan.'
-                    : registrationFeeRequired
-                      ? 'The full tuition is paid now.'
-                      : 'Recorded against your application — admissions invoices it after review.'}
+                  Registration is free — nothing is charged to apply.
                 </p>
-              </div>
+                <p className={styles.totalNote}>
+                  Tuition ({formatNaira(ACADEMY_PAYMENTS.tuitionNgn)}) can be paid in instalments —{' '}
+                  {formatNaira(ACADEMY_PAYMENTS.weeklyNgn)} weekly, at the Film Academy venue or by
+                  bank transfer to {ACADEMY_PAYMENTS.bankName}, Account: {ACADEMY_PAYMENTS.accountNumber}.
+                </p>
+                <p className={styles.totalNote}>
+                  Recorded against your application — admissions invoices it after review.
+                </p>
+              </>
             )}
           </div>
 

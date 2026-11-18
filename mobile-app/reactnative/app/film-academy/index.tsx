@@ -1,10 +1,11 @@
 // tile must never hand the user to a browser. This calls the same
 // /api/academy/* endpoints the web console uses — sharing an API is fine.
 // Money note: academy amounts are NAIRA, not kobo — these tables predate the
-// kobo convention used across finance. Tuition is the composite format
-// structure served per training (academy_area_pricing_options): weekend /
-// weekdays, each with and without boarding, plus a 30-day full-time boarding
-// format. The settings.tuition_fee programme figure is never charged.
+// kobo convention used across finance. The per-training formats
+// (academy_area_pricing_options: weekend / weekdays, each with and without
+// boarding, plus a 30-day full-time boarding format) describe HOW you train.
+// The programme tuition is flat — see ACADEMY_PAYMENTS — registration is free,
+// and tuition is paid weekly at the venue or by bank transfer, not in-app.
 
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Image } from 'react-native';
@@ -18,16 +19,12 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { getOverview } from '@/features/filmAcademy/api';
+import { ACADEMY_PAYMENTS } from '@/features/filmAcademy/payments';
 import type { FilmAcademyBatch, FilmAcademyInterestArea, FilmAcademyOverview } from '@/features/filmAcademy/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import { RemoteBanner } from '@/features/media/banners';
 
 export const FILM_ACADEMY_KEY = ['film-academy', 'overview'];
-
-function formatNaira(n: number | null): string {
-  if (n === null || n === undefined) return '—';
-  return `₦${Number(n).toLocaleString('en-NG')}`;
-}
 
 function formatDate(iso: string | null): string {
   if (!iso) return 'Date to be announced';
@@ -36,18 +33,11 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-/** Cheapest format price for a training — the composite structure, not the retired fee_ngn. */
-function fromPrice(area: FilmAcademyInterestArea): number {
-  const opts = area.pricing_options ?? [];
-  if (opts.length > 0) return Math.min(...opts.map((o) => Number(o.price_ngn)));
-  return Number(area.fee_ngn ?? 0); // older server without the format table
-}
-
 function TuitionStructureCard({ data }: { data: FilmAcademyOverview }) {
   const structure = data.pricingStructure;
   if (structure.length === 0) return null;
   // Deliberately no area list here: every training is shown inside its own
-  // batch below, with its five price lines in the accordion. A standalone
+  // batch below, with its formats in the accordion. A standalone
   // catalogue outside the batches went stale whenever a batch stopped offering
   // one of these trainings.
   return (
@@ -69,8 +59,11 @@ function TuitionStructureCard({ data }: { data: FilmAcademyOverview }) {
         </>
       )}
       <Text style={styles.feeNote}>
-        You pay the application fee and first tuition payment together when you apply. Open a training in a
-        cohort below and tap its price line to choose, then continue to apply.
+        Registration is free — you apply without paying. Tuition is ₦
+        {ACADEMY_PAYMENTS.tuitionNgn.toLocaleString('en-NG')} and can be paid in instalments of ₦
+        {ACADEMY_PAYMENTS.weeklyNgn.toLocaleString('en-NG')} weekly, at the Film Academy venue or by bank transfer
+        to {ACADEMY_PAYMENTS.bankName} ({ACADEMY_PAYMENTS.accountNumber}). Open a training in a cohort
+        below and tap the format you want, then continue to apply.
       </Text>
     </View>
   );
@@ -80,20 +73,13 @@ function BatchCard({ batch, areas, applied }: {
   batch: FilmAcademyBatch; areas: FilmAcademyInterestArea[]; applied: boolean;
 }) {
   // Accordion selection: { areaSlug: formatKey }. Tapping a training opens it;
-  // tapping one of its price lines selects the training IN that format (the
-  // tuition the apply form and the server then carry). A legacy area with no
+  // tapping one of its format lines selects the training IN that format (the
+  // choice the apply form and the server then carry). A legacy area with no
   // format table is selected by its header directly, under the empty key.
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [openSlug, setOpenSlug] = useState<string | null>(null);
   const selectedSlugs = Object.keys(selections);
   const selected = areas.filter((area) => area.slug in selections);
-
-  const chosenFee = (area: FilmAcademyInterestArea) => {
-    const key = selections[area.slug];
-    const opt = (area.pricing_options ?? []).find((o) => o.key === key);
-    return opt ? Number(opt.price_ngn) : fromPrice(area);
-  };
-  const totalSelectedFee = selected.reduce((sum, area) => sum + chosenFee(area), 0);
 
   const pickSub = (area: FilmAcademyInterestArea, key: string) =>
     setSelections((prev) => {
@@ -180,7 +166,7 @@ function BatchCard({ batch, areas, applied }: {
                   accessibilityState={{ expanded: hasFormats && isOpen, selected: on, disabled: applied }}
                   accessibilityLabel={chosenOpt
                     ? `${area.label}, ${chosenOpt.label} selected`
-                    : `${area.label}${on ? ', selected' : ', tap to open its price lines'}`}
+                    : `${area.label}${on ? ', selected' : ', tap to open its training formats'}`}
                   style={styles.trainingRow}
                 >
                   {!hasFormats && (
@@ -191,30 +177,26 @@ function BatchCard({ batch, areas, applied }: {
                   <View style={styles.trainingBody}>
                     <Text style={[styles.trainingLabel, on && styles.trainingLabelOn]}>{area.label}</Text>
                     {chosenOpt ? (
-                      <Text style={styles.trainingMeta}>
-                        {chosenOpt.label} — {formatNaira(Number(chosenOpt.price_ngn))}
-                      </Text>
+                      // Format only — the programme tuition is flat, so no
+                      // per-format price figures are shown.
+                      <Text style={styles.trainingMeta}>{chosenOpt.label}</Text>
                     ) : (
                       <>
                         {!!area.description && (
                           <Text style={styles.trainingMeta} numberOfLines={2}>{area.description}</Text>
                         )}
                         {hasFormats && (
-                          <Text style={styles.trainingMeta}>Tap to see the price options</Text>
+                          <Text style={styles.trainingMeta}>Tap to see the training formats</Text>
                         )}
                       </>
                     )}
                   </View>
-                  {hasFormats ? (
+                  {hasFormats && (
                     <ChevronDown
                       size={18}
                       color={Colors.onSurfaceVariant}
                       style={{ transform: [{ rotate: isOpen ? '180deg' : '0deg' }] }}
                     />
-                  ) : (
-                    <Text style={[styles.trainingFee, on && styles.trainingFeeOn]}>
-                      {fromPrice(area) > 0 ? formatNaira(fromPrice(area)) : 'No tuition'}
-                    </Text>
                   )}
                 </Pressable>
                 {isOpen && hasFormats && (
@@ -229,7 +211,7 @@ function BatchCard({ batch, areas, applied }: {
                           disabled={applied || blocked}
                           accessibilityRole="radio"
                           accessibilityState={{ selected: subOn, disabled: applied || blocked }}
-                          accessibilityLabel={`${o.label}${o.note ? `, ${o.note}` : ''}, ₦${Number(o.price_ngn).toLocaleString('en-NG')}`}
+                          accessibilityLabel={`${o.label}${o.note ? `, ${o.note}` : ''}`}
                           style={[styles.subRow, subOn && styles.trainingRowOn, blocked && styles.chipBlocked]}
                         >
                           {subOn
@@ -237,9 +219,6 @@ function BatchCard({ batch, areas, applied }: {
                             : <View style={styles.subSpacer} />}
                           <Text style={[styles.trainingLabel, subOn && styles.trainingLabelOn]}>
                             {o.label}{o.note ? ` (${o.note})` : ''}
-                          </Text>
-                          <Text style={[styles.trainingFee, subOn && styles.trainingFeeOn]}>
-                            = {formatNaira(Number(o.price_ngn))}
                           </Text>
                         </Pressable>
                       );
@@ -252,18 +231,11 @@ function BatchCard({ batch, areas, applied }: {
         </View>
       )}
 
-      {!!batch.installments_count && batch.installments_count > 1 && totalSelectedFee > 0 && (
-        <Text style={styles.feeNote}>
-          Payable in {batch.installments_count} instalments
-          {batch.fee_frequency ? ` (${batch.fee_frequency})` : ''}
-        </Text>
-      )}
-
       {selected.length > 0 && (
         <View style={styles.selectedRow}>
           <Text style={styles.selectedLabel}>Selected training</Text>
           <Text style={styles.selectedValue}>
-            {selected.map(s => s.label).join(', ')} · {totalSelectedFee > 0 ? `tuition ${formatNaira(totalSelectedFee)}` : 'No tuition'}
+            {selected.map(s => s.label).join(', ')} · Tuition ₦{ACADEMY_PAYMENTS.tuitionNgn.toLocaleString('en-NG')}
           </Text>
         </View>
       )}
@@ -398,7 +370,7 @@ export default function FilmAcademyScreen() {
           </>
         )}
 
-        {/* Same five formats price every training — shown once, here, so the
+        {/* The same formats describe every training — shown once, here, so the
             cohort cards below can stay about choosing one. */}
         {!!data && !isLoading && !error && data.interestAreas.length > 0 && (
           <TuitionStructureCard data={data} />
@@ -459,8 +431,6 @@ const styles = StyleSheet.create({
   trainingLabel: { ...Typography.labelMd, color: Colors.onSurface },
   trainingLabelOn: { color: Colors.onSurface },
   trainingMeta: { ...Typography.caption, color: Colors.onSurfaceVariant },
-  trainingFee: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
-  trainingFeeOn: { color: Colors.onSurface },
   selectedRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
                  gap: Spacing.sm, marginTop: Spacing.xs },
   selectedLabel: { ...Typography.bodySm, color: Colors.onSurfaceVariant },

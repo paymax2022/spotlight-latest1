@@ -17,6 +17,20 @@ export const ACADEMY_CONTACT = {
   ],
 } as const;
 
+/**
+ * Programme payment terms for the Film Academy, as supplied by the academy
+ * team. Registration is free — an application charges nothing — and tuition is
+ * settled offline: weekly at the academy venue, or by bank transfer. Nothing
+ * here is charged in-app, so these figures are presentation copy, not a quote
+ * the platform collects.
+ */
+export const ACADEMY_PAYMENTS = {
+  tuitionNgn: 50000,
+  weeklyNgn: 15000,
+  bankName: 'Providus Bank',
+  accountNumber: '1311026275',
+} as const;
+
 export function whatsappEnquiry(message: string): string {
   return `https://wa.me/${ACADEMY_CONTACT.whatsappNumber}?text=${encodeURIComponent(message)}`;
 }
