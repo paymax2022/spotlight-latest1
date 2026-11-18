@@ -38,7 +38,20 @@ outside CI were being accepted (a local backend deploy succeeded at 15:00:33Z
 and a second, carrying the released tip itself, succeeded at 15:18Z; the other
 local attempts failed later at build on the submitting machine), so the
 refusal is
-CI-path-specific, not an environment outage. No token value
+CI-path-specific, not an environment outage. Updated 15:56Z with episode 10 and
+with the two captures this pack said were uncapturable: **the status code and the
+endpoint.** Episode 10 is run `44329801870` — Release's `deploy-staging` matrix
+copied verbatim onto a branch (all three services, `ref: main`, the pin, the
+staging secret) with `max-parallel: 1`, so the three uploads could not overlap;
+it refused 4 of 4 at 14:56:37-14:57:59Z with zero `Indexing...` lines. And
+`railway up --verbose` — the flag the ask below used to beg for the name of —
+prints the URL and the archive size, and under it the laptop failure has an
+explicit status: **`Failed to upload code with status code 524`** on
+`https://backboard.railway.com/project/{project}/environment/{env}/up`. One
+7,511,269-byte `backend` archive from that machine was **accepted** (`162c1d04`,
+`SUCCESS` at 15:18:18.823Z, staging's backend now runs main's tip) and six
+133,527,512-byte repo-root frontend archives from the same machine with the same
+credential were **refused** between 15:27:31Z and 15:53:34Z. No token value
 appears here.
 
 ## The ask
@@ -53,11 +66,25 @@ Failed to fetch: error decoding response body
 ```
 
 The CLI exits 1 inside ~1 s, no deployment row is created, and no `Indexing...`
-line is printed. **What we need from you: what does your upload-initiate endpoint
-actually return, and under what condition, when the answer is not JSON — for
-`environmentId = 6b5f27a3-a290-4574-a977-363eb21d43ad` specifically?** We cannot
-capture the status code or body: the CLI discards both. If there is a verbose or
-wire-log mode that prints the response, name it and we will produce it.
+line is printed. **What we needed from you we have now found ourselves:**
+`railway up --verbose` prints the request line and the archive size, and in the
+failure it prints the status code — `Failed to upload code with status code 524`,
+which is Cloudflare's origin-timeout, on
+
+```
+https://backboard.railway.com/project/e7dca861-…/environment/6b5f27a3-…/up?serviceId=…&message=…
+```
+
+So the revised ask is narrower, and it is about that route: **why does the
+upload-initiate POST on `backboard.railway.com` for `environmentId =
+6b5f27a3-a290-4574-a977-363eb21d43ad` intermittently return a non-JSON body —
+and, from GitHub runners, a sub-second one, while from our own laptop the same
+call returns a 524 after ~35-115 s of transfer?** The two shapes are 53 s to
+110 s apart on the wall and look different at the CLI, and we cannot tell whether
+the CI path is the same origin timeout answered early by an edge cache. The
+size-and-shape differential in "What episode 10 and the wire captures add" is
+ours to give you: within one five-minute window, one machine, one credential —
+7,511,269 bytes accepted, 133,527,512 bytes 524'd, twice.
 
 ## Identifiers
 
@@ -128,13 +155,13 @@ uses, except where the row says otherwise.
 | credential value / paste corruption | a deliberately corrupted token produces `Unauthorized. …` or `Login state is corrupt … failed to parse header value`, never a decode error. The staging secret has completed uploads with the same value: deployment `28946ae4`, `cliMessage f7d1ac27…-serial2-i3`, 2026-11-16 17:06:29Z |
 | credential scope | `railway status --environment staging --json` returns 40,632 bytes of JSON from the same runner, and `railway api projectToken { … }` resolves the staging secret to `environmentId 6b5f27a3…`. From a laptop session authenticated as the project **owner**, `railway up --service f2-probe-nonexistent --environment staging --project e7dca861…` answers cleanly with `Service not found` — so environment resolution and service lookup on that environment are healthy and the failure is later in the flow. (We have not run that last probe with the project token; we cannot create a deployment to test with without overwriting a live staging service.) |
 | upload shape | development and staging receive identical shapes for `backend` (`--path-as-root`, `BUILD_DIR=backend`); development is accepted, staging refused. Staging's pathless repo-root frontend uploads have also succeeded from CI (`7f7efc20` SUCCESS, serving the expected literal) |
-| archive size | a 133,423,024-byte archive from a 211,126,634-byte checkout uploaded fine; a 6-byte archive failed for an unrelated reason |
-| in-flight concurrency | one job made the identical staging `backend` upload twelve times: six strictly serial (`ab-S1`-`ab-S6`, ~9 s apart, 17:01:1x-17:01:50Z) and six fired together (`ab-C1`-`ab-C6`, 17:02:59.247-17:03:04.238Z — **all six inside 5.0 s**). Every one produced a deployment row in `railway deployment list --environment staging --service backend`, each superseding the last. A pile-up cap would have refused some of the six |
+| archive size | a 133,423,024-byte archive from a 211,126,634-byte checkout uploaded fine; a 6-byte archive failed for an unrelated reason. **Re-measured 2026-11-18 15:33-15:50Z with `--verbose`, and inside one environment one window it does discriminate**: `backend` staging at `bytes: 7511269` accepted, `frontend-web` and `frontend-admin` staging at `bytes: 133527512` refused with 524 — same machine, same credential, minutes apart. See the new section; the honest limit is that a 133 MB staging archive has been accepted before (row above), so size looks like a modifier of a slow path, not the cause |
+| in-flight concurrency | one job made the identical staging `backend` upload twelve times: six strictly serial (`ab-S1`-`ab-S6`, ~9 s apart, 17:01:1x-17:01:50Z) and six fired together (`ab-C1`-`ab-C6`, 17:02:59.247-17:03:04.238Z — **all six inside 5.0 s**). Every one produced a deployment row in `railway deployment list --environment staging --service backend`, each superseding the last. A pile-up cap would have refused some of the six. **Re-tested 2026-11-18 14:56:37-14:57:59Z** with the whole staging matrix at `max-parallel: 1` — three services, one at a time, no overlap possible, CI, the pin, the staging secret: run `44329801870` refused 4 of 4 (`Indexing lines: 0`). Serialization is not a protection |
 | request rate | staging accepted two uploads 3 s apart at 16:34:47 / :50 and refused the next one 62 s later |
 | runner / OS / `CI=true` | a container with all three present behaved identically to the GitHub runner; the same runner accepts development in the same second |
 | environment name ambiguity | `railway environment list` shows exactly one environment named `staging` (`6b5f27a3…`, `isEphemeral: false`, `restricted: false`, created 2026-11-02 by forking `staging-Old`); all three services CI deploys report a `SUCCESS` latest deployment on it, so nothing is paused or stuck |
 | environment protection rules | none configured; a probe job declaring the same environment produced both outcomes |
-| connected git source | **this row was dismissed in our first write-up and we now think that dismissal was a reasoning error — see "the one variable that fits" below.** Re-measured 2026-11-17 with `railway api serviceInstance(serviceId, environmentId) { source { repo } }`: staging's instances report `source.repo = paymax2022/spotlight-latest1`, development's report `repo: null`, production's reports `source: null`. Staging also accepted twelve consecutive uploads with that source connected, which is why we dropped it |
+| connected git source | **this row was dismissed in our first write-up and we now think that dismissal was a reasoning error — see "the one variable that fits" below.** Re-measured 2026-11-17 with `railway api serviceInstance(serviceId, environmentId) { source { repo } }`: staging's instances report `source.repo = paymax2022/spotlight-latest1`, development's report `repo: null`, production's reports `source: null`. Staging also accepted twelve consecutive uploads with that source connected, which is why we dropped it. **Measured again 2026-11-18: the source was never removed, and staging both accepted and refused in the same hour with it unchanged** — accepted at 14:23:32.640Z and 14:23:35.695Z, refused 14:29:15-14:48:57Z, refused 4/4 serially 14:56:37-14:57:59Z, accepted from a laptop at 15:00:33Z, 15:18Z and 15:33Z, refused at 15:38:06Z, 15:46:39Z and 15:49:40Z |
 
 ## The one variable that fits
 
@@ -177,6 +204,101 @@ fits every observation: sub-second refusal, no `Indexing...` line, one
 environment only, and recovery on its own timescale. We are ready to disconnect
 that source as a test, but we would rather ask than mutate a live environment on
 a theory.
+
+## What episode 10 and the wire captures add
+
+Three runs on 2026-11-18 afternoon close the last structural gaps and change the
+shape of the ask.
+
+**Episode 10 — serialization (`44329801870`, 14:56:37-14:57:59Z).** Episode 9
+left one difference between CI's two accepts at 14:23:3x — single serial one-shot
+uploads — and its own 27 refusals: CI's staging legs are a three-service matrix,
+and every one-shot success up to then had been a serial upload. We took the
+matrix and set `max-parallel: 1`, changing nothing else: `ref: main`, the pin,
+`environment: staging`, the staging secret, `scripts/ci/railway-deploy.sh`, all
+three services. Every leg refused (`Indexing lines: 0`, `decode-error lines: 4`
+with `RETRY_ATTEMPTS=2`). Concurrency was the last repo-side structural
+difference we could name, and it is now falsified too.
+
+**Episode 11 — the same minute, two payload sizes (15:18-15:53Z).** A retry
+driver running from the project owner's laptop, one upload at a time, produced
+the cleanest within-environment split we have. All five rows below are
+`railway deployment list --environment staging --service <svc> --json`, and
+every one of them carries `meta.cliMessage = 6057b0d3cedf78db54d9bfe6e46c1031106f5e6b`
+— main's tip:
+
+| row | created (UTC) | service / shape | `--verbose` reports | status |
+|---|---|---|---|---|
+| `162c1d04` | 15:18:18.823 | `backend`, `--path-as-root` | `service: 70de07d8-…` `environment: 6b5f27a3-…` `bytes: 7511269` — measured on this exact command shape | **SUCCESS** — staging `backend` now runs main's tip |
+| `37104509` | 15:38:52.103 | `frontend-web`, repo root | `bytes: 133527512` | **FAILED**, CLI printed `Failed to upload code with status code 524` |
+| `94b26f40`/`e0d257a9` | 15:49:47 / 15:42:57 | `frontend-admin`, repo root | `bytes: 133527512` | **FAILED**, same 524 (a third at 15:27:31) |
+| `3b3fa49c` | 15:47:09.377 | `frontend-web`, repo root | `bytes: 133527512` | **FAILED**, 524 |
+| `4746ac48` | 15:53:34.685 | `frontend-web`, repo root | `bytes: 133527512` | **FAILED**, 524 |
+
+Thirty-five minutes, one machine, one credential, one environment: the 7.5 MB
+archive lands `SUCCESS` and the 133 MB archive is refused six times, three per
+frontend service. (The same listing also holds `0a335d90`, an earlier `FAILED`
+backend row for the same commit, so the small payload is not immune either — it
+just eventually lands.) Under `--verbose` the same frontend call also shows the
+transfer running for tens of seconds before it dies — at 115 s on one attempt —
+which is what the 524 says: **Cloudflare's origin-timeout status, returned as an
+HTML error page, which is exactly what the CLI's JSON parser reports as
+`error decoding response body` / `expected value at line 1 column 1`.** The two
+signatures the whole pack has treated as one are the same fault seen at two
+speeds, and 524 is not a status Railway's own API emits — it is the proxy giving
+up on the origin.
+
+**And the two speeds separate on something you can query: whether a row exists.**
+Every CI refusal in episodes 1-10 created **no** deployment row and printed no
+`Indexing...` line. Every laptop 524 above created a `FAILED` row whose
+`cliMessage` is the commit we were uploading — so that request reached
+upload-initiate, a deployment record was made, and the code snapshot never
+materialised (the same class as the `Failed to create code snapshot` config
+errors seen earlier today). **We can now show the missing snapshot from your own
+API:** `deployment(id: "37104509-b197-40c6-bbd0-242bedae5b6a")` — the 15:38:52Z
+`frontend-web` row — returns `snapshotId: null`, `diagnosis: null`, `status:
+FAILED`, and so does `4746ac48-775f-455b-a380-65ac23749b00` from 15:53:34Z. Both
+carried `meta.cliMessage = 6057b0d3c…`. The row exists; the code never arrived.
+Those two deployment IDs are the server-side trace handles for two of the six
+133 MB attempts, and they are the first ones this pack has ever been able to
+hand you. Our corrected reading of the title claim in this pack: **`error
+decoding response body` is what the CLI prints when the answer is not JSON, and
+it covers two distinct server outcomes — a pre-row refusal from CI, and a
+post-row snapshot timeout on a 133 MB payload.**
+
+The honest limit: a 133,423,024-byte staging archive has been accepted before
+(row above, "What we measured out"), so size is a modifier of a slow path rather
+than a cause. But it is the only variable inside staging that currently predicts
+the answer: six 133 MB attempts refused, one 7.5 MB attempt accepted — seven for seven.
+
+**This also corrects episode 9's headline.** "The refusal is CI-path-specific,
+not an environment outage" was the right reading of episode 9 alone, because the
+only thing the laptop was uploading then was the small backend archive. Episode
+11 shows the laptop refusing too, six times, on the large payload. There is no
+exempt path; the fault is the staging upload path, and the paths differ only in
+what they put through it.
+
+**The route's front door is healthy, and that is the problem.** A body-less
+`GET` and `POST` to the exact upload URL, from a CI runner, at 15:20:48Z
+(run `44334536965`; no archive was sent, deliberately — a real payload would land
+on staging):
+
+| probe | status | time | body |
+|---|---|---|---|
+| `GET …/environment/6b5f27a3…/up?serviceId=70de07d8…` with the staging token | `404` JSON `{"message":"Not Found","requestId":"ea241832-…"}` | 54.7 ms | 74 bytes |
+| `GET` the same with the development token on `87489af5…` | `404` JSON, `requestId d0f75cd5-…` | 45.8 ms | 74 bytes |
+| `POST` with the staging token, no body | `401` JSON `{"message":"User does not have access to environment 6b5f27a3-…","requestId":"3208cdc0-…"}` | 50.9 ms | 142 bytes |
+| `POST` with the development token, no body | `401` JSON, same sentence for `87489af5-…`, `requestId 326c1c01-…` | 174.6 ms | 142 bytes |
+
+Every answer is clean JSON in under 200 ms, `server: cloudflare`,
+`via: 1.1 google`, `cf-cache-status: DYNAMIC`, `cf-ray: …-PDX`. Two things
+follow. First, the 401 sentence is not a staging authorization fault — the
+development token, whose environment accepts every release, is told exactly the
+same thing on this request shape, so a body-less `POST` is simply not the upload
+handshake and we do not read anything into it. Second, the refusal only appears
+when a real archive is put behind the call, so whatever times out is on the
+payload path, not the auth path — and that is where we would like the server-side
+log for the 15:38Z, 15:46Z, 15:49Z and 15:53Z attempts.
 
 ## Cost to us
 
@@ -407,8 +529,18 @@ release — the menu-visibility tip — was refused 27 times out of 27 while its
 own development legs returned deployment IDs 25.8-33.3 s before the same
 service was refused, its own `migrate staging database` leg applied a real
 migration, and uploads to the same staging services from outside CI were
-accepted inside the window (one backend SUCCESS at 15:00:33Z, the rest failing
-at build on the submitting machine).
+accepted inside the window (one backend SUCCESS at 15:00:33Z, and — read
+together with episode 11 below — the rest of that afternoon's local attempts
+dying on a 524 against `backboard`, not on the submitting machine); and
+14:56:37-14:57:59Z the same day, in which the tenth episode — Release's staging
+matrix copied onto a branch with `max-parallel: 1`, so its three uploads could
+not overlap — was refused 4 times out of 4 (`Indexing lines: 0`); and
+15:27:31-15:53:34Z, in which the eleventh episode — a laptop retry driver, one
+upload at a time — accepted a 7,511,269-byte backend archive at 15:18:18.823Z
+(`162c1d04`, `SUCCESS`, staging's backend now on main's tip) and refused six
+133,527,512-byte repo-root frontend archives with
+`Failed to upload code with status code 524`, each of which *did* create a
+`FAILED` deployment row carrying that commit as `meta.cliMessage`.
 Not one staging deployment row was created on 2026-11-17: at 08:18Z the
 three `latestDeployment` records still dated from 2026-11-16 (`e4670d96`,
 `d5825eff`, `28946ae4`), and a fourth episode four hours later did not change
