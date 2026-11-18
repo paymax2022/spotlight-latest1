@@ -38,7 +38,12 @@ outside CI were being accepted (a local backend deploy succeeded at 15:00:33Z
 and a second, carrying the released tip itself, succeeded at 15:18Z; the other
 local attempts failed later at build on the submitting machine), so the
 refusal is
-CI-path-specific, not an environment outage. No token value
+CI-path-specific, not an environment outage. Updated the same day at 17:25Z with
+a **positive control** rather than an episode: `serviceInstanceDeploy` put
+`main`'s tip `a30a8fd5b…` on all three staging services — three rows, three
+snapshots, three `SUCCESS` inside two minutes — while the upload path was still
+refusing, which confines the fault to upload-initiate and not to staging. See
+"Positive control". No token value
 appears here.
 
 ## The ask
@@ -168,6 +173,62 @@ laptop at 09:06:11Z and 09:06:41Z on 2026-11-16 (`616bd93b…` and `ea71b561…`
 both `SUCCESS`) — seven hours *before* this episode's fault window opened, so its
 legs have never been asked for an upload while the fault was live. The clean test
 of the source hypothesis is staging's own source, which we have not touched.
+
+## Positive control, 2026-11-18 17:16-17:22Z: these same instances deploy `main` fine when Railway pulls the commit
+
+We can now show that the refusing endpoint is the only broken part of this
+environment, without waiting for you. `serviceInstanceDeploy` — the mutation
+behind the dashboard's **Deploy** — was called once per staging service with
+`latestCommit: true`:
+
+```
+railway api 'mutation($s:String!,$e:String!,$latest:Boolean){
+  serviceInstanceDeploy(serviceId:$s, environmentId:$e, latestCommit:$latest) }' \
+  --var s=<serviceId> --var e=6b5f27a3-a290-4574-a977-363eb21d43ad --var latest=true
+```
+
+Each returned `true`, each created a deployment row **with a `snapshotId`** — the
+thing the upload path never gets far enough to make — built from
+`branch: "main"`, and reached `SUCCESS` inside two minutes:
+
+| service | deployment | created | `snapshotId` | `meta.commitHash` | status |
+|---|---|---|---|---|---|
+| `frontend-admin` | `bf679fce` | 17:16:40.749Z | `4e4c5637` | `a30a8fd5b…` | `SUCCESS` |
+| `frontend-web` | `484b5797` | 17:18:26.703Z | `ff3e708e` | `a30a8fd5b…` | `SUCCESS` |
+| `backend` | `7de6cf94` | 17:18:52.387Z | `531a9cf6` | `a30a8fd5b…` | `SUCCESS` |
+
+and staging serves it: `GET /api/v1/public/build` on
+`backend-staging-new.up.railway.app` answers
+`{"commit":"a30a8fd5b68e084ac5b96436e97e1204fc0c17ac","started_at":"2026-11-18T17:21:48Z"}`
+— the exact tip whose own staging upload legs refused 27 out of 27 in every run
+whose legs opened, the last being run `44323824351` at 14:55-15:33Z.
+
+So the project, the environment, all three service instances, their builds and
+their swap-over are healthy **now, in the same minutes the upload path is
+refusing**. Set that beside the credential-scope row above, where the same
+staging token authenticates from a runner, resolves to `6b5f27a3…`, and drives
+`railway status`, `railway api` and `railway deployment list` without error: the
+fault is confined to upload-initiate for this environment and touches nothing
+else about staging.
+
+Two further exclusions came out of the same pass, both read-only.
+`ServiceInstance.isUpdatable` is `false` on **all nine** instances — three
+services in each of development, staging and production — so it cannot be what
+separates the refusing three from the accepting six, and a `clearance` on the
+staging instances is likewise excluded: it is `null` on all three, and those same
+three accepted a deploy 40 s after we asked.
+
+This section does **not** test the `ServiceSource` hypothesis, and we will not
+present it as if it did: `serviceInstanceDeploy` and upload-initiate are
+different endpoints, and this call went out under an owner user session rather
+than a project token, so the endpoint and the credential both changed at once.
+What it does settle is the operational half. All three staging instances carry
+`source.repo = paymax2022/spotlight-latest1` again — the temporary removal from
+`frontend-admin`'s described in the Reproduction notes has been reversed, by us
+or from the dashboard we cannot tell from the API — and that instance then built
+from that same source without trouble. The question we still put to you is the
+one above: does upload-initiate take a different path, reaching out to GitHub,
+when the target instance carries a `ServiceSource`?
 
 So the specific thing we would like checked: **does upload-initiate behave
 differently for a service instance that has a `ServiceSource` — does it resolve
