@@ -382,10 +382,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// enforce tier limits fail-closed inside the service.
 	transferGroup := finance.Group("/transfers")
 	// E2E-SEC-058: per-user rate limit on the money-moving initiates (the
-	// finding's repro was 15 rapid transfers with no 429). GETs and the
-	// non-money helpers stay unmetered.
+	// finding's repro was 15 rapid transfers with no 429). The other GETs and
+	// the non-money helpers stay unmetered.
 	transferRate := middleware.PerUserRateLimit(redisClient, "finance-transfer", cfg.FinanceTransferRatePerMin)
-	transferGroup.GET("/paymax/resolve", transfersHandler.ResolvePaymax)
+	// .review/cashtag-security.md MAJOR M1: the resolve oracle is metered like
+	// the initiates. The old "GETs stay unmetered" rule predates cashtag
+	// addressing, which gave this lookup a short, low-entropy,
+	// dictionary-shaped namespace — unmetered, one authenticated account can
+	// walk the whole handle wordlist (two cheap indexed reads per hit) in
+	// minutes. POST /resolve-account is metered for the same "spends a lookup
+	// per call" reason.
+	transferGroup.GET("/paymax/resolve", transferRate, transfersHandler.ResolvePaymax)
 	transferGroup.POST("/paymax", transferRate, transfersHandler.InitiatePaymax)
 	transferGroup.POST("/bank", transferRate, transfersHandler.InitiateBank)
 	// Multi-provider bank payout surface (gated by FEATURE_BANK_TRANSFERS_ENABLED
