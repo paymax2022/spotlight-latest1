@@ -8,8 +8,8 @@ import HeaderSpacer from './HeaderSpacer';
 import AcademyApplyProvider, { ApplyLink } from './ApplyDrawer';
 import AreaExplorer from './AreaExplorer';
 import TuitionPlanner from './TuitionPlanner';
-import { ACADEMY_CONTACT, whatsappEnquiry } from './contact';
-import { formatNaira, formatProgrammeDate, intakePhase, scheduleLabel } from './format';
+import { ACADEMY_CONTACT, ACADEMY_PAYMENTS, whatsappEnquiry } from './contact';
+import { formatProgrammeDate, intakePhase, scheduleLabel } from './format';
 import styles from './academy.module.css';
 
 // The catalogue is read per request: tuition, areas and intakes are
@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     'Areas of study, training formats and tuition for the Spotlight Film Academy in Lekki, Lagos — acting, directing, cinematography, editing, sound, producing, production design and script writing, taught through real movie projects.',
   openGraph: {
     title: 'Spotlight Film Academy | Train on real sets in Lagos',
-    description: 'Choose a craft, pick a training format, and see the tuition admissions actually charges.',
+    description: 'Choose a craft, pick a training format — registration is free and tuition is ₦50,000, payable in instalments.',
     images: [{ url: HERO_IMAGE, width: 1586, height: 992, alt: 'Spotlight Film Academy trainees at work on a film set.' }],
   },
 };
@@ -71,8 +71,6 @@ export default async function FilmAcademyPage() {
   const { areas, intakes, pricingStructure, deliverables, feeExclusions, maxAreas, settings, loadErrors } =
     await getAcademyCatalogue();
 
-  const allPrices = areas.flatMap((area) => area.pricing_options.map((option) => option.price_ngn));
-  const priceFloor = allPrices.length > 0 ? Math.min(...allPrices) : null;
   // An intake with no linked trainings accepts no application, so it gets a
   // note rather than a card with a button that cannot work.
   const joinableIntakes = intakes.filter((intake) => intake.areaSlugs.length > 0);
@@ -175,7 +173,7 @@ export default async function FilmAcademyPage() {
                   jump link is dropped rather than left pointing at an empty target. */}
               {areas.length > 0 ? (
                 <Link className={`${styles.btn} ${styles.btnOutline}`} href="#plan">
-                  Price your training <span aria-hidden="true">↓</span>
+                  Plan your training <span aria-hidden="true">↓</span>
                 </Link>
               ) : null}
             </div>
@@ -210,7 +208,7 @@ export default async function FilmAcademyPage() {
                 </div>
                 <div className={styles.fact}>
                   <strong>{String(pricingStructure.length).padStart(2, '0')}</strong>
-                  <span>Training formats, priced per area</span>
+                  <span>Training formats to pick from</span>
                 </div>
                 <div className={styles.fact}>
                   <strong>{String(intakes.length).padStart(2, '0')}</strong>
@@ -273,7 +271,6 @@ export default async function FilmAcademyPage() {
                 <br />
                 classroom.
               </h2>
-              <small>Illustrative image — not footage from a Spotlight cohort</small>
             </div>
           </div>
 
@@ -303,7 +300,7 @@ export default async function FilmAcademyPage() {
           </div>
         </section>
 
-        {/* ── Plan and price ───────────────────────────────────────────── */}
+        {/* ── Plan and tuition ─────────────────────────────────────────── */}
         {areas.length > 0 ? (
           <section className={styles.plan} id="plan">
             <div className={styles.wrap}>
@@ -317,14 +314,17 @@ export default async function FilmAcademyPage() {
                   </h2>
                 </div>
                 <p className={styles.sectionKicker}>
-                  Tuition is priced per area of study, in the format you choose{priceFloor !== null ? ` — from ${formatNaira(priceFloor)} per area` : ''}.
-                  Selecting a second area adds its own format price.
+                  Tuition is ₦{ACADEMY_PAYMENTS.tuitionNgn.toLocaleString('en-NG')} for the programme, and registration is
+                  free. It can be paid in instalments — ₦{ACADEMY_PAYMENTS.weeklyNgn.toLocaleString('en-NG')} weekly, at the
+                  academy venue or by bank transfer.
                 </p>
               </div>
               <TuitionPlanner
                 areas={areas}
                 maxAreas={maxAreas}
-                applicationFeeNgn={settings?.registration_type === 'paid' ? settings.application_fee : null}
+                applicationFeeNgn={settings
+                  ? (settings.registration_type === 'paid' ? settings.application_fee : 0)
+                  : null}
                 applicationFeeRefundable={settings ? settings.application_fee_refundable : null}
                 feeExclusions={feeExclusions}
               />
@@ -487,10 +487,12 @@ export default async function FilmAcademyPage() {
                 What does the training cost? <span aria-hidden="true">+</span>
               </summary>
               <p>
-                Tuition is set per area of study and per format, and an application carries up to {maxAreas} areas, so
-                the total is the sum of what you select. Alongside tuition there is an application fee of{' '}
-                {settings?.registration_type === 'paid' ? formatNaira(settings.application_fee) : 'an amount confirmed by admissions'}
-                , and the project costs listed above are not covered by tuition.
+                Tuition is ₦{ACADEMY_PAYMENTS.tuitionNgn.toLocaleString('en-NG')} for the programme, and an application
+                carries up to {maxAreas} areas of study. Registration is free — nothing is charged to apply. Tuition can
+                be paid in instalments — ₦{ACADEMY_PAYMENTS.weeklyNgn.toLocaleString('en-NG')} weekly, either at the Film
+                Academy venue or by bank transfer to {ACADEMY_PAYMENTS.bankName}, Account:{' '}
+                {ACADEMY_PAYMENTS.accountNumber}. The project
+                costs listed above are not covered by tuition.
               </p>
               <p>Confirm the current amounts with admissions before you pay — they are managed by the academy team.</p>
             </details>
@@ -508,8 +510,8 @@ export default async function FilmAcademyPage() {
                 ))}
               </ul>
               <p>
-                The full-time format runs about a month and is the one priced with boarding for people coming from
-                outside Lagos.
+                The full-time format runs about a month and is the one that comes with boarding for people coming
+                from outside Lagos.
               </p>
             </details>
 
@@ -543,9 +545,9 @@ export default async function FilmAcademyPage() {
               </summary>
               <p>
                 The apply button opens the application right here, over this page. You choose an intake, then up
-                to {maxAreas} areas of study and a format for each, and see what is charged before you commit. Sign
-                in when you are ready to submit — it returns you here afterwards — and admissions reviews the
-                application from there.
+                to {maxAreas} areas of study and a training format for each — registration is free, so nothing is
+                charged to submit. Sign in when you are ready — it returns you here afterwards — and admissions
+                reviews the application from there.
               </p>
             </details>
 
@@ -554,7 +556,7 @@ export default async function FilmAcademyPage() {
                 Is accommodation available? <span aria-hidden="true">+</span>
               </summary>
               <p>
-                Three of the five formats are priced with boarding. Whether a bed is free for your dates is set by
+                Three of the five formats come with boarding. Whether a bed is free for your dates is set by
                 admissions, so ask them before you choose a format. Feeding is not included in any tuition amount.
               </p>
             </details>
