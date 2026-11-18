@@ -13,7 +13,6 @@ import { Spacing } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import { HomeMenuButton } from '@/components/HomeMenu';
-import { RemoteBanner } from '@/features/media/banners';
 import RecentUtilityTransactions from '@/features/services/RecentUtilityTransactions';
 
 const HERO_BANNER_URL = 'https://res.cloudinary.com/paymax/image/upload/v1792925219/Utility_payments_made_easy_omlar0.png';
@@ -122,14 +121,14 @@ export default function BillsScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <RemoteBanner slug="utility-bills" priority style={styles.banner} />
-
-        {/* The "Paymax Bills Hub" text hero is gone. What remains is the banner picture
-            alone, with nothing painted over it. */}
+        {/* One banner on this hub. The CMS `utility-bills` RemoteBanner used to
+            render above this artwork, so the screen showed two stacked bill
+            banners; the artwork below is the one that stays, at its own 1774×887
+            (2:1) height so nothing in it is cropped. */}
         <View style={styles.heroBanner}>
           <Image
             source={{ uri: HERO_BANNER_URL }}
-            style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]}
+            style={StyleSheet.absoluteFill}
             resizeMode="cover"
             accessibilityLabel="All your bills, one easy app. Airtime, data, electricity and cable TV."
           />
@@ -246,7 +245,6 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.lg,
     paddingBottom: Platform.OS === 'ios' ? 120 : 96,
   },
-  banner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
   empty: {
     marginHorizontal: Spacing.containerMargin,
     marginTop: Spacing.sm,
@@ -260,10 +258,16 @@ const styles = StyleSheet.create({
   emptyTitle: { ...Typography.labelLg, color: Colors.onSurface, textAlign: 'center' },
   emptyBody: { ...Typography.bodySm, color: Colors.onSurfaceVariant, textAlign: 'center' },
   heroBanner: {
+    // Sized by stretching, never by `width: '100%'`: a declared 100% width is
+    // 100% of the parent and ignores this box's own side margins, which is how
+    // banners ended up flush against the right edge. Equal, named gutters keep
+    // the two sides of the frame the same 20px the rest of the column uses.
+    alignSelf: 'stretch',
     aspectRatio: 2,
     borderRadius: Radius.xl,
     overflow: 'hidden',
-    marginHorizontal: Spacing.containerMargin,
+    marginLeft: Spacing.containerMargin,
+    marginRight: Spacing.containerMargin,
     marginBottom: Spacing.lg,
   },
   sectionHeader: {

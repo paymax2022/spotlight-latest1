@@ -5,15 +5,14 @@ import type { AcademyCatalogueArea } from '@/src/server/services/academy/catalog
 import styles from './academy.module.css';
 import { ApplyLink } from './ApplyDrawer';
 import { whatsappEnquiry } from './contact';
-import { formatNaira } from './format';
 
 const tabId = (index: number) => `area-tab-${index}`;
 
 /**
  * The areas of study, read from `academy_interest_areas` — the same rows the
- * application endpoint prices against. The list, the descriptions and the five
- * format prices per area all come from the admin-managed tables, so nothing here
- * can drift from what an applicant is actually charged.
+ * application endpoint reads. The list and descriptions are admin-managed.
+ * Tuition is flat (ACADEMY_PAYMENTS), so formats are shown as ways to train —
+ * weekday/weekend, boarding — not as price options.
  */
 export default function AreaExplorer({ areas }: { areas: AcademyCatalogueArea[] }) {
   const [index, setIndex] = useState(0);
@@ -76,7 +75,6 @@ export default function AreaExplorer({ areas }: { areas: AcademyCatalogueArea[] 
           <div className={styles.priceLines}>
             <p className={styles.priceHead}>
               <span>Training formats</span>
-              <span>Tuition</span>
             </p>
             <dl>
               {area.pricing_options.map((option) => (
@@ -85,7 +83,6 @@ export default function AreaExplorer({ areas }: { areas: AcademyCatalogueArea[] 
                     {option.label}
                     {option.note ? <span className={styles.priceRowNote}>{option.note}</span> : null}
                   </dt>
-                  <dd>{formatNaira(option.price_ngn)}</dd>
                 </div>
               ))}
             </dl>
