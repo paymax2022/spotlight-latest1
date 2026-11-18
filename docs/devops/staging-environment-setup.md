@@ -122,10 +122,11 @@ value of `SUPABASE_PROJECT_ID` cannot be read: `gh api
 repos/paymax2022/spotlight-latest1/environments/Production/secrets` returns only
 the *name* `SUPABASE_DB_PASSWORD` (no environment-scoped `SUPABASE_PROJECT_ID`,
 so the ref comes from the repo-level secret of that name), and Actions secrets
-are write-only by design. What is settled: `ops-db-push-scoped.yml:101-104`
-refuses `wnicsubiznmishkmunsv` under `environment: production-db-scoped`, and
-that lane's completed runs prove only **that** environment's ref, not
-`Production`'s. The only thing that answers the question is a dispatched
+are write-only by design. What is settled: that lane's
+`Resolve the production DSN` step refuses `wnicsubiznmishkmunsv` under
+`environment: production-db-scoped`, and that lane's completed runs prove only
+**that** environment's ref, not `Production`'s. The only thing that answers the
+question is a dispatched
 `ops-db-push.yml` **link-step log** (`ops-db-push.yml:128-129` runs
 `supabase link --project-ref "$SUPABASE_PROJECT_ID"`), i.e. an operator action
 this plan was not authorised to take — recorded as operator-owned in ledger §16.
