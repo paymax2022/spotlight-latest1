@@ -64,15 +64,49 @@ name: F2 staging upload probe (branch-only, no production path)
 # overlap. `RETRY_ATTEMPTS=2` with a 20 s base delay so a refusal costs 2
 # attempts instead of 9 and this run finishes in minutes either way.
 #
-# Verdict table for this run:
-#   all three legs land  -> the refusal is shaped by concurrent staging
-#                           uploads; `max-parallel: 1` on release.yml's
-#                           deploy-staging is a repo-side fix, and staging gets
-#                           current on main's tip as a by-product.
-#   legs still refuse    -> concurrency is falsified too; the fault is a
-#                           time-windowed Railway-side refusal that no repo-side
-#                           change survives, and the evidence pack is the
-#                           deliverable.
+# REVISED 2026-11-18 ~16:45Z: this revision now carries the ServiceSource A/B.
+#
+# Why the A/B must run HERE and not as a `gh run rerun <release> --failed`.
+# The rerun looks cheaper (no push, no gate), but it is not provably safe on
+# the production side: release.yml's `migrate-production` is
+# `needs: [gates, smoke-staging]` with the comment "that proof is the
+# precondition for touching production". A `--failed` rerun re-evaluates the
+# downstream of the legs it re-runs, so IF the staging legs went green,
+# `smoke-staging` stops being skipped and the production half becomes live
+# without a reviewer (`gates` already said `proceed` for that sha). Every
+# measurement of "--failed leaves skipped jobs alone" was taken on reruns where
+# staging refused again, so the question has never actually arisen. This
+# workflow has no production job at all, so the same three CI-shaped uploads
+# are safe to run here.
+#
+# The condition this run reads (instance config, captured 16:3xZ, unchanged by
+# this workflow):
+#   staging frontend-admin  source.repo = ""            <- disconnected for the A/B
+#   staging backend         source.repo = paymax2022/spotlight-latest1
+#   staging frontend-web    source.repo = paymax2022/spotlight-latest1
+#
+# Verdict table:
+#   admin ACCEPTS while backend/web REFUSE
+#       -> the connected `ServiceSource.repo` is the CI-path discriminator. The
+#          repo-side fix is portable: disconnect the source on the remaining two
+#          staging instances (restore string:
+#          `input:{source:{repo:"paymax2022/spotlight-latest1"}}`), and Release
+#          goes green on the next merge. Note the caveat below before believing
+#          this cell.
+#   all three REFUSE
+#       -> the source is exonerated. Restore admin's source, then fall back to a
+#          fresh staging project token, and the evidence pack is the deliverable.
+#   all three ACCEPT
+#       -> the fault closed on its own; re-measure Release before touching any
+#          instance config.
+#
+# CAVEAT that keeps the A/B from being conclusive on its own: at 14:23:32.640Z
+# and 14:23:35.695Z CI's serial one-shot backend uploads were ACCEPTED with
+# backend's source connected (rows 77811006 and dc99dbca), and refused 9/9 six
+# minutes later with the source unchanged. So `source.repo` can be necessary in
+# the refusal path without being sufficient for it; a single passing admin leg is
+# a strong signal, not a proof, and it must be re-run against backend before any
+# instance config is changed in the other direction.
 
 on:
   push:
@@ -136,6 +170,29 @@ jobs:
       - name: Install Railway CLI
         run: npm install --global @railway/cli@5.40.1
 
+      # Read-only evidence that the A/B condition is what we think it is,
+      # printed inside the same job as the upload. `railway api` takes the
+      # document positionally with --var and NO --project; the ids are
+      # String!; `serviceInstanceUpdate` returns Boolean! but this is a read.
+      # `|| true` everywhere: a failed read must never change a leg's outcome.
+      - name: Read this service's staging instance config (read-only)
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          SERVICE: ${{ matrix.service }}
+        run: |
+          set -uo pipefail
+          case "$SERVICE" in
+            backend)        SID=70de07d8-c058-4221-b645-61c4f1ac7aa5 ;;
+            frontend-web)   SID=dda6372c-0bb7-4014-a2b1-aa646c11a281 ;;
+            frontend-admin) SID=c4f1086e-0a2d-4367-b503-209c14a2ce6f ;;
+            *)              SID=unknown ;;
+          esac
+          echo "serviceId=$SID for $SERVICE"
+          Q='query($s:String!,$e:String!){ serviceInstance(serviceId:$s, environmentId:$e){ rootDirectory source{repo} latestDeployment{ id createdAt status } } }'
+          railway api "$Q" --var "s=$SID" --var "e=6b5f27a3-a290-4574-a977-363eb21d43ad" --compact 2>&1 | sed -E 's/[A-Za-z0-9._-]{41,}/<REDACTED>/g' || true
+          echo "--- does this pin know --verbose? (capability, not a mutation) ---"
+          railway up --help 2>&1 | grep -i -E '^\s*--verbose' || echo "(no --verbose on $(railway --version 2>&1 | head -1))"
+
       - name: Deploy ${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
@@ -162,4 +219,18 @@ jobs:
           echo "decode-error lines: $(grep -c 'error decoding response body' /tmp/leg.log)"
           echo "wrapper retries: $(grep -c 'with-retry' /tmp/leg.log)"
           echo "deployed line: $(grep -c 'deployed' /tmp/leg.log)"
+          # F2's signature is the ABSENCE of a deployment row. Query for the
+          # newest row on this service and print it, so a leg that "failed" with
+          # no row is distinguishable from one that failed mid-transfer.
+          if [ "$rc" != "0" ]; then
+            SID=unknown
+            case "$SERVICE" in
+              backend)        SID=70de07d8-c058-4221-b645-61c4f1ac7aa5 ;;
+              frontend-web)   SID=dda6372c-0bb7-4014-a2b1-aa646c11a281 ;;
+              frontend-admin) SID=c4f1086e-0a2d-4367-b503-209c14a2ce6f ;;
+            esac
+            echo "--- newest staging row for $SERVICE after the refusal ---"
+            Q2='query($s:String!,$e:String!){ serviceInstance(serviceId:$s, environmentId:$e){ latestDeployment{ id createdAt status snapshotId } } }'
+            railway api "$Q2" --var "s=$SID" --var "e=6b5f27a3-a290-4574-a977-363eb21d43ad" --compact 2>&1 | sed -E 's/[A-Za-z0-9._-]{41,}/<REDACTED>/g' || true
+          fi
           exit "$rc"
