@@ -37,6 +37,33 @@ export const dynamic = 'force-dynamic';
 const WEB_API_BASE_URL = process.env.WEB_API_BASE_URL || '';
 const TIMEOUT_MS = Number(process.env.WEB_PROXY_TIMEOUT_MS ?? 20_000);
 
+/**
+ * The four headers that describe the bytes being relayed, and nothing else.
+ *
+ * The body below is forwarded verbatim, so the headers a client needs to read
+ * that body correctly have to travel with it: `Content-Type` says what the
+ * bytes are, `Content-Range` is what makes a 206 legal (a 206 without it is a
+ * protocol error the media element rejects outright), `Accept-Ranges` tells the
+ * player it may seek, and `Content-Disposition` is the difference between the
+ * console's Download button saving a beat and opening one.
+ *
+ * Deliberately an allowlist rather than a copy of everything upstream returned:
+ * this proxy talks to frontend-web with the admin session bearer attached, and
+ * relaying a `set-cookie` — or any other header the upstream sets for its own
+ * origin — back through a console response would put a second credential in the
+ * browser that nothing here decided to issue.
+ */
+function passthroughHeaders(upstream: Headers): Record<string, string> {
+  const out: Record<string, string> = {
+    'Content-Type': upstream.get('content-type') || 'application/json',
+  };
+  for (const name of ['Content-Range', 'Accept-Ranges', 'Content-Disposition'] as const) {
+    const value = upstream.get(name.toLowerCase());
+    if (value) out[name] = value;
+  }
+  return out;
+}
+
 async function forward(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
   if (!WEB_API_BASE_URL) {
     return NextResponse.json(
@@ -86,6 +113,13 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   // it, any money-mutation route reached through this proxy 400s unconditionally.
   const idempotencyKey = request.headers.get('idempotency-key');
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+  // A media element does not fetch a file, it fetches a range of one, and the
+  // Open Mic review panel points its <audio src> at this proxy. Without the
+  // caller's Range the web app answers a full 200 body every time: the song
+  // plays from the top, scrubbing re-downloads it, and the partial headers
+  // below would have nothing to describe.
+  const range = request.headers.get('range');
+  if (range) headers['Range'] = range;
 
   const method = request.method;
   // corrupts any binary body — a multipart image upload arrives with its bytes
@@ -110,7 +144,7 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
     const buffer = await upstream.arrayBuffer();
     return new NextResponse(buffer, {
       status: upstream.status,
-      headers: { 'Content-Type': upstream.headers.get('content-type') || 'application/json' },
+      headers: passthroughHeaders(upstream.headers),
     });
   } catch (err) {
     // Log the TARGET, never a header. An unbounded hang here would be invisible.
