@@ -1,6 +1,29 @@
-import type { OpenMicContest, OpenMicFinaleConfig, OpenMicPrizePackage, OpenMicVotingConfig } from './types';
+import type { OpenMicContest, OpenMicEntryStatus, OpenMicFinaleConfig, OpenMicPrizePackage, OpenMicVotingConfig } from './types';
 
 export const OPEN_MIC_CONTEST_TYPE = 'one_beat_one_verse';
+
+/**
+ * The decisions an admin may apply to a handed-in song, in the order a review
+ * interface should list them. `OpenMicSubmissionReviewInput` (./types) is the
+ * type-level answer; this array is the runtime one, because the route that
+ * receives the decision cannot check a type. Without that check a stray status
+ * string — a typo in a console, a hand-built request — writes straight into
+ * `competition_entries.status`, and the reader, the leaderboard and the
+ * eligibility gate all key off that column.
+ *
+ * `satisfies` is what keeps the two in step: a value here that is not an entry
+ * status fails the build rather than shipping a list the server then refuses.
+ */
+export const OPEN_MIC_REVIEW_STATUSES = [
+  'approved',
+  'rejected',
+  'correction_requested',
+  'clean_version_requested',
+  'published_for_voting',
+  'disqualified',
+  'finalist',
+  'winner',
+] as const satisfies readonly OpenMicEntryStatus[];
 
 /**
  * `contests.category` the registration plane writes for Open Mic, from the

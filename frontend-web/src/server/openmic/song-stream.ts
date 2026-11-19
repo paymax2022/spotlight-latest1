@@ -1,12 +1,15 @@
 /**
  * Serving song bytes, whichever storage the deployment has.
  *
- * Two routes play a contestant's song: the public reader that web, admin and
- * mobile all point their `<audio>`/`expo-audio` at, and the admin review route.
- * Both need the same behaviour — presigned passthrough when R2 is configured, a
- * ranged read from local disk when it is not — and both used to be R2-only, which
- * is why localhost answered 404 "Audio not available" for a file it had just
- * written to its own temp directory.
+ * Three surfaces ask for Open Mic audio bytes: the public song reader that web,
+ * admin and mobile point their `<audio>`/`expo-audio` at, the admin review
+ * route, and the public beat reader an anonymous visitor previews the official
+ * beat with. They need the same behaviour — presigned passthrough when R2 is
+ * configured, a ranged read from local disk when it is not — and the song ones
+ * used to be R2-only, which is why localhost answered 404 "Audio not available"
+ * for a file it had just written to its own temp directory. The beat reader had
+ * the same gap in a quieter shape: it ignored `Range`, so a player could hear
+ * the beat from the start but could not scrub it.
  *
  * The range arithmetic is pure and separate because getting it wrong does not
  * throw: a browser that receives 200 instead of 206 simply cannot scrub, so a
@@ -84,7 +87,7 @@ export function contentDispositionHeader(disposition: 'inline' | 'attachment', f
  *
  * Statuses: 200 whole object, 206 slice, 404 no such object, 416 range past EOF.
  */
-export async function buildSongResponse(input: {
+export async function buildAudioResponse(input: {
   objectKey: string;
   fileName?: string;
   rangeHeader?: string | null;

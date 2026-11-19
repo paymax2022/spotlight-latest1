@@ -3,6 +3,7 @@ import { hasUsableSupabaseConfig, hasUsableSupabaseReadConfig } from '@/lib/supa
 import { OPEN_MIC_CONTEST_TYPE } from '@/src/features/openmic/constants';
 import { buildSongObjectKey, songContestRef, songReaderUrl } from '@/src/features/openmic/song-storage';
 import { getSongSubmissionEligibility } from './submission-eligibility';
+import { projectReview } from './review-rules';
 import { isOpenMicContestRow } from './edition-identity';
 import { randomUUID } from 'node:crypto';
 import { recordVoteFraudSignals, recordVoteAudit } from '@/src/server/voting/core';
@@ -1555,32 +1556,57 @@ export async function getSubmissionById(submissionId: string) {
 export async function reviewSubmission(submissionId: string, review: OpenMicSubmissionReviewInput, actorId?: string) {
   if (!shouldUseDb()) throw new Error('Open Mic DB is not configured.');
   try {
+    // The row on disk is the only valid input. This used to ask the in-memory
+    // store to compute the update, and that store throws
+    // "Submission not found." for anything it has not seen — which in DB mode is
+    // everything, so no admin could ever approve, reject or publish a hand-in.
     const previous = await getSubmissionById(submissionId);
-    const updated = reviewSubmissionMemory(submissionId, review);
+    if (!previous) throw new Error('Submission not found.');
+    const { patch, notification } = projectReview(previous, review, new Date().toISOString());
     const supabase = createAdminClient();
     const { error } = await supabase
       .from('competition_entries')
       .update({
-        status: updated.status,
-        moderation_feedback: updated.reviewNote || '',
-        reviewed_at: updated.approvedAt || null,
-        live_at: updated.publishedAt || null,
+        status: patch.status,
+        moderation_feedback: patch.reviewNote || '',
+        reviewed_at: patch.approvedAt || null,
+        live_at: patch.publishedAt || null,
       })
       .eq('id', submissionId);
     if (error) throw error;
 
     await supabase.from('moderation_logs').insert({
       entry_id: submissionId,
-      competition_id: updated.contestId,
+      competition_id: previous.contestId,
       actor_id: actorId || null,
       action: review.status,
-      previous_status: previous?.status || '',
-      new_status: updated.status,
+      previous_status: previous.status || '',
+      new_status: patch.status,
       reason: review.note || '',
       notes: review.note || '',
       flags_json: {},
     });
-    return updated;
+
+    // The artist has to learn the decision, and for a rejection the note is the
+    // only thing that makes it actionable. Best-effort on purpose: the status
+    // write and the audit row above ARE the decision, and a notice that cannot
+    // be queued must not turn an approval that landed into a 500 the operator
+    // reads as a failure — that invites a second click and a second audit row.
+    if (notification) {
+      try {
+        await createNotification({
+          contestId: previous.contestId,
+          submissionId,
+          audience: 'artist',
+          channel: 'in_app',
+          ...notification,
+        });
+      } catch (notifyError) {
+        console.warn('[open-mic] review decision landed but the artist notice did not:',
+          notifyError instanceof Error ? notifyError.message : notifyError);
+      }
+    }
+    return { ...previous, ...patch };
   } catch (error) {
     if (!shouldFallback(error)) throw error;
     return reviewSubmissionMemory(submissionId, review);

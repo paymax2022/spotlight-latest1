@@ -14,7 +14,7 @@
 import { isPubliclyPlayableSongStatus, isSongKeyForSubmission } from '@/src/features/openmic/song-storage';
 import { createAdminClient } from '@/lib/supabase/server';
 import { validateRequest } from '@/src/lib/auth/request';
-import { SONG_CORS_HEADERS, buildSongResponse } from '@/src/server/openmic/song-stream';
+import { SONG_CORS_HEADERS, buildAudioResponse } from '@/src/server/openmic/song-stream';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,7 +55,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       return new Response('Audio not available', { status: 404, headers: SONG_CORS_HEADERS });
     }
 
-    return await buildSongResponse({
+    return await buildAudioResponse({
       objectKey,
       fileName: (meta.songFileName as string | undefined) || 'song.mp3',
       rangeHeader: request.headers.get('range'),

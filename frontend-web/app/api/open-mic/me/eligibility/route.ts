@@ -51,6 +51,11 @@ export async function GET(request: Request) {
               durationSeconds: contest.beat.durationSeconds,
               producerCredit: contest.beat.producerCredit,
               usageRules: contest.beat.usageRules,
+              // The beat-download POST refuses unless the caller confirms paid
+              // access when the edition requires it. A client cannot tick that
+              // honestly without knowing the rule exists, so the rule travels
+              // with the beat rather than being guessed from the entry fee.
+              requiresPaidEntry: contest.beat.requiresPaidEntryForDownload === true,
               // Only the public reader counts as playable: a stored value that is
               // a legacy owner-only path or an off-origin free-text URL cannot be
               // heard by an applicant, and pretending otherwise gives the phone a
@@ -69,6 +74,11 @@ export async function GET(request: Request) {
               status: latest.status,
               songTitle: latest.songTitle,
               hasSong: Boolean(latest.songObjectKey),
+              // The artist's own key, and only ever their own: a `draft` row that
+              // already holds bytes is resumable, and without this the client
+              // would have to re-upload to find out it had nothing to re-upload.
+              // `createSubmission` re-derives and compares the key anyway.
+              songObjectKey: latest.songObjectKey ?? null,
               playableUrl: songReaderUrl(latest.id),
               submittedAt: latest.submittedAt,
             }

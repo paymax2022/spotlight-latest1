@@ -11,7 +11,7 @@ vi.mock('@/src/lib/storage/r2', () => ({
   createR2DownloadUrl: async () => 'https://bucket.example.invalid/signed',
 }));
 
-const { contentDispositionHeader, parseByteRange, resolveByteRange, buildSongResponse, SONG_CORS_HEADERS } =
+const { contentDispositionHeader, parseByteRange, resolveByteRange, buildAudioResponse, SONG_CORS_HEADERS } =
   await import('@/src/server/openmic/song-stream');
 const { saveLocalUpload } = await import('@/src/lib/storage/local-uploads');
 
@@ -60,7 +60,7 @@ describe('resolveByteRange', () => {
   });
 });
 
-describe('buildSongResponse without R2', () => {
+describe('buildAudioResponse without R2', () => {
   let dir = '';
 
   beforeAll(async () => {
@@ -75,7 +75,7 @@ describe('buildSongResponse without R2', () => {
   });
 
   it('serves the whole file with the type the extension map gives', async () => {
-    const res = await buildSongResponse({ objectKey: KEY });
+    const res = await buildAudioResponse({ objectKey: KEY });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('audio/mpeg');
     expect(res.headers.get('accept-ranges')).toBe('bytes');
@@ -86,7 +86,7 @@ describe('buildSongResponse without R2', () => {
   });
 
   it('answers a range with 206 and a Content-Range the browser can scrub by', async () => {
-    const res = await buildSongResponse({ objectKey: KEY, rangeHeader: 'bytes=10-19' });
+    const res = await buildAudioResponse({ objectKey: KEY, rangeHeader: 'bytes=10-19' });
     expect(res.status).toBe(206);
     expect(res.headers.get('content-range')).toBe(`bytes 10-19/${TOTAL}`);
     expect(res.headers.get('content-length')).toBe('10');
@@ -97,29 +97,29 @@ describe('buildSongResponse without R2', () => {
     // The player probes `bytes=0-1` for metadata, then requests from the seek
     // target. A server that ignores the header returns 200 twice and the UI is
     // stuck at the start of the song.
-    const probe = await buildSongResponse({ objectKey: KEY, rangeHeader: 'bytes=0-1' });
+    const probe = await buildAudioResponse({ objectKey: KEY, rangeHeader: 'bytes=0-1' });
     expect(probe.status).toBe(206);
     await probe.arrayBuffer();
-    const seek = await buildSongResponse({ objectKey: KEY, rangeHeader: 'bytes=640-' });
+    const seek = await buildAudioResponse({ objectKey: KEY, rangeHeader: 'bytes=640-' });
     expect(seek.status).toBe(206);
     expect(seek.headers.get('content-range')).toBe(`bytes 640-${TOTAL - 1}/${TOTAL}`);
     expect((await seek.arrayBuffer()).byteLength).toBe(TOTAL - 640);
   });
 
   it('refuses a range past the end with 416 and the real length', async () => {
-    const res = await buildSongResponse({ objectKey: KEY, rangeHeader: 'bytes=4000-' });
+    const res = await buildAudioResponse({ objectKey: KEY, rangeHeader: 'bytes=4000-' });
     expect(res.status).toBe(416);
     expect(res.headers.get('content-range')).toBe(`bytes */${TOTAL}`);
   });
 
   it('names the file the artist uploaded instead of the object key', async () => {
-    const res = await buildSongResponse({ objectKey: KEY, fileName: 'my song.mp3' });
+    const res = await buildAudioResponse({ objectKey: KEY, fileName: 'my song.mp3' });
     expect(res.headers.get('content-disposition')).toBe('inline; filename="my song.mp3"');
     await res.arrayBuffer();
   });
 
   it('switches to attachment for ?download=1', async () => {
-    const res = await buildSongResponse({ objectKey: KEY, fileName: 'song.mp3', disposition: 'attachment' });
+    const res = await buildAudioResponse({ objectKey: KEY, fileName: 'song.mp3', disposition: 'attachment' });
     expect(res.headers.get('content-disposition')).toBe('attachment; filename="song.mp3"');
     await res.arrayBuffer();
   });
@@ -132,7 +132,7 @@ describe('buildSongResponse without R2', () => {
   });
 
   it('404s a song that was never written instead of throwing', async () => {
-    const res = await buildSongResponse({ objectKey: 'openmic/other/artist/missing.mp3' });
+    const res = await buildAudioResponse({ objectKey: 'openmic/other/artist/missing.mp3' });
     expect(res.status).toBe(404);
   });
 
@@ -142,7 +142,7 @@ describe('buildSongResponse without R2', () => {
     // outside the temp root. The reader resolves it, refuses it, and reports the
     // same 404 as a missing song rather than leaking which half failed.
     for (const key of ['openmic/../../escape.mp3', '../../../etc/passwd', 'openmic/../../../etc/passwd']) {
-      const res = await buildSongResponse({ objectKey: key });
+      const res = await buildAudioResponse({ objectKey: key });
       expect(res.status, key).toBe(404);
     }
   });
