@@ -145,15 +145,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-9}"
 export RETRY_BASE_DELAY_S="${RETRY_BASE_DELAY_S:-60}"
 # THE BUDGET RIDES OUT A WINDOW; IT MUST NOT ARGUE WITH AN ACCOUNT STATE.
-# On 2026-11-19 the Railway trial lapsed and all six legs of two release runs spent
-# nine attempts each (~18 min a leg) against `Your trial has expired. Please select a
-# plan to continue using Railway.` — a refusal whose half-life is "until a human adds a
-# plan", i.e. never. Worse, the message was invisible in the triaged logs and only the
-# raw dev log carried it, so two runs were written off as F2 before anyone read it.
+# On 2026-11-19 the Railway trial lapsed and the three DEV legs of each of two release
+# runs spent nine attempts each (~15 min of guaranteed sleep a leg) against
+# `Your trial has expired. Please select a plan to continue using Railway.` — a refusal
+# whose half-life is "until a human adds a plan", i.e. never. Worse, that message was
+# invisible in the triaged logs and only the raw dev log carried it, so two runs were
+# written off as F2 before anyone read it.
 # 883 s of sleep is the right answer to a transient refusal and a 2.5 h blindfold on
 # this one, so stop the ladder the moment Railway says what only a person can fix.
 # Deliberately narrow: the decode-error refusal this file was written for is NOT here
 # and still burns the full ladder (pinned by test-railway-deploy-retry.sh case 2).
+#
+# WHERE THE SAVING ACTS, and where it does not — per-leg census of runs 44482224276
+# and 44488725106, counted as decode-lines / trial-lines / retry-notices (8 notices =
+# 9 tries), identical in both runs: DEV legs 0 / 9 / 8, STAGING legs 18 / 0 / 8. So
+# staging never printed the trial sentence, not once, in either run: its upload-initiate
+# request dies on the non-JSON body before Railway's entitlement check is reached, and
+# the guard has nothing to match. Expect this fail-fast to spare the dev legs (and any
+# leg that gets far enough to be told) only. Staging keeps its full 900 s ladder —
+# which is right, since the ladder exists for staging's transient window and F2 is a
+# different fault from billing. Reading these two columns as one outage is what cost
+# two runs of triage on 2026-11-19; keeping them separate is the point.
 export RETRY_NON_RETRYABLE="${RETRY_NON_RETRYABLE:-trial has expired|please select a plan}"
 # shellcheck disable=SC2086
 bash "$SCRIPT_DIR/with-retry.sh" railway up $UPLOAD_PATH $ROOT_FLAG --no-gitignore \
