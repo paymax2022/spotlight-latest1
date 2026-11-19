@@ -403,22 +403,39 @@ func isDuplicateCode(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
-// codeOwner returns the user holding code, or "" if it is free.
-// IT CHECKS BOTH TABLES, and that is the point. Attribution resolves a code by
+// codeOwnerIn returns the user holding code, or "" if it is free. The read handle
+// is a parameter so SetLinkCode can ask this INSIDE its own transaction: the
+// answer must describe the same snapshot the write then lands on.
+//
+// THREE NAMESPACES, and that is the point. Attribution resolves a code by
 // looking in referral_links FIRST and falling back to the legacy
-// finance_referral_codes (see resolveCode). So if an admin were allowed to set a
-// link code equal to some legacy user's code, every future signup typing that
-// code would resolve to the NEW owner and the original owner would silently stop
-// being credited — no error anywhere, just someone else's rewards. Checking one
-// table would have shipped exactly that.
-func (s *RewardService) codeOwner(ctx context.Context, code string) (string, error) {
+// finance_referral_codes (see RewardService.resolveCode), and
+// platform_users.referral_code is the column the admin user record displays and
+// LookupCode reports as source "platform_users" when neither code table has a
+// row. A code living in any of the three is therefore a code a registered user is
+// using. Checking one or two of them would let an admin hand out a code that
+// already belongs to someone else, and every future signup typing that code would
+// credit the NEW owner — no error anywhere, just someone else's rewards.
+//
+// CASE-INSENSITIVELY, also load-bearing. finance_referral_codes holds lowercase
+// rows from the generator that ran before REF-004, and both its resolver and its
+// unique index (20270218000000) fold case. An exact `code = $1` would call "abcde"
+// free, insert "ABCDE" into referral_links, and leave the resolver with two
+// candidate rows for what every caller treats as one code — it would then return
+// whichever row the planner reaches first.
+func codeOwnerIn(ctx context.Context, rq rowQuerier, code string) (string, error) {
 	const q = `
-		SELECT referrer_id::text FROM public.referral_links          WHERE code = $1
+		SELECT referrer_id::text FROM public.referral_links
+		 WHERE UPPER(code) = $1
 		UNION
-		SELECT user_id::text     FROM public.finance_referral_codes  WHERE code = $1
+		SELECT user_id::text FROM public.finance_referral_codes
+		 WHERE UPPER(code) = $1
+		UNION
+		SELECT id::text FROM public.platform_users
+		 WHERE referral_code IS NOT NULL AND UPPER(referral_code) = $1
 		LIMIT 1`
 	var owner string
-	err := s.db.QueryRow(ctx, q, code).Scan(&owner)
+	err := rq.QueryRow(ctx, q, NormalizeCode(code)).Scan(&owner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -428,8 +445,20 @@ func (s *RewardService) codeOwner(ctx context.Context, code string) (string, err
 	return owner, nil
 }
 
-// SetLinkCode assigns an admin-chosen code to a referrer.
-// Returns ErrCodeTaken if the code belongs to anyone else, in EITHER namespace.
+// setCodeError translates the one failure that is a normal outcome — the code was
+// claimed by someone else between the duplicate read and the write — into the
+// typed error the handler maps to a 409. The read is not a lock; the unique
+// indexes are the guarantee, so their violation must not surface as a 500.
+func setCodeError(err error, what string) error {
+	if isDuplicateCode(err) {
+		return ErrCodeTaken
+	}
+	return fmt.Errorf("referrals: %s: %w", what, err)
+}
+
+// SetLinkCode assigns an admin-chosen code to a referrer and makes it THE code
+// they hold, in every namespace that records one.
+// Returns ErrCodeTaken if the code belongs to anyone else, in ANY namespace.
 // Re-assigning a referrer their own existing code is a no-op success, so a
 // double-submit from the admin UI does not read as a failure.
 func (s *RewardService) SetLinkCode(ctx context.Context, referrerID, rawCode string) (*Link, error) {
@@ -444,13 +473,23 @@ func (s *RewardService) SetLinkCode(ctx context.Context, referrerID, rawCode str
 		return nil, err
 	}
 
-	switch owner, err := s.codeOwner(ctx, code); {
-	case err != nil:
+	// One transaction, not three statements. Different surfaces read different
+	// tables first — the customer's own referral screen (frontend-web
+	// app/api/v1/referrals/me -> getOrCreateCode) and the admin console's read
+	// (LookupCode) both prefer the legacy row — so a half-applied edit would
+	// leave one person showing two codes, which is the divergence this whole
+	// write exists to remove.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("referrals: set code: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op once committed
+
+	owner, err := codeOwnerIn(ctx, tx, code)
+	if err != nil {
 		return nil, err
-	case owner == referrerID:
-		// Already theirs — nothing to do, and not an error.
-		return s.GetOrCreateLink(ctx, referrerID)
-	case owner != "":
+	}
+	if owner != "" && owner != referrerID {
 		return nil, ErrCodeTaken
 	}
 
@@ -459,15 +498,27 @@ func (s *RewardService) SetLinkCode(ctx context.Context, referrerID, rawCode str
 		WHERE referrer_id = $1
 		RETURNING id, referrer_id, code, created_at`
 	var l Link
-	err := s.db.QueryRow(ctx, upd, referrerID, code).Scan(&l.ID, &l.ReferrerID, &l.Code, &l.CreatedAt)
-	if err != nil {
-		// The read above is not a lock: another admin can claim the same code in
-		// between. The unique index is the real guarantee, so translate its
-		// violation into the same typed error rather than a 500.
-		if isDuplicateCode(err) {
-			return nil, ErrCodeTaken
-		}
-		return nil, fmt.Errorf("referrals: set code: %w", err)
+	if err := tx.QueryRow(ctx, upd, referrerID, code).Scan(&l.ID, &l.ReferrerID, &l.Code, &l.CreatedAt); err != nil {
+		return nil, setCodeError(err, "set code")
+	}
+
+	// Converge the copies THIS user already holds. A row that carries no code is
+	// deliberately left alone: an admin renaming a code is not the event that
+	// starts writing a third column nobody maintains.
+	if _, err := tx.Exec(ctx,
+		`UPDATE public.finance_referral_codes SET code = $2 WHERE user_id = $1`,
+		referrerID, code); err != nil {
+		return nil, setCodeError(err, "converge legacy code row")
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE public.platform_users SET referral_code = $2, updated_at = now()
+		WHERE id = $1 AND referral_code IS NOT NULL AND referral_code <> ''`,
+		referrerID, code); err != nil {
+		return nil, setCodeError(err, "converge user record code")
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("referrals: set code: commit: %w", err)
 	}
 	return &l, nil
 }
