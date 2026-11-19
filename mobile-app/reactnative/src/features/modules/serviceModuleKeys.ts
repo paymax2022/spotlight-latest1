@@ -48,7 +48,7 @@ export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
   // Investment & learning families plus the remaining tiles. Registered
   // 2026-11-17 so the whole grid is admin-controllable
   // (spec 2026-11-17-mobile-menu-visibility). Keys must exist in
-  // platform_modules — migration 20261216000100 seeds them.
+  // platform_modules — migration 20271600000000 seeds them.
   investment: 'investment',
   crypto: 'crypto',
   learn: 'learn',

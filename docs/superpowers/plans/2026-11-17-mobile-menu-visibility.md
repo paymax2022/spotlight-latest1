@@ -10,6 +10,37 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-17-mobile-menu-visibility-design.md` (read it first — this plan argues from it)
 
+> **AS EXECUTED — this plan is the pre-#996 draft and seven of its stated facts are
+> wrong against current main. Do not copy them.** The spec's two reconciliation
+> notes carry the shipped shape: (1) the migration is
+> `20271600000000_mobile_menu_modules.sql`, slotted AFTER #996's
+> `20271408000100`/`20271410000000` so #996 keeps its `name`/`category` and the
+> `readiness` column already exists — and, re-slotted on 2026-11-18, ABOVE
+> `20271500000000`, the newest version either plane has recorded, because `db push` with
+> the release chain's `include_all: false` skips a back-dated file and still prints
+> "Remote database is up to date." (spec §"version slot" note; production probe run
+> `44312341468`); (2) it seeds **14** rows, not 17 — no `shopping`,
+> `parcel` or `learn` row, because a registry row must be gated by something (spec §1);
+> (3) the "exactly these 12 keys end hidden" constraint is **11** keys for the same
+> reason (`learn` is gated on `academy`); (4) `SERVICE_MODULE_REGISTRY_KEY` gains **9**
+> entries plus one featured entry, not 19, because #996 already shipped eight of them,
+> and day-one visibility comes from an audited `UPDATE` + `readiness = 'ready'`, not
+> from a seed (spec §1 "State changes", reconciliation note 2); (5) **Contest maps to
+> `competitions`, not `voteBridge`** — `3654f6b3f` shipped both the mobile mapping and the
+> seed that describes `competitions` as "Distinct from voteBridge, which is the wallet-paid
+> vote money rail"; `voteBridge` is served on both planes while `competitions` is not
+> (re-measured on the live payloads), so gating Contest on `voteBridge` would have hung a
+> tile off an always-on module;
+> (6) the `admin` row's registry `description` carries the limit of its own switch
+> ("hides the tile only; /admin routes are deliberately never release-gated"), which the
+> SQL block below predates;
+> (7) the file ends with a `DO … RAISE WARNING` guard that names any preserve key it could
+> not publish, because the flip is an `UPDATE` and a key with no row is skipped silently —
+> measured on the shape where `20271410000000` never ran, where `competitions` has no row,
+> the Contest publish is a no-op, and the tile is fail-closed hidden with no `/admin/modules`
+> switch to bring it back. Replay scripts: `fresh-plane-replay.sh` (with/without this file)
+> and `plane-b-replay.sh` (without #996's seed).
+
 ## Global Constraints
 
 - `env_flag` is NULL on every new registry row (spec §1: a FEATURE_* flag unset on a plane would silently hide the tile).
@@ -147,7 +178,7 @@ Anchor on the map tail (the `// Support` comment, `support: 'aiCare',` line, and
   // Investment & learning families plus the remaining tiles. Registered
   // 2026-11-17 so the whole grid is admin-controllable
   // (spec 2026-11-17-mobile-menu-visibility). Keys must exist in
-  // platform_modules — migration 20261216000100 seeds them.
+  // platform_modules — migration 20271600000000 seeds them.
   investment: 'investment',
   crypto: 'crypto',
   learn: 'learn',
@@ -233,7 +264,7 @@ EOF
 ### Task 3: Registry migration + local replay verification
 
 **Files:**
-- Create: `/Users/paymax/Documents/spotlight/main/supabase/migrations/20261216000100_mobile_menu_modules.sql`
+- Create: `/Users/paymax/Documents/spotlight/main/supabase/migrations/20271600000000_mobile_menu_modules.sql`
 
 **Interfaces:**
 - Consumes: schema from `20261210000000_platform_module_registry.sql` (`platform_modules`, `platform_module_environments(module_key, environment, status, updated_at)`, `platform_module_audit(module_key, environment, action IN ('publish','hide','archive','restore'), before_val, after_val, note, actor_id)`).
@@ -241,7 +272,7 @@ EOF
 
 - [ ] **Step 1: Write the migration**
 
-Create `/Users/paymax/Documents/spotlight/main/supabase/migrations/20261216000100_mobile_menu_modules.sql` with exactly:
+Create `/Users/paymax/Documents/spotlight/main/supabase/migrations/20271600000000_mobile_menu_modules.sql` with exactly:
 
 ```sql
 -- Mobile menu visibility (spec: docs/superpowers/specs/2026-11-17-mobile-menu-visibility-design.md)
@@ -332,7 +363,7 @@ Expected: `UPDATE 3`.
 cd /Users/paymax/Documents/spotlight/main && npx supabase migration up --include-all
 ```
 
-Expected: applies `20261216000100_mobile_menu_modules.sql` with no errors. (`--include-all` repairs the local drift documented for this stack; other pending migrations applying here is fine — they are all previously reviewed.)
+Expected: applies `20271600000000_mobile_menu_modules.sql` with no errors. (`--include-all` repairs the local drift documented for this stack; other pending migrations applying here is fine — they are all previously reviewed.)
 
 - [ ] **Step 4: Assert the resulting state**
 
@@ -356,7 +387,7 @@ Expected, exactly:
 Also verify idempotence (re-run is a no-op):
 
 ```bash
-psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f /Users/paymax/Documents/spotlight/main/supabase/migrations/20261216000100_mobile_menu_modules.sql
+psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f /Users/paymax/Documents/spotlight/main/supabase/migrations/20271600000000_mobile_menu_modules.sql
 ```
 
 then re-run the assertion query — `audit=` must still be `3` (the guarded WHERE skipped already-hidden rows).
@@ -368,7 +399,7 @@ The additive-only guard has only ever seen INSERT/DDL. If (and only if) CI rejec
 - [ ] **Step 6: Commit**
 
 ```bash
-git -C /Users/paymax/Documents/spotlight/main add supabase/migrations/20261216000100_mobile_menu_modules.sql
+git -C /Users/paymax/Documents/spotlight/main add supabase/migrations/20271600000000_mobile_menu_modules.sql
 git -C /Users/paymax/Documents/spotlight/main commit -m "$(cat <<'EOF'
 feat(db): register all services tiles in the module registry
 
@@ -399,7 +430,7 @@ Create `/Users/paymax/Documents/spotlight/main/mobile-app/reactnative/tests/unit
 // staging plane must produce for the 20 keys this feature touched. Deliberately
 // synthetic: it asserts THIS feature's keys only, so future admin toggles of
 // unrelated modules cannot break it. If it goes red, either migration
-// 20261216000100 drifted or a serviceModuleKeys mapping changed.
+// 20271600000000 drifted or a serviceModuleKeys mapping changed.
 // Spec: docs/superpowers/specs/2026-11-17-mobile-menu-visibility-design.md.
 
 import { describe, it } from 'node:test';
@@ -497,7 +528,7 @@ git -C /Users/paymax/Documents/spotlight/main add mobile-app/reactnative/tests/u
 git -C /Users/paymax/Documents/spotlight/main commit -m "$(cat <<'EOF'
 test(mobile): lock the staging menu-visibility matrix
 
-Red if migration 20261216000100 or a tile mapping drifts from the
+Red if migration 20271600000000 or a tile mapping drifts from the
 2026-11-17 default-disabled decision.
 EOF
 )"
@@ -517,7 +548,7 @@ EOF
 
 ```bash
 git -C /Users/paymax/Documents/spotlight/main log --oneline main..feat/mobile-menu-visibility
-git -C /Users/paymax/Documents/spotlight/main status --porcelain | grep -E 'serviceModuleKeys|menuVisibilityMatrix|serviceModuleKeys.spec|20261216000100' || echo "WORKTREE-CLEAN-FOR-THIS-FEATURE"
+git -C /Users/paymax/Documents/spotlight/main status --porcelain | grep -E 'serviceModuleKeys|menuVisibilityMatrix|serviceModuleKeys.spec|20271600000000' || echo "WORKTREE-CLEAN-FOR-THIS-FEATURE"
 ```
 
 Expected: 4-5 commits (docs, red test, mappings, migration, matrix test) and no unstaged leftovers from this feature's files.
@@ -528,7 +559,7 @@ Expected: 4-5 commits (docs, red test, mappings, migration, matrix test) and no 
 git -C /Users/paymax/Documents/spotlight/main -c credential.helper='!gh auth git-credential' push -u origin feat/mobile-menu-visibility
 cd /Users/paymax/Documents/spotlight/main && gh pr create --title "feat(mobile): admin-controlled menu visibility — 12 tiles ship hidden" --body "$(cat <<'EOF'
 ## Summary
-- Registers all 17 previously-ungated services tiles in `platform_modules` (migration `20261216000100`) so `/admin/modules` can toggle any tile per environment (visible / coming soon / hidden) with audit.
+- Registers all 17 previously-ungated services tiles in `platform_modules` (migration `20271600000000`) so `/admin/modules` can toggle any tile per environment (visible / coming soon / hidden) with audit.
 - Flips `savings`, `loyalty`, `creators` to hidden on staging+production (audit rows cite the spec); 9 new tiles seed hidden there; 8 seed visible (current UX unchanged); development stays fully visible.
 - Mobile: maps all 19 unmapped tile ids onto registry keys, gates the featured `invest`/`naija-driver` cards, and adds two regression specs (exhaustiveness + staging matrix).
 - Zero Go and zero admin-console changes — both planes already implement the toggle UI/API.
