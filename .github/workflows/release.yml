@@ -61,6 +61,13 @@ concurrency:
 
 env:
   RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+  # Staging's environment id, which the trigger lane's `serviceInstanceDeploy`
+  # requires. Read from the API on 2026-11-18 (`environment(id: …){ id name }` →
+  # "staging"); the id is used rather than the name because the staging-scoped
+  # token cannot resolve environments by name — `railway … --environment
+  # development` with that token dies with `Environment "development" not found`,
+  # so a name would be both ambiguous and, outside staging, unreadable.
+  RAILWAY_ENVIRONMENT_ID_STAGING: 6b5f27a3-a290-4574-a977-363eb21d43ad
   # The CLI's default HTTP timeout is 90s. The git-tracked frontend-web payload is
   # 110.0 MB across 2064 files (backend 25.6 MB / 2594, frontend-admin 7.7 MB /
   # 989), which does not upload in 90s.
@@ -334,26 +341,45 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Staging deploys through Railway's git-connected trigger lane, not an
+          # archive upload (2026-11-18). The upload initiate to THIS environment has
+          # refused in CI for twelve recorded episodes — sub-second, no row, staging
+          # only — see docs/devops/railway-upload-fault-report.md (F2). Size,
+          # --verbose, the retry budget and a replaced credential were each tested
+          # and eliminated; the same runner uploaded to development in the same
+          # minutes. The trigger is the transport that has landed every recent
+          # staging build, and run 44406178859 proved it works FROM A RUNNER with
+          # RAILWAY_TOKEN_STAGING: `serviceInstanceDeploy(commitSha)` returned true
+          # and row 9f0d3f7c (meta.commitHash 560e4287d…, branch main) reached
+          # SUCCESS. Arm B of that same run shows the upload still WORKS
+          # intermittently (row 2d26552d, cliMessage f2-probe-armB) — the trigger is
+          # adopted because it is the path that cannot be refused, not because the
+          # upload is permanently dead.
+          #
+          # This changes what the per-service ids mean: the mutation needs them, and
+          # an id cannot silently retarget the way a name can.
           - service: backend
-            upload_path: backend
-            root_flag: --path-as-root
-            build_dir: backend
-          # Frontends: NO positional path, NO --path-as-root — the only
-          # environment where that is correct. staging's two frontend instances
-          # carry `rootDirectory: frontend-web` / `frontend-admin` (measured
-          # 2026-11-16), which the services' own git-source builds need, so Railway
-          # strips that prefix and the archive must be the whole repo. Uploading an
-          # app folder here would make it look for `frontend-*/` inside an archive
-          # that already IS that folder. development and production have
-          # `rootDirectory: None` and take the opposite shape.
+            service_id: 70de07d8-c058-4221-b645-61c4f1ac7aa5
+            # The Go binary reports its own commit from RAILWAY_GIT_COMMIT_SHA, which
+            # a git-connected deploy sets (buildinfo reads it and labels the answer
+            # `source: "env"`). That replaces the BUILD_COMMIT stamp this lane cannot
+            # write, so SUCCESS alone is no longer the end of the evidence.
+            verify_url: https://backend-staging-new.up.railway.app/api/v1/public/build
+          # Frontends need no upload shape any more: `UPLOAD_PATH` / `ROOT_FLAG`
+          # existed to match each instance's Railway `rootDirectory` inside an archive
+          # WE ship. This lane ships no archive, and what Railway does with the clone
+          # is its business — the part we rely on is measured, not assumed: the
+          # trigger rows of the 17:16Z and 18:33Z passes built both staging frontends
+          # and `/` plus `/admin/login` answered 200 afterwards, while backend's
+          # `git`-lane rows served the Go API. development and production keep the
+          # upload lane precisely because their rootDirectory is None there, so a
+          # repo-root build would run the ROOT Dockerfile — which is the backend.
           - service: frontend-web
-            upload_path: ''
-            root_flag: ''
-            build_dir: ''
+            service_id: dda6372c-0bb7-4014-a2b1-aa646c11a281
+            verify_url: ''
           - service: frontend-admin
-            upload_path: ''
-            root_flag: ''
-            build_dir: ''
+            service_id: c4f1086e-0a2d-4367-b503-209c14a2ce6f
+            verify_url: ''
     steps:
       - uses: actions/checkout@v4
         with:
@@ -367,12 +393,12 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
           SERVICE: ${{ matrix.service }}
+          SERVICE_ID: ${{ matrix.service_id }}
           RAILWAY_ENV: staging
+          ENVIRONMENT_ID: ${{ env.RAILWAY_ENVIRONMENT_ID_STAGING }}
           SHA: ${{ needs.gates.outputs.sha }}
-          UPLOAD_PATH: ${{ matrix.upload_path }}
-          ROOT_FLAG: ${{ matrix.root_flag }}
-          BUILD_DIR: ${{ matrix.build_dir }}
-        run: bash scripts/ci/railway-deploy.sh
+          VERIFY_URL: ${{ matrix.verify_url }}
+        run: bash scripts/ci/railway-trigger-deploy.sh
 
   smoke-staging:
     name: smoke Staging
