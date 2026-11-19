@@ -1,13 +1,19 @@
 // Minimal transactional email via Resend. Fire-and-forget callers must catch: this
 // throws on a rejected or unreachable provider so a failure is never silent.
-export async function sendEmail(to: string, subject: string, html: string): Promise<void> {
+//
+// Returns whether a message actually went out. A caller that tells an operator
+// "the applicant was emailed" needs that distinction: with no RESEND_API_KEY
+// (every dev machine) the send is logged and skipped, and reporting success
+// would describe a message nobody received. Existing callers ignore the value,
+// which is safe.
+export async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.EMAIL_FROM ?? 'Spotlight <no-reply@spotlightng.com>';
 
   if (!apiKey) {
     // Dev/unconfigured: log only. Never log the body (it can carry amounts and references).
     console.log(`[email] (no RESEND_API_KEY) To: ${to} | Subject: ${subject}`);
-    return;
+    return false;
   }
 
   let res: Response;
@@ -27,4 +33,5 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
     console.error(`[email] resend rejected: ${res.status} ${body}`);
     throw new Error(`resend failed: ${res.status}`);
   }
+  return true;
 }
