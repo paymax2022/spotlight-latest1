@@ -3881,3 +3881,83 @@ same hazard §10.1's "never cite a number across a tree boundary" warns about fr
 number is only worth as much as the tree and the revision it was read from. Living references were
 re-pointed to step names in the same commit; pin-qualified historical prose was left exactly as written.
 
+## The grant probe finally reaches production — and `connect.contests.view` is verified (written 2026-11-19, 07:13–09:41Z)
+
+The section above ended with production's `permissions`/`role_permissions` rows for
+`connect.contests.view` **machine-unverified** and its dispatch "not yet run". Both halves of that
+sentence are now closed, and the reason it took a second PR is the more useful fact: **the probe
+could not run against production at all.**
+
+**Root cause (measured, not inferred).** The probe bounded its session with
+`PGOPTIONS='-c default_transaction_read_only=on'` and read that same session GUC back. Production is
+reached through Supabase's **session pooler** — the direct host is AAAA-only, so a GitHub runner has
+no alternative path — and that pooler **does not forward the client's `options` startup parameter**.
+The server therefore answered `off`, the posture guard fired, and the first dispatch (run
+`44478529252`, `mode=plan`, `versions=20271700000000`) exited 3 with *"this session is not read-only …
+refusing to probe, nothing has been concluded"*. That refusal was the designed behaviour — exit 3 is
+deliberately not exit 1 — but it meant the one question this tool exists to answer stayed unasked. The
+`PGOPTIONS` precedence recorded in the previous section is real and still true on a **direct**
+connection; it is simply unreachable from CI, so "export `PGOPTIONS` in the step" would not have
+helped either.
+
+**Fix (PR #1088, head `d9f7e499c`, squash `8c8db6bee` on `main` at 08:34:16Z; 30 success / 15 skipped
+/ 0 failed on the head).** A **statement** survives any connection path, so `q()` now wraps every
+query in `BEGIN READ ONLY … ROLLBACK`, and the posture guard reads `SHOW transaction_read_only`
+*from inside that transaction* — what the wrapper actually did, rather than what the client asked
+for. `PGOPTIONS` is kept (still the stronger posture when the path is direct) and the session value is
+still printed, as information: a probe that hid a writable session would recreate the blind spot it
+was fixing. There is deliberately **no write-canary** (`CREATE TABLE` inside the transaction) — if the
+wrapper were ever stripped, the canary would create a table on production.
+
+**Production verdict, twice.** Run `44483640603` (07:58Z, off the PR head) and run `44488847928`
+(08:35Z, off `main` at the squash `8c8db6bee`) both completed in under a minute and printed the same
+facts:
+
+```
+transaction: read-only (transaction_read_only=on)
+session: default_transaction_read_only=off        ← the pooler fault, now harmless
+permission row: present  connect.contests.view (is_system_permission=true)
+holders: contest-manager, super-admin, system-admin
+grant: GRANTED  super-admin    -> connect.contests.view
+grant: GRANTED  system-admin   -> connect.contests.view
+grant: GRANTED  contest-manager -> connect.contests.view
+rpc: OK  super-admin -> connect.contests.view (1 of 1 eligible holder, sample …3f32, resolved via the role grant)
+```
+
+So seed `20271700000000` did not merely book a history row: its slug-keyed `INSERT … SELECT` matched
+its role rows and the grants exist, and the enforcement path itself — the same
+`public.user_has_permission` the middleware calls — returns true for a real user who holds the role,
+resolved **via the role grant rather than the super-admin bypass**. That is the end of the gap that
+made `pending: 0` an insufficient answer.
+
+**What this still does not prove.** `system-admin` and `contest-manager` each reported
+`rpc: no eligible holder … (no active, unexpired, global assignment to sample)`, which is
+informational and by design: the candidate filter requires `scope_type = 'global'`, so nobody could be
+sampled for those roles. The probe therefore proves the *role → permission* grant rows and one actual
+enforcement-path resolution, not any individual user's scoped assignment. The owner-side confirmation
+stays what it always was: a scoped contest-manager opening `/admin/competitions/results`.
+
+**A destructive bug in the harness, found by running it somewhere real.** While verifying the fix, the
+harness was pointed at the local dev database, and afterwards its baseline counts had moved: **368 →
+367 permissions, 784 → 781 `role_permissions`**. `cleanup()` ran *before* the "fixture must start
+WITHOUT the seed" precondition and deleted `connect.contests.view` plus — through `ON DELETE CASCADE`
+— its three role grants, and the error text then told the operator to "run cleanup first". Its second
+half was quieter and worse: cleanup replaced `public.user_has_permission` with a generic
+EXISTS-based stub, which silently drops the super-admin bypass and scope rules from any real database
+the harness touches. Dev was repaired by replaying the additive seed (`.view` now reads
+contest-manager, super-admin, system-admin) and the harness now (a) requires the target to **prove** it
+is disposable before its first write — seed row absent and no live global assignments, else exit 1 with
+nothing deleted — and (b) cleans up only from a start-state snapshot: grants for roles that did not
+hold the permission, the row only because the guard proved it absent, and the function restored from
+`pg_get_functiondef`. Measured both directions: with the seed present it exits 1 leaving 28/52 rows and
+a byte-identical function; on a clean fixture the whole suite passes leaving zero residue and an
+unchanged RPC definition.
+
+**Unrelated context for anyone reading the deploy rows.** The merge that carried this fix triggered
+Release run `44488725106`, whose gate rendered **`proceed`** at 09:16Z and then lost all three
+Development and all three Staging deploy legs; the dev legs' own output is
+`Your trial has expired. Please select a plan to continue using Railway.` — the Railway subscription
+lapse of 2026-11-19 (08:31–14:45Z, tracked separately from the staging upload fault). Nothing in
+`8c8db6bee` is app code — two scripts, one workflow comment, one doc — and production's backend
+lineage was not redeployed by it, so this section changes no deployed behaviour.
+
