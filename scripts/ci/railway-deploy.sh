@@ -121,6 +121,21 @@ fi
 # claims that is sufficient: the fault is upstream and unbounded, and a longer window
 # than this still halts.
 #
+# WHY --verbose IS ON THE UPLOAD (added 2026-11-18 after F2 episode 11).
+# For two days this fault was unreportable because the CLI discards the response
+# status and body: every log line we had said `error decoding response body /
+# expected value at line 1 column 1`, and docs/devops/railway-upload-fault-report.md
+# spent eleven episodes asking Railway for the status code. `railway up --verbose`
+# prints the request URL with the environment and service IDs, the `bytes:` of the
+# archive it is shipping, and — when the origin answer is not JSON — the HTTP
+# status itself (`Failed to upload code with status code 524`). That single flag
+# is what turned "uploads sometimes fail" into a URL, a size boundary (7,511,269 B
+# accepted / 133,527,512 B refused, seven for seven) and two deployment IDs whose
+# `snapshotId` is null. Support verified on the pinned version:
+# `railway 5.40.1` → `railway up --help` lists `--verbose Verbose output`.
+# It changes no behaviour: the poll below still selects by `meta.cliMessage`, and
+# nothing in this script parses the upload's stdout.
+#
 # $UPLOAD_PATH and $ROOT_FLAG are UNQUOTED ON PURPOSE: an empty value must vanish
 # from the argument list, not arrive as an empty-string argument (which the CLI
 # reads as a path of ""). See THE UPLOAD RULE above.
@@ -133,6 +148,7 @@ bash "$SCRIPT_DIR/with-retry.sh" railway up $UPLOAD_PATH $ROOT_FLAG --no-gitigno
   --environment "$RAILWAY_ENV" \
   --project "$RAILWAY_PROJECT" \
   --detach \
+  --verbose \
   --message "$SHA"
 
 for attempt in $(seq 1 "$ATTEMPTS"); do

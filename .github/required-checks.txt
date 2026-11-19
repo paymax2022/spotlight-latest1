@@ -1,25 +1,68 @@
-# Required status checks on `develop` and `main` (GitHub branch protection).
-# Apply to both: scripts/ci/apply-branch-protection.sh develop && ... main
-# (AUD-TEST-003: main merges previously ran with no required gate at all.)
+# Required status checks, per protected branch (GitHub branch protection).
+#
+# ONE home for the lists. FOUR readers — and only one of them parses this file:
+#   scripts/ci/required-checks.py           the parser (@all / @<branch> selection)
+#   scripts/ci/apply-branch-protection.sh   PUTs a branch's set to GitHub (admin token)
+#   scripts/ci/test-changed-modules.py      asserts every name exists as a check-run AND
+#                                           that its workflow starts PRs on that branch
+#   scripts/ci/release-gates.py             waits on these names before any deploy
+# Listing a check here changes nothing on GitHub until someone runs the apply script for
+# that branch. That gap is how this file and `main`'s live protection drifted apart
+# (AUD-TEST-003: "main merges previously ran with no required gate at all").
+#
+# FORMAT
+#   "@all" or "@<branch>" opens a section; every bare line under it is a required context
+#   for that branch. A branch's set is @all plus its own @<branch> section. Blank lines
+#   and "#" comments are ignored; a malformed "@" directive is an error, not a skipped
+#   line — a typo'd header would otherwise swallow every check under it and silently
+#   un-gate the branch.
+#
+#   The @<branch> sections ARE the declaration of which branches this repo gates:
+#   test-changed-modules.py validates every context against the triggers of the branch
+#   named above it, and apply-branch-protection.sh refuses to run for a branch with no
+#   section. To gate a new branch, add its section; to retire one, delete it.
+#
+# WHY PER-BRANCH (measured 2026-11-17)
+#   The candidate sets come from two workflows with different triggers, so they are not
+#   interchangeable and must not be flattened into one list:
+#     ci.yml            "CI — CLAUDE.md gates"          push + pull_request -> [main]
+#     ci-optimized.yml  "CI (Zero-Billing Optimized)"   push + pull_request -> [main]
+#   @all exists for the day a second branch is gated again: a context that only reports
+#   on some branches does not belong under @all, and the test fails if you put one there.
 #
 # These are CHECK-RUN names, not workflow names — you cannot require "ci.yml".
-# For a job that calls a reusable workflow the name is "<caller job name> / <job
-# id inside the reusable>"; for an inline job it is just the job's `name:`.
+# For a job that calls a reusable workflow the name is "<caller job name> / <job id
+# inside the reusable>"; for an inline job it is the job's `name:`, and `name:` is
+# OPTIONAL — an unnamed job reports its bare job id (all five ci-optimized contexts are
+# ids like "secrets-scan", which is why a validator that greps only `name:` lines cannot
+# see them, and why it must not credit a bare id to a job that DOES set a name: ci.yml's
+# `backend` job reports as "backend (go build + vet)", so treating the id as a second
+# name there would let a main-only context pass as develop-safe).
 #
-# ⚠️ RENAMING A JOB HERE BREAKS EVERY PR. Branch protection matches on the exact
-# string; the old context simply never reports again, so PRs sit forever on
-# "Expected — waiting for status" with nothing explaining why. That is why
-# scripts/ci/test-changed-modules.py asserts every name below still exists in
-# ci.yml — rename a job and CI fails loudly instead of merges hanging silently.
+# ⚠️ RENAMING A JOB HERE BREAKS EVERY PR AND EVERY DEPLOY. Branch protection matches on
+# the exact string, and release-gates.py waits on it too; the old context simply never
+# reports again, so PRs sit forever on "Expected — waiting for status" and a release
+# stalls to `timeout`. That is why test-changed-modules.py asserts every name below still
+# exists as a job — rename a job and CI fails loudly instead of merges and deploys
+# hanging silently.
 #
-# Only UNCONDITIONAL jobs belong here. Module lanes are gated on the router and
-# report "skipped" when their module did not change; GitHub does treat a skipped
-# check as satisfied, but requiring them couples branch protection to routing for
-# no gain — a lane that must run already runs.
+# Only UNCONDITIONAL jobs belong here. Module lanes are gated on the router and report
+# "skipped" when their module did not change; GitHub does treat a skipped check as
+# satisfied, but requiring them couples branch protection to routing for no gain — a lane
+# that must run already runs.
 #
-# To change the set: edit this file, run the test, then re-apply protection with
-#   scripts/ci/apply-branch-protection.sh develop
+# To change the set: edit this file, then
+#   python3 scripts/ci/test-changed-modules.py
+#   python3 scripts/ci/test-release-gates.py
+#   python3 scripts/ci/required-checks.py --branch main      # preview; writes nothing
+# then re-apply protection for each gated branch (admin token):
+#   GITHUB_TOKEN=<admin token> scripts/ci/apply-branch-protection.sh main
 
+# Everything `main` requires: both gate sets. The first nine are ci.yml's unconditional
+# jobs; the last five are ci-optimized.yml's, which is what `main` is protected by today.
+# Keeping both here is what lets the apply script be run for `main` without dropping the
+# secrets gate — the old flat list silently did exactly that.
+@main
 backend (go build + vet) / verify
 frontend-admin (type-check) / typecheck
 frontend-web (regression + money + contract + tsc + lint) / verify
@@ -29,3 +72,15 @@ mobile (whole-app tsc) / typecheck
 openapi (validate all contracts) / validate
 which modules changed
 workflows (actionlint)
+backend
+frontend-admin
+frontend-web
+migrations
+secrets-scan
+
+# develop is deliberately NOT declared. ci.yml removed develop/staging/prod from both its
+# triggers ("releases come from main alone"), so no ci.yml or ci-optimized.yml check-run
+# can ever report for a PR whose base is develop — requiring the nine names there, as
+# GitHub's protection for `develop` still does, leaves such a PR stuck on "Expected"
+# forever. Clearing or re-scoping develop's live protection is an admin action, not a
+# repo edit; see docs/launch/BRANCH-PROTECTION.md.

@@ -5,6 +5,7 @@ import type { AcademyCatalogueArea } from '@/src/server/services/academy/catalog
 import type { AcademyPricingKey } from '@/src/server/services/academy/pricing';
 import styles from './academy.module.css';
 import { ApplyLink } from './ApplyDrawer';
+import { ACADEMY_CONTACT, ACADEMY_PAYMENTS } from './contact';
 import { formatNaira } from './format';
 
 type Selections = Record<string, AcademyPricingKey>;
@@ -18,13 +19,14 @@ interface Props {
 }
 
 /**
- * A tuition estimate from the same rows the application endpoint prices:
- * pick up to `maxAreas` areas, choose one format each, and the total is the sum
- * of the stored per-area prices.
+ * The area/format picker, plus the programme's payment terms.
  *
- * The number shown here is an estimate the visitor can reason about. What is
- * actually owed is computed server-side at submit — the client is not what
- * decides (`api/academy/apply/route.ts`), which is why the card says so.
+ * Tuition is flat (ACADEMY_PAYMENTS), so the per-area estimate this card used
+ * to compute from the stored format prices is gone: what an applicant chooses
+ * decides WHAT they train in, not what they pay. Registration is free and
+ * tuition is settled offline — weekly at the venue, or by bank transfer — so
+ * nothing on this card is a charge the platform takes. What is actually owed
+ * is still computed server-side at submit (`api/academy/apply/route.ts`).
  */
 export default function TuitionPlanner({
   areas,
@@ -36,10 +38,6 @@ export default function TuitionPlanner({
   const [selections, setSelections] = useState<Selections>({});
 
   const chosen = areas.filter((area) => selections[area.slug]);
-  const total = chosen.reduce(
-    (sum, area) => sum + (area.pricing_options.find((o) => o.key === selections[area.slug])?.price_ngn ?? 0),
-    0,
-  );
   const full = chosen.length >= maxAreas;
 
   const toggle = (slug: string) => {
@@ -50,7 +48,7 @@ export default function TuitionPlanner({
         return next;
       }
       if (Object.keys(next).length >= maxAreas) return current;
-      // Default to the area's first listed format, which is its cheapest.
+      // Default to the area's first listed format.
       const first = areas.find((item) => item.slug === slug)?.pricing_options[0];
       if (!first) return current;
       next[slug] = first.key;
@@ -96,14 +94,11 @@ export default function TuitionPlanner({
                         onClick={() => setSelections((current) => ({ ...current, [area.slug]: option.key }))}
                       >
                         {option.label}
-                        <b>{formatNaira(option.price_ngn)}</b>
                       </button>
                     ))}
                   </div>
                 ) : (
-                  <p className={styles.formatsHidden}>
-                    From {formatNaira(Math.min(...area.pricing_options.map((o) => o.price_ngn)))}
-                  </p>
+                  <p className={styles.formatsHidden}>Tap to choose a format</p>
                 )}
               </div>
             );
@@ -111,35 +106,17 @@ export default function TuitionPlanner({
         </div>
 
         <aside className={styles.totalCard}>
-          <h3>Your estimate</h3>
-          <span className={styles.totalFigure}>{formatNaira(total)}</span>
+          <h3>Your tuition</h3>
+          <span className={styles.totalFigure}>{formatNaira(ACADEMY_PAYMENTS.tuitionNgn)}</span>
           <p className={styles.totalNote}>
-            {chosen.length === 0
-              ? 'Select an area above to price a training plan.'
-              : `Tuition for ${chosen.length} ${chosen.length === 1 ? 'area' : 'areas'}.`}
+            One flat programme tuition — what you choose decides what you train in, not what you pay.
           </p>
-
-          {chosen.length > 0 ? (
-            <ul className={styles.totalList}>
-              {chosen.map((area) => {
-                const option = area.pricing_options.find((o) => o.key === selections[area.slug]);
-                return (
-                  <li key={area.slug}>
-                    <span>
-                      {area.label} — {option?.label ?? '—'}
-                    </span>
-                    <b>{formatNaira(option?.price_ngn ?? 0)}</b>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : null}
 
           <p className={styles.feeNote}>
             {applicationFeeNgn === null ? (
               'Admissions confirms the application fee before you pay anything.'
             ) : applicationFeeNgn === 0 ? (
-              'Application is free — no payment is taken to apply.'
+              'Registration is free — no payment is taken to apply.'
             ) : (
               <>
                 <b>{formatNaira(applicationFeeNgn)}</b> application fee
@@ -150,11 +127,22 @@ export default function TuitionPlanner({
           </p>
 
           <div className={styles.exclusions}>
-            <b>Tuition does not cover:</b>
-            {feeExclusions.map((line) => (
-              <p key={line}>{line}</p>
-            ))}
+            <b>How tuition is paid</b>
+            <p>
+              Tuition can be paid in instalments — {formatNaira(ACADEMY_PAYMENTS.weeklyNgn)} per week, at the Film
+              Academy venue ({ACADEMY_CONTACT.address.join(', ')}) or by bank transfer to{' '}
+              {ACADEMY_PAYMENTS.bankName}, Account: {ACADEMY_PAYMENTS.accountNumber}.
+            </p>
           </div>
+
+          {feeExclusions.length > 0 ? (
+            <div className={styles.exclusions}>
+              <b>Tuition does not cover:</b>
+              {feeExclusions.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          ) : null}
 
           <div className={styles.panelActions}>
             <ApplyLink className={styles.action}>
@@ -162,40 +150,6 @@ export default function TuitionPlanner({
             </ApplyLink>
           </div>
         </aside>
-      </div>
-
-      <div className={styles.matrixWrap} tabIndex={0} role="region" aria-label="Full tuition matrix, scrollable">
-        <table className={styles.matrix}>
-          <caption>Every area and format, as priced by admissions</caption>
-          <thead>
-            <tr>
-              <th scope="col">Area of study</th>
-              {areas[0]?.pricing_options.map((option) => (
-                <th scope="col" key={option.key}>
-                  {option.label}
-                  {option.note ? <span className={styles.priceRowNote}>{option.note}</span> : null}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {areas.map((area) => (
-              <tr key={area.slug}>
-                <th scope="row" className={styles.matrixArea}>
-                  {area.label}
-                </th>
-                {area.pricing_options.map((option) => (
-                  <td
-                    key={option.key}
-                    className={selections[area.slug] === option.key ? styles.matrixPick : undefined}
-                  >
-                    {formatNaira(option.price_ngn)}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
     </>
   );

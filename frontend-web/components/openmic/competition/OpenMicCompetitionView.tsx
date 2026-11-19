@@ -66,11 +66,11 @@ const testimonials = [
     role: 'Spoken-word artist',
     quote:
       'Voting week was the hardest part, not the stage. My friends shared the link every morning. When the results came out, it felt like the whole street had won something.',
-    image: 'photo-spotlight-performance.webp',
-    alt: 'A vocalist performing live with a handheld microphone.',
+    image: 'photo-open-mic-spoken-word.webp',
+    alt: 'A spoken-word artist performing at a microphone while fellow contestants wait behind her.',
     credit: (
       <>
-        Live performance · Spotlight photo archive
+        Spoken word open mic · Spotlight photo archive
         <br />{' '}
         <a href="/">Spotlight photo archive</a>
       </>
@@ -83,11 +83,11 @@ const testimonials = [
     role: 'Producer and drummer',
     quote:
       'I came in to accompany a friend and left with a studio session of my own. The lounge nights are where artists actually meet each other, not just the panel.',
-    image: 'photo-spotlight-stage.webp',
-    alt: 'A performer on the Spotlight stage in front of an audience.',
+    image: 'photo-open-mic-contest.webp',
+    alt: 'A performer on the open mic contest stage in front of a seated audience.',
     credit: (
       <>
-        Spotlight stage · Spotlight photo archive
+        Open mic contest · Spotlight photo archive
         <br />{' '}
         <a href="/">Spotlight photo archive</a>
       </>
@@ -100,11 +100,11 @@ const testimonials = [
     role: 'Vocalist',
     quote:
       'Nobody at Spotlight told me the competition would be easy. They told me the feedback would be honest. That is the difference between a platform and a popularity contest.',
-    image: 'photo-spotlight-stage.webp',
-    alt: 'Stage lights over a live Spotlight performance.',
+    image: 'photo-studio-session-notes.webp',
+    alt: 'An artist reviewing written feedback with a producer at a studio mixing desk.',
     credit: (
       <>
-        Spotlight stage · Spotlight photo archive
+        Studio session · Spotlight photo archive
         <br />{' '}
         <a href="/">Spotlight photo archive</a>
       </>

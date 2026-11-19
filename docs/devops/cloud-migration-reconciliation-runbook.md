@@ -178,6 +178,38 @@ fix one file, not a half-applied database.
 - App smoke: feature-flagged modules that gained tables still start; regression
   suite green; spot-check seed counts (RBAC perms, commission rates).
 
+### 8.1 RBAC seeds — verify the result, not the ledger row
+
+A spot-check of "RBAC perms" is exactly what `pending: 0` cannot give you. The
+RBAC seeds grant permissions with slug-keyed `INSERT … SELECT`:
+
+```sql
+INSERT INTO role_permissions SELECT r.id, p.id FROM p, roles r WHERE r.slug IN (…)
+```
+
+If a role row is missing, that statement matches zero rows, the transaction still
+commits, `schema_migrations` books the version, and `--verify` prints
+`pending: 0`. The permission then 403s at the API while every record says the
+migration ran. `probe-rbac-grants.sh` checks the **grants**, not the history row,
+and reads the same `public.user_has_permission` RPC the middleware reads:
+
+```bash
+TEST_DATABASE_URL="$STAGING_URL" bash scripts/db/test-probe-rbac-grants.sh   # the harness
+bash scripts/db/probe-rbac-grants.sh --db-url "$PROD_URL" --mode plan \
+  --expect 'connect.contests.view=super-admin,system-admin,contest-manager'
+```
+
+`--mode plan` reports findings and exits 0 (use before applying); `--mode apply`
+turns the same findings into exit 1 (use after). Exit 2 means the arguments were
+refused before anything was queried; exit 3 means the database could not be read
+— which is deliberately **not** the same verdict as "the grants are missing".
+A bare slug (`--expect 'connect.contests.view'`) asserts the row exists and
+nothing about roles.
+
+Production runs reach the same step through
+**[`.github/workflows/ops-db-push-scoped.yml`](../../.github/workflows/ops-db-push-scoped.yml)**
+with its `rbac_expect` input, which the lane evaluates after the write.
+
 **Rollback:**
 - A failed `--apply` migration already rolled back (transactional) — no undo
   needed; fix the file and re-run `--apply-one`.

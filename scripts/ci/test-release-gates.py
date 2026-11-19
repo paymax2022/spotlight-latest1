@@ -257,12 +257,20 @@ check("pages handles empty input",
 
 # --- the required-checks file itself -----------------------------------------
 # Would break if required_names() kept blank lines or comment lines, which would
-# make every gate wait forever on a name that can never report.
-check("required_names count", len(REQ), 9)
-check("required_names unique", len(set(REQ)), 9)
+# make every gate wait forever on a name that can never report. The file is sectioned
+# now (@all / @<branch>), so the same failure mode has a new trigger: a leaked section
+# directive. And this gate deploys nothing until ALL of these are green, so a private
+# parse that missed the five ci-optimized contexts would release under a red secrets
+# scan — the count is pinned, not merely observed.
+check("required_names count", len(REQ), 14)
+check("required_names unique", len(set(REQ)), 14)
 check("required_names has no empties", "" in REQ, False)
 check("required_names includes actionlint",
       "workflows (actionlint)" in REQ, True)
+check("required_names includes the ci-optimized secrets gate",
+      "secrets-scan" in REQ, True)
+check("required_names excludes section directives",
+      [n for n in REQ if n.startswith("@")], [])
 
 # --- wait() must return at once when green, and time out deterministically ---
 crs, runs = green_set()
