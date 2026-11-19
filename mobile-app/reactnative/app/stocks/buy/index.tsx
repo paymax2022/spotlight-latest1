@@ -9,6 +9,7 @@ import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
+import TopUpWalletButton from '@/components/TopUpWalletButton';
 import SegmentedControl from '@/components/SegmentedControl';
 import TextInputField from '@/components/TextInputField';
 import StockIcon from '@/features/stocks/components/StockIcon';
@@ -121,6 +122,7 @@ export default function StockBuyEntryScreen() {
             />
           </View>
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          {insufficient ? <TopUpWalletButton label="Add funds" route="/invest/wallet" style={styles.errorCta} /> : null}
         </View>
 
         {/* Share suggestion chips */}
@@ -200,6 +202,7 @@ const styles = StyleSheet.create({
   unit: { minWidth: 32, alignItems: 'center', justifyContent: 'center' },
   amountInput: { flex: 1, textAlign: 'right', ...Typography.headlineMd, color: Colors.onSurface, padding: 0 },
   errorText: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
+  errorCta: { marginTop: Spacing.sm },
   suggestRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md },
   suggestChip: { backgroundColor: Colors.surfaceContainerHigh, borderRadius: Radius.full, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm },
   suggestText: { ...Typography.labelMd, color: Colors.onSurface },
