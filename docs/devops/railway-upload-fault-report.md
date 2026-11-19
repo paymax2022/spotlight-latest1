@@ -1284,9 +1284,11 @@ is not "the same refusal on a prettier transport".
 exercise the pull-based workaround while the gate stood, because a successful refresh would
 have destroyed the datum. With billing restored we ran it, and it behaves as it did on
 2026-11-18: three `serviceInstanceDeploy(serviceId, environmentId, commitSha:)` calls —
-flat args; `input:` is rejected as `Unknown argument` — each returned `true`, rows reached
-`SUCCESS` in 90-170 s (backend `d07620c7…` 15:45:59, frontend-web 15:46:22, frontend-admin
-15:46:52, all `commitHash 773fe0285`), and `backend-staging-new` `/api/v1/public/build`
+flat args; `input:` is rejected as `Unknown argument` — each returned `true`. Both frontends
+were already `SUCCESS` at the first read ~80 s after the calls (rows created 15:46:22 and
+15:46:52, `commitHash 773fe0285`); the backend was still `DEPLOYING` at that read and
+`SUCCESS` at the next one ~70 s later (row `d07620c7…`, created 15:45:59).
+`backend-staging-new` `/api/v1/public/build` then
 served `{"commit":"773fe0285…","started_at":"2026-11-19T15:48:54Z"}`. Still untested
 *behind* a plan gate, and we will not test it there.
 
