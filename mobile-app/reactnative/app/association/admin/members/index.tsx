@@ -9,18 +9,23 @@ import SearchBar from '@/components/SearchBar';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
 import {MemberRow} from '@/features/association/components';
-import { useDirectory } from '@/features/association/hooks';
+import { useAdminOrgScope, useDirectory } from '@/features/association/hooks';
+import AdminOrgScopeGate from '@/features/association/components/AdminOrgScopeGate';
 import { DIRECTORY_STATUS_SEGMENTS } from '@/features/association/constants';
 import type { MemberStatus } from '@/features/association/types/association.types';
 
 export default function AdminMemberList() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<string>('all');
+  const scope = useAdminOrgScope();
 
   const members = useDirectory({
     search: search || undefined,
     status: status === 'all' ? undefined : (status as MemberStatus),
-  });
+    // Without this the roll is scoped to orgs the caller is a member of — a
+    // platform super-admin holds none, so "Manage members" read as empty.
+    org_id: scope.orgId ?? undefined,
+  }, { enabled: Boolean(scope.orgId) });
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -32,6 +37,7 @@ export default function AdminMemberList() {
         <SegmentedControl options={DIRECTORY_STATUS_SEGMENTS as never} value={status} onChange={setStatus} />
       </View>
 
+      <AdminOrgScopeGate scope={scope}>
       {members.isLoading ? (
         <StateView kind="loading" message="Loading members…" />
       ) : members.isError ? (
@@ -50,6 +56,7 @@ export default function AdminMemberList() {
           )}
         />
       )}
+      </AdminOrgScopeGate>
     </SafeAreaView>
   );
 }

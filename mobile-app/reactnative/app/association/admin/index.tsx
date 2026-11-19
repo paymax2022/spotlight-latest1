@@ -15,12 +15,14 @@ import { shadow1 } from '@/constants/tokens';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
 import { useAdminKpis } from '@/features/association/hooks';
-import { useAdminAccess } from '@/features/association/hooks';
+import { useAdminAccess, useAdminOrgScope } from '@/features/association/hooks';
+import AdminOrgScopeGate from '@/features/association/components/AdminOrgScopeGate';
 import { formatNaira, formatNairaCompact } from '@/features/association/utils';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function AdminDashboard() {
-  const kpis = useAdminKpis();
+  const scope = useAdminOrgScope();
+  const kpis = useAdminKpis(scope.orgId);
   const access = useAdminAccess();
 
   // RBAC gate: members without admin access can't open the console.
@@ -54,7 +56,8 @@ export default function AdminDashboard() {
         <HomeMenuButton />
       </View>
 
-      {kpis.isLoading || access.isLoading ? (
+      <AdminOrgScopeGate scope={scope}>
+      {kpis.isLoading ? (
         <StateView kind="loading" message="Loading dashboard…" />
       ) : kpis.isError || !kpis.data ? (
         <StateView kind="error" title="Couldn't load" message="Please try again." actionLabel="Retry" onAction={() => kpis.refetch()} />
@@ -170,6 +173,7 @@ export default function AdminDashboard() {
           ) : null}
         </ScrollView>
       )}
+      </AdminOrgScopeGate>
     </SafeAreaView>
   );
 }

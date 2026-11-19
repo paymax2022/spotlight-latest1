@@ -2,13 +2,15 @@
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants';
+import { withOrgScope } from './adminScope';
 import type {
-  AdminKpis, AdminApplication, AdminApplicationSummary, ApplicationJurisdiction, ApprovalDecision,
+  AdminKpis, AdminApplication, AdminApplicationSummary, AdminOrgOption, ApplicationJurisdiction, ApprovalDecision,
   FinanceSummary, OfflinePayment, ImportPreview, ImportResult, AuditEntry,
 } from '../types';
 import {
   MOCK_KPIS, MOCK_APPLICATIONS, MOCK_FINANCE, MOCK_OFFLINE_PAYMENTS, MOCK_IMPORT_PREVIEW, MOCK_AUDIT,
 } from './mocks';
+import { MOCK_ORGANISATIONS } from './association.mock';
 import type { PickedFile } from '../utils';
 
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
@@ -26,19 +28,22 @@ const toAppSummary = (a: AdminApplication): AdminApplicationSummary => {
   return { id, applicantName, category, chapter, submittedAt, status, jurisdiction, paid };
 };
 
-export async function getAdminKpis(): Promise<AdminKpis> {
+export async function getAdminKpis(orgId?: string | null): Promise<AdminKpis> {
   if (USE_MOCK) { await delay(); return MOCK_KPIS; }
-  const { data } = await api.get(`${BASE}/admin/kpis`);
+  const { data } = await api.get(`${BASE}/admin/kpis`, { params: withOrgScope({}, orgId) });
   return data;
 }
 
-export async function getApprovalQueue(jurisdiction: ApplicationJurisdiction | 'ALL' = 'ALL'): Promise<AdminApplicationSummary[]> {
+export async function getApprovalQueue(
+  jurisdiction: ApplicationJurisdiction | 'ALL' = 'ALL',
+  orgId?: string | null,
+): Promise<AdminApplicationSummary[]> {
   if (USE_MOCK) {
     await delay();
     const list = MOCK_APPLICATIONS.map(toAppSummary);
     return jurisdiction === 'ALL' ? list : list.filter((a) => a.jurisdiction === jurisdiction);
   }
-  const { data } = await api.get(`${BASE}/admin/approvals`, { params: { jurisdiction } });
+  const { data } = await api.get(`${BASE}/admin/approvals`, { params: withOrgScope({ jurisdiction }, orgId) });
   return data;
 }
 
@@ -63,15 +68,15 @@ export async function decideApplication(id: string, decision: ApprovalDecision, 
   return data;
 }
 
-export async function getFinanceSummary(): Promise<FinanceSummary> {
+export async function getFinanceSummary(orgId?: string | null): Promise<FinanceSummary> {
   if (USE_MOCK) { await delay(); return MOCK_FINANCE; }
-  const { data } = await api.get(`${BASE}/admin/finance`);
+  const { data } = await api.get(`${BASE}/admin/finance`, { params: withOrgScope({}, orgId) });
   return data;
 }
 
-export async function getOfflinePayments(): Promise<OfflinePayment[]> {
+export async function getOfflinePayments(orgId?: string | null): Promise<OfflinePayment[]> {
   if (USE_MOCK) { await delay(); return MOCK_OFFLINE_PAYMENTS.filter((p) => p.status === 'PENDING'); }
-  const { data } = await api.get(`${BASE}/admin/finance/offline`);
+  const { data } = await api.get(`${BASE}/admin/finance/offline`, { params: withOrgScope({}, orgId) });
   return data;
 }
 
@@ -85,12 +90,47 @@ export async function decideOfflinePayment(id: string, approve: boolean): Promis
   return data;
 }
 
-export async function getAuditLog(action?: string): Promise<AuditEntry[]> {
+export async function getAuditLog(action?: string, orgId?: string | null): Promise<AuditEntry[]> {
   if (USE_MOCK) {
     await delay();
     return action && action !== 'all' ? MOCK_AUDIT.filter((a) => a.action === action) : MOCK_AUDIT;
   }
-  const { data } = await api.get(`${BASE}/admin/audit-log`, { params: { action } });
+  const { data } = await api.get(`${BASE}/admin/audit-log`, { params: withOrgScope({ action }, orgId) });
+  return data;
+}
+
+/**
+ * The console's organisation picker feed.
+ *
+ * One endpoint serves both audiences: a platform super-admin gets every
+ * organisation, a per-org officer only the ones they hold a real admin role in.
+ * The super-admin needs it because `GET /me/admin-access` reports their
+ * `organisationId` as null — they are not scoped to one org — so every org-scoped
+ * admin read has no organisation to report on until they choose one.
+ */
+export async function getAdminOrganisations(search?: string): Promise<AdminOrgOption[]> {
+  if (USE_MOCK) {
+    await delay();
+    // Fixture mode has no admin-role table to scope against, so it lists the same
+    // demo organisations the member-facing browse shows.
+    const list: AdminOrgOption[] = MOCK_ORGANISATIONS.map((o) => ({
+      id: o.id,
+      name: o.name,
+      acronym: o.acronym ?? null,
+      category: o.category,
+      status: 'ACTIVE',
+      published: true,
+      verified: o.verified,
+      memberCount: o.memberCount,
+      createdAt: '',
+    }));
+    if (!search?.trim()) return list;
+    const q = search.trim().toLowerCase();
+    return list.filter(
+      (o) => o.name.toLowerCase().includes(q) || (o.acronym ?? '').toLowerCase().includes(q) || o.category.toLowerCase().includes(q),
+    );
+  }
+  const { data } = await api.get(`${BASE}/admin/organisations`, { params: { search } });
   return data;
 }
 
