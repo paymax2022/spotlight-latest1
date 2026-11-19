@@ -1229,11 +1229,12 @@ re-produced on one commit, and nothing about F2 moved.
 | staging frontend-admin | 15:19:57 | 15:39:13 | failure | **0** | **0** | **0** | 9 | 0 |
 | staging backend | 15:19:57 | 15:39:47 | failure | **0** | **0** | **0** | 9 | 0 |
 
-Mind the arithmetic, because our earlier tables invite a wrong reading of it: one attempt
-emits **two** lines containing `error decoding response body` — the `Failed to fetch:` line
-and its `    1: expected value at line 1 column 1` sub-line — so the "18" in episodes 7-14
-is **9 attempts**, the same number the dev legs show for the plan sentence during the
-08:31-14:45 window. Nine tries per leg on both sides of the billing change.
+Mind the arithmetic, because our earlier tables invite a wrong reading of it: each attempt
+emits **two** lines containing `error decoding response body` — `Failed to fetch: error
+decoding response body` and `    0: error decoding response body`, alongside a third line
+`    1: expected value at line 1 column 1` that does *not* match that phrase — so the "18"
+in episodes 7-14 is **9 attempts**, the same number of tries the dev legs show for the plan
+sentence during the 08:31-14:45 window. Nine per leg on both sides of the billing change.
 
 **What this run adds that episodes 1-14 could not.** Three dev legs and three staging legs
 of one commit ran inside the same two minutes. All three staging refusals land in a 2.03 s
