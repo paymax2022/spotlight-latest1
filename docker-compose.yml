@@ -46,15 +46,23 @@ services:
       FEATURE_PROVIDER_PORTAL_ENABLED: "true"
       # Symptom-based medication search addon, AND'd with FEATURE_HEALTH_PHARMACY_ENABLED
       # (finance_routes.go). Off = the whole /api/health/pharmacy/admin/symptom/* group is
-      # never registered, so the admin symptom-mappings and pharmacy-reviews consoles 404
-      # rather than answering fail-closed. Both default false in config.go and staging sets
-      # them in staging-module-flags.yml — same local/staging parity gap as the flags above.
+      # never registered, so the admin symptom-mappings console 404s rather than answering
+      # fail-closed. Default false in config.go, and neither staging nor production sets it:
+      # measured 2026-11-19, GET /api/health/pharmacy/admin/symptom/mappings is 401 on
+      # development (variable true) and 404 on staging 773fe0285 and production d3401f574
+      # (variable absent in both). The sentence this one replaces claimed staging-module-flags.yml
+      # sets it — it does not: that workflow names neither PHARMACY_SYMPTOM_SEARCH nor
+      # HEALTH_TRIAGE in its SET list or its verify list, while development-module-flags.yml's
+      # MODULES default has both. So local is ahead of staging AND production here.
       FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED: "true"
       # AI Symptom Checker (triage & navigation). Off = /api/health/triage/admin/* is not
       # mounted and every admin triage console (content, red-flag rules, validation,
       # escalations) 404s. No API keys are needed locally: with TRIAGE_ENGINE and
       # ANTHROPIC_API_KEY unset the module runs its deterministic engine + keyword
       # extractor (health_triage_routes.go), which is what the governance consoles exercise.
+      # Same measured state as the flag above: development-only. GET
+      # /api/finance/health/triage/profiles is 401 on development and 404 on staging and
+      # production, and FEATURE_HEALTH_TRIAGE_ENABLED exists only in the development env.
       FEATURE_HEALTH_TRIAGE_ENABLED: "true"
       # Property role registration (estate manager / developer / agent). Off =
       # propertyroles.RegisterMember never runs (finance_routes.go gates it on
