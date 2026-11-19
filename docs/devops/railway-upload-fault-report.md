@@ -38,7 +38,12 @@ outside CI were being accepted (a local backend deploy succeeded at 15:00:33Z
 and a second, carrying the released tip itself, succeeded at 15:18Z; the other
 local attempts failed later at build on the submitting machine), so the
 refusal is
-CI-path-specific, not an environment outage. No token value
+CI-path-specific, not an environment outage. Updated the same day at 17:25Z with
+a **positive control** rather than an episode: `serviceInstanceDeploy` put
+`main`'s tip `a30a8fd5b…` on all three staging services — three rows, three
+snapshots, three `SUCCESS` inside two minutes — while the upload path was still
+refusing, which confines the fault to upload-initiate and not to staging. See
+"Positive control". No token value
 appears here.
 
 ## The ask
@@ -169,6 +174,62 @@ both `SUCCESS`) — seven hours *before* this episode's fault window opened, so 
 legs have never been asked for an upload while the fault was live. The clean test
 of the source hypothesis is staging's own source, which we have not touched.
 
+## Positive control, 2026-11-18 17:16-17:22Z: these same instances deploy `main` fine when Railway pulls the commit
+
+We can now show that the refusing endpoint is the only broken part of this
+environment, without waiting for you. `serviceInstanceDeploy` — the mutation
+behind the dashboard's **Deploy** — was called once per staging service with
+`latestCommit: true`:
+
+```
+railway api 'mutation($s:String!,$e:String!,$latest:Boolean){
+  serviceInstanceDeploy(serviceId:$s, environmentId:$e, latestCommit:$latest) }' \
+  --var s=<serviceId> --var e=6b5f27a3-a290-4574-a977-363eb21d43ad --var latest=true
+```
+
+Each returned `true`, each created a deployment row **with a `snapshotId`** — the
+thing the upload path never gets far enough to make — built from
+`branch: "main"`, and reached `SUCCESS` inside two minutes:
+
+| service | deployment | created | `snapshotId` | `meta.commitHash` | status |
+|---|---|---|---|---|---|
+| `frontend-admin` | `bf679fce` | 17:16:40.749Z | `4e4c5637` | `a30a8fd5b…` | `SUCCESS` |
+| `frontend-web` | `484b5797` | 17:18:26.703Z | `ff3e708e` | `a30a8fd5b…` | `SUCCESS` |
+| `backend` | `7de6cf94` | 17:18:52.387Z | `531a9cf6` | `a30a8fd5b…` | `SUCCESS` |
+
+and staging serves it: `GET /api/v1/public/build` on
+`backend-staging-new.up.railway.app` answers
+`{"commit":"a30a8fd5b68e084ac5b96436e97e1204fc0c17ac","started_at":"2026-11-18T17:21:48Z"}`
+— the exact tip whose own staging upload legs refused 27 out of 27 in every run
+whose legs opened, the last being run `44323824351` at 14:55-15:33Z.
+
+So the project, the environment, all three service instances, their builds and
+their swap-over are healthy **now, in the same minutes the upload path is
+refusing**. Set that beside the credential-scope row above, where the same
+staging token authenticates from a runner, resolves to `6b5f27a3…`, and drives
+`railway status`, `railway api` and `railway deployment list` without error: the
+fault is confined to upload-initiate for this environment and touches nothing
+else about staging.
+
+Two further exclusions came out of the same pass, both read-only.
+`ServiceInstance.isUpdatable` is `false` on **all nine** instances — three
+services in each of development, staging and production — so it cannot be what
+separates the refusing three from the accepting six, and a `clearance` on the
+staging instances is likewise excluded: it is `null` on all three, and those same
+three accepted a deploy 40 s after we asked.
+
+This section does **not** test the `ServiceSource` hypothesis, and we will not
+present it as if it did: `serviceInstanceDeploy` and upload-initiate are
+different endpoints, and this call went out under an owner user session rather
+than a project token, so the endpoint and the credential both changed at once.
+What it does settle is the operational half. All three staging instances carry
+`source.repo = paymax2022/spotlight-latest1` again — the temporary removal from
+`frontend-admin`'s described in the Reproduction notes has been reversed, by us
+or from the dashboard we cannot tell from the API — and that instance then built
+from that same source without trouble. The question we still put to you is the
+one above: does upload-initiate take a different path, reaching out to GitHub,
+when the target instance carries a `ServiceSource`?
+
 So the specific thing we would like checked: **does upload-initiate behave
 differently for a service instance that has a `ServiceSource` — does it resolve
 the installation, look up a branch, or check for an in-flight push-deploy before
@@ -177,6 +238,81 @@ fits every observation: sub-second refusal, no `Indexing...` line, one
 environment only, and recovery on its own timescale. We are ready to disconnect
 that source as a test, but we would rather ask than mutate a live environment on
 a theory.
+
+## The CI arm reproduced cleanly on a fresh commit, 2026-11-18 18:10-18:29Z — and two more of our own explanations died with it
+
+This is the run we have been waiting for since the fault began. Release run `44359708940` (`main`
+`5ec5870ce8c9234609829a730a4c442594a6481e`) is the **first** run in this whole episode whose gate returned
+`proceed` rather than being cancelled or `superseded`-no-op'd by the merge train, so its staging legs
+opened for the first time in roughly two days — and all three refused, 9 attempts out of 9, without
+creating a single deployment row.
+
+| leg | outcome | window |
+| --- | --- | --- |
+| `release gate` | **success** (verdict `proceed`) | 17:34:15 → 18:09Z |
+| `migrate staging database` | **success** (`supabase db push` applied) | 18:09 → 18:10Z |
+| `deploy Development (frontend-admin)` | **success** | 18:09:26 → 18:11:03 |
+| `deploy Development (backend)` | **success** | 18:09:26 → 18:12:38 |
+| `deploy Development (frontend-web)` | **success** | 18:09:27 → 18:13:05 |
+| `deploy Staging (frontend-web)` | **failure** — 9/9 refusals | 18:10:06 → 18:28:51 |
+| `deploy Staging (backend)` | **failure** — 9/9 refusals | 18:10:06 → 18:29:02 |
+| `deploy Staging (frontend-admin)` | **failure** — 9/9 refusals | 18:10:06 → 18:29:35 |
+| `smoke Staging` / production trio | skipped (by design: no upload, no smoke) | 18:29:36 |
+
+Every one of the 27 staging attempts printed the same four lines and nothing else:
+
+```
+Failed to fetch: error decoding response body
+
+Caused by:
+    0: error decoding response body
+    1: expected value at line 1 column 1
+```
+
+with no `Indexing...`, no `Uploading...`, and — checked independently through the API, not just from the
+logs — **no deployment row created**: at 18:12Z, mid-ladder, all three staging instances still reported
+their 17:16-17:18Z rows. The retry ladder itself behaved exactly as designed (the `frontend-web` leg slept
+68/121/169/131/129/153/173/150 s, ≈ 18.5 min end to end), which retires the idea that our budget is too
+short: it covered more than the 883 s continuous-fault window measured in episode 11, and all 27 attempts
+still refused.
+
+**Three things this run settles, and the first two are our own hypotheses losing.**
+
+1. **Archive size does not discriminate inside CI.** The `backend` leg ran
+   `railway up backend --path-as-root … --detach --verbose --message 5ec5870ce…`, i.e. the ~7.5 MB
+   directory archive that this report's size-boundary row records as *accepted* from a laptop, and it was
+   refused 9/9 in the same minutes that the 133 MB frontend archives were refused. So within the CI arm
+   small and large behave identically; the 7,511,269 B / 133,527,512 B boundary is a property of *our
+   laptop's uplink* (524 from Cloudflare), not of Railway's upload-initiate.
+2. **`--verbose` produces no extra detail on this arm.** We added it in #1074 expecting the request URL,
+   the `bytes:` count and the origin status code. In CI it printed none of those — the step output jumps
+   straight from `=== deploying backend to staging (5ec5870ce…) ===` / `stamped backend/BUILD_COMMIT` to
+   `Failed to fetch: error decoding response body`. The `status code 524` we can surface is the *laptop*
+   failure; the CI refusal gives the CLI nothing to print, which is itself evidence that no HTTP response
+   with a status ever reached the client. We therefore still cannot hand you a status code for the arm
+   that matters, and no flag on our side will change that — it needs a server-side lookup.
+3. **Nothing else moved.** Same runner image as the three successful development legs minutes earlier,
+   same pinned `@railway/cli@5.40.1`, same script, same commit, same project; the only differences remain
+   the environment (`staging`) and the environment-scoped token.
+
+**Positive control repeated on the same commit, 18:31-18:34Z, this time with an explicit sha.** Fifteen
+minutes after CI gave up on `5ec5870ce`, the same three staging services were deployed to that exact
+commit through the dashboard lane —
+`serviceInstanceDeploy(serviceId:$s, environmentId:$e, commitSha:"5ec5870ce…")` → `true` ×3, rows
+`b6a58148` (18:33:12), `5b5b847f` (18:33:39), `52d7f9e6` (18:34:07), each **SUCCESS with a `snapshotId`**
+(`b3e271cf` / `f1080258` / `82807a5e`), each with `meta.commitHash = 5ec5870ce…`, `meta.branch = main`,
+`meta.reason = deploy`. Serving was confirmed from outside:
+`https://backend-staging-new.up.railway.app/api/v1/public/build` →
+`{"commit":"5ec5870ce8c9234609829a730a4c442594a6481e","source":"env","started_at":"2026-11-18T18:33:44Z"}`,
+and both frontend hosts returned 200 (`/` and `/admin/login`). Staging is therefore **not** behind main
+because of our pipeline — it is behind only in the sense that it can no longer be reached by upload.
+
+The distinction we need from you has narrowed to one thing: `POST /up`-equivalent initiate, called with a
+**project token scoped to the staging environment**, refuses before producing a row; every other way of
+starting a deployment of that same commit to those same instances — user-session upload, repo-lane
+`serviceInstanceDeploy`, with or without a pinned `commitSha` — succeeds.
+
+
 
 ## Cost to us
 
