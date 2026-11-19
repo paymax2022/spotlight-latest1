@@ -76,6 +76,18 @@ import type {
 // Re-export the shared money formatter so Batch 5 screens can import it here too.
 export { formatKobo } from '@/api/doctor.api';
 import { DOCTOR_USE_MOCK, doctorGet, doctorPost } from '@/api/doctor.client';
+import {
+  emptyBodyHasNoData,
+  mapIssuedPetPrescriptionWire,
+  mapPetGrowthWire,
+  mapPetHealthRecordWire,
+  mapPetVaccinationRecommendationWire,
+  mapPetVaccinationReminderWire,
+  type PetGrowthWire,
+  type PetHealthRecordWire,
+  type PetPrescriptionWire,
+  type PetVaccinationWire,
+} from '@/features/doctor/vetWire';
 
 // Simulate network latency so loading states are exercised in the UI.
 const wait = <T>(value: T, ms = 350): Promise<T> =>
@@ -348,19 +360,24 @@ export async function getPetOwnerRequests(): Promise<PetOwnerRequest[]> {
   return doctorGet<PetOwnerRequest[]>('/vet/owner-requests');
 }
 
-export async function getVetChatThread(petId: string): Promise<VetChatThread> {
+export async function getVetChatThread(petId: string): Promise<VetChatThread | undefined> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_VET_CHAT_THREAD);
-  return doctorGet<VetChatThread>(`/vet/pets/${petId}/chat`);
+  // GetPetChatThread confirms ownership and answers `{}` — no messages table.
+  const body = await doctorGet<VetChatThread>(`/vet/pets/${petId}/chat`);
+  return emptyBodyHasNoData(body) ? undefined : body;
 }
 
-export async function getVetCallSession(petId: string): Promise<VetCallSession> {
+export async function getVetCallSession(petId: string): Promise<VetCallSession | undefined> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_VET_CALL_SESSION);
-  return doctorGet<VetCallSession>(`/vet/pets/${petId}/call`);
+  const body = await doctorGet<VetCallSession>(`/vet/pets/${petId}/call`);
+  return emptyBodyHasNoData(body) ? undefined : body;
 }
 
-export async function getVetSoapNote(petId: string): Promise<VetClinicalNote> {
+export async function getVetSoapNote(petId: string): Promise<VetClinicalNote | undefined> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_VET_CLINICAL_NOTE);
-  return doctorGet<VetClinicalNote>(`/vet/pets/${petId}/soap-note`);
+  // GetPetSoapNote has no clinical_notes row behind it for a pet → `{}`.
+  const body = await doctorGet<VetClinicalNote>(`/vet/pets/${petId}/soap-note`);
+  return emptyBodyHasNoData(body) ? undefined : body;
 }
 
 export async function getPetEmergencyWarnings(petId: string): Promise<PetEmergencyWarning[]> {
@@ -378,9 +395,11 @@ export async function getVetReferrals(petId: string): Promise<VetReferral[]> {
   return doctorGet<VetReferral[]>(`/vet/pets/${petId}/referrals`);
 }
 
-export async function getVetConsultSummary(consultId: string): Promise<VetConsultSummary> {
+export async function getVetConsultSummary(consultId: string): Promise<VetConsultSummary | undefined> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_VET_CONSULT_SUMMARY);
-  return doctorGet<VetConsultSummary>(`/vet/consults/${consultId}/summary`);
+  // GetVetConsultSummary answers `{}` regardless of id — no consults table.
+  const body = await doctorGet<VetConsultSummary>(`/vet/consults/${consultId}/summary`);
+  return emptyBodyHasNoData(body) ? undefined : body;
 }
 
 export async function getVetConsultHistory(): Promise<VetConsultHistoryItem[]> {
@@ -395,7 +414,7 @@ export async function getPetPharmacies(): Promise<PetPharmacy[]> {
 
 export async function getIssuedPetPrescription(prescriptionId: string): Promise<IssuedPetPrescription> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_ISSUED_PET_PRESCRIPTION);
-  return doctorGet<IssuedPetPrescription>(`/vet/prescriptions/${prescriptionId}/issued`);
+  return mapIssuedPetPrescriptionWire(await doctorGet<PetPrescriptionWire>(`/vet/prescriptions/${prescriptionId}/issued`));
 }
 
 export async function getPetRefillRequests(): Promise<PetRefillRequest[]> {
@@ -418,22 +437,27 @@ export async function getPetLabInbox(): Promise<PetLabResultInboxItem[]> {
 
 export async function getPetVaccinationRecommendations(petId: string): Promise<PetVaccinationRecommendation[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_PET_VACCINATION_RECOMMENDATIONS);
-  return doctorGet<PetVaccinationRecommendation[]>(`/vet/pets/${petId}/vaccination-recommendations`);
+  // The read answers doctor_pet_vaccinations rows, which carry no urgency or
+  // rationale column.
+  const rows = await doctorGet<PetVaccinationWire[]>(`/vet/pets/${petId}/vaccination-recommendations`);
+  return rows.map(mapPetVaccinationRecommendationWire);
 }
 
 export async function getPetVaccinationReminders(petId: string): Promise<PetVaccinationReminder[]> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_PET_VACCINATION_REMINDERS);
-  return doctorGet<PetVaccinationReminder[]>(`/vet/pets/${petId}/vaccination-reminders`);
+  // Same rows: the table has no channel column, which the screen upper-cases.
+  const rows = await doctorGet<PetVaccinationWire[]>(`/vet/pets/${petId}/vaccination-reminders`);
+  return rows.map(mapPetVaccinationReminderWire);
 }
 
 export async function getPetHealthRecord(petId: string): Promise<PetHealthRecord> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_PET_HEALTH_RECORD);
-  return doctorGet<PetHealthRecord>(`/vet/pets/${petId}/health-record`);
+  return mapPetHealthRecordWire(await doctorGet<PetHealthRecordWire>(`/vet/pets/${petId}/health-record`));
 }
 
 export async function getPetGrowthHistory(petId: string): Promise<PetGrowthHistory> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_PET_GROWTH_HISTORY);
-  return doctorGet<PetGrowthHistory>(`/vet/pets/${petId}/growth`);
+  return mapPetGrowthWire(await doctorGet<PetGrowthWire>(`/vet/pets/${petId}/growth`));
 }
 
 export async function getPetChronicMonitoring(petId: string): Promise<PetChronicMonitoringEntry[]> {

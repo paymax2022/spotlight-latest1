@@ -82,7 +82,7 @@ export default function PetHealthRecordScreen() {
                     <Syringe size={16} color={Colors.teal} strokeWidth={2} />
                     <View style={styles.vacBody}>
                       <Text style={styles.vacName}>{v.name}</Text>
-                      <Text style={styles.vacMeta}>Given {new Date(v.givenAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
+                      <Text style={styles.vacMeta}>{v.givenAt ? `Given ${new Date(v.givenAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Not given'}</Text>
                     </View>
                     <StatusBadge label={cfg.label} tone={cfg.tone} />
                   </View>
