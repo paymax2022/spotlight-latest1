@@ -7,6 +7,7 @@ import (
 	"spotlight/backend/go-common/ginutil"
 	"spotlight/backend/go-common/httperr"
 	"spotlight/backend/internal/cashtag"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"strings"
 	"time"
@@ -30,12 +31,49 @@ func NewHandler(svc *Service, tags *cashtag.Service) *Handler {
 // errMap is the sentinel→status table for social handlers; WriteOK preserves
 // the {"success": false, "error": ...} envelope. Tier refusals map to 403 — the
 // same status the canonical transfer rail's errMap gives them.
+//
+// A short wallet maps to 402 for the same reason: every social money path debits
+// the ledger, and ledger.ErrInsufficientFunds is the rail-wide "the payer's
+// balance does not cover this" signal — transfers (decision.go), consult,
+// fractional-re and restaurant all answer 402 for it. Before this rule a cashtag
+// send to an unfunded wallet fell through to the 400 default, which a client can
+// only read as "the request was malformed" — so the only honest reply it could
+// give was a generic retry.
 var errMap = httperr.New(http.StatusBadRequest,
+	httperr.R(http.StatusPaymentRequired, ledger.ErrInsufficientFunds),
 	httperr.R(http.StatusForbidden, ErrForbidden, tiers.ErrWalletDisabled, tiers.ErrDailyLimitExceeded),
 	httperr.R(http.StatusServiceUnavailable, ErrTierGateUnwired, ErrReconPending),
 	httperr.R(http.StatusNotFound, ErrNotFound, cashtag.ErrNotFound),
 	httperr.R(http.StatusTooManyRequests, ErrAMLSingleLimit, ErrAMLCountLimit, ErrAMLAmountLimit),
 )
+
+// Code INSUFFICIENT_BALANCE is the token the mobile errorMapper already turns
+// into customer copy (src/utils/errorMapper.ts FRIENDLY), so a client can branch
+// on the refusal without string-matching an error text it does not own.
+const (
+	insufficientWalletMessage = "insufficient wallet balance"
+	insufficientWalletCode    = "INSUFFICIENT_BALANCE"
+)
+
+// writeMemberFailure is errMap.WriteOK plus the machine-readable code a wallet
+// shortfall needs. The service wraps the debit error with its own prefix
+// ("social: send debit: ledger: insufficient funds"), which errors.Is still
+// unwraps — but the concatenated text is a log line, not user copy, so the
+// debit-facing handlers answer the sentinel's own sentence here instead of
+// leaking the wrap. Handlers that move the caller's own wallet kobo (Send,
+// PayRequest, PayShare, ContributePool) call this; everything else keeps
+// errMap.WriteOK.
+func writeMemberFailure(c *gin.Context, err error) {
+	if errors.Is(err, ledger.ErrInsufficientFunds) {
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"success": false,
+			"error":   insufficientWalletMessage,
+			"code":    insufficientWalletCode,
+		})
+		return
+	}
+	errMap.WriteOK(c, err)
+}
 
 func (h *Handler) ClaimHandle(c *gin.Context) {
 	var req struct {
@@ -94,7 +132,7 @@ func (h *Handler) Send(c *gin.Context) {
 	}
 	p, err := h.svc.Send(c.Request.Context(), ginutil.UserID(c), req.Handle, req.Note, key, req.AmountKobo)
 	if err != nil {
-		errMap.WriteOK(c, err)
+		writeMemberFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "payment": p})
@@ -120,7 +158,7 @@ func (h *Handler) CreateRequest(c *gin.Context) {
 
 func (h *Handler) PayRequest(c *gin.Context) {
 	if err := h.svc.PayRequest(c.Request.Context(), ginutil.UserID(c), c.Param("id")); err != nil {
-		errMap.WriteOK(c, err)
+		writeMemberFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -197,7 +235,7 @@ func (h *Handler) PayShare(c *gin.Context) {
 		return
 	}
 	if err := h.svc.PayShare(c.Request.Context(), ginutil.UserID(c), c.Param("shareId"), key); err != nil {
-		errMap.WriteOK(c, err)
+		writeMemberFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -245,7 +283,7 @@ func (h *Handler) ContributePool(c *gin.Context) {
 	}
 	bal, err := h.svc.ContributePool(c.Request.Context(), ginutil.UserID(c), c.Param("id"), req.AmountKobo, key)
 	if err != nil {
-		errMap.WriteOK(c, err)
+		writeMemberFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "balance_kobo": bal})

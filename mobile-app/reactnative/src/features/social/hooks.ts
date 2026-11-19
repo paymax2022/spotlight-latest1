@@ -48,6 +48,11 @@ export function useSendMoney() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEYS.activity });
       qc.invalidateQueries({ queryKey: KEYS.me });
+      // A send debits the wallet, and the Send screen pre-flights the next one
+      // against ['wallet', 'balance'] (the key TransferScreen shares). Without
+      // this the cached figure is up to staleTime old and a second send can be
+      // waved through on a balance that no longer exists.
+      qc.invalidateQueries({ queryKey: ['wallet'] });
     },
   });
 }

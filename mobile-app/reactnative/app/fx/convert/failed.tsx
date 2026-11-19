@@ -8,11 +8,13 @@ import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import PrimaryButton from '@/components/PrimaryButton';
+import TopUpWalletButton from '@/components/TopUpWalletButton';
 import type { CurrencyCode } from '@/features/fx/types/fx.types';
 
 export default function ConvertFailedScreen() {
   const p = useLocalSearchParams<{ from: string; to: string; amount: string; amountType: string; reason: string; kind: string }>();
   const expired = p.kind === 'rate_expired';
+  const insufficient = /insufficient/i.test(p.reason ?? '');
 
   // Re-quote with the same inputs, replacing the dead flow.
   const reQuote = () =>
@@ -35,6 +37,13 @@ export default function ConvertFailedScreen() {
       </View>
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>
+        {insufficient ? (
+          <TopUpWalletButton
+            label={`Top up ${p.from} wallet`}
+            route={p.from === 'NGN' ? '/wallet/add' : '/fx/receive'}
+            style={styles.topup}
+          />
+        ) : null}
         <PrimaryButton label={expired ? 'Get a new quote' : 'Try again'} onPress={reQuote} />
         <Pressable style={styles.cancel} onPress={() => router.dismissTo('/fx')} accessibilityRole="button">
           <Text style={styles.cancelText}>Back to FX home</Text>
@@ -52,6 +61,7 @@ const styles = StyleSheet.create({
   sub: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center' },
   note: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center' },
   footer: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.sm, paddingBottom: Spacing.md },
+  topup: { alignSelf: 'center' },
   cancel: { alignItems: 'center', paddingVertical: Spacing.sm },
   cancelText: { ...Typography.labelLg, color: Colors.onSurfaceVariant },
 });

@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { OnboardingSlidePager, StateView } from '@/features/doctor/components';
 import type { PagerSlide } from '@/features/doctor/components';
+import { posterForIndex } from '@/features/doctor/constants';
 import { useOnboardingSlides } from '@/features/doctor/hooks';
 
 // Paged slides from useOnboardingSlides with dots + skip/next/get-started.
@@ -33,7 +34,9 @@ export default function OnboardingIntroScreen() {
   const [index, setIndex] = useState(0);
 
   const pagerSlides: PagerSlide[] = useMemo(
-    () => (slides ?? []).map((s) => ({ id: s.id, title: s.title, body: s.body, icon: ICON_MAP[s.icon] ?? Sparkles })),
+    () => (slides ?? []).map((s, i) => ({
+      id: s.id, title: s.title, body: s.body, icon: ICON_MAP[s.icon] ?? Sparkles, poster: posterForIndex(i),
+    })),
     [slides],
   );
 

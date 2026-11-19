@@ -6,7 +6,8 @@ import { mockAmbientRequests } from '../helpers/common';
  * AI Trading hub. EXPO_PUBLIC_TRADING_USE_MOCK defaults true — the mock starts
  * the user at KYC status NOT_STARTED, so the hub renders the risk-first
  * landing (not the portfolio dashboard) and the strategies screen is seeded
- * from MOCK_STRATEGIES in src/features/aitrading/api.ts.
+ * from MOCK_STRATEGIES in src/features/aitrading/api.ts. Those fixtures never
+ * claim a live/canary stage or real-capital eligibility, and the screen says so.
  */
 test.describe('AI Trading E2E - hub', () => {
   test.beforeEach(async ({ page }) => {
@@ -43,5 +44,8 @@ test.describe('AI Trading E2E - hub', () => {
     // Seeded from MOCK_STRATEGIES (strategyId rendered with spaces).
     await expect(page.getByText('trend following btc')).toBeVisible();
     await expect(page.getByText('mean reversion eth')).toBeVisible();
+    // Demo fixtures must never read as live fund status.
+    await expect(page.getByText(/Demo data/)).toBeVisible();
+    await expect(page.getByText('LIVE', { exact: true })).toHaveCount(0);
   });
 });

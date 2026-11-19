@@ -44,6 +44,27 @@ services:
       # check your provider access" with a Retry that could never succeed. Same
       # local/staging flag-parity class as FEATURE_REFERRALS_ENABLED above.
       FEATURE_PROVIDER_PORTAL_ENABLED: "true"
+      # Symptom-based medication search addon, AND'd with FEATURE_HEALTH_PHARMACY_ENABLED
+      # (finance_routes.go). Off = the whole /api/health/pharmacy/admin/symptom/* group is
+      # never registered, so the admin symptom-mappings and pharmacy-reviews consoles 404
+      # rather than answering fail-closed. Both default false in config.go and staging sets
+      # them in staging-module-flags.yml — same local/staging parity gap as the flags above.
+      FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED: "true"
+      # AI Symptom Checker (triage & navigation). Off = /api/health/triage/admin/* is not
+      # mounted and every admin triage console (content, red-flag rules, validation,
+      # escalations) 404s. No API keys are needed locally: with TRIAGE_ENGINE and
+      # ANTHROPIC_API_KEY unset the module runs its deterministic engine + keyword
+      # extractor (health_triage_routes.go), which is what the governance consoles exercise.
+      FEATURE_HEALTH_TRIAGE_ENABLED: "true"
+      # Property role registration (estate manager / developer / agent). Off =
+      # propertyroles.RegisterMember never runs (finance_routes.go gates it on
+      # cfg.FeaturePropertyRolesEnabled AND a rolesTablesReady() probe), so the whole
+      # /api/finance/property/roles/* group is absent and the mobile /property/roles
+      # screen's POST 404s instead of registering the role. The tables
+      # (property_role_profiles/documents/events) already exist locally, and staging
+      # sets this in staging-module-flags.yml — same local/staging parity gap as the
+      # flags above.
+      FEATURE_PROPERTY_ROLES_ENABLED: "true"
       # Point at the host-side local Supabase Postgres (supabase start → port 54322).
       # Override in CI/prod with a real DATABASE_URL.
       DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable

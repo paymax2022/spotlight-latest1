@@ -102,11 +102,15 @@ export interface StrategyMaturity {
   realCapitalEligible: boolean;
 }
 
+// Demo fixtures only — never seed `live`/`canary` and never claim real-capital
+// eligibility. A screenshot of this screen must not be mistakable for real fund
+// status, and this build cannot execute anyway (venue.NoopAdapter rejects every
+// order), so nothing here may present itself as eligible for real money.
 const MOCK_STRATEGIES: StrategyMaturity[] = [
-  { strategyId: 'trend-following-btc', stage: 'live', realCapitalEligible: true },
-  { strategyId: 'mean-reversion-eth', stage: 'canary', realCapitalEligible: true },
-  { strategyId: 'breakout-fx-majors', stage: 'shadow', realCapitalEligible: false },
-  { strategyId: 'carry-basket', stage: 'paper', realCapitalEligible: false },
+  { strategyId: 'trend-following-btc', stage: 'paper', realCapitalEligible: false },
+  { strategyId: 'mean-reversion-eth', stage: 'shadow', realCapitalEligible: false },
+  { strategyId: 'breakout-fx-majors', stage: 'paper', realCapitalEligible: false },
+  { strategyId: 'carry-basket', stage: 'shadow', realCapitalEligible: false },
   { strategyId: 'vol-scalper', stage: 'halted', realCapitalEligible: false },
 ];
 

@@ -1208,3 +1208,98 @@ about billing: the resolver rejects a phantom service before any plan check, so
 **this probe proves nothing either way** and the mutation path's behaviour behind
 the gate stays open. Nothing in this file claims it still works.
 `railway whoami` reads logged in; no token was printed, moved, or opened.
+
+## Episode 15 — 2026-11-19 15:19-15:49Z: the plan gate came off, the same-basis pairing came back, and it said the same thing
+
+Episode 14 had to concede that "*the same-basis* pairing — one runner, one minute, dev
+accepted, staging refused — cannot be re-produced from CI while the plan gate is up". The
+gate is no longer up: the owner added a plan (no agent touched billing;
+`Project.subscriptionType` reads `"hobby"` as of 15:45Z). The pairing has now been
+re-produced on one commit, and nothing about F2 moved.
+
+**The run.** `44547867538`, head `773fe0285`, gate `### Release gate: **proceed**` at
+15:19:02.5Z, `migrate staging database` success.
+
+| leg | started | ended | outcome | `Indexing...` | `Uploading...` | `bytes:` | refused | plan line |
+|---|---|---|---|---|---|---|---|---|
+| dev frontend-admin | 15:19:16 | 15:20:07 | success | 1 | 1 | `1930791` | 0 | 0 |
+| dev frontend-web | 15:19:16 | 15:21:40 | success | 1 | 1 | `103327180` | 0 | 0 |
+| dev backend | 15:19:16 | 15:22:45 | success | 1 | 1 | `7516645` | 0 | 0 |
+| staging frontend-web | 15:19:57 | 15:38:15 | failure | **0** | **0** | **0** | 9 | 0 |
+| staging frontend-admin | 15:19:57 | 15:39:13 | failure | **0** | **0** | **0** | 9 | 0 |
+| staging backend | 15:19:57 | 15:39:47 | failure | **0** | **0** | **0** | 9 | 0 |
+
+Mind the arithmetic, because our own census invites a wrong reading of it: each attempt
+emits **two** lines containing `error decoding response body` — `Failed to fetch: error
+decoding response body` and `    0: error decoding response body`, alongside a third line
+`    1: expected value at line 1 column 1` that does *not* match that phrase — so the
+"18 decode lines per leg" of episode 14's census is **9 attempts**, the same number of
+tries the dev legs show for the plan sentence during the 08:31-14:45 window. Nine per leg
+on both sides of the billing change. This is why the tables below count *refusals*, not
+matched lines.
+
+**What this run adds that episodes 1-14 could not.** Three dev legs and three staging legs
+of one commit ran inside the same two minutes. All three staging refusals land in a 2.03 s
+burst — 15:20:10.433, 15:20:12.360, 15:20:12.466 — and in every staging log
+**`Indexing...` never prints once**, while the dev legs print `Indexing...` →
+`Uploading...` → a byte count and finish. The backend archive reaches `bytes: 7516645` on
+dev and never reaches a byte count on staging. So the failing request is not the archive
+transfer: it is the call that *obtains the upload destination*, which precedes `Indexing...`.
+
+The same flag, same conclusion. `--verbose` **was on the staging command** (checked in the
+invocation, not assumed) and printed no URL, no `bytes:`, no status — because it emits only
+once the CLI holds a destination and an archive. Whatever status code is behind this, our
+logs cannot surface it by any flag we control; it exists only in your edge/origin log.
+
+**Size is confirmed irrelevant, not newly argued.** *The CI arm reproduced cleanly* section
+already retired the episode-11 boundary from inside CI: the ~7.5 MB backend archive was
+refused 9/9 in the same minutes as the 133 MB frontend archives, so small and large behave
+identically on that arm, and the `7,511,269 B` / `133,527,512 B` split was our laptop's
+11.217 Mbps uplink against Cloudflare's ~100 s window. Today adds the other half of the
+comparison, which that section could not make: the *dev* frontend-web leg of run
+`44547867538` shipped `103,327,180 B` and completed inside the minute the *staging*
+frontend-web leg of the same commit refused. And the staging side still has no CLI-reported
+size — that section established that `--verbose` prints no URL, `bytes:` or status on the CI
+arm, and all three legs here repeat exactly that: the flag is on the invocation, and the
+output jumps from `stamped backend/BUILD_COMMIT` (15:20:11.7597533Z) to `Failed to fetch`
+(15:20:12.4661144Z) — **0.71 s**, nothing in between.
+
+**The narrowed ask.** For environment `6b5f27a3-a290-4574-a977-363eb21d43ad`, services
+`70de07d8-c058-4221-b645-61c4f1ac7aa5` (backend), `dda6372c-0bb7-4014-a2b1-aa646c11a281`
+(frontend-web), `c4f1086e-0a2d-4367-b503-209c14a2ce6f` (frontend-admin): the status and
+body of the upload-initiate request at **2026-11-19 15:20:10-15:20:13Z**, retried nine
+times per service until 15:39:47Z. **Zero deployment rows came of it.** At 15:45Z the
+staging instances' latest rows were still `560e4287d` (backend, 2026-11-18T21:54:16Z) and
+`5ec5870ce` (both frontends, 2026-11-18T18:33-18:34Z) — yesterday's manual refresh, not
+today's CI.
+
+**The asymmetry Episode 14 asked about is now measured, not inferred.** During the plan
+gate, the dev legs printed `Your trial has expired. Please select a plan…` nine times each
+and the staging legs printed it **zero** times while printing nine decode refusals each. A
+staging upload therefore never reaches whatever check emits the plan message: the malformed
+response preempts the policy response. That is the strongest evidence in this file that F2
+is not "the same refusal on a prettier transport".
+
+**Episode 14's open question, answered for the post-plan state.** We deliberately did not
+exercise the pull-based workaround while the gate stood, because a successful refresh would
+have destroyed the datum. With billing restored we ran it, and it behaves as it did on
+2026-11-18: three `serviceInstanceDeploy(serviceId, environmentId, commitSha:)` calls —
+flat args; `input:` is rejected as `Unknown argument` — each returned `true`. Both frontends
+were already `SUCCESS` at the first read ~80 s after the calls (rows created 15:46:22 and
+15:46:52, `commitHash 773fe0285`); the backend was still `DEPLOYING` at that read and
+`SUCCESS` at the next one ~70 s later (row `d07620c7…`, created 15:45:59).
+`backend-staging-new` `/api/v1/public/build` then
+served `{"commit":"773fe0285…","started_at":"2026-11-19T15:48:54Z"}`. Still untested
+*behind* a plan gate, and we will not test it there.
+
+**What it costs us.** 18.3-19.8 min of staging lane per release, production legs `skipped`
+because `smoke Staging` gates them, and a staging environment that stays one CI cycle
+behind `main` until a human pulls the commit.
+
+**What we changed on our side.** PR #1091 (landed as `c88138353`) teaches `with-retry.sh`
+an opt-in `RETRY_NON_RETRYABLE` so an account-state refusal stops at one try instead of
+nine. F2's decode error is deliberately **not** in that pattern, and this table is the
+reason: a window that closes on its own must be ridden out, so staging keeps its full
+900 s ladder on purpose. The guard cannot fire on staging legs anyway — they are never
+told why they failed.
+

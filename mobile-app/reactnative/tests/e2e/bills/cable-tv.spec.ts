@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { expectOnReceipt } from '../helpers/assertions';
 import { loginAs } from '../helpers/auth';
-import { completeCablePayment, mockBillsCatalog, openBillsHome } from '../helpers/bills';
+import { completeCablePayment, mockBillsCatalog, openBillsHome, selectProviderTile } from '../helpers/bills';
 import { mockWallet } from '../helpers/wallet';
 
 test.describe('Bills E2E - Cable TV subscription', () => {
@@ -13,7 +13,7 @@ test.describe('Bills E2E - Cable TV subscription', () => {
 
   test('validates IUC, selects bouquet, pays, and lands on receipt', async ({ page }) => {
     await openBillsHome(page);
-    await page.getByText('Cable TV', { exact: true }).click();
+    await page.getByRole('button', { name: 'TV', exact: true }).first().click();
     await expect(page.getByText('Cable TV Payment').first()).toBeVisible();
 
     await completeCablePayment(page);
@@ -47,7 +47,7 @@ test.describe('Bills E2E - Cable TV subscription', () => {
     });
 
     await page.goto('/services/cable-tv');
-    await page.getByText('DSTV').first().click();
+    await selectProviderTile(page, 'DSTV');
 
     await expect(page.getByText('No packages available for this provider.')).toBeVisible();
   });

@@ -45,6 +45,8 @@ cat > "$work/bin/railway" <<'STUB'
 #   transient     the first STUB_TRANSIENT_FAILS `up` calls fail with the exact
 #                 decode error, later ones succeed
 #   always-fail   every `up` call fails with it
+#   trial-expired every `up` call reaches Uploading... then fails with Railway's
+#                 account-state refusal (the 2026-11-19 shape)
 #   shape         `up` records its argv and succeeds (empty-argument check)
 cmd="${1:-}"; shift || true
 case "$cmd" in
@@ -57,12 +59,21 @@ case "$cmd" in
     n=0
     [ -f "$STUB_UP_COUNT" ] && n="$(cat "$STUB_UP_COUNT")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_UP_COUNT"
-    if [ "${STUB_MODE}" = always-fail ] || [ "$n" -le "${STUB_TRANSIENT_FAILS:-2}" ]; then
-      echo "Failed to fetch: error decoding response body" >&2
-      echo "" >&2
-      echo "Caused by:" >&2
-      echo "    0: error decoding response body" >&2
-      echo "    1: expected value at line 1 column 1" >&2
+    if [ "${STUB_MODE}" = always-fail ] || [ "${STUB_MODE}" = trial-expired ] \
+       || [ "$n" -le "${STUB_TRANSIENT_FAILS:-2}" ]; then
+      if [ "${STUB_MODE}" = trial-expired ]; then
+        # The real 2026-11-19 shape: the upload gets as far as Uploading... and
+        # Railway answers with an ACCOUNT-STATE refusal, verbatim.
+        echo "Indexing..."
+        echo "Uploading..."
+        echo "Your trial has expired. Please select a plan to continue using Railway." >&2
+      else
+        echo "Failed to fetch: error decoding response body" >&2
+        echo "" >&2
+        echo "Caused by:" >&2
+        echo "    0: error decoding response body" >&2
+        echo "    1: expected value at line 1 column 1" >&2
+      fi
       exit 1
     fi
     echo "Indexing..."
@@ -134,6 +145,52 @@ check 'permanent failure: up stopped at RETRY_ATTEMPTS=4' "4" "$n"
 grep -q 'still failing after 4 attempts' "$work/last-out.always-fail" \
   && bounded=yes || bounded=no
 check "permanent failure: the giving-up message names the bound" "yes" "$bounded"
+
+# --- 2b. An account-state refusal is NOT worth a ladder. -----------------------
+# Measured 2026-11-19 (runs 44482224276 and 44488725106): the Railway trial lapsed, and
+# every `railway up` in the three DEV legs answered
+#     Your trial has expired. Please select a plan to continue using Railway.
+# Nine attempts each, ~15 min of sleeping per leg, for a refusal that no retry can
+# change: it clears when a human adds a plan, not when a window passes. Retrying it is
+# not caution, it is a blindfold over the actual cause — the message was only found by
+# reading the raw log after the run had already failed twice.
+# The STAGING legs of those same runs printed this line ZERO times and 18 decode errors
+# each: they die before Railway says anything about the account, so this guard cannot
+# fire there. That asymmetry is why case 2 above is the control and not a leftover:
+# the decode error MUST still burn all 4 attempts, because riding out that blip is the
+# only reason this file exists. A fail-fast that also swallowed the retryable shape
+# would have made the original fault worse.
+read -r rc n <<<"$(run_deploy trial-expired fake --path-as-root)"
+[ "$rc" -ne 0 ] && stopped=yes || stopped=no
+check "trial expiry: the script still exits non-zero" "yes" "$stopped"
+check "trial expiry: up ran ONCE — no retry ladder on a refusal that cannot clear" "1" "$n"
+grep -qi 'non-retryable' "$work/last-out.trial-expired" \
+  && named=yes || named=no
+check "trial expiry: the log says non-retryable, not 'still failing after N attempts'" "yes" "$named"
+grep -q 'trial has expired' "$work/last-out.trial-expired" \
+  && shown=yes || shown=no
+check "trial expiry: Railway's own sentence still reaches the log (not swallowed)" "yes" "$shown"
+
+# --- 2c. A malformed pattern must not switch the guard off in silence. ----------
+# `grep -E` exits 2 on a bad ERE and matches nothing, which would make the guard a
+# no-op with no trace — the same invisibility that let an expired trial masquerade as
+# a transient fault for two runs. Fail-safe is fine (retry, as this script always
+# did); failing QUIET is not.
+wrapper="$repo_root/scripts/ci/with-retry.sh"
+cat > "$work/failer.sh" <<'FAILER'
+#!/usr/bin/env bash
+echo "boom: an ordinary retryable failure" >&2
+n=0; [ -f "$WCOUNT" ] && n="$(cat "$WCOUNT")"; n=$((n + 1)); printf '%s' "$n" > "$WCOUNT"
+exit 1
+FAILER
+chmod +x "$work/failer.sh"
+: > "$work/wr.count"
+WCOUNT="$work/wr.count" RETRY_NON_RETRYABLE='[^' RETRY_ATTEMPTS=3 RETRY_BASE_DELAY_S=0 \
+  bash "$wrapper" "$work/failer.sh" > "$work/wr.out" 2>&1
+wr_n="$(cat "$work/wr.count")"
+grep -q 'not a valid ERE' "$work/wr.out" && warned=yes || warned=no
+check "bad ERE: the wrapper says the pattern is unusable instead of ignoring it" "yes" "$warned"
+check "bad ERE: behaviour degrades to the old retry-everything path (3 attempts)" "3" "$wr_n"
 
 # --- 3. Empty UPLOAD_PATH / ROOT_FLAG vanish instead of becoming "". -----------
 # THE UPLOAD RULE in railway-deploy.sh depends on this: `railway up ""` reads a

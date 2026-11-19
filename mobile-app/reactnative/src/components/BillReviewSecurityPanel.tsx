@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { CheckSquare, Square } from 'lucide-react-native';
 import TextInputField from '@/components/TextInputField';
+import TopUpWalletButton from '@/components/TopUpWalletButton';
 import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -70,7 +71,10 @@ export default function BillReviewSecurityPanel({
         <Row label="Total debit" value={formatNaira(review.totalDebit)} strong />
         <Row label="Balance after" value={formatNaira(review.balanceAfter)} warn={review.insufficient} />
         {review.insufficient && (
-          <Text style={styles.warning}>Insufficient wallet balance. Add money before confirming this payment.</Text>
+          <>
+            <Text style={styles.warning}>Insufficient wallet balance. Add money before confirming this payment.</Text>
+            <TopUpWalletButton style={styles.topup} />
+          </>
         )}
       </View>
 
@@ -128,6 +132,7 @@ const styles = StyleSheet.create({
   strong: { color: Colors.primary, fontWeight: '800' },
   warn: { color: Colors.error },
   warning: { ...Typography.labelSm, color: Colors.error, lineHeight: 18 },
+  topup: { marginTop: Spacing.xs },
   routeBox: {
     borderWidth: 1,
     borderColor: Colors.primaryContainer,

@@ -251,15 +251,26 @@ export default function ElectricityScreen() {
           {discosLoading ? (
             <ActivityIndicator size="small" color={Colors.primary} style={{ marginVertical: Spacing.md }} />
           ) : (
+            // Logo only, same treatment as Buy Airtime (fixed 44px mark centred in a
+            // square tile rather than a logo stretched over the whole tile). The
+            // DISCO name still reaches a screen reader through accessibilityLabel
+            // and the chosen one through the meter-number summary.
             <View style={styles.providerGrid}>
               {discos.filter((d) => d.isActive).map((disco) => {
                 const active = selectedDisco?.id === disco.id;
                 return (
-                  <Pressable key={disco.id} onPress={() => { setSelectedDisco(disco); setValidation(null); }} accessibilityLabel={disco.name} style={[styles.providerCard, active && styles.providerCardActive]}>
-                    <ProviderLogo fill code={disco.code} name={disco.name} logoUri={resolveProviderImage(providerLogos, disco.code, disco.name)} />
+                  <Pressable
+                    key={disco.id}
+                    onPress={() => { setSelectedDisco(disco); setValidation(null); }}
+                    accessibilityRole="button"
+                    accessibilityLabel={disco.name}
+                    accessibilityState={{ selected: active }}
+                    style={[styles.providerCard, active && styles.providerCardActive]}
+                  >
+                    <ProviderLogo code={disco.code} name={disco.name} size={44} logoUri={resolveProviderImage(providerLogos, disco.code, disco.name)} />
                     {active && (
-                      <View style={styles.providerCardCheck}>
-                        <CheckCircle2 size={16} color={Colors.primary} strokeWidth={2.2} />
+                      <View style={styles.providerCheck}>
+                        <CheckCircle2 size={15} color={Colors.onPrimary} strokeWidth={2.6} />
                       </View>
                     )}
                   </Pressable>
@@ -494,13 +505,9 @@ const styles = StyleSheet.create({
   card:        { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.lg },
   sectionTitle:{ ...Typography.titleMd, color: Colors.onSurface },
   providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
-  providerCard:{ width: '31%', maxWidth: 132, aspectRatio: 1, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  providerCard:{ flexGrow: 1, flexBasis: '21%', aspectRatio: 1, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center' },
   providerCardActive:{ borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
-  providerCardCheck:{ position: 'absolute', right: 5, bottom: 5, padding: 1, borderRadius: Radius.full, backgroundColor: '#FFFFFF' },
-  providerIcon:{ width: 34, height: 34, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
-  providerLogoWrap:{ backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: Colors.surfaceContainerHigh, overflow: 'hidden' },
-  providerLogo:{ width: 28, height: 28, borderRadius: 4 },
-  providerInitial:{ ...Typography.labelMd, fontWeight: '800' },
+  providerCheck:{ position: 'absolute', top: 5, right: 5, backgroundColor: Colors.primary, borderRadius: Radius.full, padding: 1.5 },
   typeRow:     { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md },
   typePill:    { flex: 1, paddingVertical: Spacing.sm, borderRadius: Radius.full, alignItems: 'center', borderWidth: 1.5, borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLow },
   typePillActive:{ backgroundColor: Colors.primaryContainer, borderColor: Colors.primary },
