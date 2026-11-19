@@ -76,6 +76,32 @@ export async function mockBillsCatalog(page: Page, captured = createCapturedRequ
     });
   });
 
+  // Same 401 bounce, second source: data / cable-tv / electricity / education
+  // each mount useBillKycPrompt → useKycStepUp, whose tier read (GET
+  // /api/finance/kyc/me) fires eagerly on mount. Unmocked it goes to
+  // EXPO_PUBLIC_API_BASE_URL, where a developer's running BFF answers 401 for the
+  // fixture JWT and isUnauthorized() → promptSignIn() throws the spec to /login
+  // mid-flow. CI has nothing on :3000, so the request fails as a network error
+  // (status undefined, not 401) and the lane looks green there — this stub is
+  // what makes the suite independent of whatever happens to be listening locally.
+  // Tier 1 satisfies the bills step-up requirement, so no KYC sheet appears.
+  await page.route('**/api/finance/kyc/me**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          kyc_tier: 1,
+          kyc_status: 'verified',
+          requested_tier: null,
+          phone_verified: true,
+          kyc_submitted_at: '2026-06-01T00:00:00.000Z',
+          kyc_verified_at: '2026-06-01T00:00:00.000Z',
+        },
+      }),
+    });
+  });
+
   await page.route('**/rest/v1/utility_billers**', async (route) => {
     const url = route.request().url();
     if (url.includes('code=eq.MTN')) return fulfillRaw(route, { id: 'net-mtn' });
@@ -495,7 +521,7 @@ export async function mockTransactions(page: Page) {
 
 export async function completeEducationPayment(page: Page) {
   await page.goto('/services/education');
-  await page.getByText('WAEC Result Checker').first().click();
+  await selectProviderTile(page, 'WAEC Result Checker');
   await page.getByText('WAEC Result Checker PIN').first().click();
   await page.getByPlaceholder('Candidate ID or phone reference').fill(validIdentifiers.educationReference);
   await page.getByPlaceholder('801 234 5678').fill(validIdentifiers.phone);
@@ -512,11 +538,16 @@ export async function openBillsHome(page: Page) {
 }
 
 /**
- * The airtime picker shows brand logos and no brand text, so a network is chosen
- * by the accessible name on its tile rather than by visible text.
+ * Every bills picker (airtime, data, electricity, cable, education) shows brand
+ * logos and no brand text, so a provider is chosen by the accessible name on its
+ * tile rather than by visible text.
  */
-export async function selectAirtimeNetwork(page: Page, name: string) {
+export async function selectProviderTile(page: Page, name: string) {
   await page.getByRole('button', { name }).click();
+}
+
+export async function selectAirtimeNetwork(page: Page, name: string) {
+  await selectProviderTile(page, name);
 }
 
 export async function completeAirtimePurchase(page: Page) {
@@ -533,13 +564,17 @@ export async function completeAirtimePurchase(page: Page) {
 
 export async function completeDataPurchase(page: Page) {
   await page.goto('/services/data');
-  await page.getByText('MTN').first().click();
+  await selectProviderTile(page, 'MTN');
   await page.getByPlaceholder('801 234 5678').fill(validIdentifiers.phone);
   // Plans live behind a SelectField ("Choose Plan"), not an inline list — open it
   // first, then pick the option. Its label is "<name> · <allowance> · <validity> — ₦<price>",
-  // so match on the plan name rather than the whole string.
+  // so match on the plan name rather than the whole string. /3GB Weekly/ matches
+  // twice: the "Recent Data Purchases" card on the page behind the modal (whose
+  // backdrop intercepts the click — measured at bodyChild=1, y≈1354) and the real
+  // sheet option (the RNW modal portal is appended last to document.body), so
+  // .last() is the only clickable copy.
   await page.getByText('Select a data plan').click();
-  await page.getByText(/3GB Weekly/).first().click();
+  await page.getByText(/3GB Weekly/).last().click();
   await page.getByText('Review Purchase').click();
   await expect(page.getByText('Confirm Purchase')).toBeVisible();
   await page.getByPlaceholder('Enter 4-digit PIN').fill('1234');
@@ -549,7 +584,7 @@ export async function completeDataPurchase(page: Page) {
 
 export async function validateElectricityMeter(page: Page, type: 'Prepaid' | 'Postpaid' = 'Prepaid') {
   await page.goto('/services/electricity');
-  await page.getByText('IKEDC').first().click();
+  await selectProviderTile(page, 'IKEDC');
   await page.getByText(type, { exact: true }).click();
   await page.getByPlaceholder('1234 5678 9012').fill(validIdentifiers.meterNumber);
   await page.getByText('Validate Meter').click();
@@ -559,7 +594,10 @@ export async function validateElectricityMeter(page: Page, type: 'Prepaid' | 'Po
 export async function completeElectricityPayment(page: Page, type: 'Prepaid' | 'Postpaid' = 'Prepaid') {
   await validateElectricityMeter(page, type);
   await page.getByPlaceholder('801 234 5678').fill(validIdentifiers.phone);
-  await page.getByText(type === 'Postpaid' ? '₦10,000' : '₦5,000').click();
+  // Strict mode: ₦5,000 matches three nodes in DOM order — the amount pill
+  // (form), the Payment Summary "Amount" row, and the Recent Purchases card.
+  // .first() is the pill.
+  await page.getByText(type === 'Postpaid' ? '₦10,000' : '₦5,000').first().click();
   await page.getByText('Review Payment').click();
   await expect(page.getByText('Confirm Payment')).toBeVisible();
   await page.getByPlaceholder('Enter 4-digit PIN').fill('1234');
@@ -569,11 +607,14 @@ export async function completeElectricityPayment(page: Page, type: 'Prepaid' | '
 
 export async function completeCablePayment(page: Page) {
   await page.goto('/services/cable-tv');
-  await page.getByText('DSTV').first().click();
+  await selectProviderTile(page, 'DSTV');
   await page.getByPlaceholder('1234567890').fill(validIdentifiers.smartCardNumber);
   await page.getByText('Validate Card').click();
   await expect(page.getByText('QA Cable Customer').first()).toBeVisible();
-  await page.getByText('Compact').last().click();
+  // The bouquet card, not the identically-titled row in the "Recent cable TV"
+  // list below it: `.last()` used to open that history card, which navigated to
+  // Transaction Detail and left the phone field "not visible" forever.
+  await page.getByText('Compact', { exact: true }).first().click();
   await page.getByPlaceholder('801 234 5678').fill(validIdentifiers.phone);
   await page.getByText('Review Subscription').click();
   await expect(page.getByText('Confirm Subscription')).toBeVisible();

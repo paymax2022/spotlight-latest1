@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { expectOnReceipt } from '../helpers/assertions';
 import { loginAs } from '../helpers/auth';
-import { completeEducationPayment, mockBillsCatalog, openBillsHome } from '../helpers/bills';
+import { completeEducationPayment, mockBillsCatalog, openBillsHome, selectProviderTile } from '../helpers/bills';
 import { mockWallet } from '../helpers/wallet';
 
 test.describe('Bills E2E - Education payment', () => {
@@ -13,11 +13,14 @@ test.describe('Bills E2E - Education payment', () => {
 
   test('opens from bills hub and loads education products', async ({ page }) => {
     await openBillsHome(page);
-    await page.getByText('Education', { exact: true }).click();
+    await page.getByRole('button', { name: 'Exams', exact: true }).first().click();
     await expect(page.getByText('Education Payment', { exact: true }).first()).toBeVisible();
 
-    await page.getByText('WAEC Result Checker').first().click();
-    await expect(page.getByText('WAEC Result Checker PIN').first()).toBeVisible();
+    await selectProviderTile(page, 'WAEC Result Checker');
+    // Two matches: the hub screen below the pushed education route keeps its
+    // Recent Transactions list mounted under display:none (0×0 → "hidden"), so
+    // .first() is the hub's stale copy and .last() is the real product card.
+    await expect(page.getByText('WAEC Result Checker PIN').last()).toBeVisible();
   });
 
   test('sends the expected education payment payload with an idempotency key', async ({ page }) => {

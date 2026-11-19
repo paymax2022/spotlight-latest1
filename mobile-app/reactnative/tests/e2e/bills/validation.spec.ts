@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { loginAs } from '../helpers/auth';
-import { mockBillsCatalog, selectAirtimeNetwork } from '../helpers/bills';
+import { mockBillsCatalog, selectAirtimeNetwork, selectProviderTile } from '../helpers/bills';
 import { mockWallet } from '../helpers/wallet';
 
 test.describe('Bills E2E - Validation and error states', () => {
@@ -42,7 +42,7 @@ test.describe('Bills E2E - Validation and error states', () => {
     });
 
     await page.goto('/services/electricity');
-    await page.getByText('IKEDC').first().click();
+    await selectProviderTile(page, 'IKEDC');
     await page.getByPlaceholder('1234 5678 9012').fill('999999');
     await page.getByText('Validate Meter').click();
 

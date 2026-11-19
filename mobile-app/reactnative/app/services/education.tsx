@@ -221,6 +221,10 @@ export default function EducationScreen() {
               <Text style={styles.apiError}>Could not load education providers. Tap to retry.</Text>
             </Pressable>
           ) : (
+            // Logo only, same treatment as Buy Airtime: the exam bodies are
+            // recognised by their marks and the caption beneath repeated the logo.
+            // The name still reaches a screen reader through accessibilityLabel and
+            // the chosen one through the summary below.
             <View style={styles.providerGrid}>
               {providers.filter((provider) => provider.isActive).map((provider) => {
                 const active = selectedProvider?.id === provider.id;
@@ -231,13 +235,17 @@ export default function EducationScreen() {
                       setSelectedProvider(provider);
                       setSelectedProduct(null);
                     }}
+                    accessibilityRole="button"
+                    accessibilityLabel={provider.name}
+                    accessibilityState={{ selected: active }}
                     style={[styles.providerCard, active && styles.providerCardActive]}
                   >
-                    <ProviderLogo code={provider.code} name={provider.name} logoUri={resolveProviderImage(providerLogos, provider.code, provider.name)} />
-                    <Text style={[styles.providerName, active && styles.providerNameActive]} numberOfLines={1}>
-                      {provider.name}
-                    </Text>
-                    {active && <CheckCircle2 size={16} color={Colors.primary} strokeWidth={2.2} />}
+                    <ProviderLogo code={provider.code} name={provider.name} size={44} logoUri={resolveProviderImage(providerLogos, provider.code, provider.name)} />
+                    {active && (
+                      <View style={styles.providerCheck}>
+                        <CheckCircle2 size={15} color={Colors.onPrimary} strokeWidth={2.6} />
+                      </View>
+                    )}
                   </Pressable>
                 );
               })}
@@ -492,26 +500,18 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
   },
   providerCard: {
-    width: '48%',
-    minHeight: 82,
+    flexGrow: 1,
+    flexBasis: '21%',
+    aspectRatio: 1,
     borderRadius: Radius.lg,
     borderWidth: 1.5,
     borderColor: Colors.surfaceContainerHigh,
     backgroundColor: Colors.surfaceContainerLow,
-    padding: Spacing.md,
-    gap: Spacing.sm,
-  },
-  providerCardActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
-  providerIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: Radius.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  providerInitial: { ...Typography.labelLg, fontWeight: '800' },
-  providerName: { ...Typography.labelMd, color: Colors.onSurface },
-  providerNameActive: { color: Colors.onPrimaryFixed },
+  providerCardActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
+  providerCheck: { position: 'absolute', top: 5, right: 5, backgroundColor: Colors.primary, borderRadius: Radius.full, padding: 1.5 },
   productList: { gap: Spacing.sm, marginTop: Spacing.md },
   productRow: {
     minHeight: 72,
