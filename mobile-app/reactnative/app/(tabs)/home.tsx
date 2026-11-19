@@ -21,8 +21,9 @@ import {
 } from '@/features/modules/serviceModuleKeys';
 import { getDashboard } from '@/api/dashboard.api';
 
-// 16px glyphs: the compact wallet renders them inline in a chip, where 20 would
-// push four actions onto a second row on a small screen.
+// 16px glyphs keep each chip as narrow as its label allows. At 390px the four
+// still wrap 3+1 in the flex row — measured in the browser — but nothing is
+// clipped, which 20px icons did cause.
 const QUICK_ACTION_ICONS: Record<string, React.ReactNode> = {
   add:      <Plus      size={16} color={Colors.onPrimary} strokeWidth={2} />,
   send:     <Send      size={16} color={Colors.onPrimary} strokeWidth={2} />,
