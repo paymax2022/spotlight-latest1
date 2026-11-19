@@ -161,6 +161,13 @@ export interface MemberDirectoryQuery {
   chapterId?: string;
   category?: string;
   status?:   MemberStatus;
+  /**
+   * Explicit organisation for the admin console, sent as `org_id` because that
+   * is the form tag `MemberDirectoryQuery` binds in Go. Omit it and the backend
+   * scopes the roll to the orgs the caller is an ACTIVE member of — right for a
+   * member, empty for a platform super-admin, who has no membership row.
+   */
+  org_id?: string;
 }
 
 export interface MemberDashboard {

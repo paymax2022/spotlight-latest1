@@ -11,16 +11,19 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
-import { useFinanceSummary } from '@/features/association/hooks';
+import { useAdminOrgScope, useFinanceSummary } from '@/features/association/hooks';
+import AdminOrgScopeGate from '@/features/association/components/AdminOrgScopeGate';
 import { formatNaira, formatNairaCompact } from '@/features/association/utils';
 import type { RevenueLine } from '@/features/association/types';
 
 export default function FinanceDashboard() {
-  const fin = useFinanceSummary();
+  const scope = useAdminOrgScope();
+  const fin = useFinanceSummary(scope.orgId);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Finance & dues" />
+      <AdminOrgScopeGate scope={scope}>
       {fin.isLoading ? (
         <StateView kind="loading" message="Loading finance…" />
       ) : fin.isError || !fin.data ? (
@@ -67,6 +70,7 @@ export default function FinanceDashboard() {
           <RevenueCard lines={fin.data.byCategory ?? []} />
         </ScrollView>
       )}
+      </AdminOrgScopeGate>
     </SafeAreaView>
   );
 }

@@ -11,7 +11,8 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
-import { useApprovalQueue } from '@/features/association/hooks';
+import { useAdminOrgScope, useApprovalQueue } from '@/features/association/hooks';
+import AdminOrgScopeGate from '@/features/association/components/AdminOrgScopeGate';
 import { relativeTime } from '@/features/association/utils';
 import type { ApplicationJurisdiction, AdminApplicationSummary } from '@/features/association/types';
 
@@ -23,7 +24,8 @@ const SEGMENTS = [
 
 export default function ApprovalQueue() {
   const [seg, setSeg] = useState<string>('ALL');
-  const queue = useApprovalQueue(seg as ApplicationJurisdiction | 'ALL');
+  const scope = useAdminOrgScope();
+  const queue = useApprovalQueue(seg as ApplicationJurisdiction | 'ALL', scope.orgId);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -31,6 +33,7 @@ export default function ApprovalQueue() {
       <View style={styles.segWrap}>
         <SegmentedControl options={SEGMENTS as never} value={seg} onChange={setSeg} />
       </View>
+      <AdminOrgScopeGate scope={scope}>
       {queue.isLoading ? (
         <StateView kind="loading" message="Loading applications…" />
       ) : queue.isError ? (
@@ -47,6 +50,7 @@ export default function ApprovalQueue() {
           renderItem={({ item }) => <ApplicationCard app={item} />}
         />
       )}
+      </AdminOrgScopeGate>
     </SafeAreaView>
   );
 }

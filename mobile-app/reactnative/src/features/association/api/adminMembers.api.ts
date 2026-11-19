@@ -20,6 +20,12 @@ const MOCK_ACCESS: AdminAccess = {
   role: 'CHAPTER_ADMIN',
   roleLabel: 'Chapter admin',
   jurisdiction: 'CHAPTER',
+  // A CHAPTER_ADMIN administers one named organisation, and the live DTO says so.
+  // Fixture mode has to say it too: the console now resolves its org scope from
+  // this field, and without it a demo run would stop at the org picker instead of
+  // showing the dashboard the fixtures are there to demonstrate.
+  organisationId: 'org-demo-1',
+  organisationName: 'Lagos Island Traders Association',
   can: { approveMembers: true, manageMembers: true, manageFinance: true, importMembers: true },
 };
 
