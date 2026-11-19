@@ -13,6 +13,8 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StatusChip from '@/features/registration/components/StatusChip';
 import { useStatus, useWithdraw, useRegistrationVoting } from '@/features/registration/hooks/useRegistration';
 import ContestVotingCard from '@/features/registration/components/ContestVotingCard';
+import OpenMicHandinCard from '@/features/openmic/components/OpenMicHandinCard';
+import { looksLikeOpenMicSlug } from '@/features/openmic/constants';
 import { statusLabel } from '@/features/registration/utils/status';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
@@ -101,6 +103,13 @@ export default function RegistrationStatusScreen() {
         )}
 
         {votingQuery.data && <ContestVotingCard voting={votingQuery.data} />}
+
+        {/* Open Mic only: the beat download and the song hand-in are the two
+            steps this screen used to be silent about, even though they are what
+            turns an approved application into a song voters can hear. */}
+        {looksLikeOpenMicSlug(draft.contestSlug) && (
+          <OpenMicHandinCard contestSlug={String(draft.contestSlug ?? '').trim()} applicationId={appId} />
+        )}
 
         <Text style={styles.sectionTitle}>Status history</Text>
         {timeline.length === 0 ? (
