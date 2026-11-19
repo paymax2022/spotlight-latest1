@@ -54,9 +54,9 @@ for f in "${files[@]}"; do
   # regex cannot judge without seeing the data) and TRUNCATE. Comments are
   # stripped first so a header note about "no DROP TABLE" is not read as DDL.
   # NOTE: this is deliberately CI's vocabulary, not the prod writer's:
-  # ops-db-push-scoped.yml:152 adds `alter table … drop`, so a file can read
-  # `additive` here and still be refused by the lane. NON-ADDITIVE therefore
-  # means "CI's own gate would have blocked this file", nothing more.
+  # the scoped lane's additive re-check adds `alter table … drop`, so a file
+  # can read `additive` here and still be refused by the lane. NON-ADDITIVE
+  # therefore means "CI's own gate would have blocked this file", nothing more.
   # `|| true` is load-bearing twice over: grep exits 1 on a zero-match line and
   # `set -o pipefail` propagates that through `wc -l` into the assignment, which
   # under `set -e` would abort the sweep on the first clean migration.
