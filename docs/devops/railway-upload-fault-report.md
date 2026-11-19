@@ -74,12 +74,13 @@ a **positive control** rather than an episode: `serviceInstanceDeploy` put
 `main`'s tip `a30a8fd5b…` on all three staging services — three rows, three
 snapshots, three `SUCCESS` inside two minutes — while the upload path was still
 refusing, which confines the fault to upload-initiate and not to staging. See
-"Positive control". Updated a final time at 22:20Z with episode 13 — the fault
-surviving a brand-new `RAILWAY_TOKEN_STAGING` — and with the differential probe
+"Positive control". Updated a last time for that day at 22:20Z with episode 13 — the
+fault surviving a brand-new `RAILWAY_TOKEN_STAGING` — and with the differential probe
 that produced the transport change, both recorded in the
 [Resolution](#resolution--2026-11-18-2154z-the-fault-is-time-windowed-and-staging-no-longer-depends-on-it).
 No token value
-appears here.
+appears here. The chain continued on 2026-11-19 with episodes 14 and 15, each
+summarised in its own block below; episode 15 is the one *The ask* now rests on.
 
 > **Episode 14 (2026-11-19 08:31Z) changes how to read the two arms of every
 > table above.** Today's two real release attempts failed **six** legs, not three.
