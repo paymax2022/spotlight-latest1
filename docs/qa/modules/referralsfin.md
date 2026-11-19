@@ -20,7 +20,7 @@ Two coexisting surfaces (additive brownfield). (1) **Legacy**: `GET /api/finance
 | Purchase refunded (emit) | `POST /internal/referrals/purchase-refunded` | `X-Internal-Secret` | yes (reversal) |
 | Recalc tiers | `POST /internal/referrals/recalc-tiers` | `X-Internal-Secret` | yes (milestone payout) |
 | Admin config (get/publish) | `GET/PUT /v1/admin/referrals/config` | `referral.admin.config` | no |
-| Admin analytics / fraud / ledger / case / milestones / module | `GET/POST /v1/admin/referrals/*` | per-route `referral.admin.*` | case-adjust: yes |
+| Admin analytics / fraud / ledger / case (incl. `PUT /:referrerId/code`) / milestones / module | `GET/POST/PUT /v1/admin/referrals/*` | per-route `referral.admin.*` | case-adjust: yes |
 
 `PurchaseSettled{module, transaction_id, payer_user_id, margin_kobo, currency, settled_at}`; `PurchaseRefunded{transaction_id, refunded_at}`. `ComputeReward(marginKobo, rate) = floor(margin × rate)` (integer kobo). Reward status: `PENDING`, `CREDITED`, `REVERSED`. Milestone status: `ACHIEVED`, `PAID`, `VOIDED`. Ledger keys: credit `referral:reward:<rewardID>`, reversal `referral:reward-reversal:<rewardID>`, milestone `referral:milestone:<referrer>:<threshold>`; expense account `AccountReferralReward`.
 
@@ -56,6 +56,8 @@ Two coexisting surfaces (additive brownfield). (1) **Legacy**: `GET /api/finance
 | `REFERRALSFIN-UNIT-001` | Self-referral rejected | P0 | — | `POST /v1/referrals/attribute` own code | self | `self-referral rejected`; no attribution |
 | `REFERRALSFIN-UNIT-002` | Attribute idempotent per user | P1 | already attributed | `POST /attribute` again | — | Returns existing referrer; no re-attribution (`referred_user_id` UNIQUE) |
 | `REFERRALSFIN-UNIT-003` | Unknown code rejected | P1 | — | `POST /attribute` bad code | unknown | 400 error; no attribution |
+| `REFERRALSFIN-UNIT-004` | Admin code edit refuses a code someone holds | P0 | code claimed by another registered user in `referral_links`, legacy `finance_referral_codes`, or `platform_users.referral_code`, in any case | `PUT /v1/admin/referrals/:id/code` | that code | 409 `that referral code is already in use`; the holder's rows untouched (`tests/referrals/code_admin_live_db_test.go`) |
+| `REFERRALSFIN-UNIT-005` | Admin code edit converges every surface | P0 | user whose legacy row predates their link row and who also has a `platform_users` code | same | new code | all three rows for that user carry the new code, `LookupCode` returns it, and the replaced code has zero claims (re-assignable) |
 | `REFERRALSFIN-SEC-001` | Internal endpoint no secret → 503 | P0 | `ReferralRewardsInternalSecret=""` | `POST /internal/referrals/purchase-settled` | — | 503 `internal endpoint disabled` (fail-closed) |
 | `REFERRALSFIN-SEC-002` | Internal endpoint wrong secret → 401 | P0 | secret set | POST with wrong `X-Internal-Secret` | wrong | 401 `invalid internal secret` (constant-time compare) |
 | `REFERRALSFIN-SEC-003` | Internal endpoint valid secret | P0 | secret set | POST with correct `X-Internal-Secret` | correct | 200; event processed |
