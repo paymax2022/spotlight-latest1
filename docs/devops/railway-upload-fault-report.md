@@ -81,6 +81,22 @@ that produced the transport change, both recorded in the
 No token value
 appears here.
 
+> **Episode 14 (2026-11-19 08:31Z) changes how to read the two arms of every
+> table above.** Today's two real release attempts failed **six** legs, not three.
+> The development uploads are no longer a positive control: each one now dies
+> **0.12-0.94 s** after `Uploading...` with a legible
+> **`Your trial has expired. Please select a plan to continue using Railway.`**
+> The staging legs still die exactly the way this report describes — pre-row,
+> `error decoding response body`, 18 such lines on each of the five staging legs
+> that reached the CLI (9 attempts × 2 lines), and **zero** `Indexing...`,
+> **zero** `Uploading...`, **zero** trial lines — so staging never even reaches
+> the plan gate. (The sixth leg, `135437519699`, died in `actions/checkout` on a
+> GitHub-side git transport error and is not counted as evidence.) Read as
+> evidence this leaves *The ask* unchanged and narrows it: nothing has been
+> uploaded to **any** environment of this project since 2026-11-18T21:54:16Z.
+> The billing gate is ours to settle, not yours; the record of both signatures
+> side by side is the last section.
+
 ## The ask
 
 `railway up` to **one environment** of our project intermittently fails before any
@@ -1017,3 +1033,178 @@ URL, no bytes and no status, so only your edge logs can say what status was actu
 sent. The mutation path is not offered as a fix to you — it is our workaround, and
 this file's title still describes a fault on your side that we can no longer
 characterise from ours.
+
+---
+
+## Episode 14 — 2026-11-19 08:31Z: the development arm became a second fault, and the two signatures stayed cleanly apart
+
+Two release runs of `main` ran today, both real attempts (gate verdict
+`proceed`, staging `supabase db push` success in both), and both ended
+`completed/failure` with **all six deploy legs red**:
+
+| run | started | tip | release gate | dev legs | staging migrate | staging legs |
+|---|---|---|---|---|---|---|
+| `44482224276` | 07:46:41Z | `138d7a906` | `135417090118` success | `135437246412` / `135437246386` / `135437246677` **all failure** | `135437246903` success | `135437519699` / `135437519804` / `135437519816` **all failure** |
+| `44488725106` | 08:34:19Z | `8c8db6bee` | `135449002409` success | `135459329473` / `135459329245` / `135459329446` **all failure** | `135459329612` success | `135459608343` / `135459608026` / `135459608032` **all failure** |
+
+**The development legs fail differently from the staging legs, in the same
+run, twelve minutes apart.** Verbatim from the retained job logs
+(`gh api repos/paymax2022/spotlight-latest1/actions/jobs/<id>/logs`):
+
+Development, `deploy Development (backend)`, job `135437246412`, first two and
+last of nine attempts:
+
+```
+2026-11-19T08:31:42.7145184Z Indexing...
+2026-11-19T08:31:42.9537368Z Uploading...
+2026-11-19T08:31:43.2437091Z Your trial has expired. Please select a plan to continue using Railway.
+2026-11-19T08:32:58.4359994Z Indexing...
+2026-11-19T08:32:58.6658628Z Uploading...
+2026-11-19T08:32:58.9930151Z Your trial has expired. Please select a plan to continue using Railway.
+2026-11-19T08:50:17.3962031Z Indexing...
+2026-11-19T08:50:17.6275792Z Uploading...
+2026-11-19T08:50:18.0704361Z Your trial has expired. Please select a plan to continue using Railway.
+```
+
+Measured over all **54** dev attempts (six legs × nine), the refusal lands
+**0.120-0.940 s** after `Uploading...` opens — per leg: run 1's `backend`
+`135437246412` **0.276-0.443 s**, `frontend-admin` `135437246386`
+**0.272-0.303 s**, `frontend-web` `135437246677` **0.322-0.405 s**; run 2's
+`backend` `135459329473` **0.120-0.177 s**, `frontend-web` `135459329245`
+**0.186-0.201 s**, `frontend-admin` `135459329446` **0.184-0.940 s**. So the CLI
+does reach the transfer step — which for this report has always been the
+dividing line — and the message is Railway's own plan/billing sentence, printed
+clean. Contrast the staging arm of the same runs: no `Indexing...` line, no
+`Uploading...` line, and an unparseable body instead of a sentence — the two
+arms never even reach the same step.
+
+Staging, `deploy Staging (backend)`, job `135459608343` (run `44488725106`),
+first three of its nine attempts, with the command repeated on each retry
+warning elided as `…`:
+
+```
+2026-11-19T09:16:54.6825441Z Attempting to download 20...
+2026-11-19T09:17:00.5324118Z Failed to fetch: error decoding response body
+2026-11-19T09:17:00.5327689Z     1: expected value at line 1 column 1
+2026-11-19T09:17:00.5383593Z ##[warning]with-retry: attempt 1/9 failed (exit 1); retrying in 84s — railway up backend --path-as-root … --environment staging …
+2026-11-19T09:18:24.8818557Z Failed to fetch: error decoding response body
+2026-11-19T09:21:00.2026783Z Failed to fetch: error decoding response body
+```
+
+`grep -c 'trial has expired'` over that whole staging job returns **0**. Staging
+produces zero `Indexing...` lines and zero `Uploading...` lines, exactly as in
+every episode since 2026-11-16, so **staging never gets far enough to be told
+about the plan** — we cannot say from this evidence whether staging is also
+plan-gated, and we do not claim it is.
+
+**Per-line census of all twelve legs today** (counts of literal log lines per job,
+so the two arms can be compared without reading any log at all):
+
+| leg | job | `Indexing...` | `Uploading...` | trial lines | decode lines | note |
+|---|---|---|---|---|---|---|
+| dev `backend` (run 1) | `135437246412` | 9 | 9 | 9 | 0 | |
+| dev `frontend-admin` (run 1) | `135437246386` | 9 | 9 | 9 | 0 | |
+| dev `frontend-web` (run 1) | `135437246677` | 9 | 9 | 9 | 0 | |
+| staging `backend` (run 1) | `135437519699` | 0 | 0 | 0 | 0 | **never reached the CLI** — `actions/checkout` died with `RPC failed; curl 56 GnuTLS recv error (-24)`, `fatal: early EOF`, `fetch-pack: invalid index-pack output`, git exit 128 |
+| staging `frontend-web` (run 1) | `135437519804` | 0 | 0 | 0 | 18 | |
+| staging `frontend-admin` (run 1) | `135437519816` | 0 | 0 | 0 | 18 | |
+| dev `backend` (run 2) | `135459329473` | 9 | 9 | 9 | 0 | |
+| dev `frontend-web` (run 2) | `135459329245` | 9 | 9 | 9 | 0 | |
+| dev `frontend-admin` (run 2) | `135459329446` | 9 | 9 | 9 | 0 | |
+| staging `backend` (run 2) | `135459608343` | 0 | 0 | 0 | 18 | |
+| staging `frontend-web` (run 2) | `135459608026` | 0 | 0 | 0 | 18 | |
+| staging `frontend-admin` (run 2) | `135459608032` | 0 | 0 | 0 | 18 | |
+
+So today's totals are **54 plan-gated development refusals** (6 legs × 9) and
+**90 pre-row staging refusals** (5 legs × 9, 2 log lines each), with one staging
+leg excluded because it failed in checkout on the GitHub side — that leg is not
+counted as F2 evidence anywhere in this pack, and 18 decode lines per leg is the
+"2 lines × 9 attempts" shape, not eighteen attempts.
+
+**Two signatures, not one fault.** A plan gate that refuses *after* the upload
+is initiated, on the development token, and a non-JSON response *before* any
+row is created, on the staging token, in the same pipeline, one hour apart.
+The second one is what this pack is about. The first one is ours.
+
+**Read-only account state, queried 2026-11-19 ~09:50Z** with `railway api`
+against the project and workspace (no mutations, no deployment created):
+
+```
+project(id: e7dca861-3667-4d9a-8090-6d2f4d179ec2) {
+  subscriptionType  -> "trial"
+  expiredAt         -> null
+  isTempProject     -> false
+  workspaceId       -> fdc5d434-58a6-44be-8f67-32d39fc33dc7
+}
+workspace(workspaceId: fdc5d434-…) { name -> "My Projects", plan -> "HOBBY" }
+```
+
+and `serviceInstance(serviceId, environmentId) { isUpdatable latestDeployment {
+createdAt status snapshotId } }` for all nine instances:
+
+| environment | backend | frontend-web | frontend-admin |
+|---|---|---|---|
+| development | `2026-11-18T21:26:41Z` SUCCESS snap=Y | `21:26:38Z` SUCCESS snap=Y | `21:26:41Z` SUCCESS snap=Y |
+| staging | `2026-11-18T21:54:16Z` SUCCESS snap=Y | `18:33:39Z` SUCCESS snap=Y | `18:34:07Z` SUCCESS snap=Y |
+| production | `2026-11-18T16:37:12Z` SUCCESS snap=Y | `14:35:15Z` FAILED snap=Y | `14:47:15Z` SUCCESS snap=Y |
+
+`isUpdatable` is `false` on all nine. **The census is the part that matters:**
+the newest deployment row anywhere in this project is 2026-11-18T21:54:16Z —
+arm B of the probe in *Resolution*. Today's six red legs created **no rows**,
+and nothing between 21:54Z yesterday and now created a row either. So the
+honest summary of 2026-11-19 is *zero deploys to zero environments*, and the
+development-side reason for that is a billing state, not F2.
+
+**Three of today's Release runs read green and deployed nothing** — worth
+stating in a vendor ticket because the row alone misleads: `44478442712`
+(07:17:15Z, `757f0a229`), `44480631166` (07:34:14Z, `62a47a710`) and
+`44481476457` (07:40:51Z, `83c7cac73`) are `completed/success` with
+`release gate` success and **every** `deploy`, `migrate` and `smoke` job
+`completed/skipped` — the merge-train `superseded`/`noop_docs_only` verdict
+from `scripts/ci/release-gates.py`. Only the two runs in the table above
+actually attempted uploads today.
+
+**What this invalidates, and what it does not.** Every episode in this pack
+rests part of its force on "the development legs in the same job succeeded".
+That statement is true for every run it is made about (2026-11-16 through
+episode 13 at 21:47Z on 2026-11-18, and the 21:54:16Z arm-B accept) and is no
+longer true going forward: from 08:31:42Z today the same development path
+refuses, for a different reason. Two consequences:
+
+1. The *same-basis* pairing — one runner, one minute, dev accepted, staging
+   refused — cannot be re-produced from CI while the plan gate is up, because
+   the dev arm no longer returns. Until we clear the billing state, the tight
+   intervals quoted in *The differential* and in episodes 7-13 are historical,
+   and the reproducible live datum is staging's own 27-for-27 pre-row refusal,
+   which is unchanged and still reproducible on demand.
+2. We cannot date the billing change more finely than this: the last accepted
+   development upload was 2026-11-18T21:26:41Z and the first plan-gated
+   refusal was 2026-11-19T08:31:43.243Z, and CI exercised neither path in
+   between, so the account state may have changed at any point in that
+   window. `Project.expiredAt` is `null` while `subscriptionType` is still
+   `"trial"`, which is why we do not present the account fields as proof of a
+   timestamp — the proof of the gate is the CLI's own message in the logs.
+
+**One asymmetry we would like your view on.** The plan-gate refusal reaches the
+CLI as a legible, actionable sentence, while F2 reaches it as a body the client
+cannot parse (`expected value at line 1 column 1`, no URL, no status). Both
+come from the same CLI build against the same project within the same hour.
+Whatever the staging upload-initiate returns during a refusal window, it is
+not the same error path — which is further evidence that the staging refusal
+is not a policy response with a nice message and a different transport, but a
+malformed one.
+
+**What we did not do, and what we could not find out.** No plan was selected and
+no payment was touched; that is an owner action on our side. We did **not**
+establish whether the `serviceInstanceDeploy(commitSha:)` workaround of
+*Resolution* still works after 08:31Z today: a successful refresh is a write that
+would have destroyed today's datum, so the only probe we ran used deliberately
+non-existent ids —
+`serviceInstanceDeploy(serviceId:"00000000-0000-0000-0000-000000000000",
+environmentId:"00000000-…", commitSha:"0…0")` — and it returned
+`{"code":"INTERNAL_SERVER_ERROR","message":"Not Authorized",
+"path":["serviceInstanceDeploy"]}`. That answer is about id authorization, not
+about billing: the resolver rejects a phantom service before any plan check, so
+**this probe proves nothing either way** and the mutation path's behaviour behind
+the gate stays open. Nothing in this file claims it still works.
+`railway whoami` reads logged in; no token was printed, moved, or opened.
