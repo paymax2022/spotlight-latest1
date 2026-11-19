@@ -80,30 +80,71 @@ run bash "$PROBE" --db-url "$TEST_DATABASE_URL" --mode apply --expect "$inj"
 
 # ── fixture ownership ─────────────────────────────────────────────────────────
 # Everything below runs against an isolated throwaway Postgres that carries the
-# RBAC plane but NOT the seed. Cleanup restores that exact state so the harness
-# is re-runnable and leaves no residue for the next verification.
-# Every fixture user this harness creates shares one email prefix, so
-# cleanup cannot miss a later one: a leftover holder reads as a real eligible
-# holder and skews the counts asserted in §9.
+# RBAC plane but NOT the seed. The harness MUTATES its target — it inserts the
+# seed row and role grants, creates users and assignments, and replaces
+# public.user_has_permission — so two rules keep it off anything real.
+#
+#   1. The target must PROVE it is disposable before the first write: no seed
+#      row, no live global assignments. An earlier version deleted whatever it
+#      found and only then checked; pointing it at a database that already
+#      carried `connect.contests.view` therefore removed the row and, through
+#      ON DELETE CASCADE, its grants — the harness destroyed the exact fact the
+#      probe exists to verify. Refusing is the only correct answer, because the
+#      harness cannot tell residue from production truth cloned into a scratch DB.
+#   2. Cleanup may undo only what THIS run created: grants for roles that did
+#      not hold the permission beforehand, the permission row if it was absent,
+#      and the target's own function definition rather than a generic stub.
+#
+# Every fixture user shares one email prefix so cleanup cannot miss a later one:
+# a leftover holder reads as a real eligible holder and skews §9's counts.
 FIX_PREFIX='probe-rbac-grants-test'
 FIX_USERS="${FIX_PREFIX}@spotlight.local"
 FIX_USERS2="${FIX_PREFIX}2@spotlight.local"
 FIX_ID2='00000000-0000-0000-0000-0000000000a2'
+
+# Read the start state before anything can change it: cleanup returns the target
+# to exactly this, and the guard below decides whether this is a fixture at all.
+SEED_AT_START="$(psql_fixture -c "select count(*) from public.permissions where slug = '$SLUG'")"
+GRANTS_AT_START="$(psql_fixture -c "select coalesce(string_agg(r.slug, ','), '') from public.role_permissions rp join public.roles r on r.id = rp.role_id join public.permissions p on p.id = rp.permission_id where p.slug = '$SLUG'")"
+RPC_AT_START="$(psql_fixture -c "select pg_get_functiondef(p.oid) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'user_has_permission' and p.pronargs = 4" 2>/dev/null || true)"
+ASSIGNMENTS_AT_START="$(psql_fixture -c "select count(*) from public.user_roles ur join public.roles r on r.id = ur.role_id where r.slug in ('super-admin','system-admin','contest-manager') and ur.scope_type = 'global' and ur.is_active")"
+
+if [ "${SEED_AT_START:-?}" != 0 ] || [ "${ASSIGNMENTS_AT_START:-?}" != 0 ]; then
+  echo "ERROR: TEST_DATABASE_URL is not a disposable fixture." >&2
+  echo "       it already holds the seed row (count=$SEED_AT_START) and $ASSIGNMENTS_AT_START live global assignment(s)" >&2
+  echo "       to the RBAC roles. Reaching a known start state here would mean deleting data this harness did not" >&2
+  echo "       create, so it deletes nothing and stops." >&2
+  echo "       Build a scratch database instead (RBAC plane + the four role rows, no seed, no assignments)." >&2
+  exit 1
+fi
+
 cleanup() {
+  # Roles that already held the permission are quoted into a NOT IN list, so a
+  # pre-existing grant survives and only this run's additions go. The list is
+  # empty by construction on a guarded fixture; it stays data-driven so the same
+  # function is safe if that guard is ever relaxed.
+  keep="''"
+  [ -n "$GRANTS_AT_START" ] && keep="$(printf '%s' "$GRANTS_AT_START" \
+    | awk -F',' '{ for (i = 1; i <= NF; i++) printf "%s\x27%s\x27", (i > 1 ? "," : ""), $i }')"
   psql_fixture -c "
     DELETE FROM public.user_permissions WHERE user_id IN (SELECT id FROM public.platform_users WHERE email LIKE '${FIX_PREFIX}%');
     DELETE FROM public.user_roles WHERE user_id IN (SELECT id FROM public.platform_users WHERE email LIKE '${FIX_PREFIX}%');
     DELETE FROM public.platform_users WHERE email LIKE '${FIX_PREFIX}%';
-    DELETE FROM public.role_permissions WHERE permission_id IN (SELECT id FROM public.permissions WHERE slug = '$SLUG');
-    DELETE FROM public.permissions WHERE slug = '$SLUG';
-    CREATE OR REPLACE FUNCTION public.user_has_permission(p_user_id uuid, p_permission_slug text, p_scope_type text DEFAULT 'global', p_scope_id text DEFAULT NULL) RETURNS boolean LANGUAGE plpgsql STABLE AS \$\$ BEGIN RETURN EXISTS (SELECT 1 FROM public.effective_permissions(p_user_id, p_scope_type, p_scope_id) ep WHERE ep.permission_slug = p_permission_slug); END \$\$;" >/dev/null 2>&1 || true
+    DELETE FROM public.role_permissions WHERE permission_id = (SELECT id FROM public.permissions WHERE slug = '$SLUG')
+      AND role_id NOT IN (SELECT id FROM public.roles WHERE slug IN ($keep));
+    ${SEED_ROW_DELETE}
+    ${RPC_AT_START}
+  " >/dev/null 2>&1 || true
 }
 trap 'rm -rf "$TMP"; cleanup' EXIT
+# The permission row itself only gets removed when this run is the one that
+# inserted it; the guard above already proved it was absent at start.
+SEED_ROW_DELETE="DELETE FROM public.permissions WHERE slug = '$SLUG';"
 cleanup
 
 precond="$(psql_fixture -c "select count(*) from public.permissions where slug = '$SLUG'")"
 roles_present="$(psql_fixture -c "select count(*) from public.roles where slug in ('super-admin','system-admin','contest-manager')")"
-[ "$precond" = 0 ] || fail "fixture must start WITHOUT the seed (permission row exists); run cleanup first"
+[ "$precond" = 0 ] || fail "the seed row survived cleanup — a crashed run inserted it under a different grant snapshot; delete it from the fixture by hand"
 [ "$roles_present" = 3 ] || fail "fixture is missing the 3 RBAC roles the seed keys on (found $roles_present)"
 
 # ── 3. RED: the un-seeded state is reported as a failure in apply mode ─────────
