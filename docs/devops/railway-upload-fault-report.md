@@ -95,7 +95,23 @@ appears here.
 > evidence this leaves *The ask* unchanged and narrows it: nothing has been
 > uploaded to **any** environment of this project since 2026-11-18T21:54:16Z.
 > The billing gate is ours to settle, not yours; the record of both signatures
-> side by side is the last section.
+> side by side is Episode 14, below.
+>
+> **Episode 15 (2026-11-19 15:19-15:49Z) settles that gate, and supersedes two
+> sentences of the block above.** The owner added a plan — no agent touched
+> billing; `Project.subscriptionType` reads `"hobby"` from 15:45Z — and
+> development uploads resumed from the same runner class: run `44547867538` shows
+> all three dev legs printing `Indexing...` → `Uploading...` → a byte count
+> (`1930791`, `103327180`, `7516645`) in the same minutes as the three staging
+> legs of the *same commit* refused 9/9 with **zero** `Indexing...`. So "nothing
+> has been uploaded to any environment" held only for the 08:31-14:45Z plan-gate
+> window, and "the development uploads are no longer a positive control" is now
+> reversed: they are a positive control again, and F2 is demonstrably not the
+> plan gate on a different transport. **The live ask is the narrowed one in
+> Episode 15** — the status and body of the request that *obtains the upload
+> destination* for environment `6b5f27a3-a290-4574-a977-363eb21d43ad` at
+> 2026-11-19 15:20:10-15:20:13Z — not the archive PUT that follows it, and not
+> the version of *The ask* below, which predates that measurement.
 
 ## The ask
 
@@ -139,6 +155,19 @@ know they are different questions:
    serialised: 14:56:37-14:57:59Z) — and whether anything on the staging
    environment's upload path is rate-limited, circuit-broken or routed
    differently from `development`'s.
+
+> **Everything above is the 2026-11-18 form of the ask; the dates in it are that
+> day's.** Episode 15 (final section) moves two points: the development arm is a
+> positive control again — the plan gate came off before run `44547867538`, whose
+> dev legs landed from 15:19Z, and `Project.subscriptionType` read `"hobby"` at
+> the 15:45Z probe — and
+> the failing request has been narrowed from "the staging upload-initiate" to the
+> call that *obtains the upload destination* — the one that dies before
+> `railway up --verbose` can print a URL, a byte count or a status code, which is
+> why no flag on our side can ever surface the number. The timestamps above are
+> still the ones to pull from your edge logs; the freshest and cleanest datum is
+> Episode 15's 2026-11-19 15:20:10-15:20:13Z burst, three services, nine
+> refusals each, zero deployment rows.
 
 ## Identifiers
 
