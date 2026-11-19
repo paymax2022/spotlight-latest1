@@ -21,6 +21,16 @@ vi.mock('@/services/userReferralActivityService', () => ({
 
 import { ReferralActivityPanel } from './ReferralActivityPanel';
 import { AdminUsersRequestError } from '@/services/usersService';
+import { ReferralCodeTakenError as TakenError } from '@/services/referralRewardsAdminService';
+
+const mockSetCode = vi.fn();
+// Only the write is replaced; the code-shape constants and the typed 409 error
+// stay the real ones, so the panel is exercised against what the service actually
+// exports.
+vi.mock('@/services/referralRewardsAdminService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/referralRewardsAdminService')>();
+  return { ...actual, setReferrerCode: (...a: unknown[]) => mockSetCode(...a) };
+});
 
 const panel = () => within(screen.getByTestId('referral-activity-panel'));
 const err = (status: number, msg = 'boom') => new (AdminUsersRequestError as unknown as new (s: number, m: string) => Error)(status, msg);
@@ -33,6 +43,7 @@ describe('ReferralActivityPanel', () => {
     mockCode.mockReset().mockResolvedValue({ code: 'K7QX2', source: 'finance_referral_codes' });
     mock360.mockReset().mockResolvedValue(sum);
     mockLedger.mockReset().mockResolvedValue([entry()]);
+    mockSetCode.mockReset().mockResolvedValue({ code: 'JIDE1' });
   });
   afterEach(() => {
     cleanup();
@@ -147,9 +158,50 @@ describe('ReferralActivityPanel', () => {
     expect(panel().queryByText('Copied')).toBeNull();
   });
 
-  it('is read-only: only Copy and Retry buttons exist', async () => {
+  it('an admin can set a custom code: it is normalised, saved, and the shown code follows', async () => {
     render(<ReferralActivityPanel userId="u1" />);
     await panel().findByText('₦123.45');
-    expect(panel().getAllByRole('button').map((b) => b.textContent)).toEqual(['Copy']);
+    const input = panel().getByLabelText(/new code/i);
+    fireEvent.change(input, { target: { value: 'jide1' } });
+    // The field upper-cases as you type, so what the admin sees is what is saved.
+    expect((input as HTMLInputElement).value).toBe('JIDE1');
+    fireEvent.click(panel().getByRole('button', { name: /save code/i }));
+    await waitFor(() => expect(mockSetCode).toHaveBeenCalledWith('u1', 'JIDE1'));
+    expect(await panel().findByText(/Referral code is now JIDE1/i)).toBeTruthy();
+    // The code shown is re-read from the server, not stitched together locally.
+    await waitFor(() => expect(mockCode).toHaveBeenCalledTimes(2));
+  });
+
+  it('a code that belongs to someone else is reported as taken, not as a failure', async () => {
+    mockSetCode.mockRejectedValue(new TakenError());
+    render(<ReferralActivityPanel userId="u1" />);
+    fireEvent.change(await panel().findByLabelText(/new code/i), { target: { value: 'TAKEN' } });
+    fireEvent.click(panel().getByRole('button', { name: /save code/i }));
+    expect(await panel().findByText(/already in use/i)).toBeTruthy();
+    // The user still sees their real code — a refused save changes nothing.
+    expect(panel().getByTestId('referral-code').textContent).toBe('K7QX2');
+    expect(panel().queryByText(/Referral code is now/i)).toBeNull();
+  });
+
+  it('an invalid shape is refused before anything is sent', async () => {
+    render(<ReferralActivityPanel userId="u1" />);
+    fireEvent.change(await panel().findByLabelText(/new code/i), { target: { value: 'AB' } });
+    fireEvent.click(panel().getByRole('button', { name: /save code/i }));
+    expect(await panel().findByText(/3-5 characters/i)).toBeTruthy();
+    expect(mockSetCode).not.toHaveBeenCalled();
+  });
+
+  it('a server error other than a clash says what the server said', async () => {
+    mockSetCode.mockRejectedValue(new Error('Request failed (500)'));
+    render(<ReferralActivityPanel userId="u1" />);
+    fireEvent.change(await panel().findByLabelText(/new code/i), { target: { value: 'FLYER' } });
+    fireEvent.click(panel().getByRole('button', { name: /save code/i }));
+    expect(await panel().findByText(/Request failed \(500\)/)).toBeTruthy();
+  });
+
+  it('the controls are Copy and Save code, and nothing else', async () => {
+    render(<ReferralActivityPanel userId="u1" />);
+    await panel().findByText('₦123.45');
+    expect(panel().getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['Copy', 'Save code']);
   });
 });

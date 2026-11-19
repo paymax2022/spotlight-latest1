@@ -11,7 +11,14 @@ import {
   type ReferralLedgerEntry,
 } from '@/services/userReferralActivityService';
 import { formatKobo } from '@/services/transactionsAdminService';
-import { Card, Button, colors } from '@/components/ui/vuexy';
+import {
+  setReferrerCode,
+  REFERRAL_CODE_MIN,
+  REFERRAL_CODE_MAX,
+  REFERRAL_CODE_PATTERN,
+  ReferralCodeTakenError,
+} from '@/services/referralRewardsAdminService';
+import { Card, Button, Input, colors } from '@/components/ui/vuexy';
 
 type Section<T> = { data: T | null; loading: boolean; error: string | null; forbidden: boolean; notFound: boolean; reload: () => void };
 
@@ -76,15 +83,36 @@ function SectionBody<T>({ s, what, disabledOn404, children }: { s: Section<T>; w
 
 const heading = { margin: '0 0 6px', fontSize: 13, fontWeight: 700, color: colors.text } as const;
 
+/**
+ * The code the user sees, plus the control that changes it.
+ *
+ * Reading and writing are deliberately different requests: the read
+ * (userReferralActivityService) reports which table the code lives in, and the
+ * write (referralRewardsAdminService -> PUT /v1/admin/referrals/:id/code) is the
+ * rewards engine's own endpoint, which normalises the value and refuses one that
+ * another registered user already holds. The section re-reads after a save so
+ * what is on screen is the server's answer, not a local guess.
+ */
 function CodeSection({ userId }: { userId: string }) {
   // The service maps 404 to null, so `data === null` here means "failed"; wrap the null.
   const s = useSection<{ v: ReferralCode | null }>(userId, async (id) => ({ v: await getUserReferralCode(id) }), 'Loading referral code failed.');
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [codeInput, setCodeInput] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [codeMsg, setCodeMsg] = useState<string | null>(null);
+  const [codeErr, setCodeErr] = useState<string | null>(null);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
   useEffect(() => {
     setCopied(false);
     if (timer.current) clearTimeout(timer.current);
+    // The panel can swap users without unmounting, so nothing from the previous
+    // user may be left on screen — including a half-typed code and the last
+    // result line, which would otherwise read as an answer about the wrong user.
+    setCodeInput('');
+    setSaving(false);
+    setCodeMsg(null);
+    setCodeErr(null);
   }, [userId]);
 
   const copy = async (code: string) => {
@@ -98,22 +126,72 @@ function CodeSection({ userId }: { userId: string }) {
     timer.current = setTimeout(() => setCopied(false), 1500);
   };
 
+  const saveCode = async () => {
+    // Upper-case before validating and sending: the server normalises too, so a
+    // code typed in lower case must not be rejected here for a reason the server
+    // would not have made.
+    const code = codeInput.trim().toUpperCase();
+    setCodeMsg(null);
+    setCodeErr(null);
+    if (!REFERRAL_CODE_PATTERN.test(code)) {
+      setCodeErr(`Use ${REFERRAL_CODE_MIN}-${REFERRAL_CODE_MAX} characters, letters and numbers.`);
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await setReferrerCode(userId, code);
+      setCodeMsg(`Referral code is now ${res.code}.`);
+      setCodeInput('');
+      s.reload();
+    } catch (err) {
+      // A clash is a normal outcome to recover from, not a bug: say the code is
+      // taken so the admin picks another, and leave every other message exactly
+      // as the server said it.
+      setCodeErr(err instanceof ReferralCodeTakenError
+        ? `${code} is already in use by another referrer. Try a different one.`
+        : err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div>
       <h3 style={heading}>Referral code</h3>
       <SectionBody s={s} what="referral code">
-        {({ v }) =>
-          v ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, flexWrap: 'wrap' }}>
-              <code data-testid="referral-code" style={{ fontWeight: 700, fontSize: 15 }}>{v.code}</code>
-              <span data-testid="referral-code-source" style={{ color: colors.muted }}>source: {v.source}</span>
-              <Button variant="outline" sm onClick={() => void copy(v.code)}>Copy</Button>
-              {copied ? <span style={{ color: colors.success }}>Copied</span> : null}
+        {({ v }) => (
+          <div style={{ display: 'grid', gap: 10 }}>
+            {v ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, flexWrap: 'wrap' }}>
+                <code data-testid="referral-code" style={{ fontWeight: 700, fontSize: 15 }}>{v.code}</code>
+                <span data-testid="referral-code-source" style={{ color: colors.muted }}>source: {v.source}</span>
+                <Button variant="outline" sm onClick={() => void copy(v.code)}>Copy</Button>
+                {copied ? <span style={{ color: colors.success }}>Copied</span> : null}
+              </div>
+            ) : (
+              <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>No referral code yet</p>
+            )}
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+              <div>
+                <label htmlFor="referral-code-new" style={{ display: 'block', fontSize: 12, color: colors.muted }}>
+                  New code ({REFERRAL_CODE_MIN}–{REFERRAL_CODE_MAX} letters or numbers)
+                </label>
+                <Input
+                  id="referral-code-new"
+                  value={codeInput}
+                  maxLength={REFERRAL_CODE_MAX}
+                  onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                  placeholder="e.g. SALES"
+                />
+              </div>
+              <Button variant="primary" sm onClick={() => void saveCode()} disabled={saving || !codeInput.trim()}>
+                {saving ? 'Checking…' : 'Save code'}
+              </Button>
             </div>
-          ) : (
-            <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>No referral code yet</p>
-          )
-        }
+            {codeMsg ? <p style={{ color: colors.success, fontSize: 13, margin: 0 }}>{codeMsg}</p> : null}
+            {codeErr ? <p style={{ color: colors.danger, fontSize: 13, margin: 0 }}>{codeErr}</p> : null}
+          </div>
+        )}
       </SectionBody>
     </div>
   );
@@ -186,9 +264,10 @@ function LedgerSection({ userId }: { userId: string }) {
 }
 
 /**
- * Read-only referral activity for the admin user profile: the user's own code, the
- * referral-360 summary and the referral ledger. Each section loads and fails on its
- * own. No mutation controls.
+ * Referral activity for the admin user profile: the user's own code, the
+ * referral-360 summary and the referral ledger. Each section loads and fails on
+ * its own. The one mutation is the code itself (CodeSection), because support
+ * and growth routinely need a vanity code for a specific referrer.
  */
 export function ReferralActivityPanel({ userId }: { userId: string }) {
   return (
