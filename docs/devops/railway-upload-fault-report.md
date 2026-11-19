@@ -38,46 +38,48 @@ outside CI were being accepted (a local backend deploy succeeded at 15:00:33Z
 and a second, carrying the released tip itself, succeeded at 15:18Z; the other
 local attempts failed later at build on the submitting machine), so the
 refusal is
-CI-path-specific, not an environment outage. Updated 15:56Z with episode 10 and
-with the two captures this pack said were uncapturable: **the status code and the
-endpoint.** Episode 10 is run `44329801870` — Release's `deploy-staging` matrix
-copied verbatim onto a branch (all three services, `ref: main`, the pin, the
-staging secret) with `max-parallel: 1`, so the three uploads could not overlap;
-it refused 4 of 4 at 14:56:37-14:57:59Z with zero `Indexing...` lines, which
-removes the last repo-side structural difference we could point at. And
-`railway up --verbose` — the flag the ask below used to beg for the name of —
-prints the URL, the `bytes:` of the archive and an explicit status, which let us
-chase the laptop-side failures and **eliminate them as evidence**: six repo-root
-frontend archives of 133,527,512 bytes died with
+CI-path-specific, not an environment outage. Updated 15:56Z with episodes 10,
+11 and 12 and with the two captures this pack said were uncapturable: **the
+status code and the endpoint.** Episode 10 is run `44329801870` — Release's
+`deploy-staging` matrix copied verbatim onto a branch (all three services,
+`ref: main`, the pin, the staging secret) with `max-parallel: 1`, so the three
+uploads could not overlap; it refused 4 of 4 at 14:56:37-14:57:59Z with zero
+`Indexing...` lines, which removes the last repo-side structural difference we
+could point at. And `railway up --verbose` — the flag the ask below used to beg
+for the name of — prints the URL, the `bytes:` of the archive and an explicit
+status, which let us chase the laptop-side failures and **eliminate them as
+evidence**: six repo-root frontend archives of 133,527,512 bytes died with
 **`Failed to upload code with status code 524`** on
 `https://backboard.railway.com/project/{project}/environment/{env}/up`, and the
 uploading machine measures **11.217 Mbps uplink** (`networkQuality -s`,
 16:20Z) — 1,068,220,096 bits at that rate is 95 s of transfer at line rate, and
 Cloudflare's proxy window is ~100 s. A 7,511,269-byte backend archive from the
-same machine takes ~5 s and was accepted (`162c1d04`, `SUCCESS` 15:18:18.823Z,
-staging's backend now runs main's tip). **Those laptop refusals are our
-bandwidth, not your fault, and we are withdrawing them from the differential.**
-What survives is the CI signature — sub-second, pre-row, from a runner that
-uploads the same 133 MB class to `development` in the same job — and the two
-queryable artifacts in "What episode 10, 11 and 12 add". **Episode 12 then
-removes our last own-side suspect:** the A/B ran twice, on two different lanes,
-and both times the staging instance whose connected git source we disconnected
-refused exactly like the two that kept theirs — the real Release lane first
-(`44296221501` re-run, 15:52:05-16:10:02Z, 27 refusals across three legs, the
-disconnected leg indistinguishable from the connected two), then the serial
-branch matrix (`16:44:57.617Z` and `16:45:21.001Z`). So `ServiceSource.repo` is
-not the discriminator; the one that is left is the credential path — a
-per-environment project token from a runner refuses pre-row on staging while this
-account's own login session is accepted on the same instances minutes later.
-Updated the same day at 17:25Z with a **positive control** rather than an
-episode: `serviceInstanceDeploy` put `main`'s tip `a30a8fd5b…` on all three
-staging services — three rows, three snapshots, three `SUCCESS` inside two
-minutes — while the upload path was still refusing, which confines the fault to
-upload-initiate and not to staging. See "Positive control". At 18:10-18:29Z the
-CI arm reproduced cleanly on a fresh commit whose gate had genuinely returned
-`proceed` (run `44359708940`, 27 out of 27), and at 18:31-18:34Z that same commit
-went to staging by trigger in ~90 s — see "The CI arm reproduced cleanly on a
-fresh commit". No token value appears anywhere in this pack.
+same machine takes ~5 s and was accepted (`162c1d04`, `SUCCESS`
+15:18:18.823Z, staging's backend now runs main's tip). **Those laptop refusals
+are our bandwidth, not your fault, and we are withdrawing them from the
+differential.** What survives is the CI signature — sub-second, pre-row, from a
+runner that uploads the same 133 MB class to `development` in the same job —
+and the two queryable artifacts in "What episode 10, 11 and 12 add".
+**Episode 12 then removes our last own-side suspect:** the A/B ran **twice** —
+once inside a real Release (`44296221501` re-run with `--failed`, 15:52:03Z to
+16:10:14Z, nine attempts on each of the three staging legs) and once on a
+branch-scoped serial matrix (`44349761092`, `16:44:57.617Z` and `16:45:21.001Z`)
+— and both times the staging instance whose connected git source we disconnected
+refused exactly like the two that kept theirs, so
+`ServiceSource.repo` is not the discriminator; the one that is left is the
+credential path — a per-environment project token from a runner refuses
+pre-row on staging while this account's own login session is accepted on the
+same instances minutes later. Updated the same day at 17:25Z with
+a **positive control** rather than an episode: `serviceInstanceDeploy` put
+`main`'s tip `a30a8fd5b…` on all three staging services — three rows, three
+snapshots, three `SUCCESS` inside two minutes — while the upload path was still
+refusing, which confines the fault to upload-initiate and not to staging. See
+"Positive control". Updated a final time at 22:20Z with episode 13 — the fault
+surviving a brand-new `RAILWAY_TOKEN_STAGING` — and with the differential probe
+that produced the transport change, both recorded in the
+[Resolution](#resolution--2026-11-18-2154z-the-fault-is-time-windowed-and-staging-no-longer-depends-on-it).
+No token value
+appears here.
 
 ## The ask
 
@@ -197,7 +199,7 @@ uses, except where the row says otherwise.
 | runner / OS / `CI=true` | a container with all three present behaved identically to the GitHub runner; the same runner accepts development in the same second |
 | environment name ambiguity | `railway environment list` shows exactly one environment named `staging` (`6b5f27a3…`, `isEphemeral: false`, `restricted: false`, created 2026-11-02 by forking `staging-Old`); all three services CI deploys report a `SUCCESS` latest deployment on it, so nothing is paused or stuck |
 | environment protection rules | none configured; a probe job declaring the same environment produced both outcomes |
-| connected git source | **this row was dismissed in our first write-up and we now think that dismissal was a reasoning error — see "the one variable that fits" below.** Re-measured 2026-11-17 with `railway api serviceInstance(serviceId, environmentId) { source { repo } }`: staging's instances report `source.repo = paymax2022/spotlight-latest1`, development's report `repo: null`, production's reports `source: null`. Staging also accepted twelve consecutive uploads with that source connected, which is why we dropped it. **Re-checked 2026-11-18 with `serviceInstance(serviceId, environmentId){ source{ repo } }`: the property is not even uniform across staging** — `backend` and `frontend-web` report `repo: paymax2022/spotlight-latest1`, `frontend-admin` reports `repo: ""` (an empty string, not null), and development reports `null` for all three. **This row is closed as of 16:47Z: the clean test ran twice and says no.** `frontend-admin`'s source was disconnected at ~15:52Z and its CI legs re-run on the real Release lane (`44296221501`, 9 attempts per leg), then again on a serial branch matrix (`44349761092`); the disconnected instance refused exactly like the two that stayed connected on both lanes. Numbers in "The one variable that fits" and episode 12. All three sources were then restored and verified by readback |
+| connected git source | **this row was dismissed in our first write-up and we now think that dismissal was a reasoning error — see "the one variable that fits" below.** Re-measured 2026-11-17 with `railway api serviceInstance(serviceId, environmentId) { source { repo } }`: staging's instances report `source.repo = paymax2022/spotlight-latest1`, development's report `repo: null`, production's reports `source: null`. Staging also accepted twelve consecutive uploads with that source connected, which is why we dropped it. **Re-checked 2026-11-18 with `serviceInstance(serviceId, environmentId){ source{ repo } }`: the property is not even uniform across staging** — `backend` and `frontend-web` report `repo: paymax2022/spotlight-latest1`, `frontend-admin` reports `repo: ""` (an empty string, not null), and development reports `null` for all three. The clean test of the source hypothesis is running now: `frontend-admin`'s source was disconnected at ~15:52Z and its CI leg re-run, so the verdict is an A/B against `backend` and `frontend-web` in the same run rather than another correlation. This row stays open until that lands. **It landed: the verdict is NO — see "Status of that sentence" below and episode 12; the source was restored and verified by readback** |
 
 ## The one variable that fits
 
@@ -205,7 +207,8 @@ uses, except where the row says otherwise.
 > for the ask.** The hypothesis below was tested twice that afternoon and failed
 > both times; the falsification and the surviving discriminator (the credential
 > path) are recorded immediately after it, and the live ask is the one in
-> "So the specific thing we would like checked".
+> "The ask". We are leaving the section in place because the withdrawal *is* the
+> finding we want you to see.
 
 `--environment staging` is the only difference between the refused calls and the
 accepted ones — same project, same three service IDs, same CLI build, same
@@ -237,41 +240,6 @@ laptop at 09:06:11Z and 09:06:41Z on 2026-11-16 (`616bd93b…` and `ea71b561…`
 both `SUCCESS`) — seven hours *before* this episode's fault window opened, so its
 legs have never been asked for an upload while the fault was live. The clean test
 of the source hypothesis is staging's own source, which we have not touched.
-
-**Status of that sentence as of 2026-11-18 16:47Z: the test has reported, and
-the answer is NO — this section's hypothesis is falsified.** `frontend-admin`'s
-staging `source.repo` was set to `""` at ~15:52Z (`serviceInstanceUpdate` with
-`input: {source: {repo: ""}}`; `input: {source: null}` is a silent no-op that
-still returns `true`), `backend` and `frontend-web` were left connected, and the
-arm was then run **twice**: once on the real Release lane — run `44296221501`
-re-run with `--failed`, so all three staging legs executed in one production
-release, 9 attempts each, `15:52:05.476Z` through `16:10:02.476Z` — and once on a
-branch-scoped serial matrix (`44349761092`). Both times the disconnected instance
-refused in exactly the same way as the two connected ones (`16:44:57.617Z` and
-`16:45:21.001Z`), always `error decoding response body` / `expected value at line
-1 column 1`, zero `Indexing...` lines, no deployment row. Full numbers in episode
-12. `frontend-admin`'s source has been restored
-(`serviceInstanceUpdate input:{source:{repo:"paymax2022/spotlight-latest1"}}` →
-readback `source{repo:"paymax2022/spotlight-latest1"}`, `rootDirectory
-"frontend-admin"`), so all three staging instances are back in their
-pre-experiment state and this pack is no longer describing a mutated config.
-
-Two premises of this section also need correcting on the record: the source
-property was never uniform across staging's instances during the experiment
-window, and the laptop arm that was going to serve as a control for it turns out
-to have been bandwidth-limited, so it controls for nothing. See "What episode 10,
-11 and 12 add".
-
-**What is left standing.** With the CLI pin, the archive shape, the checkout, the
-secret's validity, in-flight concurrency and now the connected git source all
-falsified from inside CI, the only discriminator this pack still has is the
-**credential path**: a per-environment project token from a runner refuses, while
-the same project's own CLI login session from a workstation passes initiate on the
-same instances within minutes (rows `a6cd8fd3…` `SUCCESS` 16:12:12Z and
-`162c1d04…` `SUCCESS` 15:18:18.823Z, both staging, both with `source.repo`
-connected). We are testing that now by minting a fresh, staging-scoped project
-token and repeating the identical serial probe with it, which separates "this
-token" from "project tokens as a class".
 
 ## Positive control, 2026-11-18 17:16-17:22Z: these same instances deploy `main` fine when Railway pulls the commit
 
@@ -323,25 +291,42 @@ different endpoints, and this call went out under an owner user session rather
 than a project token, so the endpoint and the credential both changed at once.
 What it does settle is the operational half. All three staging instances carry
 `source.repo = paymax2022/spotlight-latest1` again — the temporary removal from
-`frontend-admin`'s is the A/B described in episode 12, and that section records
-the restore and its readback — and that instance then built from that same source
-without trouble. The question this section left open — whether upload-initiate
-takes a different path, reaching out to GitHub, when the target instance carries a
-`ServiceSource` — is **answered no by that A/B and withdrawn**: two instances'
-worth of evidence, the disconnected leg refusing like the connected ones on both
-the real Release lane and the serial branch matrix.
+`frontend-admin`'s described in the Reproduction notes has been reversed, by us
+or from the dashboard we cannot tell from the API — and that instance then built
+from that same source without trouble. The question we still put to you is the
+one above: does upload-initiate take a different path, reaching out to GitHub,
+when the target instance carries a `ServiceSource`?
 
-So the specific thing we would like checked, restated as of 18:35Z: **why does
-upload-initiate refuse, before writing a row, when the call is authenticated with
-a staging-scoped project token from a runner, while the identical call for the
-same service on `development` succeeds in the same job and the same instance
-accepts a user-session upload minutes later?** Every repo-side and instance-side
-candidate this pack raised — CLI pin, archive shape and size, checkout,
-concurrency, environment state, `isUpdatable`, `clearance` and the connected
-`ServiceSource` — has now been falsified from inside CI, and the credential path
-is what remains. If initiate branches on token type, or resolves something for
-project tokens that a user session already carries, that is where we would like
-the server-side lookup.
+So the specific thing we would like checked: **does upload-initiate behave
+differently for a service instance that has a `ServiceSource` — does it resolve
+the installation, look up a branch, or check for an in-flight push-deploy before
+answering?** If it reaches GitHub at that point, an intermittent failure there
+fits every observation: sub-second refusal, no `Indexing...` line, one
+environment only, and recovery on its own timescale. We are ready to disconnect
+that source as a test, but we would rather ask than mutate a live environment on
+a theory.
+
+**Status of that sentence as of 2026-11-18 16:47Z: the test has reported, and
+the answer is NO — this section's hypothesis is falsified.** `frontend-admin`'s
+staging `source.repo` was set to `""` at ~15:52Z (`serviceInstanceUpdate` with
+`input: {source: {repo: ""}}`; `input: {source: null}` is a silent no-op that
+still returns `true`), `backend` and `frontend-web` were left connected, and a
+branch-scoped CI run executed all three staging uploads serially inside one
+matrix — both arms, one job set, one runner class, one CLI pin, one secret. The
+disconnected instance refused in exactly the same way as the two connected ones:
+`16:44:57.617Z` and `16:45:21.001Z`, `error decoding response body` / `expected
+value at line 1 column 1`, zero `Indexing...` lines, no deployment row. Full
+numbers in episode 12. `frontend-admin`'s source has been restored
+(`serviceInstanceUpdate input:{source:{repo:"paymax2022/spotlight-latest1"}}` →
+readback `source{repo:"paymax2022/spotlight-latest1"}`, `rootDirectory
+"frontend-admin"`), so all three staging instances are back in their
+pre-experiment state and this pack is no longer describing a mutated config.
+
+Two premises of this section also need correcting on the record: the source
+property was never uniform across staging's instances during the experiment
+window, and the laptop arm that was going to serve as a control for it turns out
+to have been bandwidth-limited, so it controls for nothing. See "What episode 10,
+11 and 12 add".
 
 ## What episode 10, 11 and 12 add
 
@@ -492,6 +477,22 @@ when a real archive is put behind the call, so whatever times out is on the
 payload path, not the auth path — and that is where we would like the server-side
 log for the 15:38Z, 15:46Z, 15:49Z and 15:53Z attempts.
 
+**What is left standing.** With the CLI pin, the archive shape, the checkout, the
+secret's validity, in-flight concurrency and now the connected git source all
+falsified from inside CI, the only discriminator this pack still has is the
+**credential path**: a per-environment project token from a runner refuses, while
+the same project's own CLI login session from a workstation passes initiate on the
+same instances within minutes (rows `a6cd8fd3…` `SUCCESS` 16:12:12Z and
+`162c1d04…` `SUCCESS` 15:18:18.823Z, both staging, both with `source.repo`
+connected). We are testing that now by minting a fresh, staging-scoped project
+token and repeating the identical serial probe with it, which separates "this
+token" from "project tokens as a class". **It landed, and the split was wrong
+twice over**: episode 13 — a token minted at 21:13:48Z — refused 27-for-27, so
+"this token" is not the discriminator either, and the CI-arm reproduction below
+then accepted a single-shot upload from the *same* credential seven minutes
+after its own 27 refusals — the fault is a time window on the upload-initiate
+path, not a property of any credential ([Resolution](#resolution--2026-11-18-2154z-the-fault-is-time-windowed-and-staging-no-longer-depends-on-it)).
+
 ## The CI arm reproduced cleanly on a fresh commit, 2026-11-18 18:10-18:29Z — and two more of our own explanations died with it
 
 This is the run we have been waiting for since the fault began. Release run `44359708940` (`main`
@@ -564,6 +565,8 @@ The distinction we need from you has narrowed to one thing: `POST /up`-equivalen
 **project token scoped to the staging environment**, refuses before producing a row; every other way of
 starting a deployment of that same commit to those same instances — user-session upload, repo-lane
 `serviceInstanceDeploy`, with or without a pinned `commitSha` — succeeds.
+
+
 
 ## Cost to us
 
@@ -761,7 +764,7 @@ Push any commit to `paymax2022/spotlight-latest1:main` and watch
 fault is intermittent, so this may need several attempts, and a docs-only merge
 produces no attempt at all: run `44111967023` cleared its gate in 5m30s and
 skipped every deploy leg because no service changed, so a sample needs a commit
-that changes a service. Nine episodes are on the record: 16:23:32-16:38:15Z on
+that changes a service. Thirteen episodes are on the record: 16:23:32-16:38:15Z on
 2026-11-16, in which CI's staging calls were refused throughout (though a probe
 job was accepted twice inside that span, at
 16:34:47 and 16:34:50Z); 23:18:25-23:38:48Z the same day, in which all 27 were
@@ -809,18 +812,20 @@ uploading machine measures 11.217 Mbps uplink, so 133 MB is ~95 s of transfer
 against a ~100 s proxy ceiling, and each produced a `FAILED` row (the two we
 queried carry `snapshotId: null`) — a mid-transfer death, not the pre-row refusal this ledger
 otherwise records. They stay listed because the withdrawal is itself the finding
-someone reading their own 524 needs. And 15:51:47-16:10:17Z, the A/B's first arm,
-on the release lane itself: episode 8's run `44296221501` re-run with
-`frontend-admin`'s staging git source disconnected and the other two instances
-left connected — refused 27 times out of 27 (26 × `error decoding response body`,
-1 × `error sending request`), zero `Indexing...` lines, and no deployment row from
-the run, the disconnected leg indistinguishable from the connected two
-(`134928782893` / `134928782909` / `134928783012`). And 16:40:10-16:45:23Z the twelfth episode — the same matrix on a branch,
+someone reading their own 524 needs. And 16:40:10-16:45:23Z the twelfth episode — the same matrix on a branch,
 serial, two attempts each, with `frontend-admin`'s staging git source
 disconnected as the A/B against the two instances that kept theirs — refused 6
 times out of 6, the disconnected instance indistinguishable from the connected
 ones (`134961865736` / `134961866303` / `134961866826`), which is how
-`ServiceSource.repo` left the list of suspects.
+`ServiceSource.repo` left the list of suspects; and 21:27:25-21:47:07Z the
+thirteenth episode — the staging `RAILWAY_TOKEN` replaced minutes earlier, at
+21:13:48Z, to test the one variable every episode had left uncontrolled — was
+refused 27 times out of 27, the first refusal 0.84 s after its step group
+opened, so a brand-new credential behaves identically to the old one. At
+21:54:16Z, seven minutes after that run closed, the same token, runner and CLI
+build accepted a single-shot staging upload, and a `serviceInstanceDeploy`
+mutation in the same minute built and served main's tip from the connected
+repo — the window's other edge, recorded in [Resolution](#resolution--2026-11-18-2154z-the-fault-is-time-windowed-and-staging-no-longer-depends-on-it).
 Not one staging deployment row was created on 2026-11-17: at 08:18Z the
 three `latestDeployment` records still dated from 2026-11-16 (`e4670d96`,
 `d5825eff`, `28946ae4`), and a fourth episode four hours later did not change
@@ -914,3 +919,101 @@ re-concluded `failure` at 14:00:36Z. Episode 9 is run `44323824351`, a push to
 `smoke Staging`, `migrate production database`, `deploy Production` and
 `smoke Production` are `134904132748` / `134904134661` / `134904136046` /
 `134904138560`.
+
+## Resolution — 2026-11-18 21:54Z: the fault is time-windowed, and staging no longer depends on it
+
+One more episode and one differential probe close this out on our side. The CI-arm
+reproduction (run `44359708940`, 27-for-27, with the size, `--verbose` and
+retry-budget theories dying with it) is recorded above, in *The CI arm reproduced
+cleanly on a fresh commit*; this section adds the fresh-token episode and the probe
+that produced the transport change. Everything in this section was read back out of
+the retained job logs, not from a shell transcript, so every number below can be
+re-checked with
+`gh api repos/paymax2022/spotlight-latest1/actions/jobs/<id>/logs`.
+
+**Episode 13 — run `44401391758`** (`workflow_dispatch` of `release.yml`, tip
+`560e4287d`, 21:25:53Z → 21:47:11Z, `failure`). `RAILWAY_TOKEN_STAGING` had been
+**replaced minutes earlier, at 21:13:48Z**, to test the one variable every episode
+so far left uncontrolled. The answer is no: each staging leg still lost its full
+budget — 9 of 9 on `backend` (job `135145845620`), 9 of 9 on `frontend-admin`
+(`135145845593`) and 9 of 9 on `frontend-web` (`135145845664`), 27 refusals between
+21:27:25Z and 21:47:07Z, the first one **0.84 s** after its step group opened
+(21:27:25.734Z → 21:27:26.576Z) — while the same run's three development uploads
+were accepted (`135145317315` / `135145317334` / `135145317466`). A brand-new
+credential behaves identically to the old one, so **the token is out as a variable.**
+
+**The probe — run `44406178859`** (`.github/workflows/f2-probe.yml`, branch
+`ci/f2-trigger-deploy-probe` at `729a3c1a3`, dispatch input
+`sha=560e4287dd25db5d21a999de4172ca5b6156607f`, single job `135161899727`,
+21:54:01Z → 22:03:43Z, `success`). One job, **one credential file held constant**,
+three arms, run seven minutes after episode 13 closed:
+
+| arm | what it asked | what came back |
+|---|---|---|
+| B — upload, no ladder | `railway up backend --path-as-root --no-gitignore --service backend --environment staging --detach --verbose --message f2-probe-armB` | **accepted**: `Indexing...`, `bytes: 7513454`, `Uploading...`, row `2d26552d-c5a2-43a4-9746-6bcae9142473`, `arm_B_upload_exit=0` at 21:54:16Z |
+| C — trigger | `railway api 'mutation($s,$e,$sha){ serviceInstanceDeploy(serviceId:$s, environmentId:$e, commitSha:$sha) }'` with the *same* service id and the *same* staging environment id | `{ "data": { "serviceInstanceDeploy": true } }` at 21:54:17Z |
+| C — outcome | `deployment list --service backend --environment staging --json`, then the host's own build endpoint | newest row `9f0d3f7c`: `status=SUCCESS`, `meta.commitHash=560e4287dd…`, `meta.branch=main`, `meta.cliMessage=null`, `meta.reason=deploy`; arm B's row `2d26552d` had become `REMOVED`; `https://backend-staging-new.up.railway.app/api/v1/public/build` → `{"commit":"560e4287dd25db5d21a999de4172ca5b6156607f","source":"env","started_at":"2026-11-18T21:54:39Z","uptime_seconds":540}` |
+
+Read the probe honestly, in the order it actually discriminates:
+
+1. **F2 is a window, not a ban on the staging target.** The identical token, runner,
+   CLI build, service, environment and command shape that refused 27 consecutive
+   times from 21:27:25Z to 21:47:07Z accepted a single-shot upload at 21:54:16Z. Any
+   sentence in this file that can be read as "staging uploads never work from CI" is
+   wrong; "intermittently" in *The ask* is the operative word, and the observed
+   windows run to at least nineteen minutes.
+2. **`serviceInstanceDeploy` works from a GitHub runner with the project token.**
+   Until this run the mutation had only ever been exercised with a user session. It
+   returned `true`, Railway built the connected commit 13 s later, and the instance
+   was serving it. That is the transport question this repo needed answered, and it
+   is answered yes.
+3. **The served-commit read alone does not prove which arm did it** — arm B and arm C
+   both targeted `560e4287d`. The discriminating evidence is the row census: the
+   active row is the one whose `meta` carries `commitHash` and `branch` with
+   `cliMessage: null` — the git-source signature, not an upload row — and arm B's
+   upload row is the one that got superseded into `REMOVED`.
+
+**What we changed.** `release.yml`'s three staging legs no longer upload. They call
+`scripts/ci/railway-trigger-deploy.sh`, which snapshots the deployment ids *before*
+mutating, pins `commitSha` to the sha the gate approved (never `latestCommit` — a
+merge train would otherwise deploy a commit CI did not test), waits for a **new** row
+whose `meta.commitHash` starts with that sha, and then compares the sha the backend
+actually serves. `backend/internal/platform/buildinfo/buildinfo.go` reads
+`BUILD_COMMIT` / `RAILWAY_GIT_COMMIT_SHA` / `SOURCE_COMMIT`, so a git build reports its
+own commit with `source:"env"` and needs no stamping. Development and production keep
+`railway up`: they have never refused, and their `rootDirectory` is `None`, so a
+repo-root git build there would run the root `Dockerfile` — which is the Go backend —
+into the two frontend services. See `docs/devops/deployment-matrix.md`.
+
+**Two things the CLI's own JSON taught us**, worth stating because both failed
+silently on the first draft and either one looks exactly like a deploy that never
+happened:
+
+- `railway deployment list --json` returns **only** `createdAt`, `id`, `meta` and
+  `status` (measured 22:06:55Z against staging's backend, 5 rows). There is no
+  `gmtCreate` and no `snapshotId` in the CLI envelope, although the GraphQL layer
+  exposes both — so a poll that filters rows by `gmtCreate` matches nothing forever.
+  The probe's own poll had this bug: it printed no row for the whole nine minutes
+  while the row it was hunting reached `SUCCESS` in about ninety seconds.
+- A git-connected row carries `meta.cliMessage: null` and puts the commit in
+  `meta.commitHash`. The selector written for the upload lane
+  (`select(.meta.cliMessage == $msg)`) therefore times out on a trigger row even when
+  the trigger succeeded. Both selectors are now pinned by
+  `scripts/ci/test-railway-trigger-deploy.sh` against a stub that returns the observed
+  field set, and the test has been mutation-proven in three places.
+
+**What is still open for Railway.** *The ask* is unchanged and the probe sharpens it:
+`--verbose` does not surface the status, and the refusal now has a documented
+on/off timescale — 27-for-27 inside 21:27:25Z–21:47:07Z, accepted at 21:54:16Z,
+against `environmentId = 6b5f27a3-a290-4574-a977-363eb21d43ad`. The `ServiceSource`
+hypothesis in *The one variable that fits* is **dead**: episode 12 disconnected
+`frontend-admin`'s staging git source (job `134961866826`, `source.repo` `""` re-read
+before and after) and it refused indistinguishably from the two instances that kept
+theirs, in the same run, minutes apart — so no probe straddling a refusal window is
+needed for that variable. What remains of *The ask* is narrower and entirely
+server-side: the HTTP status and body that staging's upload-initiate returns to a
+project-token runner during a refusal window — the CLI prints a decode error with no
+URL, no bytes and no status, so only your edge logs can say what status was actually
+sent. The mutation path is not offered as a fix to you — it is our workaround, and
+this file's title still describes a fault on your side that we can no longer
+characterise from ours.
