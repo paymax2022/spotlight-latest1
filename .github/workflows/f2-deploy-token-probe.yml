@@ -1,0 +1,266 @@
+name: F2 deploy-lane token probe (can a project token deploy staging?)
+# ONE question, asked in CI, with the only credential CI has.
+#
+# Why this exists
+# docs/devops/railway-upload-fault-report.md ("The lane that works") proves that
+# `serviceInstanceDeploy(serviceId, environmentId, commitSha)` puts a given commit
+# of `main` on all three staging services in ~90 s, with real `snapshotId`s, while
+# `railway up` refuses upload-initiate 27 times in a row (Release run
+# 44359708940, 2026-11-18 18:10-18:29Z). That proof was collected from a laptop
+# authenticated as the project OWNER.
+#
+# Release's staging leg authenticates with `RAILWAY_TOKEN_STAGING`, a project
+# token. Whether that token may call the mutation is the entire gate on replacing
+# the broken upload path with the working one — and it cannot be answered from a
+# laptop, because `projectTokenCreate` returns `Not Authorized` for the owner
+# session, so there is no throwaway token to test with either.
+# Measured 2026-11-19: `RAILWAY_TOKEN_STAGING` is a repository-level secret (it is
+# in `/actions/secrets`), and the `staging` environment holds zero environment
+# secrets — so this job gets the same secret as Release's leg without declaring
+# `environment:`, which also keeps it free of any deployment-approval wait.
+#
+# Verdicts this prints, and what each one means
+#   P3_ROW_SERVED      → the token can drive the repo lane AND the commit actually
+#                        built with a snapshot: wire the mutation into the staging
+#                        leg (the report lists the three edits it requires).
+#   P2_MUTATION_TRUE   → authorised, but P3 did not confirm delivery; treat the
+#                        lane as promising, not proven.
+#   P2_MUTATION_FALSE  → authorised but refused: Railway accepted the call and said
+#                        no. Different problem from F2, and the error text matters.
+#   P2_TOKEN_UNAUTH    → the repo lane is session-scoped; staging stays a manual
+#                        owner-session deploy until Railway fixes the upload.
+#   P1_TOKEN_UNAUTH    → the token cannot even read: scope problem, not F2.
+#   P1_SECRET_MISSING  → the secret is absent from this run, so nothing here proves
+#                        anything about the token. Fix the secret, re-dispatch.
+#
+# Inert unless dispatched: there is no push/pull_request/schedule trigger, so this
+# file cannot change any release, and it deploys nothing that staging should not
+# already be serving (it deploys main's tip, which is what staging is supposed to
+# run). It performs NO upload, so it cannot produce a second archive path to
+# confuse the record.
+run-name: F2 deploy-lane token probe → ${{ inputs.service }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Which staging service to deploy through the repo lane'
+        required: true
+        default: backend
+        type: choice
+        options:
+          - backend
+          - frontend-admin
+          - frontend-web
+
+permissions:
+  contents: read
+
+concurrency:
+  group: f2-deploy-token-probe
+  cancel-in-progress: false
+
+env:
+  # Identifiers read from the Railway API on 2026-11-18/19; P1 re-resolves the
+  # service NAME from the id it is about to deploy, so a stale literal can never
+  # silently point the mutation at some other service. The backend pair was
+  # re-measured against CLI 5.40.1 itself before this file landed.
+  PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+  STAGING_ENV: 6b5f27a3-a290-4574-a977-363eb21d43ad
+  SERVICE_BACKEND: 70de07d8-c058-4221-b645-61c4f1ac7aa5
+  SERVICE_FRONTEND_WEB: dda6372c-0bb7-4014-a2b1-aa646c11a281
+  SERVICE_FRONTEND_ADMIN: c4f1086e-0a2d-4367-b503-209c14a2ce6f
+  # Release's own pin, so the answer transfers to the real leg.
+  CLI_VERSION: 5.40.1
+
+jobs:
+  probe:
+    name: probe deploy auth (${{ inputs.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WANT: ${{ inputs.service }}
+      VERDICT: P0_NOT_REACHED
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Install the CLI at Release's pin
+        run: |
+          npm install --global "@railway/cli@${CLI_VERSION}" >/dev/null
+          railway --version
+
+      - name: Resolve main's tip
+        # Deliberately NOT GITHUB_SHA: a dispatch from a probe branch would
+        # otherwise "deploy" the probe commit itself and staging would silently
+        # stop serving main, which is the one thing this file must not cause.
+        id: sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+          case "$sha" in
+            ''|*[!0-9a-f]*) echo "::error::could not resolve main's tip"; exit 1 ;;
+          esac
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "main tip = $sha"
+
+      - name: P1 — does the staging token authenticate, and does the id mean what we think?
+        id: p1
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: |
+          set +e
+          case "$WANT" in
+            backend)        sid="$SERVICE_BACKEND" ;;
+            frontend-web)   sid="$SERVICE_FRONTEND_WEB" ;;
+            frontend-admin) sid="$SERVICE_FRONTEND_ADMIN" ;;
+            *) echo "::error::unknown service '$WANT'"; exit 1 ;;
+          esac
+          echo "sid=$sid" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::notice::P1_SECRET_MISSING RAILWAY_TOKEN_STAGING is not present in this run — nothing here proves anything about the token"
+            echo 'VERDICT=P1_SECRET_MISSING' >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          json="$(railway api \
+            'query($s:String!,$e:String!){ serviceInstance(serviceId:$s, environmentId:$e){ id serviceName } }' \
+            --var "s=$sid" --var "e=$STAGING_ENV" --compact 2>&1 | head -1)"
+          printf '    %s\n' "$json"
+          name="$(printf '%s' "$json" | jq -r '.data.serviceInstance.serviceName // empty' 2>/dev/null)"
+
+          if [ "$name" = "$WANT" ]; then
+            echo "::notice::P1_TOKEN_READ_OK token authenticates AND $sid resolves to the intended service ($WANT)"
+            echo 'ok=true' >> "$GITHUB_OUTPUT"
+            echo 'VERDICT=P1_TOKEN_READ_OK' >> "$GITHUB_ENV"
+          elif printf '%s' "$json" | grep -qi 'not authorized\|unauthorized\|forbidden\|401'; then
+            echo "::notice::P1_TOKEN_UNAUTH the staging token cannot even read — a scope problem, not F2"
+            echo 'ok=false' >> "$GITHUB_OUTPUT"
+            echo 'VERDICT=P1_TOKEN_UNAUTH' >> "$GITHUB_ENV"
+          else
+            echo '::notice::P1_OTHER unexpected answer (indented above); refusing to call the mutation blind'
+            echo 'ok=false' >> "$GITHUB_OUTPUT"
+            echo 'VERDICT=P1_OTHER' >> "$GITHUB_ENV"
+          fi
+
+      - name: P2 — can a PROJECT TOKEN call serviceInstanceDeploy?
+        id: p2
+        if: steps.p1.outputs.ok == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          SID: ${{ steps.p1.outputs.sid }}
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          set +e
+          json="$(railway api \
+            'mutation($s:String!,$e:String!,$sha:String){ serviceInstanceDeploy(serviceId:$s, environmentId:$e, commitSha:$sha) }' \
+            --var "s=$SID" --var "e=$STAGING_ENV" --var "sha=$SHA" --compact 2>&1 | head -1)"
+          printf '    %s\n' "$json"
+          val="$(printf '%s' "$json" | jq -r '.data.serviceInstanceDeploy // empty' 2>/dev/null)"
+          err="$(printf '%s' "$json" | jq -r '.errors[0].message // empty' 2>/dev/null)"
+          [ -n "$err" ] && printf '    error: %s\n' "$err"
+
+          if [ "$val" = "true" ]; then
+            echo "::notice::P2_MUTATION_TRUE a project token CAN call the repo-lane mutation"
+            echo 'ok=true' >> "$GITHUB_OUTPUT"
+            echo 'VERDICT=P2_MUTATION_TRUE' >> "$GITHUB_ENV"
+          elif [ "$val" = "false" ]; then
+            echo '::notice::P2_MUTATION_FALSE authorised but refused — Railway said no to the deploy itself, which is not F2 and not a token problem'
+            echo 'ok=false' >> "$GITHUB_OUTPUT"
+            echo 'VERDICT=P2_MUTATION_FALSE' >> "$GITHUB_ENV"
+          elif printf '%s' "$json" "$err" | grep -qi 'not authorized\|unauthorized\|forbidden'; then
+            echo '::notice::P2_TOKEN_UNAUTH the repo lane is session-scoped: the upload fault stays the only CI route until Railway fixes it'
+            echo 'ok=false' >> "$GITHUB_OUTPUT"
+            echo 'VERDICT=P2_TOKEN_UNAUTH' >> "$GITHUB_ENV"
+          else
+            echo '::notice::P2_OTHER mutation returned something else (indented above)'
+            echo 'ok=false' >> "$GITHUB_OUTPUT"
+            echo 'VERDICT=P2_OTHER' >> "$GITHUB_ENV"
+          fi
+
+      - name: P3 — did a row with a snapshotId actually appear for that commit?
+        # `true` alone is not delivery: the report's 524 arm proves a mid-transfer
+        # death still creates a row, and a `true` with no row would be a third
+        # shape. Read the instance back and print the row, so the verdict is
+        # attributable to a deployment id rather than to a boolean.
+        id: p3
+        if: steps.p2.outputs.ok == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          SID: ${{ steps.p1.outputs.sid }}
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          set +e
+          last='(no readable row)'
+          unreadable=0
+          for i in $(seq 1 40); do
+            json="$(railway api \
+              'query($s:String!,$e:String!){ serviceInstance(serviceId:$s, environmentId:$e){ latestDeployment{ id createdAt status snapshotId meta } } }' \
+              --var "s=$SID" --var "e=$STAGING_ENV" --compact 2>/dev/null | head -1)"
+            line="$(printf '%s' "$json" | SHA="$SHA" python3 -c '
+          import json, os, sys
+          sha = os.environ["SHA"]
+          raw = sys.stdin.read().strip()
+          try:
+              ld = (json.loads(raw).get("data") or {}).get("serviceInstance", {}).get("latestDeployment") or {}
+          except Exception:
+              print("row=(unparseable) " + raw[:120]); raise SystemExit(3)
+          meta = ld.get("meta") or {}
+          commit = str(meta.get("commitHash") or "")
+          print("row=%s status=%s created=%s commit=%s snapshot=%s branch=%s reason=%s" % (
+              str(ld.get("id"))[:8], ld.get("status"), ld.get("createdAt"), commit[:9],
+              str(ld.get("snapshotId"))[:8], meta.get("branch"), meta.get("reason")))
+          if commit == sha and ld.get("snapshotId") and ld.get("status") == "SUCCESS":
+              raise SystemExit(0)
+          if commit == sha and ld.get("status") in ("FAILED", "CRASHED", "REMOVED"):
+              raise SystemExit(2)
+          raise SystemExit(3)
+          ')"
+            rc=$?
+            printf '  [%2d] %s\n' "$i" "$line"
+            case "$rc" in
+              0) echo 'VERDICT=P3_ROW_SERVED' >> "$GITHUB_ENV"
+                 printf 'Row proving delivery:\n\n    %s\n' "$line" >> "$GITHUB_STEP_SUMMARY"
+                 exit 0 ;;
+              2) echo 'VERDICT=P3_ROW_FAILED' >> "$GITHUB_ENV"
+                 printf 'Row that ended red (a build problem, not an auth problem):\n\n    %s\n' "$line" >> "$GITHUB_STEP_SUMMARY"
+                 exit 1 ;;
+            esac
+            last="$line"
+            if [ "$rc" = 3 ] && printf '%s' "$line" | grep -q unparseable; then
+              unreadable=$((unreadable + 1))
+              if [ "$unreadable" -ge 3 ]; then
+                echo '::notice::P3_READ_FAIL the token cannot read the instance back — the P2 answer stands, delivery unproven'
+                echo 'VERDICT=P3_READ_FAIL' >> "$GITHUB_ENV"
+                exit 1
+              fi
+            fi
+            sleep 15
+          done
+          printf 'Last row seen:\n\n    %s\n' "$last" >> "$GITHUB_STEP_SUMMARY"
+          echo '::notice::P3_NO_ROW no deployment for that commit appeared in ~10 min — `true` did not become work; treat the lane as unproven'
+          echo 'VERDICT=P3_NO_ROW' >> "$GITHUB_ENV"
+          exit 1
+
+      - name: Verdict
+        if: always()
+        env:
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          {
+            echo "## F2 deploy-lane token probe"
+            echo ""
+            echo "| field | value |"
+            echo '| --- | --- |'
+            echo "| service | \`$WANT\` |"
+            echo "| main tip | \`$SHA\` |"
+            echo "| verdict | **\`$VERDICT\`** |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo ""
+          echo "VERDICT=$VERDICT"
+          # Green only when the CI-usable lane is proven end to end; every other
+          # answer — including "authorised but refused" — must not look like a pass.
+          [ "$VERDICT" = "P3_ROW_SERVED" ]
