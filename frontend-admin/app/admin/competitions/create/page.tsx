@@ -43,6 +43,7 @@ const FALLBACK_CATEGORIES: ContestCategory[] = [
 const TYPES: ContestType[] = [
   'online_contest', 'physical_audition', 'hybrid_contest',
   'public_voting_contest', 'bootcamp_reality_show', 'housemate_reality_show',
+  'one_beat_one_verse',
   'pitch_competition', 'school_vs_school_contest', 'regional_contest',
   'national_contest', 'international_entry',
 ];

@@ -23,6 +23,11 @@ export type ContestType =
   | 'physical_audition'
   | 'hybrid_contest'
   | 'public_voting_contest'
+  // Open Mic's engine type. The web catalog declares this for `open-mic-competition`
+  // (src/features/registration/reference-data.ts), and the phone reads the same
+  // contest records, so the union has to carry it or a fetched Open Mic contest
+  // types as a value the app says cannot exist.
+  | 'one_beat_one_verse'
   | 'bootcamp_reality_show'
   | 'housemate_reality_show'
   | 'pitch_competition'

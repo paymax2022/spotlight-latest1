@@ -6,6 +6,7 @@ import {
   SONG_EXTENSION,
   SONG_OBJECT_PREFIX,
   buildSongObjectKey,
+  isSongKeyForSubmission,
   isSongObjectKeyFor,
   isUUID,
   songContestRef,
@@ -106,6 +107,42 @@ describe('isSongObjectKeyFor', () => {
   it('is case-tolerant on the stem, which Postgres uuids are', () => {
     const upper = keyFor({ submissionId: SUBMISSION.toUpperCase() });
     expect(isSongObjectKeyFor({ key: upper, contestRef: CONTEST_REF, artistUserId: ARTIST })).toBe(true);
+  });
+});
+
+describe('isSongKeyForSubmission', () => {
+  it('lets the reader play a row whose contest was renamed', () => {
+    // Weaker than `isSongObjectKeyFor` on purpose: a reader has only the row, so
+    // it pins the object to the submission id rather than to a contest ref that
+    // an admin may since have changed.
+    expect(isSongKeyForSubmission(keyFor(), SUBMISSION)).toBe(true);
+    expect(isSongKeyForSubmission(keyFor({ contestRef: 'an-old-slug' }), SUBMISSION)).toBe(true);
+    expect(isSongKeyForSubmission(keyFor({ submissionId: SUBMISSION.toUpperCase() }), SUBMISSION)).toBe(true);
+  });
+
+  it('refuses a key that names a different submission', () => {
+    expect(isSongKeyForSubmission(keyFor({ submissionId: '33333333-3333-4333-8333-333333333333' }), SUBMISSION)).toBe(false);
+  });
+
+  it('refuses traversal, wrong shapes and non-string keys', () => {
+    const cases = [
+      `openmic/${CONTEST_REF}/${ARTIST}/../../etc/passwd`,
+      `registration/${ARTIST}/${SUBMISSION}.mp3`,
+      `openmic/${CONTEST_REF}/${SUBMISSION}.mp3`,
+      `openmic/${CONTEST_REF}/${ARTIST}/${SUBMISSION}`,
+      `openmic/${CONTEST_REF}/${ARTIST}/${SUBMISSION}.svg`,
+      undefined,
+      null,
+      42,
+    ];
+    for (const key of cases) {
+      expect(isSongKeyForSubmission(key, SUBMISSION), String(key)).toBe(false);
+    }
+  });
+
+  it('refuses an id that cannot be a row id, so the check is never vacuous', () => {
+    expect(isSongKeyForSubmission(`openmic/${CONTEST_REF}/${ARTIST}/.mp3`, '')).toBe(false);
+    expect(isSongKeyForSubmission(`openmic/a/b/not-a-uuid.mp3`, 'not-a-uuid')).toBe(false);
   });
 });
 

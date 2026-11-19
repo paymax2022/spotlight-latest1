@@ -156,12 +156,35 @@ export default function OpenMicEntryForm({
       const submissionId = String(presignPayload.upload?.submissionId || '');
       if (!uploadUrl || !objectKey || !submissionId) throw new Error('Upload URL was not returned.');
 
-      const uploadRes = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': contentType },
-        body: file,
-      });
-      if (!uploadRes.ok) throw new Error('Direct upload to storage failed.');
+      // Two transports, decided by the server rather than guessed here. With R2
+      // configured the presign hands back a signed PUT URL; without it (any local
+      // checkout) it hands back mode 'direct' and the bytes go to our own multipart
+      // route, which writes them to disk. Always issuing the PUT is how localhost
+      // "uploaded" a song to a URL that was really the API's own path, then had
+      // nothing to play back.
+      if (String(presignPayload.upload?.mode || 'presigned') === 'direct') {
+        const body = new FormData();
+        body.append('file', file);
+        body.append('contestSlug', contestSlug);
+        body.append('submissionId', submissionId);
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'POST',
+          // No Content-Type header: the browser must set it, boundary included.
+          headers: { Authorization: `Bearer ${token}` },
+          body,
+        });
+        if (!uploadRes.ok) {
+          const failed = await uploadRes.json().catch(() => ({}));
+          throw new Error(String(failed?.error || 'Song upload failed.'));
+        }
+      } else {
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': contentType },
+          body: file,
+        });
+        if (!uploadRes.ok) throw new Error('Direct upload to storage failed.');
+      }
 
       const completeRes = await fetch('/api/open-mic/uploads/complete', {
         method: 'POST',

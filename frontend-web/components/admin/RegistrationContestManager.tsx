@@ -38,6 +38,7 @@ const contestTypes: ContestType[] = [
   'housemate_reality_show',
   'bootcamp_reality_show',
   'public_voting_contest',
+  'one_beat_one_verse',
   'hybrid_contest',
   'physical_audition',
   'online_contest',

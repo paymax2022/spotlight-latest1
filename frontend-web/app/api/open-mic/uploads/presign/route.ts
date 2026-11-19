@@ -1,22 +1,31 @@
+/**
+ * Ask for permission to hand in a song.
+ *
+ * The answer now comes with a `mode`, because "where do the bytes go?" is a
+ * deployment question rather than a client question: with R2 credentials the
+ * server signs a PUT straight to the bucket, and without them (localhost, CI)
+ * the client POSTs multipart to `/api/open-mic/uploads`, which holds the file on
+ * disk. Both modes return the same `objectKey`, `submissionId` and `readerUrl`,
+ * so `complete` and every reader afterwards are identical.
+ *
+ * The eligibility gate here is the one change with security weight: this route
+ * used to check only the submission window, so a signed-up-but-`pending`
+ * applicant could obtain a presigned PUT for the bucket.
+ */
 import { randomUUID } from 'crypto';
+import { DIRECT_SONG_UPLOAD_PATH, SONG_CONTENT_TYPE } from '@/src/features/openmic/song-storage';
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
-import { createR2UploadUrl, sanitizeObjectFileName } from '@/src/lib/storage/r2';
+import { createR2UploadUrl, hasR2Config } from '@/src/lib/storage/r2';
 import { getContestBySlug } from '@/src/server/openmic/persistence';
-
-const MAX_MP3_BYTES = 50 * 1024 * 1024;
-const ALLOWED_AUDIO_TYPE = 'audio/mp3';
-
-function isSubmissionWindowOpen(contest: Awaited<ReturnType<typeof getContestBySlug>>) {
-  if (!contest) return false;
-  if (contest.status === 'submission_open') return true;
-  const end = contest.submissionEndAt ? Date.parse(contest.submissionEndAt) : Number.NaN;
-  const start = contest.submissionStartAt ? Date.parse(contest.submissionStartAt) : Number.NaN;
-  const now = Date.now();
-  if (Number.isFinite(start) && now < start) return false;
-  if (Number.isFinite(end) && now > end) return false;
-  return Number.isFinite(start) || Number.isFinite(end);
-}
+import { getSongSubmissionEligibility } from '@/src/server/openmic/submission-eligibility';
+import {
+  eligibilityForbiddenResponse,
+  guardSongContentType,
+  guardSongFileName,
+  guardSongSize,
+  songUploadDescriptor,
+} from '@/src/server/openmic/song-upload-request';
 
 export async function POST(request: Request) {
   try {
@@ -29,43 +38,61 @@ export async function POST(request: Request) {
     };
     if (!body) return errorResponse('Invalid JSON body', 400);
     const contestSlug = String(body.contestSlug || '').trim();
-    const fileName = sanitizeObjectFileName(String(body.fileName || ''));
-    const contentType = String(body.contentType || '').toLowerCase();
-    const fileSize = Number(body.fileSize || 0);
+    const fileName = String(body.fileName || '');
+    const contentType = String(body.contentType || '');
+    const fileSize = body.fileSize;
 
     if (!contestSlug) return errorResponse('contestSlug is required', 400);
-    if (!fileName.toLowerCase().endsWith('.mp3')) return errorResponse('Only MP3 uploads are allowed', 400);
-    if (contentType !== ALLOWED_AUDIO_TYPE) return errorResponse('File type must be audio/mp3', 400);
-    if (!Number.isFinite(fileSize) || fileSize <= 0) return errorResponse('fileSize is required', 400);
-    if (fileSize > MAX_MP3_BYTES) return errorResponse('MP3 file must be 50MB or less', 400);
+    const nameGuard = guardSongFileName(fileName);
+    if (!nameGuard.ok) return errorResponse(nameGuard.message, 400);
+    const typeGuard = guardSongContentType(contentType);
+    if (!typeGuard.ok) return errorResponse(typeGuard.message, 400);
+    const sizeGuard = guardSongSize(fileSize);
+    if (!sizeGuard.ok) return errorResponse(sizeGuard.message, 400);
 
     const contest = await getContestBySlug(contestSlug);
     if (!contest) return errorResponse('Contest not found', 404);
-    if (!isSubmissionWindowOpen(contest)) {
-      return errorResponse('Song upload deadline is closed for this contest', 403);
-    }
+
+    const verdict = await getSongSubmissionEligibility(contest, user.id);
+    if (!verdict.eligible) return eligibilityForbiddenResponse(verdict);
 
     const submissionId = randomUUID();
-    const artistId = user.id;
-    const contestId = contest.slug || contest.id;
-    const objectKey = `openmic/${contestId}/${artistId}/${submissionId}.mp3`;
+    const upload = songUploadDescriptor({ contest, artistUserId: user.id, submissionId });
 
-    const uploadUrl = await createR2UploadUrl({ key: objectKey, contentType });
+    if (!hasR2Config()) {
+      return successResponse(
+        {
+          success: true,
+          upload: {
+            ...upload,
+            mode: 'direct' as const,
+            uploadUrl: DIRECT_SONG_UPLOAD_PATH,
+            method: 'POST' as const,
+            fieldName: 'file' as const,
+            headers: {},
+          },
+        },
+        201,
+      );
+    }
+
+    // The object we presign is always served back as mp3, whatever the client
+    // declared; `SONG_CONTENT_TYPE` keeps the signature and the stored metadata
+    // on one value instead of echoing a client string into a signed header.
+    const uploadUrl = await createR2UploadUrl({ key: upload.objectKey, contentType: SONG_CONTENT_TYPE });
     return successResponse(
       {
         success: true,
         upload: {
-          contestId,
-          artistId,
-          submissionId,
-          objectKey,
+          ...upload,
+          mode: 'presigned' as const,
           uploadUrl,
-          method: 'PUT',
-          headers: { 'Content-Type': contentType },
-          maxBytes: MAX_MP3_BYTES,
+          method: 'PUT' as const,
+          fieldName: null,
+          headers: { 'Content-Type': SONG_CONTENT_TYPE },
         },
       },
-      201
+      201,
     );
   } catch (error) {
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {

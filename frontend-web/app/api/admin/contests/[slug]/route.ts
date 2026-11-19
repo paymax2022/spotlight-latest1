@@ -20,6 +20,7 @@ const allowedTypes: ContestType[] = [
   'physical_audition',
   'hybrid_contest',
   'public_voting_contest',
+  'one_beat_one_verse',
   'bootcamp_reality_show',
   'housemate_reality_show',
   'pitch_competition',

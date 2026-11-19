@@ -1,6 +1,9 @@
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { hasUsableSupabaseConfig, hasUsableSupabaseReadConfig } from '@/lib/supabase/runtime';
 import { OPEN_MIC_CONTEST_TYPE } from '@/src/features/openmic/constants';
+import { buildSongObjectKey, songContestRef, songReaderUrl } from '@/src/features/openmic/song-storage';
+import { getSongSubmissionEligibility } from './submission-eligibility';
+import { isOpenMicContestRow } from './edition-identity';
 import { randomUUID } from 'node:crypto';
 import { recordVoteFraudSignals, recordVoteAudit } from '@/src/server/voting/core';
 import type {
@@ -124,7 +127,13 @@ function mapContestRow(row: any): OpenMicContest {
   const recurrence = (assets.recurrence || {}) as Record<string, any>;
   const finale = (assets.finale || {}) as Record<string, any>;
   const voting = (assets.voting || {}) as Record<string, any>;
-  const beat = Array.isArray(row.competition_beats) ? row.competition_beats[0] : undefined;
+  // The edition's live beat, not whichever row the join happened to return first:
+  // `competition_beats` keeps retired rows for the audit trail and the embed has no
+  // ordering guarantee, so `[0]` could point an applicant at last month's file.
+  const beatRows = safeArray<any>(row.competition_beats).filter(Boolean);
+  const beat =
+    beatRows.find((item) => item.is_active === true) ||
+    beatRows.slice().sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0];
 
   return {
     id: row.id,
@@ -349,10 +358,19 @@ export async function listContests(input?: { includeNonPublic?: boolean; month?:
     const { data, error } = await supabase
       .from('contests')
       .select('*, competition_beats(*)')
-      .eq('contest_type', OPEN_MIC_CONTEST_TYPE)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    return safeArray<any>(data).map(mapContestRow).filter((contest) => {
+    // Membership in the Open Mic plane is decided by `isOpenMicContestRow`, not by
+    // a `contest_type` eq: an edition published from the registration plane is
+    // typed `public_voting_contest`, and the old hard filter hid it from every
+    // Open Mic screen — beat, application, song upload — while the admin contest
+    // list and the mobile Connect API both showed it live. `contests` holds a few
+    // dozen rows, so narrowing here instead of in SQL costs nothing measurable and
+    // keeps exactly one definition of "which row is Open Mic".
+    return safeArray<any>(data)
+      .filter(isOpenMicContestRow)
+      .map(mapContestRow)
+      .filter((contest) => {
       if (!input?.includeNonPublic && contest.visibility === 'hidden') return false;
       if (typeof input?.month === 'number' && contest.month !== input.month) return false;
       if (typeof input?.year === 'number' && contest.year !== input.year) return false;
@@ -598,11 +616,13 @@ export async function getContestBySlug(slug: string) {
     const { data, error } = await supabase
       .from('contests')
       .select('*, competition_beats(*)')
-      .eq('contest_type', OPEN_MIC_CONTEST_TYPE)
       .eq('slug', slug)
       .maybeSingle();
     if (error) throw error;
     if (!data) return null;
+    // Slug alone is not enough to call a row an Open Mic edition, and the type is
+    // no longer enough either; see `listContests`.
+    if (!isOpenMicContestRow(data)) return null;
     return mapContestRow(data);
   } catch (error) {
     throw error;
@@ -845,6 +865,16 @@ export async function upsertBeat(contestId: string, payload: any) {
       updatedAt: now,
     };
     const supabase = createAdminClient();
+    // One live beat per edition. Earlier rows stay for the audit trail — a song
+    // already uploaded against them keeps its `beat_id` — but they must not
+    // compete for the title, because an applicant can only record over one file.
+    const { error: retireError } = await supabase
+      .from('competition_beats')
+      .update({ is_active: false })
+      .eq('competition_id', contestId)
+      .eq('is_active', true)
+      .neq('id', beat.id);
+    if (retireError) throw retireError;
     const { error } = await supabase.from('competition_beats').upsert({
       id: beat.id,
       competition_id: contestId,
@@ -1240,19 +1270,26 @@ export async function createSubmission(input: Parameters<typeof createSubmission
       return { success: false as const, errors: { beat: 'Official beat not yet available.' } };
     }
 
+    // Approval is a union across the three planes a reviewer may have used
+    // (`src/server/openmic/submission-eligibility.ts`). The lookup below is
+    // by e-mail/stage name and returns `null` for an applicant who registered
+    // through `/apply`, which used to mean "no application, no gate".
+    const nowMs = Date.now();
+    const eligibility = await getSongSubmissionEligibility(contest, input.artistUserId, nowMs);
     const linkedApplication = await findApplicationForContest(contest.id, input.email, input.stageName);
-    if (linkedApplication && linkedApplication.applicationStatus !== 'approved') {
+    // A row that predates `competition_enrollments.user_id` can only be matched by
+    // e-mail, so it still counts; a row owned by a different account never does.
+    const legacyApproval = Boolean(
+      linkedApplication && linkedApplication.applicationStatus === 'approved' && !linkedApplication.userId,
+    );
+    if (eligibility.source === 'none' && !legacyApproval) {
       return { success: false as const, errors: { application: 'Your application has not been approved yet.' } };
     }
     if (contest.entryFeeRequired && linkedApplication && !['paid', 'waived'].includes(linkedApplication.paymentStatus)) {
       return { success: false as const, errors: { payment: 'Entry fee payment is required before song submission.' } };
     }
 
-    const nowMs = Date.now();
-    const withinSubmissionWindow =
-      contest.status === 'submission_open' ||
-      isWithinWindow(nowMs, contest.submissionStartAt, contest.submissionEndAt);
-    if (!withinSubmissionWindow) {
+    if (!eligibility.window.open) {
       return { success: false as const, errors: { submissionWindow: 'Song submission is currently closed for this contest.' } };
     }
 
@@ -1300,14 +1337,19 @@ export async function createSubmission(input: Parameters<typeof createSubmission
 
     const now = new Date().toISOString();
     const expectedObjectKey = input.songObjectKey
-      ? `openmic/${contest.slug || contest.id}/${submissionUserId}/${submissionId}.mp3`
+      ? buildSongObjectKey({
+          contestRef: songContestRef(contest),
+          artistUserId: submissionUserId,
+          submissionId,
+        })
       : '';
     if (input.songObjectKey && input.songObjectKey !== expectedObjectKey) {
       return { success: false as const, errors: { songObjectKey: 'Uploaded song object key is invalid.' } };
     }
-    const submissionSongUrl = input.songObjectKey
-      ? `/api/admin/open-mic/submissions/${submissionId}/song`
-      : input.songUrl;
+    // The public reader, not the admin route: this value is what a contestant's
+    // own profile and the mobile app end up playing, and the admin path requires
+    // an admin session.
+    const submissionSongUrl = input.songObjectKey ? songReaderUrl(submissionId) : input.songUrl;
     const normalizedGenre = String(input.genre || contest.beat?.genre || 'Unspecified').trim() || 'Unspecified';
     const normalizedSongTitle =
       String(input.songTitle || '').trim() ||
@@ -1429,13 +1471,17 @@ export async function recordSubmissionUploadComplete(input: {
   const contest = await getContestBySlug(input.contestSlug);
   if (!contest) throw new Error('Contest not found.');
 
-  const expectedObjectKey = `openmic/${contest.slug || contest.id}/${input.artistUserId}/${input.submissionId}.mp3`;
+  const expectedObjectKey = buildSongObjectKey({
+    contestRef: songContestRef(contest),
+    artistUserId: input.artistUserId,
+    submissionId: input.submissionId,
+  });
   if (input.objectKey !== expectedObjectKey) {
     throw new Error('Uploaded song object key is invalid.');
   }
 
   const now = new Date().toISOString();
-  const songUrl = `/api/admin/open-mic/submissions/${input.submissionId}/song`;
+  const songUrl = songReaderUrl(input.submissionId);
   const supabase = createAdminClient();
   const { error } = await supabase.from('competition_entries').upsert({
     id: input.submissionId,

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import OpenMicAuthGate from '@/components/openmic/OpenMicAuthGate';
+import { songReaderUrl } from '@/src/features/openmic/song-storage';
 
 type ApiState = {
   role?: string;
@@ -84,9 +85,23 @@ export default function OpenMicProfilePage() {
             <h3>My Song Submissions</h3>
             {(state.submissions || []).length === 0 ? <p className="mb-0">No submissions yet.</p> : (
               <ul className="mb-0">
-                {(state.submissions || []).map((row) => (
-                  <li key={String(row.id)}>{String(row.songTitle || 'Untitled')} - {String(row.status || 'submitted')}</li>
-                ))}
+                {(state.submissions || []).map((row) => {
+                  const id = String(row.id || '');
+                  // Same reader the voters use; this caller is the artist who owns
+                  // the row, so the reader also serves a draft that has not been
+                  // submitted yet — the listen-back-before-submitting step.
+                  const hasSong = Boolean(row.songObjectKey || row.songUrl);
+                  return (
+                    <li key={id} className="mb-3">
+                      <div>
+                        {String(row.songTitle || 'Untitled')} - {String(row.status || 'submitted')}
+                      </div>
+                      {id && hasSong ? (
+                        <audio controls preload="none" src={songReaderUrl(id)} className="d-block mt-2 w-100" />
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </section>

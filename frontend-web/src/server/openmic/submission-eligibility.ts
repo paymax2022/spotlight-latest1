@@ -13,6 +13,7 @@
  * collector below is the only part that talks to Supabase.
  */
 import { createAdminClient } from '@/lib/supabase/server';
+import { OPEN_MIC_CONTEST_SLUGS } from '@/src/features/openmic/constants';
 import { describeSubmissionWindow, type SubmissionWindowVerdict } from './submission-window';
 
 export type EligibilitySource = 'promoted' | 'enrollment' | 'registration' | 'none';
@@ -60,7 +61,7 @@ const APPROVED_ENROLLMENT_STATUSES = ['approved'];
  * Open Mic approval is what lets an already-approved applicant upload a song
  * against the edition that carries the beat.
  */
-const OPEN_MIC_REGISTRATION_SLUGS = ['open-mic-competition', 'open-mic', 'open-mic-2026'];
+const OPEN_MIC_REGISTRATION_SLUGS = OPEN_MIC_CONTEST_SLUGS;
 
 /**
  * Pure decision. Sources are tried in the order a reviewer would recognise:
