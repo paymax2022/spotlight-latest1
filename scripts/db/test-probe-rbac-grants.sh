@@ -24,6 +24,10 @@ psql_fixture() { psql "$TEST_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -At "$@"; }
 [ -f "$PROBE" ] || fail "probe script missing"
 grep -qE "^PGOPTIONS=.*default_transaction_read_only=on" "$PROBE" \
   || fail "probe must export default_transaction_read_only=on in PGOPTIONS (anchored: a comment is not enforcement)"
+grep -qE '^q\(\)[[:space:]]*\{[[:space:]]*psql .*-c "BEGIN READ ONLY; .*ROLLBACK"' "$PROBE" \
+  || fail "probe's q() must run every statement inside BEGIN READ ONLY … ROLLBACK — PGOPTIONS is a startup-parameter REQUEST, and a pooler that drops it (measured on the production session pooler, run 44478529252) leaves the read-only guarantee with nothing behind it"
+grep -qE 'SHOW transaction_read_only' "$PROBE" \
+  || fail "probe must read transaction_read_only from inside its own transaction: the per-transaction GUC is what proves the wrapper took effect, whereas the session GUC only reports what the client asked for"
 grep -qE '^\s*(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE|GRANT|REVOKE)\b' "$PROBE" \
   && fail "probe source contains a write statement outside the read-only guard"
 
@@ -107,7 +111,7 @@ roles_present="$(psql_fixture -c "select count(*) from public.roles where slug i
 # row even when its INSERT…SELECT matched zero role rows.
 run bash "$PROBE" --db-url "$TEST_DATABASE_URL" --mode apply --expect "$EXPECT"
 [ "$rc" -eq 1 ] || fail "un-seeded state must exit 1 in apply mode, got $rc: $out"
-printf '%s\n' "$out" | grep -qF "session: read-only (default_transaction_read_only=on)" || fail "the probe did not confirm its own read-only posture"
+printf '%s\n' "$out" | grep -qF "transaction: read-only (transaction_read_only=on)" || fail "the probe did not confirm read-only from inside its own transaction"
 printf '%s\n' "$out" | grep -qF "permission row: MISSING  $SLUG" || fail "RED: permission row not reported MISSING"
 for r in super-admin system-admin contest-manager; do
   printf '%s\n' "$out" | grep -qF "grant: MISSING  $r -> $SLUG" || fail "RED: $r grant not reported MISSING"
@@ -155,25 +159,54 @@ run bash "$PROBE" --db-url "$TEST_DATABASE_URL" --mode apply --expect "$EXPECT"
 after="$(counts)"
 [ "$before" = "$after" ] || fail "probe changed row counts or timestamps ($before -> $after)"
 
-# ── 7b. the posture check is load-bearing: a session the server made writable ──
-# PGOPTIONS is a request, not a guarantee. A transaction pooler that drops session
-# tuning, or a DSN carrying its own `options=`, overrides it, and the probe would
-# then certify grants over a connection that can write. Measured on this fixture
-# (2026-11-18): `-c` in PGOPTIONS beats ALTER DATABASE/ROLE SET, but a URI
-# `options=` beats PGOPTIONS — the server then answers `off` and a
-# `CREATE TABLE` succeeds. Without this case, deleting the probe's
-# `[ "$ro" = on ] || die3` line changes nothing observable, which is how a guard
-# that is only a printed string survives review.
+# ── 7b. the guarantee is per-transaction, so a writable SESSION ≠ a writable PROBE
+# PGOPTIONS is a startup-parameter REQUEST. Measured on this fixture (2026-11-18):
+# `-c` in PGOPTIONS beats ALTER DATABASE/ROLE SET, but a URI `options=` beats
+# PGOPTIONS — the server then answers `off` and a `CREATE TABLE` succeeds. And
+# measured against the real production target the next day (run 44478529252, the
+# session pooler at aws-0-eu-north-1:5432): the pooler does not forward the
+# client's `options` at all, so `SHOW default_transaction_read_only` answered
+# `off` and the probe refused with 3 — correctly, but that made the tool unable
+# to answer the one question it was built for. `BEGIN READ ONLY` is a statement,
+# not a startup parameter, so it survives any pooler. This section therefore
+# asserts BOTH halves: the wrapper makes a hostile session harmless, and
+# without the wrapper a hostile session is refused rather than concluded over.
 WRITABLE_URL="${TEST_DATABASE_URL%%\?*}?options=-c%20default_transaction_read_only%3Doff"
-echo "== 7b. posture: DSN options= override (session must be refused)"
+echo "== 7b. transaction-level read-only holds over a session the server made writable"
 posture="$(PGOPTIONS='-c default_transaction_read_only=on' psql "$WRITABLE_URL" -X -At \
   -c 'show default_transaction_read_only' 2>&1 | tail -1)"
 [ "$posture" = "off" ] || fail "the fixture no longer demonstrates the hazard (DSN override yields '$posture', need 'off') — this case proves nothing while it is 'on'"
+before7b="$(counts)"
 run bash "$PROBE" --db-url "$WRITABLE_URL" --mode apply --expect "$EXPECT"
-[ "$rc" -eq 3 ] || fail "a writable session must be refused with 3, got $rc: $out"
+[ "$rc" -eq 0 ] || fail "a writable session must not stop the probe while every statement sits in BEGIN READ ONLY, got $rc: $out"
+printf '%s\n' "$out" | grep -qF "transaction: read-only (transaction_read_only=on)" \
+  || fail "the probe did not read its read-only guarantee from inside its own transaction: $out"
+printf '%s\n' "$out" | grep -qF "session: default_transaction_read_only=off" \
+  || fail "the probe must say plainly that the SESSION is writable — hiding that would re-create the blind spot: $out"
+after7b="$(counts)"
+[ "$before7b" = "$after7b" ] || fail "the probe wrote through a hostile session ($before7b -> $after7b)"
+
+# The mutant that makes the wrapper load-bearing: strip BEGIN READ ONLY from q()
+# and the same hostile DSN must be refused with 3, with no verdict lines. Assert
+# the patch actually applied (one match, sha changed) — a no-op patch reports a
+# survivor that was never a survivor.
+MUT="$TMP/probe-nowrapper.sh"
+n="$(grep -cE '^q\(\) \{ psql ' "$PROBE")"
+[ "$n" = 1 ] || fail "expected exactly one q() definition to mutate, found $n"
+awk '/^q\(\) \{ psql/ {print "q() { psql \"$DBURL\" -X -q -v ON_ERROR_STOP=1 -At -c \"$1\"; }"; next} {print}' \
+  "$PROBE" > "$MUT"
+[ "$(sha256sum < "$MUT" | cut -c1-16)" != "$(sha256sum < "$PROBE" | cut -c1-16)" ] \
+  || fail "the mutant patch did not change the probe — this control proves nothing"
+run bash "$MUT" --db-url "$WRITABLE_URL" --mode apply --expect "$EXPECT"
+[ "$rc" -eq 3 ] || fail "without the wrapper a writable session must be refused with 3, got $rc: $out"
 printf '%s\n' "$out" | grep -qF 'not read-only' || fail "the refusal must name the posture: $out"
 printf '%s\n' "$out" | grep -qE '^  (permission row|grant|holders|rpc):' \
   && fail "a refused session reported verdicts anyway: $out"
+# …and the guard tracks real capability, not the presence of a string: the same
+# mutant over the ordinary DSN is fine, because there the session genuinely
+# cannot write.
+run bash "$MUT" --db-url "$TEST_DATABASE_URL" --mode apply --expect "$EXPECT"
+[ "$rc" -eq 0 ] || fail "an un-wrapped probe over a genuinely read-only session must still conclude, got $rc: $out"
 run bash "$PROBE" --db-url "$TEST_DATABASE_URL" --mode apply --expect "$EXPECT"
 [ "$rc" -eq 0 ] || fail "the ordinary DSN must still pass after a posture refusal, got $rc: $out"
 
