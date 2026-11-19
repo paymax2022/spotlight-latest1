@@ -1,4 +1,6 @@
-import { confirmImport, decideApplication, decideOfflinePayment, getAdminKpis, getApplication, getApprovalQueue, getAuditLog, getFinanceSummary, getImportPreview, getOfflinePayments } from '../api/admin.api';
+import { confirmImport, decideApplication, decideOfflinePayment, getAdminKpis, getAdminOrganisations, getApplication, getApprovalQueue, getAuditLog, getFinanceSummary, getImportPreview, getOfflinePayments } from '../api/admin.api';
+import { resolveAdminOrgScope } from '../api/adminScope';
+import { useAdminOrgStore } from '../store/adminOrgStore';
 import { assignRole, getMyAdminAccess, restoreMember, suspendMember, transferMember } from '../api/adminMembers.api';
 import { approveAiNote, awaitProcessing, convertActionItem, createAiNote, getAiNote, getAiNotes, publishAiNote, regenerateSummary } from '../api/ainotes.api';
 import { castVote, getDashboard, getDirectory, getDues, getElection, getElections, getMember, getMembershipCard, getOrganisation, getOrganisations, getReceipt, payInvoice, submitApplication, verifyMembershipCard } from '../api/association.api';
@@ -25,12 +27,101 @@ import { Platform } from 'react-native';
 
 const KEY = 'association';
 
-export function useAdminKpis() {
-  return useQuery({ queryKey: [KEY, 'adminKpis'], queryFn: getAdminKpis, staleTime: 30_000 });
+export function useAdminKpis(orgId?: string | null) {
+  return useQuery({
+    queryKey: [KEY, 'adminKpis', orgId ?? null],
+    queryFn: () => getAdminKpis(orgId),
+    // No scope yet is not an error to show: the screen asks for a pick instead.
+    // Firing anyway would send the request unscoped, which is the 404 this stops.
+    enabled: Boolean(orgId),
+    staleTime: 30_000,
+  });
 }
 
-export function useApprovalQueue(jurisdiction: ApplicationJurisdiction | 'ALL' = 'ALL') {
-  return useQuery({ queryKey: [KEY, 'approvals', jurisdiction], queryFn: () => getApprovalQueue(jurisdiction), staleTime: 20_000 });
+/**
+ * The console's organisation picker feed.
+ *
+ * `enabled` is the caller's business: a per-org officer already has an
+ * `organisationId` from `/me/admin-access` and must not pay for a list they will
+ * never choose from.
+ */
+export function useAdminOrganisations(search?: string, enabled = true) {
+  return useQuery({
+    queryKey: [KEY, 'adminOrganisations', search ?? ''],
+    queryFn: () => getAdminOrganisations(search),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * Which organisation the admin console is acting on, and what to do when that is
+ * not knowable yet.
+ *
+ * A real per-org officer gets their own org and is never asked. A platform
+ * super-admin — whom `/me/admin-access` reports with `organisationId: null` —
+ * resolves through `resolveAdminOrgScope`: one organisation is taken without a
+ * fuss, several need a pick that persists across the console's screens. Every
+ * org-scoped admin read hangs off the value this returns; sent unscoped it makes
+ * the backend hunt a membership row the caller does not have and answer 404,
+ * which is what used to render as a bare "Couldn't load".
+ */
+export function useAdminOrgScope() {
+  const access = useAdminAccess();
+  const ownOrgId = access.data?.organisationId ?? null;
+  const needsList = !access.isLoading && !ownOrgId;
+  const orgs = useAdminOrganisations(undefined, needsList);
+  const selection = useAdminOrgStore((s) => s.orgId);
+  const hydrated = useAdminOrgStore((s) => s.hasHydrated);
+  const select = useAdminOrgStore((s) => s.select);
+
+  // A remembered pick arrives a tick after first render. Waiting for hydration
+  // keeps the console from flashing a picker it would immediately dismiss.
+  const hydrating = needsList && !hydrated;
+  const list = orgs.isSuccess && !hydrating ? orgs.data ?? [] : null;
+
+  const scope = resolveAdminOrgScope({ ownOrgId, selection, orgs: list });
+  const chosen = scope.orgId
+    ? (orgs.data ?? []).find((o) => o.id === scope.orgId) ?? null
+    : null;
+
+  return {
+    ...scope,
+    /**
+     * True when the scope came from the picker rather than from the admin's own
+     * organisation. The console shows the org context bar only then: a per-org
+     * officer has exactly one org and switching is not a thing they can do.
+     */
+    isExplicit: !ownOrgId && Boolean(scope.orgId),
+    /**
+     * The scope itself could not be worked out — the access call failed, or the
+     * organisation list did. Screens must not fall through to their data's error
+     * branch here: nothing org-scoped was even sent, so "Couldn't load" would
+     * describe the wrong request and Retry would repeat the wrong call.
+     */
+    isError: access.isError || (needsList && orgs.isError),
+    retry: () => {
+      void access.refetch();
+      if (needsList) void orgs.refetch();
+    },
+    /** Selectable organisations, empty until the list lands. */
+    orgs: orgs.data ?? [],
+    /** Display name for the active scope, for the header and the picker label. */
+    orgName: ownOrgId
+      ? access.data?.organisationName ?? null
+      : chosen?.name ?? null,
+    select,
+    isLoading: access.isLoading || (needsList && (orgs.isLoading || hydrating)),
+  };
+}
+
+export function useApprovalQueue(jurisdiction: ApplicationJurisdiction | 'ALL' = 'ALL', orgId?: string | null) {
+  return useQuery({
+    queryKey: [KEY, 'approvals', jurisdiction, orgId ?? null],
+    queryFn: () => getApprovalQueue(jurisdiction, orgId),
+    enabled: Boolean(orgId),
+    staleTime: 20_000,
+  });
 }
 
 export function useApplication(id?: string) {
@@ -54,12 +145,22 @@ export function useDecideApplication() {
   });
 }
 
-export function useFinanceSummary() {
-  return useQuery({ queryKey: [KEY, 'finance'], queryFn: getFinanceSummary, staleTime: 30_000 });
+export function useFinanceSummary(orgId?: string | null) {
+  return useQuery({
+    queryKey: [KEY, 'finance', orgId ?? null],
+    queryFn: () => getFinanceSummary(orgId),
+    enabled: Boolean(orgId),
+    staleTime: 30_000,
+  });
 }
 
-export function useOfflinePayments() {
-  return useQuery({ queryKey: [KEY, 'offlinePayments'], queryFn: getOfflinePayments, staleTime: 15_000 });
+export function useOfflinePayments(orgId?: string | null) {
+  return useQuery({
+    queryKey: [KEY, 'offlinePayments', orgId ?? null],
+    queryFn: () => getOfflinePayments(orgId),
+    enabled: Boolean(orgId),
+    staleTime: 15_000,
+  });
 }
 
 export function useDecideOfflinePayment() {
@@ -73,8 +174,13 @@ export function useDecideOfflinePayment() {
   });
 }
 
-export function useAuditLog(action: string = 'all') {
-  return useQuery({ queryKey: [KEY, 'auditLog', action], queryFn: () => getAuditLog(action), staleTime: 20_000 });
+export function useAuditLog(action: string = 'all', orgId?: string | null) {
+  return useQuery({
+    queryKey: [KEY, 'auditLog', action, orgId ?? null],
+    queryFn: () => getAuditLog(action, orgId),
+    enabled: Boolean(orgId),
+    staleTime: 20_000,
+  });
 }
 
 /** Cache key the preview screen reads the uploaded dry-run from. */
@@ -263,10 +369,19 @@ export function useVerifyCard() {
   return useMutation({ mutationFn: (token: string) => verifyMembershipCard(token) });
 }
 
-export function useDirectory(query?: MemberDirectoryQuery) {
+/**
+ * The member roll.
+ *
+ * `enabled` exists for the admin console: it scopes the roll with `org_id`, and
+ * before an organisation is chosen the unscoped query would return a roll scoped
+ * to orgs the caller belongs to — always empty for a platform super-admin, so the
+ * request would only cost a round trip whose answer cannot be shown.
+ */
+export function useDirectory(query?: MemberDirectoryQuery, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [KEY, 'directory', query ?? {}],
     queryFn: () => getDirectory(query),
+    enabled: options?.enabled ?? true,
     staleTime: 30_000,
   });
 }

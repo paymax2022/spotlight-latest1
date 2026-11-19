@@ -9,17 +9,20 @@ import { Radius } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
-import { useOfflinePayments, useDecideOfflinePayment } from '@/features/association/hooks';
+import { useAdminOrgScope, useOfflinePayments, useDecideOfflinePayment } from '@/features/association/hooks';
+import AdminOrgScopeGate from '@/features/association/components/AdminOrgScopeGate';
 import { formatNaira, relativeTime } from '@/features/association/utils';
 import type { OfflinePayment } from '@/features/association/types';
 
 export default function OfflinePayments() {
-  const payments = useOfflinePayments();
+  const scope = useAdminOrgScope();
+  const payments = useOfflinePayments(scope.orgId);
   const decide = useDecideOfflinePayment();
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Offline payments" />
+      <AdminOrgScopeGate scope={scope}>
       {payments.isLoading ? (
         <StateView kind="loading" message="Loading payments…" />
       ) : payments.isError ? (
@@ -43,6 +46,7 @@ export default function OfflinePayments() {
           )}
         />
       )}
+      </AdminOrgScopeGate>
     </SafeAreaView>
   );
 }

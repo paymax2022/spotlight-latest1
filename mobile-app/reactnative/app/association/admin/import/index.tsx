@@ -11,7 +11,8 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useImportPreview } from '@/features/association/hooks';
-import { useAdminAccess } from '@/features/association/hooks';
+import { useAdminOrgScope } from '@/features/association/hooks';
+import AdminOrgScopeGate from '@/features/association/components/AdminOrgScopeGate';
 import { pickSpreadsheet } from '@/features/association/utils';
 import type { PickedFile } from '@/features/association/utils';
 
@@ -19,7 +20,7 @@ const STEPS = ['Download the template', 'Fill in member rows', 'Upload the file'
 
 export default function ImportIntro() {
   const preview = useImportPreview();
-  const access = useAdminAccess();
+  const scope = useAdminOrgScope();
   const [file, setFile] = useState<PickedFile | null>(null);
 
   // Pick a real .xlsx/.csv and upload it as multipart/form-data. The endpoint
@@ -29,7 +30,10 @@ export default function ImportIntro() {
     if (!picked) return;
     setFile(picked);
     preview.mutate(
-      { file: picked, orgId: access.data?.organisationId ?? undefined },
+      // The import handler takes `org_id` from the query and, without one, falls
+      // back to the caller's own membership — which a platform super-admin does
+      // not have. Scope it the same way every other console call is scoped.
+      { file: picked, orgId: scope.orgId ?? undefined },
       {
         onSuccess: () => router.push('/association/admin/import/preview'),
         onError: () => Alert.alert('Upload failed', 'Could not read the file. Please check the format and try again.'),
@@ -40,6 +44,7 @@ export default function ImportIntro() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Bulk member upload" />
+      <AdminOrgScopeGate scope={scope}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         <Text style={styles.intro}>Migrate your existing member list from Excel or CSV. We’ll check for duplicates and invalid records before anything is imported.</Text>
 
@@ -86,6 +91,7 @@ export default function ImportIntro() {
           loading={preview.isPending}
         />
       </View>
+      </AdminOrgScopeGate>
     </SafeAreaView>
   );
 }

@@ -519,6 +519,25 @@ export interface AdminKpis {
   duesOutstandingKobo: number;
 }
 
+/**
+ * One row of `GET /admin/organisations` — the console's organisation picker.
+ *
+ * A platform super-admin gets every organisation; a per-org officer gets only
+ * the ones they hold a real admin role in, which is why the console can use this
+ * one endpoint for both audiences instead of branching on the role.
+ */
+export interface AdminOrgOption {
+  id:           string;
+  name:         string;
+  acronym:      string | null;
+  category:     string;
+  status:       string;
+  published:    boolean;
+  verified:     boolean;
+  memberCount:  number;
+  createdAt:    string;
+}
+
 export type ApplicationJurisdiction = 'CHAPTER' | 'NATIONAL';
 export type ApplicationReviewStatus = 'PENDING' | 'INFO_REQUESTED';
 export type ApprovalDecision = 'APPROVE' | 'REJECT' | 'REQUEST_INFO';

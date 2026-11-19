@@ -9,7 +9,8 @@ import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
-import { useAuditLog } from '@/features/association/hooks';
+import { useAdminOrgScope, useAuditLog } from '@/features/association/hooks';
+import AdminOrgScopeGate from '@/features/association/components/AdminOrgScopeGate';
 import { relativeTime } from '@/features/association/utils';
 import type { AuditAction } from '@/features/association/types';
 
@@ -35,7 +36,8 @@ const ACTION_META: Record<AuditAction, { icon: string; color: string; bg: string
 
 export default function AdminAuditLog() {
   const [filter, setFilter] = useState<string>('all');
-  const audit = useAuditLog(filter);
+  const scope = useAdminOrgScope();
+  const audit = useAuditLog(filter, scope.orgId);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -43,6 +45,7 @@ export default function AdminAuditLog() {
       <View style={styles.segWrap}>
         <SegmentedControl options={SEGMENTS as never} value={filter} onChange={setFilter} scrollable />
       </View>
+      <AdminOrgScopeGate scope={scope}>
       {audit.isLoading ? (
         <StateView kind="loading" message="Loading audit log…" />
       ) : audit.isError ? (
@@ -75,6 +78,7 @@ export default function AdminAuditLog() {
           }}
         />
       )}
+      </AdminOrgScopeGate>
     </SafeAreaView>
   );
 }
