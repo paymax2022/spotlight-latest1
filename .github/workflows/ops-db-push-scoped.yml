@@ -39,6 +39,10 @@ on:
         description: 'Type SCOPED to allow apply mode'
         type: string
         default: ''
+      rbac_expect:
+        description: 'Read-only RBAC grant check, run last. One "slug=role,role" (or bare "slug") per line; empty skips it'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -59,6 +63,7 @@ jobs:
       VERSIONS: ${{ inputs.versions }}
       CONFIRM: ${{ inputs.confirm }}
       INPUT_MODE: ${{ inputs.mode }}
+      RBAC_EXPECT: ${{ inputs.rbac_expect }}
     steps:
       - uses: actions/checkout@v4
 
@@ -294,3 +299,60 @@ jobs:
           pending="$(psql "$SCOPED_DB_URL" -tAc "$sql" 2>/dev/null || echo 'unavailable')"
           echo "  local migrations still without a history row: $pending"
           exit "$fail"
+
+      # LAST step, read-only by construction, deliberately after every write:
+      # scripts/db/probe-rbac-grants.sh.
+      #
+      # WHY. The RBAC seeds grant permissions with slug-keyed `INSERT … SELECT`
+      # (`SELECT r.id, p.id FROM … WHERE r.slug IN (…)`). An absent role row makes
+      # that statement match nothing, the transaction still commits, and the
+      # step above cheerfully prints `recorded: <version>`. History then says the
+      # seed ran; the grants do not exist; a scoped contest-manager gets 403 and
+      # nothing anywhere reports a difference. This step verifies the RESULT of
+      # the seed instead of its ledger row, and asks the same
+      # `public.user_has_permission` RPC the middleware asks.
+      #
+      # OPERATORS: `mode=plan` plus `rbac_expect`, with any recorded version in
+      # `versions`, is a read-only production RBAC check you can dispatch at any
+      # time — it writes nothing and answers "does this role actually hold this
+      # permission" without a 403 in front of you.
+      #
+      # Appended rather than woven in: the probe cannot change what a run
+      # applies, and a finding here must not abort a migration the ledger has
+      # already correctly booked (the run turns red, the write stays — which is
+      # the true reading of "applied but not effective"). Adding the input above
+      # did shift this file's line numbers, so the `<line>` citations pointing
+      # into it from docs/devops/ and scripts/db/list-pending.sh are re-pointed
+      # by step name in the same commit.
+      - name: RBAC grant probe (read-only)
+        if: ${{ !cancelled() }}
+        run: |
+          set -uo pipefail
+          if [ -z "$(printf '%s' "${RBAC_EXPECT:-}" | tr -d '[:space:]')" ]; then
+            echo "::notice::rbac_expect is empty — the RBAC grant probe was SKIPPED. Nothing about the grants has been verified by this run."
+            exit 0
+          fi
+          # An earlier step can fail before the DSN exists (`if: !cancelled()`
+          # reaches here on a red run). Say so plainly rather than letting the
+          # probe's own "no --db-url" usage error read like a bad rbac_expect.
+          if [ -z "${SCOPED_DB_URL:-}" ]; then
+            echo "::error::SCOPED_DB_URL was never resolved — the DSN step did not complete, so this step verified nothing about the grants."
+            exit 1
+          fi
+          # Every statement runs under default_transaction_read_only=on inside the
+          # script, so Postgres itself refuses a write here; the DSN is the same
+          # one the apply step used, already masked by the Resolve step.
+          printf '%s\n' "$RBAC_EXPECT" | sed '/^[[:space:]]*$/d; s/^/  expect: /'
+          rc=0
+          bash scripts/db/probe-rbac-grants.sh \
+            --db-url "$SCOPED_DB_URL" --mode "$INPUT_MODE" --expect "$RBAC_EXPECT" || rc=$?
+          case "$rc" in
+            0) ;;
+            1) echo "::error::the grants this lane was told to expect are NOT live. In apply mode the migration write itself completed and is booked in history — that is exactly the case this probe exists for: history said applied while the rows were missing. Re-run with mode=plan and the same rbac_expect to review the findings without any write."
+               ;;
+            2) echo "::error::rbac_expect was refused before anything was queried. Each token must be '<permission-slug>' or '<permission-slug>=<role>,<role>'."
+               ;;
+            3) echo "::error::the probe could not reach or read the database — this run says nothing about the grants, in either direction."
+               ;;
+          esac
+          exit "$rc"
