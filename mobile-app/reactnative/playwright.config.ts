@@ -17,12 +17,29 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: 'CI=1 npm run web',
+        // --clear: Metro's cache does not key on resolver.blockList, so a warm
+        // cache from a normal `expo start` can still serve the repo's .env module
+        // and silently override the pins below. A cold bundle (~30s) buys
+        // determinism; without it this lane tests whatever the developer's .env
+        // says instead of the fixtures the specs assert.
+        command: 'CI=1 npm run web -- --clear',
         url: 'http://127.0.0.1:8083',
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
         env: {
           ...process.env,
+          // Lets metro.config.js drop the repo's .env files from the module
+          // graph: Expo merges those over process.env in dev, which would
+          // silently override every *_USE_MOCK pin below with whatever the
+          // developer's local .env says.
+          PLAYWRIGHT_MOCK_ENV: '1',
+          // ...and don't load the repo's .env into the CLI process either. The
+          // blockList removes the bundle-side .env module; without this, Expo
+          // still dotenv-loads the files into process.env and the serializer
+          // re-injects them, so unpinned modules (crypto, trading) would run
+          // against the live proxy. With both off, each module falls back to
+          // its documented default (mock) except where pinned below.
+          EXPO_NO_DOTENV: '1',
           EXPO_PUBLIC_API_BASE_URL: 'http://127.0.0.1:3000',
           EXPO_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:54321',
           EXPO_PUBLIC_SUPABASE_ANON_KEY: 'e2e-anon-key',

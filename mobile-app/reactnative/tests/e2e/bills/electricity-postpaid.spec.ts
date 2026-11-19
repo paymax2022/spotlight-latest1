@@ -32,7 +32,11 @@ test.describe('Bills E2E - Electricity postpaid', () => {
     await completeElectricityPayment(page, 'Postpaid');
 
     await expectOnReceipt(page, 'Payment Successful', 'PMX-ELEC-002');
-    await expect(page.getByText('Postpaid Electricity')).toBeVisible();
+    // "Postpaid Electricity" (the mocked productName) matches twice: the
+    // electricity screen below the receipt in the router stack keeps its Recent
+    // Purchases card mounted under display:none (hidden .first()), and the
+    // receipt's own row is the visible .last() copy.
+    await expect(page.getByText('Postpaid Electricity').last()).toBeVisible();
     await expect(page.getByText('Electricity Token')).toHaveCount(0);
   });
 });

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { expectOnReceipt } from '../helpers/assertions';
 import { loginAs } from '../helpers/auth';
-import { completeDataPurchase, mockBillsCatalog, openBillsHome } from '../helpers/bills';
+import { completeDataPurchase, mockBillsCatalog, openBillsHome, selectProviderTile } from '../helpers/bills';
 import { mockWallet } from '../helpers/wallet';
 
 test.describe('Bills E2E - Data and internet bundle purchase', () => {
@@ -13,8 +13,8 @@ test.describe('Bills E2E - Data and internet bundle purchase', () => {
 
   test('loads bundles and completes a data purchase', async ({ page }) => {
     await openBillsHome(page);
-    await page.getByText('Data / Internet').click();
-    await expect(page.getByText('Buy Data Bundle')).toBeVisible();
+    await page.getByRole('button', { name: 'Data', exact: true }).first().click();
+    await expect(page.getByText('Buy Data')).toBeVisible();
 
     await completeDataPurchase(page);
 
@@ -48,7 +48,7 @@ test.describe('Bills E2E - Data and internet bundle purchase', () => {
     });
 
     await page.goto('/services/data');
-    await page.getByText('MTN').first().click();
+    await selectProviderTile(page, 'MTN');
 
     await expect(page.getByText('No plans available for this network.')).toBeVisible();
   });

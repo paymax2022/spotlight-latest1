@@ -141,3 +141,5 @@ export * from './batch6';
 export * from './batch7';
 
 export * from './onboarding';
+
+export * from './onboardingArtwork';

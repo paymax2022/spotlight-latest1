@@ -237,14 +237,28 @@ export default function DataScreen() {
           {netsLoading ? (
             <ActivityIndicator size="small" color={Colors.primary} style={{ marginVertical: Spacing.md }} />
           ) : (
+            // Logo only, same treatment as Buy Airtime: the networks are recognised
+            // by their marks and the caption beneath was a brand name repeating the
+            // logo. The name still reaches a screen reader through
+            // accessibilityLabel and the chosen one through Payment Summary.
             <View style={styles.providerGrid}>
               {networks.filter((n) => n.isActive).map((net) => {
                 const active = selectedNetwork?.id === net.id;
                 return (
-                  <Pressable key={net.id} onPress={() => { setSelectedNetwork(net); setSelectedPlan(null); }} style={[styles.providerCard, active && styles.providerCardActive]}>
-                    <ProviderLogo code={net.code} name={net.name} logoUri={resolveProviderImage(providerLogos, net.code, net.name)} />
-                    <Text style={[styles.providerName, active && styles.providerNameActive]} numberOfLines={1}>{net.name}</Text>
-                    {active && <CheckCircle2 size={16} color={Colors.primary} strokeWidth={2.2} />}
+                  <Pressable
+                    key={net.id}
+                    onPress={() => { setSelectedNetwork(net); setSelectedPlan(null); }}
+                    accessibilityRole="button"
+                    accessibilityLabel={net.name}
+                    accessibilityState={{ selected: active }}
+                    style={[styles.providerCard, active && styles.providerCardActive]}
+                  >
+                    <ProviderLogo code={net.code} name={net.name} size={44} logoUri={resolveProviderImage(providerLogos, net.code, net.name)} />
+                    {active && (
+                      <View style={styles.providerCheck}>
+                        <CheckCircle2 size={15} color={Colors.onPrimary} strokeWidth={2.6} />
+                      </View>
+                    )}
                   </Pressable>
                 );
               })}
@@ -450,13 +464,10 @@ const styles = StyleSheet.create({
   heroBanner:  { width: '100%', aspectRatio: 1774 / 887, borderRadius: Radius.xl, marginBottom: Spacing.lg, overflow: 'hidden', backgroundColor: Colors.primaryContainer },
   card:        { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.lg },
   sectionTitle:{ ...Typography.titleMd, color: Colors.onSurface },
-  providerGrid:{ flexDirection: 'row', flexWrap: 'nowrap', justifyContent: 'space-between', gap: Spacing.xs, marginTop: Spacing.md, marginBottom: Spacing.lg },
-  providerCard:{ flex: 1, minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.sm, gap: Spacing.sm, alignItems: 'center' },
+  providerGrid:{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.lg },
+  providerCard:{ flexGrow: 1, flexBasis: '21%', aspectRatio: 1, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center' },
   providerCardActive:{ borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
-  providerIcon:{ width: 34, height: 34, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
-  providerInitial:{ ...Typography.labelLg, fontWeight: '800' },
-  providerName:{ ...Typography.labelMd, color: Colors.onSurface },
-  providerNameActive:{ color: Colors.onPrimaryFixed },
+  providerCheck:{ position: 'absolute', top: 5, right: 5, backgroundColor: Colors.primary, borderRadius: Radius.full, padding: 1.5 },
   planSelected:{ minHeight: 60, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.primary, backgroundColor: Colors.primaryFixed, padding: Spacing.md, marginTop: Spacing.xs, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   planTitleActive:{ ...Typography.labelLg, color: Colors.onPrimaryFixed },
   planMeta:    { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },

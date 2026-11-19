@@ -11,6 +11,7 @@ import { shadow1 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
+import TopUpWalletButton from '@/components/TopUpWalletButton';
 import { useStock, useInvestWallet, useBuyOrder } from '@/features/invest/hooks/useInvest';
 import { formatNaira, nairaToKobo, formatQty, orderStatusLabel } from '@/features/invest/utils/format';
 import type { Receipt } from '@/features/invest/types/invest.types';
@@ -117,7 +118,12 @@ export default function BuyScreen() {
           </View>
           <Text style={styles.cashHint}>Available cash: {formatNaira(cash)}</Text>
           {tooLow && <Text style={styles.err}>Minimum order is {formatNaira(min)}.</Text>}
-          {insufficient && <Text style={styles.err}>Not enough cash. Add funds in your invest wallet.</Text>}
+          {insufficient && (
+            <>
+              <Text style={styles.err}>Not enough cash. Add funds in your invest wallet.</Text>
+              <TopUpWalletButton label="Add funds" route="/invest/wallet" style={styles.errCta} />
+            </>
+          )}
         </View>
 
         <View style={[styles.reviewCard, shadow1]}>
@@ -176,6 +182,7 @@ const styles = StyleSheet.create({
   amountInput: { ...Typography.displayLg, fontSize: 44, letterSpacing: -0.88, color: Colors.onSurface, minWidth: 120, textAlign: 'center', padding: 0 },
   cashHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   err: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
+  errCta: { marginTop: Spacing.sm },
   reviewCard: {
     marginHorizontal: Spacing.containerMargin, marginTop: Spacing.lg,
     backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg,
