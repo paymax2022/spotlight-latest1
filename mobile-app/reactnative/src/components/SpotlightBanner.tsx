@@ -97,7 +97,9 @@ const styles = StyleSheet.create({
   image: {
     // Not `width: '100%'`: that is 100% of the parent and ignores this box's own side
     // margins, so a caller passing marginHorizontal (home, crypto, association,
-    // realtor, crowdfunding, bills) overflowed the right edge. Stretch fits inside them.
+    // realtor, crowdfunding, food) overflowed the right edge. Stretch fits inside them.
+    // `bills` used to be in that list: its hub now renders one hard-coded hero with its
+    // own 20px gutters instead of this banner.
     alignSelf: 'stretch',
     borderRadius: Radius.lg,
     backgroundColor: Colors.surfaceContainerLow,
