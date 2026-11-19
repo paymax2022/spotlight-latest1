@@ -13,11 +13,15 @@
 # scoped admin then gets 403 with no signal anywhere. This probe closes that gap
 # by verifying the RESULT of the seed rather than its history row.
 #
-# CONTRACT. Strictly read-only. Every statement runs in a session with
-# `default_transaction_read_only=on`, so a write is refused by Postgres itself,
-# and the enforcement-path sample is only called after `pg_proc.provolatile`
-# says the function is STABLE or IMMUTABLE (a VOLATILE function cannot execute
-# in a read-only transaction anyway — two independent guards).
+# CONTRACT. Strictly read-only. Every statement runs inside an explicit
+# `BEGIN READ ONLY … ROLLBACK` transaction, so a write is refused by Postgres
+# itself whatever the connection path does to startup parameters (the session is
+# additionally ASKED for `default_transaction_read_only=on` via PGOPTIONS, which
+# is the stronger posture on a direct connection but is dropped by Supabase's
+# session pooler — see the comment at the wrapper), and the enforcement-path
+# sample is only called after `pg_proc.provolatile` says the function is STABLE
+# or IMMUTABLE (a VOLATILE function cannot execute in a read-only transaction
+# anyway — two independent guards).
 #
 # Expectation syntax (one or more, whitespace/newline separated; roles are
 # comma separated). Slugs and roles are matched against a whitelist BEFORE they
@@ -106,18 +110,30 @@ done
 [ ${#SLUGS[@]} -le "$MAX_EXPECT" ] || die "too many expectations: ${#SLUGS[@]} > $MAX_EXPECT"
 
 # ── connect, read-only by construction ───────────────────────────────────────
+# Two layers, and only the second one is load-bearing.
+# PGOPTIONS asks the server to make the whole SESSION read-only — the strongest
+# posture, and what a direct connection really gets. But it is a startup
+# PARAMETER, and a pooler may drop it: measured on the production session pooler
+# (run 44478529252, 2026-11-19) the server answered `off`, and this probe refused
+# to conclude — correctly, yet unable to answer the one question it exists for.
+# `BEGIN READ ONLY` is a STATEMENT, so no pooler can lose it: every query below
+# runs inside a read-only transaction that is rolled back, which is the guarantee
+# the probe relies on. The session posture is still printed, as information.
 PGOPTIONS='-c default_transaction_read_only=on'; export PGOPTIONS
-q() { psql "$DBURL" -X -q -v ON_ERROR_STOP=1 -At -c "$1"; }
+q() { psql "$DBURL" -X -q -v ON_ERROR_STOP=1 -At -c "BEGIN READ ONLY; $1; ROLLBACK"; }
 
 rest="${DBURL#*://}"; creds="${rest%%@*}"; hostdb="${rest#*@}"
 echo "RBAC grant probe — read-only, mode=$MODE, ${#SLUGS[@]} expectation(s)"
 echo "  target: ${creds%%:*}@${hostdb%%\?*}"
 q 'SELECT 1' >/dev/null 2>&1 || die3 "cannot reach the database at ${creds%%:*}@${hostdb%%\?*} — nothing has been concluded about the grants"
-# Enforced, not assumed: PGOPTIONS above is the only reason this session cannot
-# write, so confirm the server agrees before any statement is called a check.
-ro="$(q 'SHOW default_transaction_read_only')" || die3 "the session's read-only posture could not be read"
-[ "$ro" = on ] || die3 "this session is not read-only (default_transaction_read_only=$ro) — refusing to probe, nothing has been concluded"
-echo "  session: read-only (default_transaction_read_only=$ro)"
+# Read the guarantee back from inside the transaction that runs the checks:
+# `transaction_read_only` reports what the wrapper actually did, while the session
+# GUC would only report what the client managed to ask for. Enforced, not assumed.
+tx="$(q 'SHOW transaction_read_only')" || die3 "the read-only state of the probe's own transaction could not be read — nothing has been concluded about the grants"
+[ "$tx" = on ] || die3 "this session is not read-only (transaction_read_only=$tx) — refusing to probe, nothing has been concluded"
+sp="$(psql "$DBURL" -X -q -At -c 'SHOW default_transaction_read_only' 2>/dev/null || echo '?')"
+echo "  transaction: read-only (transaction_read_only=$tx)"
+echo "  session: default_transaction_read_only=$sp (informational — the BEGIN READ ONLY wrapper around every statement, not the startup parameter, is what bounds this probe)"
 
 # ── 1. permission rows, expected role grants, and the actual holder list ─────
 # One round-trip: every expectation contributes rows, tagged with its index.

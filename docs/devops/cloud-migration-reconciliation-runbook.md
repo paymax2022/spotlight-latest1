@@ -210,6 +210,21 @@ Production runs reach the same step through
 **[`.github/workflows/ops-db-push-scoped.yml`](../../.github/workflows/ops-db-push-scoped.yml)**
 with its `rbac_expect` input, which the lane evaluates after the write.
 
+**How the read-only guarantee is actually enforced (measured 2026-11-19).** The
+first version of this tool bounded the session with `PGOPTIONS=-c
+default_transaction_read_only=on` — a startup *parameter*. The production target
+is reached through Supabase's session pooler (the direct host is AAAA-only), and
+that pooler does not forward the client's `options`: the server answered `off`,
+the posture guard fired, and run `44478529252` exited 3 with "this run says
+nothing about the grants". The refusal was correct; the consequence was that the
+check could never run where it was needed. Every statement now runs inside an
+explicit `BEGIN READ ONLY … ROLLBACK`, which is SQL rather than a parameter and
+therefore survives any connection path; the probe reads
+`SHOW transaction_read_only` from inside that transaction to prove the wrapper
+took effect, and still prints the session posture as information. Harness §7b
+holds both halves: over a DSN engineered to make the session writable, the probe
+concludes safely, and the same probe with the wrapper stripped is refused with 3.
+
 **Rollback:**
 - A failed `--apply` migration already rolled back (transactional) — no undo
   needed; fix the file and re-run `--apply-one`.

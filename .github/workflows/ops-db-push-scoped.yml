@@ -339,9 +339,11 @@ jobs:
             echo "::error::SCOPED_DB_URL was never resolved — the DSN step did not complete, so this step verified nothing about the grants."
             exit 1
           fi
-          # Every statement runs under default_transaction_read_only=on inside the
-          # script, so Postgres itself refuses a write here; the DSN is the same
-          # one the apply step used, already masked by the Resolve step.
+          # Every statement runs inside an explicit BEGIN READ ONLY … ROLLBACK, so
+          # Postgres itself refuses a write here regardless of what the pooler does
+          # to the client's startup parameters (PGOPTIONS alone was measured dead on
+          # this pooler: run 44478529252, the session answered `off`). The DSN is
+          # the same one the apply step used, already masked by the Resolve step.
           printf '%s\n' "$RBAC_EXPECT" | sed '/^[[:space:]]*$/d; s/^/  expect: /'
           rc=0
           bash scripts/db/probe-rbac-grants.sh \
