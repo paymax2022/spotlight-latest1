@@ -3,13 +3,14 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { getActiveAcademySettings } from '@/src/server/services/academy';
 import { createAcademyFeeIntent } from '@/src/server/payments/academy-fee-intents';
 import { createAdminClient } from '@/lib/supabase/server';
+import { getTrainingFormats } from '@/src/server/services/academy/formats';
 import {
-  isPricingKey,
+  activeFormatKeys,
+  fallbackFormatKey,
   parseAreaSelections,
   tuitionForFormat,
   tuitionForSelections,
   tuitionPlanShape,
-  ACADEMY_PRICING_FALLBACK_KEY,
   type AreaPricingOptionRow,
 } from '@/src/server/services/academy/pricing';
 import { randomUUID } from 'node:crypto';
@@ -60,11 +61,17 @@ export async function POST(request: Request) {
       settings.registration_type === 'paid' ? Number(settings.application_fee ?? 0) : 0;
 
     // One charge: application fee + first tuition instalment, quoted from the
-    // same rows and plan shape the apply route verifies against.
+    // same rows and plan shape the apply route verifies against — and from the
+    // same format catalogue, because this is the number a card is charged.
+    const formats = await getTrainingFormats();
+    const offeredKeys = activeFormatKeys(formats);
     const supabase = createAdminClient();
-    const selections = parseAreaSelections(body.area_selections);
+    const selections = parseAreaSelections(body.area_selections, offeredKeys);
     if (selections === 'invalid') {
-      return errorResponse('Each selection needs a known area and a valid training format', 400);
+      // Fail closed: a selection naming a format the operator never created (or
+      // has withdrawn) is not something to price "as if" — the apply route
+      // would refuse the same submission after the money had already moved.
+      return errorResponse('Each selection needs a known area and a training format on offer', 400);
     }
     const slugs = selections
       ? Object.keys(selections)
@@ -80,10 +87,14 @@ export async function POST(request: Request) {
       ? await supabase.from('academy_area_pricing_options').select('area_id, key, label, note, price_ngn, sort_order').in('area_id', areas.map((a) => a.id))
       : { data: [] };
     const options = (optionRows ?? []) as AreaPricingOptionRow[];
-    const formatKey = isPricingKey(body.pricing_option_key) ? body.pricing_option_key : ACADEMY_PRICING_FALLBACK_KEY;
+    // A client that names no format — or names one the operator has withdrawn
+    // since it loaded the form — is priced in the cheapest format ON OFFER, so
+    // the quoted amount can never exceed what the screen showed.
+    const namedKey = typeof body.pricing_option_key === 'string' ? body.pricing_option_key.trim() : '';
+    const formatKey = offeredKeys.has(namedKey) ? namedKey : fallbackFormatKey(formats);
     const areaTuition = selections
-      ? tuitionForSelections(areas, selections, options)
-      : tuitionForFormat(areas, formatKey, options);
+      ? tuitionForSelections(areas, selections, options, formats)
+      : tuitionForFormat(areas, formatKey, options, formats);
 
     const { data: batchRow } = batchId
       ? await supabase.from('academy_batches')

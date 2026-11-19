@@ -122,12 +122,24 @@ export type AcademySettings = {
   is_active: boolean;
 };
 
-export type AcademyPricingKey =
-  | 'weekend_day'
-  | 'weekend_boarding'
-  | 'weekday_day'
-  | 'weekday_boarding'
-  | 'full_time_boarding';
+/**
+ * A training format key is data now, not a type: the operator adds and retires
+ * rows in academy_pricing_formats, so no console build can enumerate the legal
+ * values. `string` is the honest type — the BFF is what refuses a key that is
+ * not in the catalogue, and it does so before any money is quoted.
+ */
+export type AcademyPricingKey = string;
+
+/** One managed tuition format, as stored in academy_pricing_formats. */
+export type AcademyPricingFormat = {
+  key: AcademyPricingKey;
+  label: string;
+  note: string | null;
+  sort_order: number;
+  is_active: boolean;
+  /** Naira. What a training is priced at in this format before anyone reprices it. */
+  default_price_ngn: number;
+};
 
 /** One composite tuition item: a training format priced for one area (NAIRA). */
 export type AcademyPricingOption = {
@@ -147,7 +159,7 @@ export type AcademyInterestArea = {
   fee_ngn: number | null;
   is_active: boolean | null;
   sort_order: number | null;
-  /** The five-format tuition structure. Served by GET since the composite pricing change. */
+  /** The on-offer tuition formats, priced for this area. Served by GET. */
   pricing_options?: AcademyPricingOption[];
 };
 
@@ -412,6 +424,56 @@ export async function updateSettings(input: Partial<AcademySettings>): Promise<A
 
 export async function listInterestAreas(): Promise<AcademyInterestArea[]> {
   return (await call<{ areas?: AcademyInterestArea[] }>(`${B}/interest-areas`)).areas ?? [];
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// TUITION FORMATS (academy_pricing_formats). The list an applicant chooses
+// between under each training — "Weekend (No Boarding)", "1 month - Boarding",
+// and whatever the operator adds next season. Identity lives here; the MONEY per
+// training lives on the area rows above, because a format's price is a
+// training-by-training decision.
+//
+// Deleting is deliberately NOT offered: an application stores the key forever,
+// so the console withdraws a format (is_active false) and the BFF refuses a
+// delete the moment any application or training still references it.
+// ────────────────────────────────────────────────────────────────────────────
+
+export async function listPricingFormats(): Promise<AcademyPricingFormat[]> {
+  return (await call<{ formats?: AcademyPricingFormat[] }>(`${B}/pricing-formats`)).formats ?? [];
+}
+
+export type PricingFormatInput = {
+  key?: string;
+  label?: string;
+  note?: string | null;
+  default_price_ngn?: number;
+  sort_order?: number;
+  is_active?: boolean;
+};
+
+export async function createPricingFormat(input: PricingFormatInput): Promise<AcademyPricingFormat> {
+  return (await call<{ format: AcademyPricingFormat }>(`${B}/pricing-formats`, {
+    method: 'POST', body: JSON.stringify(input),
+  })).format;
+}
+
+/** Partial edit: label, note, default price or is_active. The key never changes. */
+export async function updatePricingFormat(
+  key: AcademyPricingKey,
+  patch: PricingFormatInput,
+): Promise<AcademyPricingFormat[]> {
+  const r = await call<{ formats?: AcademyPricingFormat[]; format?: AcademyPricingFormat }>(
+    `${B}/pricing-formats/${encodeURIComponent(key)}`,
+    { method: 'PUT', body: JSON.stringify(patch) },
+  );
+  return r.formats ?? (r.format ? [r.format] : []);
+}
+
+/** The whole list, in the order applicants should see it. Every key must appear. */
+export async function reorderPricingFormats(order: AcademyPricingKey[]): Promise<AcademyPricingFormat[]> {
+  return (await call<{ formats?: AcademyPricingFormat[] }>(`${B}/pricing-formats`, {
+    method: 'PUT', body: JSON.stringify({ order }),
+  })).formats ?? [];
 }
 
 export async function createInterestArea(input: Partial<AcademyInterestArea>): Promise<AcademyInterestArea> {

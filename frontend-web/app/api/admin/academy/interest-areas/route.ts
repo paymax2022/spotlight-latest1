@@ -2,23 +2,25 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { addAuditEvent } from '@/src/server/admin/audit';
 import { createAdminClient } from '@/lib/supabase/server';
+import { getTrainingFormats, tryGetTrainingFormats } from '@/src/server/services/academy/formats';
 import {
   attachPricingOptions,
   defaultPricingRows,
-  isPricingKey,
-  pricingDefinition,
-  type AcademyPricingKey,
+  type AcademyPricingFormat,
   type AreaPricingOptionRow,
 } from '@/src/server/services/academy/pricing';
 
 // Each area is priced by the composite structure in
-// academy_area_pricing_options — five training formats (weekend/weekday, each
-// with and without boarding, plus 30-day full-time boarding), one row per
-// area × format, NAIRA. GET returns every area with its pricing_options; PUT
-// accepts a `pricing` array to reprice formats. The legacy single `fee_ngn`
-// is no longer what applicants are priced on: it survives only for historic
-// rows, and editing it here changes nothing an applicant sees.
-// `slug` is written into academy_applications.areas_of_interest, so it must stay
+// academy_area_pricing_options — one row per area × TRAINING FORMAT, NAIRA — and
+// the formats themselves are the operator's rows in academy_pricing_formats (see
+// ../pricing-formats/route.ts). There is no fixed list any more: the number of
+// formats, their names and their order are read from the catalogue on every
+// request, which is why this route's shape is "ask the catalogue, then price".
+// GET returns every area with its pricing_options plus the catalogue the console
+// renders; PUT accepts a `pricing` array to reprice formats. The legacy single
+// `fee_ngn` is no longer what applicants are priced on: it survives only for
+// historic rows, and editing it here changes nothing an applicant sees.
+// `slug` is written into academy_applications.areas_of_interest, so it must stay —
 // changing its slug orphans historic rows, which is why slug is only accepted on
 // create and ignored on update.
 
@@ -127,11 +129,17 @@ export async function GET(request: Request) {
       logDbError('GET options', optionsError);
       return errorResponse('Failed to load area pricing', 500);
     }
+    // includeInactive on both reads: the console shows what the operator retired
+    // as well as what is on offer, so that withdrawing a format is reversible
+    // and its prices stay visible.
+    const { formats } = await tryGetTrainingFormats({ includeInactive: true });
     const areas = attachPricingOptions(
       (data ?? []) as Array<{ id: string } & Record<string, unknown>>,
       (optionRows ?? []) as AreaPricingOptionRow[],
+      formats,
+      { includeInactive: true },
     );
-    return successResponse({ success: true, areas });
+    return successResponse({ success: true, areas, pricing_formats: formats });
   } catch (error) {
     return handleApiError(error, 'Failed to load areas of interest');
   }
@@ -174,13 +182,13 @@ export async function POST(request: Request) {
       return errorResponse('Failed to create the area of interest', 500);
     }
 
-    // A new area is offerable immediately, so it must carry the five formats —
-    // priced at the launch structure. An area with no option rows would fall
-    // back to those same defaults when an applicant picks a format, so a
-    // failure here is logged, not fatal.
+    // A new area is offerable immediately, so it must carry every format the
+    // operator has on offer right now, at each format's default price. An area
+    // with no option rows would fall back to those same defaults when an
+    // applicant picks a format, so a failure here is logged, not fatal.
     const { error: seedError } = await supabase
       .from('academy_area_pricing_options')
-      .insert(defaultPricingRows(data.id));
+      .insert(defaultPricingRows(data.id, await getTrainingFormats()));
     if (seedError) logDbError('POST pricing', seedError);
 
     return successResponse({ success: true, area: data });
@@ -217,29 +225,34 @@ export async function PUT(request: Request) {
     }
 
     // Composite pricing: `{ key, price_ngn }` per format, upserted against the
-    // (area_id, key) unique. Labels/notes/sort stay whatever the structure
-    // says — the admin edits the PRICE of a format, not its identity.
+    // (area_id, key) unique. Labels/notes/sort come from the managed format —
+    // the admin edits the PRICE of a format here, not its identity, and a key
+    // the operator has not created (or has withdrawn) is refused rather than
+    // allowed to reach the FK.
     const pricing = Array.isArray(body.pricing) ? body.pricing : null;
     if (body.pricing !== undefined && !pricing) {
       return errorResponse('pricing must be an array of { key, price_ngn }', 400);
     }
-    const validatedPricing: Array<{ key: AcademyPricingKey; price_ngn: number }> = [];
+    const formats = await getTrainingFormats({ includeInactive: true });
+    const formatByKey = new Map(formats.map((f) => [f.key, f]));
+    const validatedPricing: Array<{ key: string; price_ngn: number }> = [];
     for (const item of pricing ?? []) {
-      if (!isPricingKey(item?.key)) {
-        return errorResponse(`Unknown pricing format: ${String(item?.key)}`, 400);
+      const key = typeof item?.key === 'string' ? item.key.trim() : '';
+      if (!formatByKey.has(key)) {
+        return errorResponse(`Unknown tuition format: ${String(item?.key)}`, 400);
       }
       // A repeated key makes the upsert fail ("cannot affect row a second time").
-      if (validatedPricing.some((p) => p.key === item.key)) {
-        return errorResponse(`Duplicate pricing format: ${item.key}`, 400);
+      if (validatedPricing.some((p) => p.key === key)) {
+        return errorResponse(`Duplicate pricing format: ${key}`, 400);
       }
       const price = parseFormatPrice(item.price_ngn);
       if (price === null) {
         return errorResponse(
-          `Price for ${item.key} must be a whole number of naira above zero (at most 9,999,999,999)`,
+          `Price for ${key} must be a whole number of naira above zero (at most 9,999,999,999)`,
           400,
         );
       }
-      validatedPricing.push({ key: item.key, price_ngn: price });
+      validatedPricing.push({ key, price_ngn: price });
     }
 
     const supabase = createAdminClient();
@@ -275,7 +288,9 @@ export async function PUT(request: Request) {
       }
 
       const rows = validatedPricing.map(({ key, price_ngn }) => {
-        const def = pricingDefinition(key);
+        // Identity comes from the catalogue, so a reprice writes the label and
+        // position the operator set — not a copy from before the last rename.
+        const def: AcademyPricingFormat = formatByKey.get(key) ?? formats[0];
         return {
           area_id: id,
           key,

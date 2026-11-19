@@ -1,38 +1,56 @@
-// The composite Film Academy tuition structure: every area of interest is
-// offered in five formats, and the same five prices apply to all areas.
-// Mirrors supabase/migrations/20271060000000_academy_area_pricing_options.sql.
-// This module is the single source for: seeding an area's option rows, the
-// admin's label/price editor, validating + pricing an applicant's format, and
-// stating the cap on a public page.
+// The Film Academy training formats — the list an applicant chooses between
+// under each area of interest ("Weekend (No Boarding)", "1 month - Boarding",
+// …) — are admin-managed rows in academy_pricing_formats. Each training then
+// carries one price row per format in academy_area_pricing_options.
+//
+// What lives here is the ARITHMETIC and the MERGE, not the membership: which
+// formats exist, what they are called and in what order they are shown is the
+// catalogue's business (see ./formats.ts), because the operator has to be able
+// to rename a label, reorder the list, retire a format or add one without a
+// migration and a deploy. That is the whole point of this file's shape: every
+// function below is handed the formats it should price against.
+//
+// ACADEMY_LAUNCH_FORMATS is the seed for that table and the answer for a
+// database where the migration has not run yet (a fresh local stack). It is
+// deliberately NOT a whitelist any more: nothing here refuses a key the
+// operator created.
 
-export const ACADEMY_PRICING_KEYS = [
-  'weekend_day',
-  'weekend_boarding',
-  'weekday_day',
-  'weekday_boarding',
-  'full_time_boarding',
-] as const;
+export type AcademyPricingKey = string;
 
-export type AcademyPricingKey = (typeof ACADEMY_PRICING_KEYS)[number];
-
-export interface AcademyPricingOption {
-  key: AcademyPricingKey;
+/** One managed training format, as stored in academy_pricing_formats. */
+export interface AcademyPricingFormat {
+  key: string;
   label: string;
   note: string | null;
-  /** Naira — the academy tables predate the kobo convention. */
+  sort_order: number;
+  is_active: boolean;
+  /** Naira. What a training is charged for this format when it has no row yet. */
+  default_price_ngn: number;
+}
+
+/**
+ * One format AS SERVED TO A CLIENT: the format's own identity plus that
+ * training's price. This is the wire shape the applicant accordions, the
+ * tuition planner and the admin editor all render.
+ */
+export interface AcademyPricingOption {
+  key: string;
+  label: string;
+  note: string | null;
   price_ngn: number;
   sort_order: number;
 }
 
-// Labels are the operator's exact wording, one line per format, e.g.
-// "Weekend (No Boarding) = ₦50,000". The 30-days / non-Lagos context for the
-// full-time format lives in the apply-form caption, not the price line.
-export const ACADEMY_PRICING_STRUCTURE: AcademyPricingOption[] = [
-  { key: 'weekend_day',        label: 'Weekend (No Boarding)',   note: null, price_ngn: 50000,  sort_order: 10 },
-  { key: 'weekend_boarding',   label: 'Weekend (With Boarding)', note: null, price_ngn: 80000,  sort_order: 20 },
-  { key: 'weekday_day',        label: 'Week days (No Boarding)', note: null, price_ngn: 100000, sort_order: 30 },
-  { key: 'weekday_boarding',   label: 'Week days (Boarding)',    note: null, price_ngn: 150000, sort_order: 40 },
-  { key: 'full_time_boarding', label: '1 month - Boarding',      note: null, price_ngn: 200000, sort_order: 50 },
+// The wording the operator launched on, and still sees on a database that has
+// not run 20271800000000 (mirrors that migration's seed and the five rows it
+// documents). Notes stayed null because the launch copy puts the 30-days /
+// non-Lagos context in the apply-form caption, not in the price line.
+export const ACADEMY_LAUNCH_FORMATS: AcademyPricingFormat[] = [
+  { key: 'weekend_day',        label: 'Weekend (No Boarding)',   note: null, sort_order: 10, is_active: true, default_price_ngn: 50000 },
+  { key: 'weekend_boarding',   label: 'Weekend (With Boarding)', note: null, sort_order: 20, is_active: true, default_price_ngn: 80000 },
+  { key: 'weekday_day',        label: 'Week days (No Boarding)', note: null, sort_order: 30, is_active: true, default_price_ngn: 100000 },
+  { key: 'weekday_boarding',   label: 'Week days (Boarding)',    note: null, sort_order: 40, is_active: true, default_price_ngn: 150000 },
+  { key: 'full_time_boarding', label: '1 month - Boarding',      note: null, sort_order: 50, is_active: true, default_price_ngn: 200000 },
 ];
 
 /** What an applicant pays at application time. */
@@ -61,30 +79,61 @@ export const ACADEMY_FEE_EXCLUSIONS = [
  */
 export const MAX_INTEREST_AREAS_PER_APPLICATION = 2;
 
+/** A copy, ordered the way the operator ordered it. Never sorts in place. */
+export function orderFormats(formats: AcademyPricingFormat[]): AcademyPricingFormat[] {
+  return [...formats]
+    .filter((f) => f && typeof f.key === 'string' && f.key.length > 0)
+    .sort((a, b) => a.sort_order - b.sort_order || a.key.localeCompare(b.key));
+}
+
+/** The formats a NEW application may be priced in: the on-offer ones, in order. */
+export function activeFormats(formats: AcademyPricingFormat[]): AcademyPricingFormat[] {
+  const offered = orderFormats(formats).filter((f) => f.is_active);
+  // An empty or unreadable catalogue must not empty the apply form: fall back
+  // to the launch structure, which is what every environment was seeded with.
+  return offered.length > 0 ? offered : orderFormats(ACADEMY_LAUNCH_FORMATS).filter((f) => f.is_active);
+}
+
+export function activeFormatKeys(formats: AcademyPricingFormat[]): Set<string> {
+  return new Set(activeFormats(formats).map((f) => f.key));
+}
+
 /**
- * The format priced for a client that never chose one (the old web form sends
- * no key). The cheapest format — a legacy submission must never be priced
- * above what it was shown.
+ * The format priced for a client that never chose one — the old web form and
+ * the old mobile build send no key. It used to be the literal 'weekend_day',
+ * the cheapest launch format; now it is the cheapest FORMAT ON OFFER, so an
+ * operator who withdraws the weekend format does not silently price a legacy
+ * submission above what the screen showed. Ties break on the operator's order.
  */
-export const ACADEMY_PRICING_FALLBACK_KEY: AcademyPricingKey = 'weekend_day';
-
-export function isPricingKey(v: unknown): v is AcademyPricingKey {
-  return typeof v === 'string' && (ACADEMY_PRICING_KEYS as readonly string[]).includes(v);
+export function fallbackFormat(formats: AcademyPricingFormat[]): AcademyPricingFormat {
+  const offered = activeFormats(formats);
+  return offered.reduce((cheapest, f) =>
+    (f.default_price_ngn < cheapest.default_price_ngn ? f : cheapest), offered[0]);
 }
 
-export function pricingDefinition(key: AcademyPricingKey): AcademyPricingOption {
-  return ACADEMY_PRICING_STRUCTURE.find((o) => o.key === key) ?? ACADEMY_PRICING_STRUCTURE[0];
+export function fallbackFormatKey(formats: AcademyPricingFormat[]): string {
+  return fallbackFormat(formats).key;
 }
 
-/** The five launch rows to seed for a freshly created area. */
-export function defaultPricingRows(areaId: string) {
-  return ACADEMY_PRICING_STRUCTURE.map((o) => ({
+/** The format's own row; falls back to the first on-offer format for an
+ * unknown key, which callers must have already rejected at the boundary. */
+export function pricingDefinition(key: string, formats: AcademyPricingFormat[]): AcademyPricingFormat {
+  return orderFormats(formats).find((f) => f.key === key) ?? activeFormats(formats)[0];
+}
+
+/** The five launch rows to seed for a freshly created area — today: every
+ * format the operator has on offer, at its own default price. */
+export function defaultPricingRows(
+  areaId: string,
+  formats: AcademyPricingFormat[],
+): Array<{ area_id: string; key: string; label: string; note: string | null; price_ngn: number; sort_order: number }> {
+  return activeFormats(formats).map((f) => ({
     area_id: areaId,
-    key: o.key,
-    label: o.label,
-    note: o.note,
-    price_ngn: o.price_ngn,
-    sort_order: o.sort_order,
+    key: f.key,
+    label: f.label,
+    note: f.note,
+    price_ngn: f.default_price_ngn,
+    sort_order: f.sort_order,
   }));
 }
 
@@ -98,13 +147,26 @@ export interface AreaPricingOptionRow {
 }
 
 /**
- * Per-area option rows merged onto the area list the caller already has.
- * An area with no rows gets the launch structure as defaults, so it is priced
- * on the current table rather than silently at zero.
+ * Per-area prices merged onto the area list the caller already has.
+ *
+ * Identity (label, note) comes from the managed catalogue; money comes
+ * from the stored row, falling back to the format's default price where that
+ * training has no row yet — which is exactly the state a format sits in for the
+ * seconds after an operator adds it, and for any training created while the
+ * seed insert failed.
+ *
+ * By default a row whose format is retired is NOT projected: an applicant must
+ * never be offered a withdrawn format. The admin console passes
+ * `includeInactive` — an operator who retires a format still has to see the
+ * prices it carries and be able to bring it back. A past application keeps its
+ * own snapshot either way, and the status screen reads the rows directly rather
+ * than this projection.
  */
 export function attachPricingOptions<T extends { id: string }>(
   areas: T[],
   rows: AreaPricingOptionRow[],
+  formats: AcademyPricingFormat[],
+  opts: { includeInactive?: boolean } = {},
 ): Array<T & { pricing_options: AcademyPricingOption[] }> {
   const byArea = new Map<string, AreaPricingOptionRow[]>();
   for (const r of rows) {
@@ -112,34 +174,34 @@ export function attachPricingOptions<T extends { id: string }>(
     list.push(r);
     byArea.set(r.area_id, list);
   }
+  const offered = opts.includeInactive ? orderFormats(formats) : activeFormats(formats);
   return areas.map((a) => {
-    const stored = (byArea.get(a.id) ?? [])
-      .filter((r) => isPricingKey(r.key))
-      .sort((x, y) => x.sort_order - y.sort_order)
-      .map((r) => ({
-        key: r.key as AcademyPricingKey,
-        label: r.label,
-        note: r.note,
-        price_ngn: Number(r.price_ngn),
-        sort_order: r.sort_order,
-      }));
-    const options = ACADEMY_PRICING_STRUCTURE.map((def) =>
-      stored.find((o) => o.key === def.key) ?? def,
-    );
+    const stored = byArea.get(a.id) ?? [];
+    const options: AcademyPricingOption[] = offered.map((f) => {
+      const row = stored.find((r) => r.key === f.key);
+      return {
+        key: f.key,
+        label: f.label,
+        note: f.note,
+        price_ngn: row ? Number(row.price_ngn) : f.default_price_ngn,
+        sort_order: f.sort_order,
+      };
+    });
     return { ...a, pricing_options: options };
   });
 }
 
 /**
  * Tuition for a set of areas in one format: the stored per-area price,
- * falling back to the launch definition where the option row is missing.
+ * falling back to the format's default where the option row is missing.
  */
 export function tuitionForFormat(
   areaIds: Array<{ id: string }>,
-  key: AcademyPricingKey,
+  key: string,
   rows: AreaPricingOptionRow[],
+  formats: AcademyPricingFormat[],
 ): number {
-  const def = pricingDefinition(key).price_ngn;
+  const def = pricingDefinition(key, formats).default_price_ngn;
   return areaIds.reduce((sum, a) => {
     const row = rows.find((r) => r.area_id === a.id && r.key === key);
     return sum + (row ? Number(row.price_ngn) : def);
@@ -170,14 +232,24 @@ export function tuitionPlanShape(input: {
   return { count, discountPct, discounted, unit, firstDueNgn: input.tuition > 0 ? first : 0 };
 }
 
-/** Parse `area_selections: [{slug, key}]` into {slug: key}; 'invalid' on a bad or duplicate entry. */
-export function parseAreaSelections(value: unknown): Record<string, AcademyPricingKey> | 'invalid' | null {
+/**
+ * Parse `area_selections: [{slug, key}]` into {slug: key}; 'invalid' on a bad,
+ * duplicate or NOT-ON-OFFER entry.
+ *
+ * The allowed keys are passed in because the operator owns the list: a key the
+ * admin retired, mistyped into the request, or never created must not reach the
+ * money path. Callers get it from activeFormatKeys(getTrainingFormats()).
+ */
+export function parseAreaSelections(
+  value: unknown,
+  allowedKeys: Set<string>,
+): Record<string, string> | 'invalid' | null {
   if (!Array.isArray(value) || value.length === 0) return null;
-  const out: Record<string, AcademyPricingKey> = {};
+  const out: Record<string, string> = {};
   for (const item of value) {
     const slug = String((item as { slug?: unknown })?.slug ?? '').trim();
     const key = String((item as { key?: unknown })?.key ?? '').trim();
-    if (!slug || !isPricingKey(key)) return 'invalid';
+    if (!slug || !allowedKeys.has(key)) return 'invalid';
     if (out[slug]) return 'invalid';
     out[slug] = key;
   }
@@ -187,12 +259,30 @@ export function parseAreaSelections(value: unknown): Record<string, AcademyPrici
 /** Tuition when each area carries its own format — the sum of the chosen subs. */
 export function tuitionForSelections(
   areas: Array<{ id: string; slug: string }>,
-  selections: Record<string, AcademyPricingKey>,
+  selections: Record<string, string>,
   rows: AreaPricingOptionRow[],
+  formats: AcademyPricingFormat[],
 ): number {
+  const fallback = fallbackFormat(formats);
   return areas.reduce((sum, a) => {
-    const key = selections[a.slug] ?? ACADEMY_PRICING_FALLBACK_KEY;
+    const key = selections[a.slug] ?? fallback.key;
     const row = rows.find((r) => r.area_id === a.id && r.key === key);
-    return sum + (row ? Number(row.price_ngn) : pricingDefinition(key).price_ngn);
+    return sum + (row ? Number(row.price_ngn) : pricingDefinition(key, formats).default_price_ngn);
   }, 0);
+}
+
+/**
+ * The public catalogue's format list: identity without money, because each
+ * training carries its own prices in pricing_options. A marketing page renders
+ * this, so it must be the same list the application endpoint would accept.
+ */
+export function pricingStructureFor(
+  formats: AcademyPricingFormat[],
+): Array<Omit<AcademyPricingOption, 'price_ngn'>> {
+  return activeFormats(formats).map(({ key, label, note, sort_order }) => ({
+    key,
+    label,
+    note,
+    sort_order,
+  }));
 }

@@ -31,8 +31,10 @@ let calls: Call[];
 let areaResult: Result;
 let oldPriceResult: Result;
 let upsertResult: Result;
+let formatsResult: Result;
 
 function resultFor(table: string, op: string): Result {
+  if (table === 'academy_pricing_formats') return formatsResult;
   if (table === 'academy_interest_areas' && op === 'update') return areaResult;
   if (table === 'academy_area_pricing_options' && op === 'select') return oldPriceResult;
   if (table === 'academy_area_pricing_options' && op === 'upsert') return upsertResult;
@@ -89,6 +91,19 @@ beforeEach(() => {
     error: null,
   };
   upsertResult = { data: null, error: null };
+  // The managed catalogue: the five launch formats plus one the operator added.
+  // A key outside this list is what the route must refuse.
+  formatsResult = {
+    data: [
+      { key: 'weekend_day', label: 'Weekend (No Boarding)', note: null, sort_order: 10, is_active: true, default_price_ngn: 50000 },
+      { key: 'weekend_boarding', label: 'Weekend (With Boarding)', note: null, sort_order: 20, is_active: true, default_price_ngn: 80000 },
+      { key: 'weekday_day', label: 'Week days (No Boarding)', note: null, sort_order: 30, is_active: true, default_price_ngn: 100000 },
+      { key: 'weekday_boarding', label: 'Week days (Boarding)', note: null, sort_order: 40, is_active: true, default_price_ngn: 150000 },
+      { key: 'full_time_boarding', label: '1 month - Boarding', note: null, sort_order: 50, is_active: true, default_price_ngn: 200000 },
+      { key: 'summer_intensive', label: 'Summer Intensive (2 weeks)', note: 'Holiday cohort', sort_order: 15, is_active: true, default_price_ngn: 120000 },
+    ],
+    error: null,
+  };
   vi.mocked(assertAdminPermission).mockResolvedValue({ role: 'super_admin', actorId: ADMIN_ID } as never);
   vi.mocked(createAdminClient).mockImplementation(
     () => ({ from: vi.fn((table: string) => builder(table)) }) as never,
@@ -143,11 +158,29 @@ describe('PUT /api/admin/academy/interest-areas pricing', () => {
     );
   });
 
-  it('PUT pricing rejects an unknown format key', async () => {
+  it('PUT pricing rejects a format the operator never created', async () => {
     await expect400(
       { id: AREA_ID, pricing: [{ key: 'evening_class', price_ngn: 60000 }] },
-      /Unknown pricing format: evening_class/,
+      /Unknown tuition format: evening_class/,
     );
+  });
+
+  it('PUT pricing accepts a format the operator added and writes its catalogue identity', async () => {
+    const res = await put({
+      id: AREA_ID,
+      pricing: [{ key: 'summer_intensive', price_ngn: 132500, label: 'HACKED', note: 'HACKED', sort_order: 999 }],
+    });
+    expect(res.status).toBe(200);
+    const [rows] = upsertCalls()[0].args as [Array<Record<string, unknown>>];
+    expect(rows[0]).toMatchObject({
+      area_id: AREA_ID,
+      key: 'summer_intensive',
+      price_ngn: 132500,
+      label: 'Summer Intensive (2 weeks)',
+      note: 'Holiday cohort',
+      sort_order: 15,
+    });
+    expect(addAuditEvent).toHaveBeenCalledTimes(1);
   });
 
   it('PUT pricing accepts only plain digit strings', async () => {

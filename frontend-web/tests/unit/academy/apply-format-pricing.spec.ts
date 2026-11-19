@@ -37,7 +37,19 @@ import { GET, POST } from '../../../app/api/academy/apply/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { verifyPaystackTransaction } from '@/src/lib/payments';
-import { ACADEMY_PRICING_STRUCTURE } from '@/src/server/services/academy/pricing';
+import type { AcademyPricingFormat } from '@/src/server/services/academy/pricing';
+
+// The catalogue as DATA, seeded into the fake academy_pricing_formats table.
+// This used to be an import of the hardcoded structure, which meant the spec
+// proved the endpoint agreed with a constant; now it proves the endpoint agrees
+// with the rows, which is what the operator can change.
+const FORMATS: AcademyPricingFormat[] = [
+  { key: 'weekend_day', label: 'Weekend (No Boarding)', note: null, sort_order: 10, is_active: true, default_price_ngn: 50000 },
+  { key: 'weekend_boarding', label: 'Weekend (With Boarding)', note: null, sort_order: 20, is_active: true, default_price_ngn: 80000 },
+  { key: 'weekday_day', label: 'Week days (No Boarding)', note: null, sort_order: 30, is_active: true, default_price_ngn: 100000 },
+  { key: 'weekday_boarding', label: 'Week days (Boarding)', note: null, sort_order: 40, is_active: true, default_price_ngn: 150000 },
+  { key: 'full_time_boarding', label: '1 month - Boarding', note: null, sort_order: 50, is_active: true, default_price_ngn: 200000 },
+];
 
 // In-memory per-table fake
 
@@ -118,20 +130,28 @@ const PRICES: Record<string, Record<string, number>> = {
   },
 };
 
-function optionRows(areaId: string) {
-  return ACADEMY_PRICING_STRUCTURE.map((d) => ({
+// The stored price rows for one area. One per format in the catalogue,
+// INCLUDING a withdrawn one: retiring a format never deletes the prices it
+// carries (an application is resolved against them), so the fake must keep the
+// row and the endpoint must be the thing that hides it.
+function optionRows(areaId: string, formats = FORMATS) {
+  return formats.map((d) => ({
     area_id: areaId,
     key: d.key,
     label: `${d.label} (${areaId})`,
     note: null,
     // numeric column: PostgREST returns a string
-    price_ngn: `${PRICES[areaId][d.key]}.00`,
+    price_ngn: `${PRICES[areaId][d.key] ?? d.default_price_ngn}.00`,
     sort_order: d.sort_order,
   }));
 }
 
-function seed(settings: Row = { registration_type: 'free', application_fee: 0 }) {
+function seed(
+  settings: Row = { registration_type: 'free', application_fee: 0 },
+  formats: AcademyPricingFormat[] = FORMATS,
+) {
   tables = {
+    academy_pricing_formats: formats.map((f) => ({ ...f })),
     academy_settings: [{ is_active: true, application_fee_refundable: false, tuition_fee: 0, ...settings }],
     academy_batches: [
       { id: 'batch-001', batch_name: 'Batch 1', start_date: null, duration_weeks: null, status: 'open', max_students: null },
@@ -142,7 +162,10 @@ function seed(settings: Row = { registration_type: 'free', application_fee: 0 })
       { id: 'area-sound', slug: 'sound', label: 'Sound', description: null, fee_ngn: 0, is_active: true, sort_order: 3 },
       { id: 'area-old', slug: 'retired', label: 'Retired', description: null, fee_ngn: 0, is_active: false, sort_order: 4 },
     ],
-    academy_area_pricing_options: [...optionRows('area-acting'), ...optionRows('area-editing')],
+    academy_area_pricing_options: [
+      ...optionRows('area-acting', formats),
+      ...optionRows('area-editing', formats),
+    ],
     academy_batch_interest_areas: [
       { batch_id: 'batch-001', area_slug: 'acting' },
       { batch_id: 'batch-001', area_slug: 'editing' },
@@ -212,10 +235,15 @@ describe('GET /api/academy/apply — pricing catalogue', () => {
     );
   });
 
-  it('gives an area with no stored rows the launch prices', async () => {
+  it('gives an area with no stored rows the format default prices', async () => {
     const { interestAreas } = await catalogue();
     const sound = interestAreas.find((a) => a.slug === 'sound')!;
-    expect(sound.pricing_options).toEqual(ACADEMY_PRICING_STRUCTURE);
+    expect(sound.pricing_options).toEqual(
+      FORMATS.map((f) => ({
+        key: f.key, label: f.label, note: f.note,
+        price_ngn: f.default_price_ngn, sort_order: f.sort_order,
+      })),
+    );
   });
 
   it('does not expose the area uuid', async () => {
@@ -226,9 +254,32 @@ describe('GET /api/academy/apply — pricing catalogue', () => {
   it('publishes the format structure without prices', async () => {
     const { pricingStructure } = await catalogue();
     expect(pricingStructure).toEqual(
-      ACADEMY_PRICING_STRUCTURE.map(({ key, label, note, sort_order }) => ({ key, label, note, sort_order })),
+      FORMATS.map(({ key, label, note, sort_order }) => ({ key, label, note, sort_order })),
     );
     for (const s of pricingStructure) expect(s).not.toHaveProperty('price_ngn');
+  });
+
+  // The operator's whole point: the list is theirs. What the applicant is shown
+  // and what the server will price must both follow the rows.
+  it('offers a format the operator added and withdraws one they turned off', async () => {
+    seed(
+      { registration_type: 'free', application_fee: 0 },
+      [
+        ...FORMATS.map((f) => (f.key === 'weekend_boarding' ? { ...f, is_active: false } : f)),
+        { key: 'summer_intensive', label: 'Summer Intensive (2 weeks)', note: 'Lagos only',
+          sort_order: 5, is_active: true, default_price_ngn: 120000 },
+      ],
+    );
+    const { interestAreas, pricingStructure } = await catalogue();
+    expect(pricingStructure.map((s) => s.key)).toEqual([
+      'summer_intensive', 'weekend_day', 'weekday_day', 'weekday_boarding', 'full_time_boarding',
+    ]);
+    const acting = interestAreas.find((a) => a.slug === 'acting')!;
+    expect(acting.pricing_options.map((o) => o.key)).not.toContain('weekend_boarding');
+    // The new format has no price rows of its own — it prices at its default.
+    expect(acting.pricing_options[0]).toMatchObject({
+      key: 'summer_intensive', label: 'Summer Intensive (2 weeks)', price_ngn: 120000,
+    });
   });
 });
 
@@ -298,8 +349,48 @@ describe('POST /api/academy/apply — area_selections', () => {
       body({ area_selections: [{ slug: 'acting', key: 'monthly' }] }),
     );
     expect(status).toBe(400);
-    expect(json.error).toMatch(/valid training format/i);
+    expect(json.error).toMatch(/training format on offer/i);
     expect(applicationInserts()).toHaveLength(0);
+  });
+
+  it('rejects a withdrawn format key with 400 and no insert', async () => {
+    // 'weekend_boarding' is a real key with real stored rows — the operator has
+    // simply taken it off the offer. Withdrawing must stop new money going into
+    // it, not merely hide it from the form.
+    seed({ registration_type: 'free', application_fee: 0 },
+      FORMATS.map((f) => (f.key === 'weekend_boarding' ? { ...f, is_active: false } : f)));
+    const { status } = await apply(
+      body({ area_selections: [{ slug: 'acting', key: 'weekend_boarding' }] }),
+    );
+    expect(status).toBe(400);
+    expect(applicationInserts()).toHaveLength(0);
+
+    const legacy = await apply(body({ areas_of_interest: ['acting'], pricing_option_key: 'weekend_boarding' }));
+    expect(legacy.status).toBe(400);
+    expect(legacy.json.error).toMatch(/unknown training format/i);
+  });
+
+  it('prices in a format the operator added, from its own stored row', async () => {
+    const added: AcademyPricingFormat = {
+      key: 'summer_intensive', label: 'Summer Intensive (2 weeks)', note: null,
+      sort_order: 5, is_active: true, default_price_ngn: 120000,
+    };
+    seed({ registration_type: 'free', application_fee: 0 }, [...FORMATS, added]);
+    // The row seed() created prices the new format at its default; reprice this
+    // training, which is what the areas console does, and the stored row must
+    // win over the catalogue default.
+    const row = tables.academy_area_pricing_options.find(
+      (r) => r.area_id === 'area-acting' && r.key === 'summer_intensive',
+    );
+    expect(row).toBeDefined();
+    row!.price_ngn = '132500.00';
+    const { status } = await apply(
+      body({ area_selections: [{ slug: 'acting', key: 'summer_intensive' }] }),
+    );
+    expect(status).toBe(201);
+    const [payload] = applicationInserts();
+    expect(payload.tuition_total_ngn).toBe(132500);
+    expect(payload.pricing_option_key).toBe('summer_intensive');
   });
 
   it.each([

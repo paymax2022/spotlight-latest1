@@ -44,6 +44,9 @@ const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'settings',    label: 'Settings',     hint: 'Fees and areas used by the apply form' },
 ];
 
+/** Mirror of the server's academy_pricing_formats.key rule, so a bad key is refused here. */
+const FORMAT_KEY_PATTERN = /^[a-z][a-z0-9_]{1,39}$/;
+
 /** Academy money is stored in whole NAIRA. Never divide by 100 here. */
 function naira(v: number | string | null | undefined): string {
   const n = Number(v ?? 0);
@@ -145,9 +148,9 @@ function BatchesTab({ onNotice }: NoticeProp) {
   const [pricingBusy, setPricingBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // The batch editor prices in place: the five lines belong to the training's
-  // own catalogue rows, shared by every batch that offers it — the same rows
-  // the Settings tab edits and the server charges from.
+  // The batch editor prices in place: one line per tuition format on offer
+  // belongs to the training's own catalogue rows, shared by every batch that
+  // offers it — the same rows the Settings tab edits and the server charges from.
   const saveBatchAreaPricing = async (
     a: svc.AcademyInterestArea,
     pricing: Array<{ key: svc.AcademyPricingKey; price_ngn: number }>,
@@ -324,8 +327,9 @@ function BatchesTab({ onNotice }: NoticeProp) {
             <p style={{ fontSize: '0.75rem', color: colors.muted, marginTop: 0 }}>
               This batch offers <strong>only</strong> the trainings you tick — at least one is
               required, and a ticked training is what the phone shows inside this cohort. Open a
-              training&rsquo;s accordion to see and edit its five tuition lines; prices belong to
-              the training and are shared by every batch that offers it.
+              training&rsquo;s accordion to see and edit its tuition lines — one per
+              format on offer; prices belong to the training and are shared by every
+              batch that offers it.
             </p>
             <div style={{ display: 'grid', gap: '0.4rem', marginTop: '0.4rem' }}>
               {(areas.data ?? []).filter((a) => a.is_active !== false).map((a) => {
@@ -371,7 +375,8 @@ function Field({ label: l, children }: { label: string; children: React.ReactNod
 /**
  * One training inside the batch editor, on the same accordion contract as the
  * applicant screens: the header carries no fee text, and opening it reveals
- * the five tuition subs — each with its price, editable in place. Saving
+ * one tuition line per format on offer — each with its price, editable in
+ * place. Saving
  * writes the training's own catalogue rows (shared by every batch), which is
  * what the applicant accordions render and the server charges from.
  */
@@ -438,7 +443,8 @@ function BatchAreaAccordion({ area, busy, checked, onCheck, onSavePricing }: {
           ))}
           {options.length === 0 ? (
             <span style={{ fontSize: '0.75rem', color: colors.muted }}>
-              No tuition lines yet — open this training under Settings and save its five prices.
+              No tuition lines yet — add a format under Settings, then save this
+              training&rsquo;s prices.
             </span>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.15rem' }}>
@@ -1149,12 +1155,12 @@ function SettingsTab({ onNotice }: NoticeProp) {
     if (!newArea.trim()) return;
     setBusy(true);
     try {
-      // The server gives a new training the five standard tuition formats —
-      // there is no single fee to ask for any more.
+      // The server gives a new training a price line for every format currently
+      // on offer, at each format's default — there is no single fee to ask for.
       await svc.createInterestArea({ label: newArea.trim() });
       setNewArea('');
       await areas.reload();
-      onNotice('Area added — it now appears in the app’s apply form with the standard tuition structure.');
+      onNotice('Area added — it now appears in the app’s apply form with a price for every tuition format on offer.');
     } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
@@ -1227,15 +1233,18 @@ function SettingsTab({ onNotice }: NoticeProp) {
         </StateBlock>
       </Card>
 
+      <PricingFormatsCard onChanged={() => void areas.reload()} />
+
       <Card title="Trainings and their tuition structure">
         <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 0 }}>
-          Every training is priced by the same composite structure: Weekend -
-          Saturday &amp; Sunday (No Boarding / With Boarding), Week days -
-          Mondays - Fridays (No Boarding / Boarding), and 1 month (30 days)
-          with Boarding for non Lagos residents. These prices are the
-          tuition shown on the phone — payable after approval, not at application. The single legacy
-          training fee is retired; the slug is what the application row stores, so renaming a label
-          is safe but the slug is the contract.
+          Every training is priced by the formats above — one price line each, and
+          the format list is yours to manage. These prices are the tuition shown
+          on the phone: payable after approval, not at application. The single
+          legacy training fee is retired, and a training with no price line for a
+          format is charged that format&rsquo;s default, so withdrawing a format
+          here changes nothing an applicant was already quoted. The slug is what
+          the application row stores, so renaming a label is safe but the slug is
+          the contract.
         </p>
         <FilterBar>
           <div style={{ minWidth: 240 }}>
@@ -1281,11 +1290,222 @@ function SettingsTab({ onNotice }: NoticeProp) {
 }
 
 /**
+ * The tuition-format catalogue — the list an applicant chooses between under
+ * every training ("Weekend (No Boarding)", "1 month - Boarding", …).
+ *
+ * This used to be five names baked into a Postgres CHECK and two TypeScript
+ * unions, so re-wording or re-ordering what a learner saw meant a migration and
+ * a deploy. It is data now: rename it here, move it up or down, add a format for
+ * the next season, or withdraw one.
+ *
+ * Two rules the console has to respect, because the server enforces them anyway
+ * and a surprise refusal is worse than a disabled button:
+ *   · a format an application was priced in can be WITHDRAWN, never deleted —
+ *     withdrawing keeps that learner's record readable;
+ *   · the last format on offer cannot be withdrawn, because the apply form would
+ *     be left with nothing to price anybody in.
+ * The prices themselves live per training (the card below this one); a new
+ * format starts every training at its default price.
+ */
+function PricingFormatsCard({ onChanged }: { onChanged?: () => Promise<void> | void }) {
+  const formats = useAsync(() => svc.listPricingFormats(), []);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, { label: string; note: string; price: string }>>({});
+  const [adding, setAdding] = useState<{ key: string; label: string; price: string } | null>(null);
+
+  const rows = useMemo(() => formats.data ?? [], [formats.data]);
+  useEffect(() => {
+    setDrafts(Object.fromEntries(rows.map((f) => [
+      f.key,
+      { label: f.label, note: f.note ?? '', price: String(f.default_price_ngn) },
+    ])));
+  }, [rows]);
+
+  const draftOf = (f: svc.AcademyPricingFormat) => drafts[f.key] ?? { label: f.label, note: f.note ?? '', price: String(f.default_price_ngn) };
+  const dirtyFor = (f: svc.AcademyPricingFormat) => {
+    const d = draftOf(f);
+    return d.label !== f.label || d.note !== (f.note ?? '') || Number(d.price) !== Number(f.default_price_ngn);
+  };
+
+  const run = async (what: () => Promise<unknown>) => {
+    setBusy(true); setFormError(null);
+    try {
+      await what();
+      await formats.reload();
+      await onChanged?.();
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveFormat = (f: svc.AcademyPricingFormat) => {
+    const d = draftOf(f);
+    const price = parseFormatPriceInput(d.price);
+    if (price === null) return;
+    void run(() => svc.updatePricingFormat(f.key, { label: d.label.trim(), note: d.note.trim() || null, default_price_ngn: price }));
+  };
+
+  const withdrawOrReturn = (f: svc.AcademyPricingFormat) => {
+    if (f.is_active && !window.confirm(
+      `Withdraw “${f.label}”?\n\nIt stops being offered on the apply form, but every application already priced in it — and the price each training carries — stays exactly as it is.`,
+    )) return;
+    void run(() => svc.updatePricingFormat(f.key, { is_active: !f.is_active }));
+  };
+
+  /**
+   * One move at a time, sent as the whole list: the server reorders only against
+   * a complete order so a partial list cannot silently shuffle what is left out.
+   */
+  const move = (index: number, delta: number) => {
+    const next = [...rows];
+    const target = index + delta;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    void run(() => svc.reorderPricingFormats(next.map((f) => f.key)));
+  };
+
+  const suggestKey = (labelText: string) =>
+    labelText.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+  const createFormat = () => {
+    if (!adding) return;
+    const key = adding.key.trim().toLowerCase();
+    const label = adding.label.trim();
+    const price = parseFormatPriceInput(adding.price);
+    if (!FORMAT_KEY_PATTERN.test(key)) {
+      setFormError('A format key is 2-40 characters: a lowercase letter, then lowercase letters, digits or underscores (e.g. summer_intensive).');
+      return;
+    }
+    if (!label) { setFormError('A label is required — it is what the applicant reads.'); return; }
+    if (price === null) { setFormError(FORMAT_PRICE_HINT); return; }
+    void run(async () => {
+      await svc.createPricingFormat({ key, label, default_price_ngn: price });
+      setAdding(null);
+    });
+  };
+
+  return (
+    <Card title="Tuition formats applicants choose between">
+      <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 0 }}>
+        These are the training formats every area is priced by. Rename, reorder,
+        add or withdraw one here and the apply form on the phone changes with it —
+        no deploy. Each training then carries its own price for each format in the
+        card below.
+      </p>
+      <StateBlock loading={formats.loading} error={formats.error} empty={rows.length === 0}
+        emptyText="No tuition formats — the apply form falls back to the launch list until you add one.">
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead><tr>
+            <th style={th()}>Order</th><th style={th()}>Format</th><th style={th()}>Key</th>
+            <th style={th()}>Default price</th><th style={th()}>On offer</th><th style={th()} />
+          </tr></thead>
+          <tbody>
+            {rows.map((f, i) => {
+              const d = draftOf(f);
+              const price = parseFormatPriceInput(d.price);
+              const invalid = price === null || !d.label.trim();
+              return (
+                <tr key={f.key} style={{ opacity: f.is_active ? 1 : 0.55 }}>
+                  <td style={td()}>
+                    <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                      <button style={btn()} disabled={busy || i === 0} onClick={() => move(i, -1)} title="Move earlier">↑</button>
+                      <button style={btn()} disabled={busy || i === rows.length - 1} onClick={() => move(i, 1)} title="Move later">↓</button>
+                    </span>
+                  </td>
+                  <td style={td()}>
+                    <input style={{ ...input(), width: '100%', minWidth: 190 }} value={d.label} disabled={busy}
+                      onChange={(e) => setDrafts((p) => ({ ...p, [f.key]: { ...d, label: e.target.value } }))} />
+                    <input style={{ ...input(), width: '100%', minWidth: 190, marginTop: 4 }} value={d.note} disabled={busy}
+                      placeholder="note (optional)"
+                      onChange={(e) => setDrafts((p) => ({ ...p, [f.key]: { ...d, note: e.target.value } }))} />
+                  </td>
+                  <td style={td()}><code style={{ fontSize: '0.75rem' }}>{f.key}</code></td>
+                  <td style={td()}>
+                    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.75rem', color: colors.muted }}>₦</span>
+                      <input type="number" min={1} step={1} style={{ ...input(), width: 120 }} value={d.price} disabled={busy}
+                        onChange={(e) => setDrafts((p) => ({ ...p, [f.key]: { ...d, price: e.target.value } }))} />
+                    </span>
+                    <div style={{ fontSize: '0.7rem', color: colors.muted, marginTop: 3 }}>
+                      {price === null
+                        ? <span style={{ color: colors.danger }}>{FORMAT_PRICE_HINT}</span>
+                        : <>new trainings start at {naira(price)}</>}
+                    </div>
+                  </td>
+                  <td style={td()}>
+                    <Badge status={f.is_active ? 'active' : 'draft'} label={f.is_active ? 'on offer' : 'withdrawn'} />
+                  </td>
+                  <td style={{ ...td(), whiteSpace: 'nowrap' }}>
+                    <button style={btnPrimary()} disabled={busy || !dirtyFor(f) || invalid} onClick={() => saveFormat(f)}>
+                      {dirtyFor(f) ? 'Save' : 'Saved'}
+                    </button>{' '}
+                    <button style={btn()} disabled={busy} onClick={() => withdrawOrReturn(f)}>
+                      {f.is_active ? 'Withdraw' : 'Return to offer'}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </StateBlock>
+
+      {/* The add form and the notes stay outside StateBlock: an empty catalogue
+          is exactly the state where the operator needs the button. */}
+      {adding ? (
+          <div style={{ marginTop: '0.9rem', display: 'grid', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <Field label="Label (what the applicant reads)">
+                <input style={input()} placeholder="e.g. Summer Intensive (2 weeks)" value={adding.label} disabled={busy}
+                  onChange={(e) => {
+                    const label = e.target.value;
+                    setAdding({ ...adding, label, key: adding.key || suggestKey(label) });
+                  }} />
+              </Field>
+              <Field label="Key (permanent — applications store it)">
+                <input style={input()} value={adding.key} disabled={busy}
+                  onChange={(e) => setAdding({ ...adding, key: e.target.value })} />
+              </Field>
+              <Field label="Default price (₦)">
+                <input type="number" min={1} step={1} style={input()} value={adding.price} disabled={busy}
+                  onChange={(e) => setAdding({ ...adding, price: e.target.value })} />
+              </Field>
+              <button style={btnPrimary()} disabled={busy} onClick={createFormat}>Add format</button>
+              <button style={btn()} disabled={busy} onClick={() => setAdding(null)}>Cancel</button>
+            </div>
+            <p style={{ fontSize: '0.72rem', color: colors.muted, margin: 0 }}>
+              Adding it gives every active training a price line at that default —
+              reprice individual trainings below.
+            </p>
+          </div>
+        ) : (
+          <div style={{ marginTop: '0.9rem' }}>
+            <button style={btn()} disabled={busy} onClick={() => setAdding({ key: '', label: '', price: '' })}>
+              Add a tuition format
+            </button>
+          </div>
+        )}
+
+        {formError ? <div style={{ color: colors.danger, fontSize: '0.78rem', marginTop: '0.6rem' }}>{formError}</div> : null}
+
+        <AuditNote>
+          A format an application was priced in cannot be deleted — withdraw it
+          instead, so that learner&rsquo;s record still resolves to the wording they
+          were charged under. The last format on offer cannot be withdrawn.
+        </AuditNote>
+    </Card>
+  );
+}
+
+/**
  * One training as an accordion row. The header carries no fee text — the same
- * rule the applicant-facing accordions follow — and opening it reveals the five
- * composite tuition lines, each editable in place. GET always serves all five
- * formats per area (the server fills any missing row with the launch
- * structure), so the editor never has to invent formats.
+ * rule the applicant-facing accordions follow — and opening it reveals one
+ * tuition line per format on offer, each editable in place. GET serves the
+ * on-offer formats for every area (a training with no row yet is priced at the
+ * format's default), so the editor never has to invent formats.
  */
 function InterestAreaPricingRow({ area, busy, onSavePricing, onToggle }: {
   area: svc.AcademyInterestArea;
@@ -1330,7 +1550,7 @@ function InterestAreaPricingRow({ area, busy, onSavePricing, onToggle }: {
             </span>
             <strong>{area.label}</strong>
             <span style={{ fontSize: '0.72rem', color: colors.muted }}>
-              {open ? '' : '— open to edit its five tuition lines'}
+              {open ? '' : `— open to edit its ${options.length} tuition line${options.length === 1 ? '' : 's'}`}
             </span>
           </span>
         </td>
@@ -1367,7 +1587,8 @@ function InterestAreaPricingRow({ area, busy, onSavePricing, onToggle }: {
               ))}
               {options.length === 0 && (
                 <div style={{ fontSize: '0.78rem', color: colors.muted }}>
-                  No pricing loaded — reload this tab; the server should serve all five formats.
+                  No tuition lines — reload this tab; the server should serve one
+                  line per format on offer.
                 </div>
               )}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.25rem' }}>
