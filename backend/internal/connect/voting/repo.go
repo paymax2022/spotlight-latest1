@@ -21,7 +21,7 @@ type Repository struct {
 // NewRepository builds a voting repository.
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
-// The slug is COALESCEd to '' because connect_contests.slug is nullable: rows
+// The slug is COALESCEd to ” because connect_contests.slug is nullable: rows
 // inserted straight into connect_contests (fixtures, mirrors with no contest
 // record) have none, and the admin console needs to distinguish "no slug" from
 // an unreadable row rather than scanning a NULL into a string.
@@ -312,6 +312,79 @@ type RosterEntry struct {
 	LikeCount    int64  `json:"like_count"`
 	ShareCount   int64  `json:"share_count"`
 	LikedByMe    bool   `json:"liked_by_me"`
+	// The contestant's Open Mic song, when they have handed one in. The roster
+	// query finds the submission, the read boundary (Service.withSong) turns its
+	// id into this deployment's reader URL — so SongURL is empty on any entry
+	// that did not pass through a service read, which is correct: only the
+	// service decides what a caller may load.
+	SongSubmissionID string `json:"song_submission_id,omitempty"`
+	SongStatus       string `json:"song_status,omitempty"`
+	SongURL          string `json:"song_url,omitempty"`
+}
+
+// publiclyPlayableSongStatuses is the roster-side copy of
+// PUBLICLY_PLAYABLE_SONG_STATUSES in
+// frontend-web/src/features/openmic/song-storage.ts. It is a security rule, not
+// a display preference: `draft` (uploaded, not yet submitted) and every
+// moderation state stay out of the public roster. TestSongStatusParityWithWeb
+// fails if the two lists drift, because the web reader refuses these rows
+// anyway and a roster that advertises a song the reader will not serve is a
+// broken player on every phone.
+var publiclyPlayableSongStatuses = []string{
+	"submitted",
+	"published_for_voting",
+	"finalist",
+	"winner",
+	"live_for_voting",
+}
+
+// rosterSongJoin finds the one song a roster row may play. It is a single
+// function because ListRoster and GetRosterEntry must agree — the profile
+// screen and the list screen showing different players for the same artist is
+// the bug this prevents.
+//
+// Keyed on the ARTIST, not on the contestant row: competition_entries has no
+// contestant_id, and the promotion seam (registration_contestant_seam) copies
+// user_id onto contestants while the song row already carries it. The contest
+// side matches on id because contests and connect_contests are mirrored twins
+// that keep the SAME id (connect_contests_bridge inserts NEW.id, and
+// mirror_connect_contest_to_legacy inserts v_cc.id back), so no lookup is
+// needed.
+//
+// The bytes test is a text match on the JSON summary column rather than a
+// cast: lyrical_concept_summary is TEXT and holds free-form lyrics for older
+// rows, so `::jsonb` would abort the whole roster query on the first row that
+// is not JSON. A key name is what the web writer stores (songObjectKey, or the
+// earlier r2ObjectKey), and a row that passes this test but names no real
+// object only produces a reader 404 — the reader, not this query, is the
+// authority on who may hear what.
+//
+// Newest first, created_at DESC, which is the same order the web chooser uses
+// so both surfaces pick the same submission.
+//
+// statusParam is the placeholder name of the status-array parameter, which
+// differs between the two queries ("$4" in ListRoster, "$3" in
+// GetRosterEntry). It is a function argument rather than a format verb because
+// the LIKE patterns below carry literal % signs, which fmt.Sprintf would read
+// as verbs.
+//
+// The `song (id, status)` column list is load-bearing, not style: lower() is an
+// unnamed expression, so Postgres would name that output column `lower` and
+// every `song.status` reference above it fails with 42703 — a wrong-query error
+// the live-DB test catches, and the reason this join is not inlined twice.
+func rosterSongJoin(statusParam string) string {
+	return `
+		LEFT JOIN LATERAL (
+			SELECT ce.id::text, lower(ce.status)
+			FROM competition_entries ce
+			WHERE ce.competition_id = c.connect_contest_id
+			  AND ce.user_id = c.user_id
+			  AND lower(ce.status) = ANY(` + statusParam + `::text[])
+			  AND (ce.lyrical_concept_summary LIKE '%"songObjectKey"%'
+			       OR ce.lyrical_concept_summary LIKE '%"r2ObjectKey"%')
+			ORDER BY ce.created_at DESC
+			LIMIT 1
+		) song (id, status) ON TRUE`
 }
 
 // ListRoster returns the active contestants for a contest ordered by total
@@ -324,12 +397,13 @@ type RosterEntry struct {
 // empty user_id never matches a real contestant_likes row, so it degrades
 // to false rather than erroring).
 func (r *Repository) ListRoster(ctx context.Context, contestID string, includeInactive bool, viewerID string) ([]RosterEntry, error) {
-	const q = `
+	q := `
 		SELECT c.id::text, c.name, c.stage_name, c.category, c.state, c.bio,
 		       c.photo_url, c.media_url, c.status::text, c.is_active,
 		       COALESCE(v.free_votes, 0), COALESCE(v.paid_votes, 0),
 		       COALESCE(cl.like_count, 0), COALESCE(cs.share_count, 0),
-		       EXISTS (SELECT 1 FROM contestant_likes WHERE contestant_id = c.id AND user_id::text = $3)
+		       EXISTS (SELECT 1 FROM contestant_likes WHERE contestant_id = c.id AND user_id::text = $3),
+		       COALESCE(song.id, ''), COALESCE(song.status, '')
 		FROM contestants c
 		LEFT JOIN (
 			SELECT option_ref,
@@ -344,12 +418,15 @@ func (r *Repository) ListRoster(ctx context.Context, contestID string, includeIn
 		) cl ON cl.contestant_id = c.id
 		LEFT JOIN (
 			SELECT contestant_id, COUNT(*) AS share_count FROM contestant_shares GROUP BY contestant_id
-		) cs ON cs.contestant_id = c.id
+		) cs ON cs.contestant_id = c.id` +
+		// The status array is $4, after the three scalar params this query
+		// already binds.
+		rosterSongJoin("$4") + `
 		WHERE c.connect_contest_id = $1
 		  AND ($2 OR c.is_active = true)
 		ORDER BY (COALESCE(v.free_votes, 0) + COALESCE(v.paid_votes, 0)) DESC, c.name ASC`
 
-	rows, err := r.db.Query(ctx, q, contestID, includeInactive, viewerID)
+	rows, err := r.db.Query(ctx, q, contestID, includeInactive, viewerID, publiclyPlayableSongStatuses)
 	if err != nil {
 		return nil, fmt.Errorf("voting: list roster: %w", err)
 	}
@@ -361,7 +438,8 @@ func (r *Repository) ListRoster(ctx context.Context, contestID string, includeIn
 		if err := rows.Scan(&e.ContestantID, &e.Name, &e.StageName, &e.Category, &e.State,
 			&e.Bio, &e.PhotoURL, &e.MediaURL,
 			&e.Status, &e.IsActive, &e.FreeVotes, &e.PaidVotes,
-			&e.LikeCount, &e.ShareCount, &e.LikedByMe); err != nil {
+			&e.LikeCount, &e.ShareCount, &e.LikedByMe,
+			&e.SongSubmissionID, &e.SongStatus); err != nil {
 			return nil, fmt.Errorf("voting: scan roster entry: %w", err)
 		}
 		e.TotalVotes = e.FreeVotes + e.PaidVotes
@@ -396,13 +474,14 @@ func (r *Repository) IsOnRoster(ctx context.Context, contestID, optionRef string
 // viewerID sets LikedByMe (pass "" if the caller has no viewer, e.g. an
 // unauthenticated resolve path — it degrades to false, never errors).
 func (r *Repository) GetRosterEntry(ctx context.Context, contestantID, viewerID string) (*RosterEntry, error) {
-	const q = `
+	q := `
 		SELECT c.id::text, c.name, c.stage_name, c.category, c.state, c.bio,
 		       c.photo_url, c.media_url, c.status::text, c.is_active,
 		       COALESCE(v.free_votes, 0), COALESCE(v.paid_votes, 0),
 		       COALESCE(c.connect_contest_id::text, ''),
 		       COALESCE(cl.like_count, 0), COALESCE(cs.share_count, 0),
-		       EXISTS (SELECT 1 FROM contestant_likes WHERE contestant_id = c.id AND user_id::text = $2)
+		       EXISTS (SELECT 1 FROM contestant_likes WHERE contestant_id = c.id AND user_id::text = $2),
+		       COALESCE(song.id, ''), COALESCE(song.status, '')
 		FROM contestants c
 		LEFT JOIN (
 			SELECT option_ref,
@@ -416,16 +495,20 @@ func (r *Repository) GetRosterEntry(ctx context.Context, contestantID, viewerID 
 		) cl ON cl.contestant_id = c.id
 		LEFT JOIN (
 			SELECT contestant_id, COUNT(*) AS share_count FROM contestant_shares GROUP BY contestant_id
-		) cs ON cs.contestant_id = c.id
+		) cs ON cs.contestant_id = c.id` +
+		// $3 here, not $4: this query binds the contestant id and the viewer
+		// before the status array.
+		rosterSongJoin("$3") + `
 		WHERE c.id::text = $1 AND c.is_active = true`
 
 	var e RosterEntry
 	var contestID string
-	err := r.db.QueryRow(ctx, q, contestantID, viewerID).Scan(
+	err := r.db.QueryRow(ctx, q, contestantID, viewerID, publiclyPlayableSongStatuses).Scan(
 		&e.ContestantID, &e.Name, &e.StageName, &e.Category, &e.State, &e.Bio,
 		&e.PhotoURL, &e.MediaURL, &e.Status, &e.IsActive,
 		&e.FreeVotes, &e.PaidVotes, &contestID,
-		&e.LikeCount, &e.ShareCount, &e.LikedByMe)
+		&e.LikeCount, &e.ShareCount, &e.LikedByMe,
+		&e.SongSubmissionID, &e.SongStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

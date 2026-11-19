@@ -28,6 +28,26 @@ func contestMediaPathOf(stored string) string {
 	return ""
 }
 
+// The root-relative reader frontend-web serves every Open Mic song through —
+// web voting cards, the admin review panel, the artist's own profile and this
+// API. It is the ONLY way a song's bytes reach a client: it re-checks the
+// status and the object key on every request, so a contestant disqualified
+// after the roster was cached stops playing instead of streaming forever.
+const songReaderPath = "/api/open-mic/songs/"
+
+// resolveWebRoute hangs a root-relative frontend-web route under this
+// deployment's web origin. With no origin configured the path comes back as
+// stored: a path the web app can render truthfully beats a URL guessed wrong.
+func resolveWebRoute(path, base string) string {
+	if path = strings.TrimSpace(path); path == "" {
+		return ""
+	}
+	if base = strings.TrimRight(strings.TrimSpace(base), "/"); base == "" {
+		return path
+	}
+	return base + path
+}
+
 // resolveMediaURL turns a stored contest image value into one the calling
 // client can load. base is the web app origin for THIS deployment: a path
 // becomes an absolute URL under it, and a legacy path written under another
@@ -44,8 +64,29 @@ func resolveMediaURL(stored, base string) string {
 	if path == "" {
 		return stored
 	}
-	if base = strings.TrimRight(strings.TrimSpace(base), "/"); base == "" {
-		return path
+	return resolveWebRoute(path, base)
+}
+
+// withSong turns the submission id the roster query found into the absolute
+// reader URL a phone can hand to its audio player. The scan leaves the stored
+// id alone, so this is the read boundary that decides the origin — the same
+// shape as withMedia for contest images and withPhoto for contestant photos.
+// An entry with no song gets no URL, never a URL to a 404.
+func (s *Service) withSong(e *RosterEntry) *RosterEntry {
+	if e == nil {
+		return nil
 	}
-	return base + path
+	if e.SongSubmissionID == "" {
+		e.SongURL = ""
+		return e
+	}
+	e.SongURL = resolveWebRoute(songReaderPath+e.SongSubmissionID, s.mediaBase)
+	return e
+}
+
+func (s *Service) withSongList(list []RosterEntry) []RosterEntry {
+	for i := range list {
+		s.withSong(&list[i])
+	}
+	return list
 }

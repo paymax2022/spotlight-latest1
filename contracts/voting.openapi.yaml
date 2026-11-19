@@ -260,6 +260,31 @@ components:
           description: >
             Whether the authenticated caller has liked this contestant.
             Always false for the public share-resolve endpoint, which has no caller.
+        song_submission_id:
+          type: string
+          description: >
+            The Open Mic submission (`competition_entries.id`) whose song this
+            contestant may be heard on. Empty when the artist has not handed in
+            a song, or when their newest one is still a draft — a draft belongs
+            to the artist alone and is served by the reader only to its owner.
+        song_status:
+          type: string
+          description: >
+            The submission's state as stored, lower-cased: one of `submitted`,
+            `published_for_voting`, `finalist`, `winner`, `live_for_voting`. The
+            roster only ever names a state the reader will serve, so a
+            disqualified or withdrawn song disappears from here instead of
+            playing on.
+        song_url:
+          type: string
+          description: >
+            Absolute url of the song, ready for a phone audio player: the
+            frontend-web reader `/api/open-mic/songs/<song_submission_id>` under
+            this deployment's web origin (`WEB_APP_BASE_URL`). The reader
+            re-checks the status and the stored object key on every request and
+            answers 404 rather than 403 for anything it must not serve, so this
+            url is a convenience, never the permission. Empty together with
+            `song_submission_id` when there is no song to play.
 
 paths:
   # ── Wallet-paid votes (in-app wallet debit, no Paystack redirect) ──────────
