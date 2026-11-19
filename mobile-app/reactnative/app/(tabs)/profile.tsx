@@ -29,6 +29,7 @@ import {
   LineChart,
   KeyRound,
   Building2,
+  LayoutGrid,
 } from 'lucide-react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import TextInputField from '@/components/TextInputField';
@@ -57,6 +58,9 @@ import {
 import { STATE_NAMES, getLGAsForState } from '@/data/nigeria';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
+import { useProviderCapabilities } from '@/features/providerPortal/useProviderCapabilities';
+import { PORTAL_ROUTES, portalRoute } from '@/features/providerPortal/portals';
+import { PortalIcon } from '@/features/providerPortal/PortalIcon';
 
 type ProfileForm = {
   firstName: string;
@@ -227,6 +231,12 @@ export default function ProfileScreen() {
     queryFn: getKyc,
   });
 
+  // Provider accounts the caller owns, from the cross-module portal registry.
+  // Read-only and fail-quiet: while it loads, or if /health is down, the patient
+  // profile renders exactly as before.
+  const providerQuery = useProviderCapabilities();
+  const providerAccounts = providerQuery.data ?? [];
+
   useEffect(() => {
     if (!profileQuery.data) return;
     // Merge server values into the form instead of replacing it: an empty/omitted
@@ -335,6 +345,7 @@ export default function ProfileScreen() {
   const handleRefresh = () => {
     void profileQuery.refetch();
     void kycQuery.refetch();
+    void providerQuery.refetch();
   };
 
   const handleSaveProfile = () => {
@@ -687,18 +698,62 @@ export default function ProfileScreen() {
             ) : null}
           </View>
 
+          {providerAccounts.length > 0 ? (
+            <View style={[styles.card, shadow1]}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionIcon}>
+                  <LayoutGrid size={18} color={Colors.primary} strokeWidth={2.2} />
+                </View>
+                <View style={styles.sectionHeaderText}>
+                  <Text style={styles.sectionTitle}>Your provider accounts</Text>
+                  <Text style={styles.sectionSub}>Manage the services you offer, your prices and your bookings.</Text>
+                </View>
+              </View>
+              <View style={styles.providerList}>
+                {providerAccounts.map((account) => {
+                  const meta = PORTAL_ROUTES[account.type];
+                  if (!meta) return null;
+                  return (
+                    <Pressable
+                      key={`${account.type}:${account.providerId}`}
+                      onPress={() => router.push(portalRoute(account.type, account.approved) as never)}
+                      style={({ pressed }) => [styles.providerRow, pressed && { opacity: 0.9 }]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Manage ${meta.label}: ${account.displayName}`}
+                    >
+                      <View style={styles.settingsIcon}><PortalIcon type={account.type} color={Colors.primary} /></View>
+                      <View style={styles.merchantBody}>
+                        <Text style={styles.settingsTitle}>{account.displayName || meta.label}</Text>
+                        <Text style={styles.settingsSub}>
+                          {meta.label} · {account.approved ? 'Approved' : account.status.toLowerCase()}
+                        </Text>
+                      </View>
+                      <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
+
           <Pressable
-            onPress={() => router.push('/(merchant)')}
+            onPress={() => router.push(providerAccounts.length > 0 ? '/provider-portal' : '/(merchant)')}
             style={({ pressed }) => [styles.merchantCard, shadow1, pressed && { opacity: 0.9 }]}
             accessibilityRole="button"
-            accessibilityLabel="Become a merchant or service provider"
+            accessibilityLabel={providerAccounts.length > 0 ? 'Add another business' : 'Become a merchant or service provider'}
           >
             <View style={styles.merchantIcon}>
               <Store size={20} color={Colors.onPrimary} strokeWidth={2} />
             </View>
             <View style={styles.merchantBody}>
-              <Text style={styles.merchantTitle}>Become a Merchant / Provider</Text>
-              <Text style={styles.merchantSub}>Sell or offer services — keep your customer account</Text>
+              <Text style={styles.merchantTitle}>
+                {providerAccounts.length > 0 ? 'Add another business' : 'Become a Merchant / Provider'}
+              </Text>
+              <Text style={styles.merchantSub}>
+                {providerAccounts.length > 0
+                  ? 'Apply for another provider workspace — keep your customer account'
+                  : 'Sell or offer services — keep your customer account'}
+              </Text>
             </View>
             <ChevronRight size={18} color={Colors.onPrimary} strokeWidth={2} />
           </Pressable>
@@ -770,6 +825,8 @@ const styles = StyleSheet.create({
   merchantCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.primary, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginTop: Spacing.md, marginBottom: Spacing.sm },
   merchantIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
   settingsRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginTop: Spacing.sm, marginBottom: Spacing.sm, borderWidth: 1, borderColor: Colors.outlineVariant },
+  providerList: { gap: Spacing.sm },
+  providerRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.outlineVariant, padding: Spacing.sm },
   settingsIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
   settingsTitle: { ...Typography.labelLg, color: Colors.onSurface },
   settingsSub: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
