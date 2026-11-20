@@ -38,7 +38,7 @@ git rev-parse origin/main origin/prod
 
 ---
 
-## 2. Measured baseline (2026-11-19 23:25–23:45Z, re-checked 2026-11-20 08:48Z and 09:2xZ)
+## 2. Measured baseline (2026-11-19 23:25–23:45Z, re-checked 2026-11-20 08:48Z and 09:05Z)
 
 | Fact | Value | How it was measured |
 |---|---|---|
@@ -56,7 +56,7 @@ git rev-parse origin/main origin/prod
 | Prod-only files (exist on `prod`, absent on main) | **23** | `git diff --diff-filter=A --name-only origin/main origin/prod` |
 | Prod commits patch-absent on main | 10 (`git cherry`), of which 9 are ports *of* main features whose adapted form differs | `git cherry -v origin/main origin/prod` |
 | Staging backend | `773fe0285`; delta vs main = **2 referral files, 0 migrations** | `git diff --name-only 773fe0285 origin/main -- backend/ supabase/migrations` |
-| **Live backend stamps (09:2xZ)** | dev `a05b8676e` · staging `773fe0285` · prod `d3401f574` — **three planes, three different commits**; `773fe0285` is a strict ancestor of main (it merely predates #1095), so this is drift, not divergence | `curl -s --http1.1 https://backend-{development-502c,staging-new,production-1b33d}.up.railway.app/api/v1/public/build`; hostnames from `scripts/ci/railway-urls.sh` @main |
+| **Live backend stamps (09:05Z)** | dev `a05b8676e` · staging `773fe0285` · prod `d3401f574` — **three planes, three different commits**; `773fe0285` is a strict ancestor of main (it merely predates #1095), so this is drift, not divergence | `curl -s --http1.1 https://backend-{development-502c,staging-new,production-1b33d}.up.railway.app/api/v1/public/build`; hostnames from `scripts/ci/railway-urls.sh` @main |
 
 **The single most consequential number: 758 = 758.** The production database is *already* at
 main's migration head. There is no pending schema work, no replay, no `db push` in this
@@ -247,7 +247,7 @@ If the owner rejects C, fall back to A and re-run §3 against the merge commit, 
 |---|---|---|---|
 | **G1** | Deployment currency re-read | `curl -sS --http1.1 …/api/v1/public/build` on all three backends | prod still `d3401f574`; if not, re-baseline §2 before anything else |
 | **G2** | Pin the release SHA to a CI-green main sha | `gh run list --workflow=ci.yml --branch main --limit 5`, take the newest `success` head | the sha you deploy has its own green row; **never** deploy "main right now" |
-| **G3** | Release train reaches production | verdict line of the `release gate` job **+ the three `deploy Staging (…)` conclusions** | verdict `proceed` **and** all three staging legs `success`. Measured 2026-11-20 09:2xZ: verdict **is** `proceed` and dev is 3/3 green, but **all three staging legs fail with F2 in every run since 2026-11-19 14:49Z** (`44547867538`, `44560489834`, `44629671567`, `44637142432`, `44644175704`) → `smoke Staging` is skipped → `deploy Production` is skipped. **This gate is RED right now.** See §6.2. |
+| **G3** | Release train reaches production | verdict line of the `release gate` job **+ the three `deploy Staging (…)` conclusions** | verdict `proceed` **and** all three staging legs `success`. Measured 2026-11-20 09:05Z: verdict **is** `proceed` and dev is 3/3 green, but **all three staging legs fail with F2 in every run since 2026-11-19 14:49Z** (`44547867538`, `44560489834`, `44629671567`, `44637142432`, `44644175704`) → `smoke Staging` is skipped → `deploy Production` is skipped. **This gate is RED right now.** See §6.2. |
 | **G4** | RLS review complete | work package 3.4 | every policy on a prod-written table has a verdict row |
 | **G5** | Env-var parity, **names only** | Railway dashboard / `railway variables … \| cut -d= -f1` | every key in main's `backend/.env.example` that main newly added is either set or has a safe default; print **no values** |
 | **G6** | Client-exposure census | build metadata + `/v1/marketplace/boosts/*` | either no installed build calls `/boosts/tiers`, or main carries a one-line `tiers → BoostPricing` alias before the cut (§3.5) |
@@ -339,7 +339,7 @@ a Railway-side refusal on the request that *obtains the upload destination*, unr
 archive size (it lands ~0.7 s after `stamped backend/BUILD_COMMIT`, with `Indexing` /
 `Uploading` / `bytes:` all zero, which is why `--verbose` can never surface a status).
 
-**Measured 2026-11-20 09:2xZ, this is not intermittent any more — it is total on staging.**
+**Measured 2026-11-20 09:05Z, this is not intermittent any more — it is total on staging.**
 Every Release run since 2026-11-19 14:49Z has `deploy Staging (backend)`,
 `(frontend-admin)` and `(frontend-web)` all failing with 9 decode errors each
 (`44547867538`, `44560489834`, `44629671567`, `44637142432`, `44644175704`), while
