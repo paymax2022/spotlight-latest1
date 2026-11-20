@@ -79,8 +79,9 @@ fault surviving a brand-new `RAILWAY_TOKEN_STAGING` — and with the differentia
 that produced the transport change, both recorded in the
 [Resolution](#resolution--2026-11-18-2154z-the-fault-is-time-windowed-and-staging-no-longer-depends-on-it).
 No token value
-appears here. The chain continued on 2026-11-19 with episodes 14 and 15, each
-summarised in its own block below; episode 15 is the one *The ask* now rests on.
+appears here. The chain continued on 2026-11-19 with episodes 14, 15 and 16, each
+summarised in its own block below; episode 15 established the narrowed ask and episode 16
+re-produced it on a commit with no application code in it at all.
 
 > **Episode 14 (2026-11-19 08:31Z) changes how to read the two arms of every
 > table above.** Today's two real release attempts failed **six** legs, not three.
@@ -113,6 +114,21 @@ summarised in its own block below; episode 15 is the one *The ask* now rests on.
 > destination* for environment `6b5f27a3-a290-4574-a977-363eb21d43ad` at
 > 2026-11-19 15:20:10-15:20:13Z — not the archive PUT that follows it, and not
 > the version of *The ask* below, which predates that measurement.
+>
+> **Episode 16 (2026-11-19 23:09-23:30Z) is the freshest window and the cleanest
+> control.** Run `44629671567`, head `d446dfd9e`, a commit whose only file is
+> `docker-compose.yml` — no application code changed anywhere in it, so nothing
+> in our tree can explain the split that followed: three development legs landed
+> (`Indexing...` → `Uploading...` → `1930743` / `103321303` / `7516251` bytes,
+> rows created 23:09:56-23:10:04Z) while the three staging legs of the same
+> commit refused 9 times each with **zero** `Indexing...`, **zero** `Uploading...`
+> and **zero** deployment rows, the staging backend's first refusal arriving
+> **0.689 s** after its `stamped backend/BUILD_COMMIT` line. Billing is now
+> excluded outright: `Project.subscriptionType` reads `hobby`, the staging
+> instances' own deployment metas say `"plan": "hobby"`, and the trial sentence
+> appears zero times in those logs. **The pull list at the end of Episode 16 is
+> what to ask for now** — environment `6b5f27a3-a290-4574-a977-363eb21d43ad`,
+> ref `d446dfd9e`, 23:11:03.627Z / 23:11:08.421Z / 23:11:22.142Z first refusals.
 
 ## The ask
 
@@ -166,9 +182,10 @@ know they are different questions:
 > call that *obtains the upload destination* — the one that dies before
 > `railway up --verbose` can print a URL, a byte count or a status code, which is
 > why no flag on our side can ever surface the number. The timestamps above are
-> still the ones to pull from your edge logs; the freshest and cleanest datum is
-> Episode 15's 2026-11-19 15:20:10-15:20:13Z burst, three services, nine
-> refusals each, zero deployment rows.
+> still the ones to pull from your edge logs; the freshest datum is Episode 16 —
+> run `44629671567`, ref `d446dfd9e`, three services, nine refusals each, zero
+> deployment rows, first refusals at 23:11:03.627Z, 23:11:08.421Z and
+> 23:11:22.142Z on 2026-11-19 — on a commit that touches no application code.
 
 ## Identifiers
 
@@ -1332,4 +1349,74 @@ nine. F2's decode error is deliberately **not** in that pattern, and this table 
 reason: a window that closes on its own must be ridden out, so staging keeps its full
 900 s ladder on purpose. The guard cannot fire on staging legs anyway — they are never
 told why they failed.
+
+## Episode 16 — 2026-11-19 23:09-23:30Z: the pairing re-produced on a commit that changes no application code, and the window reopened
+
+Episode 15 proved the same-basis pairing on `773fe0285`, a commit whose payload was a CI
+probe removal. Run `44629671567` proves it again on `d446dfd9e`, whose entire diff is
+`docker-compose.yml` (+11 / −3, one file) — local orchestration that Railway never builds.
+There is no application delta available to explain a difference in outcome, and the
+outcome still differs.
+
+**The run.** Head `d446dfd9e`. `integration-verify` (`44629671413`) went green and the gate
+rendered `### Release gate: **proceed**` at 23:09:32.392Z. The run concluded `failure`;
+the only failures are the three staging legs, whose last job ended at 23:30:14Z.
+
+| leg | job | started | ended | outcome | `Indexing...` | `Uploading...` | `bytes:` | decode refusals | retry notices | plan sentence |
+|---|---|---|---|---|---|---|---|---|---|---|
+| dev frontend-admin | `135951837272` | 23:09:42 | 23:10:30 | success | 1 | 1 | `1930743` | 0 | 0 | 0 |
+| dev frontend-web | `135951837723` | 23:09:43 | 23:11:17 | success | 1 | 1 | `103321303` | 0 | 0 | 0 |
+| dev backend | `135951837290` | 23:09:44 | 23:13:12 | success | 1 | 1 | `7516251` | 0 | 0 | 0 |
+| staging backend | `135952256616` | 23:10:50 | 23:29:13 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+| staging frontend-web | `135952256565` | 23:11:08 | 23:29:38 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+| staging frontend-admin | `135952256542` | 23:10:54 | 23:30:13 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+
+Nine refusals against eight retry notices per staging leg: the notice prints only before a
+retry, so 9 is the ladder's full budget — the same count episode 15 settled, and the same
+27 staging requests in the run.
+
+**Sub-second refusal, re-measured on episode 15's own rule.** The staging backend stamps
+`backend/BUILD_COMMIT` at 23:11:02.9384113Z and its first refusal lands at
+23:11:03.6274782Z — **0.689 s**, against 0.71 s in episode 15 and inside the 0.120-0.940 s
+band. What is *not* repeated: episode 15's three first refusals fell in a 2.03 s burst,
+while here they are 23:11:03.627Z, 23:11:08.421Z and 23:11:22.142Z — an 18.5 s spread,
+because the legs started minutes apart. The invariant is the sub-second refusal after a leg
+starts, not a burst between legs, and this paragraph exists so nobody reads "burst" into
+this window.
+
+**Same archives as episode 15, to the byte class.** `1930743` vs `1930791`, `7516251` vs
+`7516645`, `103321303` vs `103327180`. Size stays irrelevant on the CI arm.
+
+**Zero staging rows, three dev rows — read live, all six instances.** Census taken across
+23:56Z on 2026-11-19 and 00:00Z on 2026-11-20 with
+`serviceInstance(serviceId, environmentId) { isUpdatable latestDeployment { createdAt status meta } }`:
+dev's three instances report rows created 23:09:56 (frontend-admin), 23:10:02
+(frontend-web) and 23:10:04 (backend), all `SUCCESS`; staging's three still report
+`773fe0285` created 15:45:59.288Z (backend), 15:46:22.677Z (frontend-web) and
+15:46:52.238Z (frontend-admin) — episode 15's manual refresh, eight hours old, not this
+CI run. `isUpdatable` is `false` on all six.
+
+**Billing is no longer even a candidate.** `Project.subscriptionType` reads `hobby` live,
+and each staging instance's own deployment meta carries `"plan": "hobby"`, while the
+staging legs printed the trial sentence zero times. Episode 14's second fault is closed;
+what remains is F2, and F2 behaves as a window: refused 23:10-23:30Z here, accepted at
+15:45Z the same afternoon through the pull path.
+
+**Requests to pull from your edge logs, to the millisecond.** Environment
+`6b5f27a3-a290-4574-a977-363eb21d43ad`, ref `d446dfd9e`, the request that obtains the
+upload destination:
+
+| service | id | first refusal | last refusal |
+|---|---|---|---|
+| backend | `70de07d8-c058-4221-b645-61c4f1ac7aa5` | 2026-11-19T23:11:03.627Z | 2026-11-19T23:29:12.074Z |
+| frontend-web | `dda6372c-0bb7-4014-a2b1-aa646c11a281` | 2026-11-19T23:11:22.142Z | 2026-11-19T23:29:36.185Z |
+| frontend-admin | `c4f1086e-0a2d-4367-b503-209c14a2ce6f` | 2026-11-19T23:11:08.421Z | 2026-11-19T23:30:11.890Z |
+
+**The cost chain is identical to episode 15's, and one step of it is easy to miss.**
+`migrate staging database / supabase db push (staging)` **succeeded** at 23:10:28 — so
+staging's schema is current with `main` while its code is not, which is the worst of the
+two states for anyone testing there. `smoke Staging` then came back `skipped` at 23:30:14Z,
+and that skip is what left `migrate production database`, `smoke Production` and
+`deploy Production` skipped in the same second. `smoke Development` passed on all three
+services at 23:13:15-23:13:37.
 
