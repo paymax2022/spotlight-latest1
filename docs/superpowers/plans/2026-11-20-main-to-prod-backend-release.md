@@ -160,10 +160,50 @@ POST   /virtual-account              POST /bills             GET  /boosts/tiers
   main-lineage client is orphaned. The exposure is exactly: **builds distributed from
   `prod` lineage** that call `sell.api.ts:184 mktGet('/boosts/tiers')`, plus any third-party
   or cached consumer.
-  → Gate **G6** decides whether this needs a shim, and it is cheap either way: add
-  `base.GET("/boosts/tiers", h.BoostPricing)` as an alias on main *before* the cut, or accept
-  the 404 for legacy builds. Both are one-line-or-zero-line options; neither is a reason to
-  keep the fork.
+  → **Gate G6 is now measured, and it revokes the cheap version of that fix.** The alias
+  `base.GET("/boosts/tiers", h.BoostPricing)` was written here assuming the two endpoints are
+  interchangeable. They are not, and this correction is the release's second real finding:
+
+  - **Different payload shapes.** prod's `BoostTiers` (`handler.go:578`) returns a JSON
+    **array** of `{tier, duration_days, price_kobo, weight}` built from `ListBoostPackages`
+    filtered on `is_active` (`service_boost.go:45`); main's `BoostPricing` returns a JSON
+    **object** `{daily_rate_kobo, preset_duration_days, min_duration_days, max_duration_days}`
+    (`model.go:336`). The legacy client wraps that call in
+    `client.ts:153` — `arr = Array.isArray(v) ? v : []` — so aliasing `tiers` to `pricing`
+    converts a loud 404 into a **silently empty tier list**. That is a worse outcome, not a fix.
+  - **The purchase contract changed as well.** `CreateBoostInput` is `{listing_id, tier, ends_at}`
+    on prod (`model.go:477`) and `{listing_id, duration_days, ends_at}` on main (`model.go:525`)
+    — **`tier` no longer exists**, and gin's `ShouldBindJSON` ignores unknown keys instead of
+    rejecting them. Real compatibility is therefore the read route **plus** re-accepting `tier`
+    in the money path.
+  - **But there is no silent-mispricing risk — that was the thing worth ruling out.**
+    `app/marketplace/boost/[listingId].tsx:89` builds the selection as
+    `mode === 'package' ? { tier } : { endsAt }`: exactly one, never both. A tier-only body
+    reaching main arrives at `ComputeBoostQuote(0, nil)` → **400 "duration_days or ends_at is
+    required"** (`service_boost.go:103`), and the Confirm button is gated on `!!selectedTier`
+    (line 74), which a 404 `useBoostTiers` can never satisfy. **The legacy package picker fails
+    closed; nobody can be charged a price they were not shown.**
+  - **The custom-date path survives the cut untouched.** That same screen's `mode === 'custom'`
+    branch sends `?ends_at=` and posts `{endsAt}`; main's `GetBoostQuote` reads `ends_at`
+    (`handler.go:609`) and prices duration × the admin daily rate. Legacy builds keep boosting —
+    by custom dates — after the release.
+
+  Net: the release breaks the **package picker** for `prod`-lineage builds, breaks it safely, and
+  leaves a working boost path. Restoring the picker is a ~20-line additive read endpoint (the
+  pieces already exist on main: `repository.go:1139 ListBoostPackages`, and `service_boost.go:598`
+  `BoostTier` carries prod's exact JSON tags) **plus** a money-path change to re-accept `tier`.
+  The read half on its own only re-enables a screen that 400s on confirm, so it is **not** a safe
+  reflexive shim — it belongs with §11 Q6 as an explicit owner decision, not a pre-flight to-do.
+
+- **Exposure of those legacy builds cannot be measured from here — an owner question, not a gate
+  failure.** `gh secret list` shows no Expo/EAS-named secrets, so CI has never produced a mobile
+  release; installed builds are manual and their source tree is unknown. prod's
+  `mobile-app/reactnative/eas.json` sends the `production` profile to
+  `frontend-web-production-9259` — which answers `/boosts/tiers` → **200** right now, measured —
+  and its `staging` / `preview` / `staging-aab` profiles to `frontend-web-staging-ec46`, a host
+  **absent from `scripts/ci/railway-urls.sh`** (it does answer: `/boosts/tiers` → 404, so it is
+  live and main-lineage). Anyone reading "the staging frontend" as one place should re-check that
+  fourth host during the cutover §8 probes.
 - **Re-measured 2026-11-20 09:05Z**, and one new fact matters for §8: development (`a05b8676e`)
   answers `tiers` → 404 (as expected) but **`pricing` → 500** `INTERNAL_ERROR`, where staging
   returns the payload (`daily_rate_kobo:10000`, presets `[1,3,7,14,30]`). Same code, different
@@ -294,7 +334,7 @@ railway-upped it by hand.
 | **G3** | Release train reaches production | verdict line of the `release gate` job **+ the three `deploy Staging (…)` conclusions** | verdict `proceed` **and** all three staging legs `success`. Measured 2026-11-20 09:05Z: verdict **is** `proceed` and dev is 3/3 green, but **all three staging legs fail with F2 in every run since 2026-11-19 14:49Z** (`44547867538`, `44560489834`, `44629671567`, `44637142432`, `44644175704`) → `smoke Staging` is skipped → `deploy Production` is skipped. **This gate is RED right now.** See §6.2. |
 | **G4** | RLS review complete | work package 3.4 | every policy on a prod-written table has a verdict row |
 | **G5** | Env-var parity, **names only** | Railway dashboard / `railway variables … \| cut -d= -f1` | every key in main's `backend/.env.example` that main newly added is either set or has a safe default; print **no values** |
-| **G6** | Client-exposure census | build metadata + `/v1/marketplace/boosts/*` | either no installed build calls `/boosts/tiers`, or main carries a one-line `tiers → BoostPricing` alias before the cut (§3.5) |
+| **G6** | Client-exposure census — **measured 2026-11-20, see §3.5** | `git grep` on both tips + live BFF probes + the prod boost screen | **Resolved as to behavior, open as to audience.** The prod-lineage package picker fails **closed** (`arr()` empties an object; a `tier`-only POST 400s; Confirm needs `!!selectedTier`), the custom-date boost path survives unchanged, and there is **no silent-mispricing path**. What remains is the owner's §11 Q3: how many installed `prod`-lineage builds exist. A `tiers → pricing` alias is **not** a valid shim (different payload shape) — see §3.5. |
 | **G7** | Rollback capacity proven | existing plan **Task 3**, still open | a dated dump of the prod DB **and a restore drill into a scratch database** — a backup never restored is not a backup |
 | **G8** | Module-flag registry parity | `platform_module_registry` rows vs main's mount list | production serves no `readiness <> 'ready'` module as live; staging's two missing flags (`PHARMACY_SYMPTOM_SEARCH`, `HEALTH_TRIAGE`) show this class of gap is real |
 | **G9** | Money-path smoke baseline captured *before* the window | `GET /api/v1/public/health`, plus the ledger's existing unauth route table | so §8 compares against a same-day baseline, not a month-old one |
@@ -432,9 +472,10 @@ What that means for the decision in §4:
    POST; a GET on a POST route 404s and proves nothing): expect `POST /api/v1/fx/cards` → 401,
    `GET /api/connect/admin/contests` → 401, `POST /api/webhooks/maplerad/go` → 404 (dark
    before and after), `GET /v1/marketplace/boosts/pricing` → **200**, and
-   `GET /v1/marketplace/boosts/tiers` → 404 **unless** the G6 alias was added, in which case it
-   must also be 200. Compare against staging `773fe0285`, which already answers this exact
-   pattern.
+   `GET /v1/marketplace/boosts/tiers` → **404, and that is the expected post-release answer**
+   (§3.5: no alias is being added, so a 200 here would mean an unintended route came back). The
+   legacy app's custom-date boost path is unaffected. Compare against staging `773fe0285`, which
+   already answers this exact pattern.
 3. RBAC probe already in the scoped lane (`scripts/db/probe-rbac-grants.sh`, exit 0/1/2/3):
    `connect.contests.view` GRANTED for super-admin / system-admin / contest-manager.
 4. Money paths, no test payments beyond what the owner allows: wallet balance read, KYC tier
@@ -452,7 +493,7 @@ What that means for the decision in §4:
 | G2 pin + G5 + G9 | agent | no |
 | G3 staging refresh at the G2 pin (manual — the train cannot do it, §6.2) | agent | **yes**, it is the canary |
 | G4 RLS work package | agent, review output signed by owner | **yes** |
-| G6 client census | owner (store metadata) | yes if mobile is exposed |
+| G6 client census | **agent — done** (§3.5: fails closed, custom-date path lives) | owner only for **how many** legacy builds exist |
 | G7 dump + restore drill | owner-approved credentials; agent drives | **yes** |
 | G8 module flags | agent | no, but cheap insurance |
 | §6 cutover | agent, inside an agreed window | — |
@@ -490,8 +531,12 @@ rollback capacity.
    provider `maplerad`, `status` not terminal)? A read-only count is enough; the schema is
    retained on main, so a non-zero answer is a data-migration question, not a code one.
 3. Are there **installed mobile/web builds from `prod` lineage** still calling
-   `/v1/marketplace/boosts/tiers` (G6)? If you don't want to census them, the cheap answer is a
-   one-line alias on main before the cut.
+   `/v1/marketplace/boosts/tiers` (G6)? The behavior is settled — §3.5 shows the picker fails
+   closed and custom-date boosts keep working, so this is now purely an **audience** question:
+   how many manual builds are out there, and is a broken *package* picker acceptable for them or
+   worth the ~20-line read endpoint **plus** re-accepting `tier` in `CreateBoostInput`? (A read
+   alias alone is not the cheap answer — it was claimed here earlier and is wrong; it yields an
+   empty list that then 400s on confirm.)
 4. Release shape **A / B / C** — recommend C (freeze the `prod` fork, deploy main-lineage).
 5. Cutover window and the abort threshold (§9).
 6. Do you want the RLS work package (G4) run as its own read-only PR, or as an appendix to
