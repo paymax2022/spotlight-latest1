@@ -130,7 +130,8 @@ therefore be simulated, which is a fact to know before trusting a dev routing de
 - **`/api/finance/admin/fx/overview` and `/verifications`** exist in `main` (added in `184113663`)
   and are inside the orchestration block, but `git merge-base` proves that commit is not in the
   deployed prod binary (`d3401f574`). Publishing them is the owner-signed main→prod release
-  project, recorded in `docs/devops/main-to-prod-backend-release-plan.md` — not a sweep step.
+  project, recorded in `docs/superpowers/plans/2026-11-20-main-to-prod-backend-release.md` (PR #1105)
+  — not a sweep step.
   This branch keeps `getOverview` pointed at that route and **fails loud** rather than substituting
   fixtures, per "Ensure all FX are front provider endpoint — realtime".
 - **FX admin surface without any Go route**: routing, providers, treasury, reconciliation,
