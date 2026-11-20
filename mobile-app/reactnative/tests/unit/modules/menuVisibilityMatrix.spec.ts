@@ -23,6 +23,9 @@ const VISIBLE_IN_STAGING = [
   'crypto', 'education', 'naija-driver', 'film-academy',
   'connect', 'marketplace', 'shopping', 'parcel',
   'contest', 'property',
+  // The landing row's contest sections ride the same voteBridge key as the
+  // Contest tile, so publishing contests publishes the shelf with them.
+  'open-mic', 'talent-hunt', 'rising-star',
 ] as const;
 
 const STAGING: ModuleVisibility = {

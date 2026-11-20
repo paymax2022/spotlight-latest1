@@ -60,6 +60,13 @@ export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
   // Contest rides the existing vote bridge module; Property Mgmt rides realtor,
   // matching the documented "unpublishing realtor hides the pillars" coupling.
   contest: 'voteBridge',
+  // The three contest sections are views over the same vote bridge, so they
+  // share its gate: unpublishing the contest module retires the section tiles
+  // with it, which is the only honest reading of a module that no longer serves
+  // anything. They are NOT separate platform_modules rows — no migration needed.
+  'open-mic': 'voteBridge',
+  'talent-hunt': 'voteBridge',
+  'rising-star': 'voteBridge',
   'naija-driver': 'arena',
   'film-academy': 'filmAcademy',
   academy: 'academy',

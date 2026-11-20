@@ -13,7 +13,7 @@ import { Colors } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
-import { SERVICE_MODULES, QUICK_ACTIONS, LANDING_BANNERS } from '@/constants/modules';
+import { SERVICE_MODULES, QUICK_ACTIONS, LANDING_BANNERS, HOME_CONTEST_SERVICE_IDS } from '@/constants/modules';
 import type { ServiceModule } from '@/constants/modules';
 import { useModuleVisibility } from '@/features/modules/visibility';
 import {
@@ -50,6 +50,15 @@ const ESSENTIAL_SERVICE_IDS = [
   'transfer', 'airtime', 'electricity', 'cable-tv',
   'telemedicine', 'ride', 'food', 'events',
 ] as const;
+
+// The entertainment shelf, rendered directly after the essentials row above (so
+// it is the row immediately under Event Tickets). Its ids live in
+// constants/modules.ts as HOME_CONTEST_SERVICE_IDS, next to the tiles they name,
+// so a test can assert the row against the same array this screen renders.
+// Film Academy is the existing hub — it already lists every training area; the
+// other three are the named contest sections, which resolve against whatever
+// contests the admin has published instead of hardcoded ids, so the shelf is
+// correct the day a Rising Star contest is created without the app changing.
 
 const MODULE_BY_ID = new Map<string, ServiceModule>(SERVICE_MODULES.map((m) => [m.id, m]));
 
@@ -135,6 +144,15 @@ export default function HomeScreen() {
   );
   const referral     = MODULE_BY_ID.get('referral');
   const showReferral = referral ? gate(registryKeyFor(referral.id)) : false;
+
+  const contestRow = React.useMemo(
+    () =>
+      HOME_CONTEST_SERVICE_IDS
+        .map((id) => MODULE_BY_ID.get(id))
+        .filter((m): m is ServiceModule => Boolean(m))
+        .filter((m) => gate(registryKeyFor(m.id))),
+    [gate],
+  );
 
   // The banner carousel under the referral strip. A banner is only ever as
   // publishable as the service it advertises: each slide rides that module's
@@ -262,6 +280,21 @@ export default function HomeScreen() {
               onAction={() => router.push('/(tabs)/services')}
             />
             <ModuleGrid modules={essentials} compact />
+          </>
+        ) : null}
+
+        {/* Contests, on the row immediately after Event Tickets. Four tiles, one
+            grid row. A section tile is only as live as the contest behind it, so
+            the copy here never promises one is running. */}
+        {contestRow.length > 0 ? (
+          <>
+            <SectionLead
+              eyebrow="Entertainment"
+              title="Contests"
+              actionLabel="All contests"
+              onAction={() => router.push('/voting')}
+            />
+            <ModuleGrid modules={contestRow} compact />
           </>
         ) : null}
 

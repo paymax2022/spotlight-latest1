@@ -122,6 +122,17 @@ export const SERVICE_MODULES: ServiceModule[] = [
   // Arena spectator/contestant home (app/arena).
   { id: 'naija-driver',    label: 'Naija Driver',    icon: 'CarFront',        iconColor: '#F97316',         bgColor: 'rgba(249,115,22,0.08)', route: '/arena',            category: 'contest', badge: 'New' },
 
+  // The named contest sections. These are NOT new screens: each one is the
+  // contests list asked for one section (?section=…, see
+  // src/features/voting/utils/contestSections.ts), which opens the contest
+  // itself when exactly one is running and says so plainly when none is — the
+  // case for Rising Star until an admin creates it. They carry no badge because
+  // whether a section is live is server data, and a static 'Live' on a tile
+  // would be a promise the app cannot keep.
+  { id: 'open-mic',        label: 'Open Mic',        icon: 'Mic',             iconColor: '#E11D74',         bgColor: 'rgba(225,29,116,0.08)',   route: '/voting/contests?section=open-mic',    category: 'contest' },
+  { id: 'talent-hunt',     label: 'Talent Hunt',     icon: 'Search',          iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,        route: '/voting/contests?section=talent-hunt', category: 'contest' },
+  { id: 'rising-star',     label: 'Rising Star',     icon: 'Star',            iconColor: Colors.gold,       bgColor: Colors.iconBgGold,        route: '/voting/contests?section=rising-star', category: 'contest' },
+
   // Film Academy used to sit under Contest, which described how it is RUN (an
   // application + selection cycle) rather than what it IS. Learning now has its
   // own band, shared with StudyHub, which moved here out of Investment.
@@ -161,6 +172,16 @@ export const QUICK_ACTIONS = [
   { id: 'send',     label: 'Send',      icon: 'Send',         route: '/wallet/send' },
   { id: 'withdraw', label: 'Withdraw',  icon: 'ArrowDown',    route: '/wallet/withdraw' },
   { id: 'exchange', label: 'Exchange',  icon: 'RefreshCw',    route: '/fx' },
+] as const;
+
+// The landing screen's contest shelf, in the order it renders (app/(tabs)/home.tsx
+// reads it straight after the essentials row that ends on Event Tickets). These
+// are SERVICE_MODULES ids, so each tile keeps its own route, tint and registry
+// gate. The list lives here rather than in the screen so a test can assert the
+// row's composition against the same array the grid renders — a copy inside the
+// screen would only ever prove the test agrees with itself.
+export const HOME_CONTEST_SERVICE_IDS = [
+  'open-mic', 'film-academy', 'talent-hunt', 'rising-star',
 ] as const;
 
 // The landing page's promotional banner carousel, which pages under the
