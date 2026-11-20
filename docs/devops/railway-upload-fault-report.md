@@ -1615,3 +1615,39 @@ largest sample of it the pipeline can produce without your logs.
 schema current with `main` since 17:13:23Z while its three apps are still the
 2026-11-19T15:46Z refresh, and a production console that cannot receive the fix this
 commit contains without a human upload.
+
+**The retry ladder, leg by leg, so the twenty minutes is auditable.** The waits are not
+ours to invent — `scripts/ci/railway-deploy.sh` exports `RETRY_ATTEMPTS=9` and
+`RETRY_BASE_DELAY_S=60`, and `scripts/ci/with-retry.sh` doubles the step, caps it at 120 s
+and adds a uniform 0–½·delay jitter. That makes the sleep floor 60 + 7 × 120 = **900 s** and
+the ceiling 90 + 7 × 180 = **1,350 s**, both numbers already written in that script's own
+comments. Below are the eight `retrying in Ns` values each of the six staging legs actually
+printed, and every sum lands inside that band:
+
+| attempt | staging leg job | service | the eight sleeps, in order (s) | Σ sleep | leg wall clock | not sleep |
+|---|---|---|---|---|---|---|
+| 1 | `136443975834` | backend | 89, 156, 123, 128, 141, 145, 141, 153 | 1,076 s | 1,093 s (18 m 13 s) | 17 s |
+| 1 | `136443975848` | frontend-admin | 64, 180, 137, 157, 164, 131, 133, 156 | 1,122 s | 1,138 s (18 m 58 s) | 16 s |
+| 1 | `136443975819` | frontend-web | 67, 160, 129, 156, 123, 136, 176, 130 | 1,077 s | 1,097 s (18 m 17 s) | 20 s |
+| 2 | `136544501170` | backend | 73, 180, 145, 173, 166, 132, 156, 171 | 1,196 s | 1,223 s (20 m 23 s) | 27 s |
+| 2 | `136544501171` | frontend-admin | 64, 178, 153, 133, 161, 129, 171, 123 | 1,112 s | 1,132 s (18 m 52 s) | 20 s |
+| 2 | `136544501180` | frontend-web | 86, 123, 156, 173, 137, 146, 152, 141 | 1,114 s | 1,133 s (18 m 53 s) | 19 s |
+
+The shape is the designed one: the first wait in every leg is 64–89 s (the 60 s step plus
+jitter) and the remaining seven are 123–180 s (the capped 120 s step plus jitter). The last
+column is the one that matters for reading these logs — **16 to 27 seconds**, and it is the
+whole of a leg that is not sleep, spread over the five steps GitHub lists for the job
+(`Set up job`, `actions/checkout@v4`, `actions/setup-node@v7`, `Install Railway CLI`, and the
+failing `Deploy <service>` step, which contains the archive build and all nine refused CLI
+calls). Nine refusals inside ~20 s of the 1,076–1,196 s a leg spends is the arithmetic form
+of the sub-second signature above, and it means the twenty minutes proves nothing about the
+payload — it is a timer, not work.
+
+Two consequences for anyone sampling these legs. A status check taken before ~20 minutes is
+blind, because the ladder has not reached attempt 9 yet, so only the *first* refusal
+timestamp is informative — which is why the pull list above is expressed to the
+millisecond. And anyone re-counting attempts from a raw log should grep
+`failed (exit 1); retrying in` (**exactly 8 lines in each of these six logs**), because the
+notice prints only *before* a retry and the ninth attempt ends instead with
+`still failing after 9 attempts (last exit 1)`; a bare `grep -c retry` returns 9 and
+double-counts that terminal line.
