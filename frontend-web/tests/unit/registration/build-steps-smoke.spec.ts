@@ -20,11 +20,11 @@ describe('buildRegistrationSteps does not throw for realistic drafts', () => {
       'derived.legalAdultAge': 18,
       'derived.formSchema': {
         version: 1,
-        includedFields: ['personal.firstName', 'identity.idUpload', 'guardian.fullName'],
-        requiredOverrides: { 'identity.idUpload': true },
+        includedFields: ['personal.firstName', 'media.profilePhoto', 'guardian.fullName'],
+        requiredOverrides: { 'media.profilePhoto': true },
         customFields: [{ key: 'custom.q', label: 'Q', type: 'select', step: 'category_specific', options: ['a', 'b'] }],
       },
-      'identity.idUpload': { previewUrl: '/x', fileName: 'a.png', storageKey: 'k' },
+      'media.profilePhoto': { previewUrl: '/x', fileName: 'a.png', storageKey: 'k' },
     }, 'some-admin-contest');
     expect(() => buildRegistrationSteps(d)).not.toThrow();
   });

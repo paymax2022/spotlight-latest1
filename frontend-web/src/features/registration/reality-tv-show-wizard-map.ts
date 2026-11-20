@@ -57,10 +57,7 @@ export interface RealityTvWizardForm {
 
   // Wizard step 3 — Show Profile (identity, media, socials, audition, public profile)
   category_uniqueStory: string;
-  identity_idType: string;
   identity_idNumber: string;
-  identity_idUploadUrl: string;
-  identity_idUploadName: string;
   media_introVideoUrl: string;
   media_introVideoName: string;
   social_instagram: string;
@@ -132,8 +129,7 @@ export const REALITY_TV_WIZARD_INITIAL: RealityTvWizardForm = {
   talent_previousCompetitions: '', talent_strengths: '', talent_careerGoal: '',
   talent_uniqueStory: '',
 
-  category_uniqueStory: '', identity_idType: '', identity_idNumber: '',
-  identity_idUploadUrl: '', identity_idUploadName: '',
+  category_uniqueStory: '', identity_idNumber: '',
   media_introVideoUrl: '', media_introVideoName: '',
   social_instagram: '', social_tiktok: '', social_youtube: '', social_x: '',
   social_totalFollowers: '', social_willingToInviteVoting: false,
@@ -169,7 +165,6 @@ export const REALITY_TV_WIZARD_INITIAL: RealityTvWizardForm = {
 export const REALITY_TV_UPLOAD_FIELDS = [
   'media.profilePhoto',
   'media.introVideo',
-  'identity.idUpload',
 ] as const;
 
 export type RealityTvUploadMeta = Record<string, Record<string, unknown>>;
@@ -252,9 +247,7 @@ export function realityTvWizardFormToFlat(
     'talent.careerGoal': f.talent_careerGoal,
     'talent.uniqueStory': f.talent_uniqueStory,
 
-    'identity.idType': f.identity_idType,
     'identity.idNumber': f.identity_idNumber,
-    'identity.idUpload': f.identity_idUploadUrl,
 
     'media.profilePhoto': f.media_profilePhotoUrl,
     'media.introVideo': f.media_introVideoUrl,
@@ -386,10 +379,7 @@ export function realityTvWizardHydrate(saved: Record<string, unknown>): {
     talent_uniqueStory: str(saved['talent.uniqueStory']),
 
     category_uniqueStory: str(saved['category.uniqueStory']),
-    identity_idType: str(saved['identity.idType']),
     identity_idNumber: str(saved['identity.idNumber']),
-    identity_idUploadUrl: str(saved['identity.idUpload']),
-    identity_idUploadName: metaFileName(saved, 'identity.idUpload'),
     media_introVideoUrl: str(saved['media.introVideo']),
     media_introVideoName: metaFileName(saved, 'media.introVideo'),
     social_instagram: str(saved['social.instagram']),
@@ -584,12 +574,6 @@ export function validateRealityTvWizardStep(
   }
   if (step === 3) {
     if (!f.category_uniqueStory.trim()) e.category_uniqueStory = 'Tell us what makes you a great TV contestant';
-    // Minors are verified through guardian consent, so the identity section
-    // (and its required values) does not apply to them.
-    if (!realityTvWizardIsMinor(f.personal_dateOfBirth)) {
-      if (!f.identity_idType) e.identity_idType = 'Select your ID type';
-      if (!f.identity_idUploadUrl) e.identity_idUploadUrl = 'A government-issued ID upload is required';
-    }
     if (!f.audition_format) e.audition_format = 'Select your preferred audition format';
     if (!f.media_rightsConfirmed) e.media_rightsConfirmed = 'You must confirm content rights';
     if (!f.publicProfile_publicVotingConsent) e.publicProfile_publicVotingConsent = 'This consent is required';
@@ -634,13 +618,12 @@ export function validateRealityTvWizardStep(
 const FLAT_ERROR_KEY_OVERRIDES: Record<string, keyof RealityTvWizardForm> = {
   'media.profilePhoto': 'media_profilePhotoUrl',
   'media.introVideo': 'media_introVideoUrl',
-  'identity.idUpload': 'identity_idUploadUrl',
   // The wizard keeps the audition link under its legacy 'media_performanceLink'
   // form key while emitting the schema's 'audition.onlineLink' flat key.
   'audition.onlineLink': 'media_performanceLink',
 };
 
-/** Server error keys are flat ('identity.idType'); wizard keys are snake. */
+/** Server error keys are flat ('media.profilePhoto'); wizard keys are snake. */
 export function flatErrorKeyToFormKey(flatKey: string): string {
   return FLAT_ERROR_KEY_OVERRIDES[flatKey] || flatKey.replace(/\./g, '_');
 }
