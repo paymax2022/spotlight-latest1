@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { getHouseLedger, formatNaira } from '@/services/referralAdminService';
 import type { HouseLedger } from '@/types/referralAdmin';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { money } from '../_ui';
 
 const REFERRAL_TABS = [
   { href: '/admin/referral/dashboard', label: 'Overview', key: 'dashboard' },
@@ -121,7 +122,7 @@ export default function HouseLedgerPage() {
                         <td style={tdCell}><StatusBadge status="normal" label={a.scope} /></td>
                         <td style={tdCell}>{a.region ?? '—'}</td>
                         <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{a.owner_user_id}</code></td>
-                        <td style={tdCell}>{formatNaira(a.balance_kobo)}</td>
+                        <td style={tdCell}>{money(a.balance_kobo)}</td>
                         <td style={tdCell}><StatusBadge status={a.non_withdrawable ? 'critical' : 'active'} label={a.non_withdrawable ? 'No (notional)' : 'Yes'} /></td>
                       </tr>
                     ))}

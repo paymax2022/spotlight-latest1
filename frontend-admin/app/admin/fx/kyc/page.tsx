@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { decideKyc, getKycQueue } from '@/services/fxAdminService';
 import type { FxKycDecision, FxKycSubmission } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, ErrorNote, errorMessage } from '../_ui';
 import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 // Live queue behind GET /api/finance/admin/fx/verifications. Reads the same rows
@@ -45,7 +45,7 @@ export default function FxKycQueuePage() {
     try {
       setRows(await getKycQueue());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -103,7 +103,7 @@ export default function FxKycQueuePage() {
 
       <Card>
         {loading ? <p style={{ color: colors.muted }}>Loading…</p>
-          : error ? <p style={{ color: colors.danger }}>{error}</p>
+          : error ? <ErrorNote message={error} />
           : shown.length === 0 ? <p style={{ color: colors.muted }}>No submissions match this filter.</p>
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>

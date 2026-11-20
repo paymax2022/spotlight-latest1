@@ -3,19 +3,20 @@
 import { useEffect, useState } from 'react';
 import { getReconRuns, getReconBreaks, resolveReconBreak } from '@/services/fxAdminService';
 import type { ReconRun, ReconBreak } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge, moneyFull } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, moneyFull, ErrorNote, errorMessage } from '../_ui';
 import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function FxReconciliationPage() {
   const [runs, setRuns] = useState<ReconRun[]>([]);
   const [breaks, setBreaks] = useState<ReconBreak[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
-    try { const [r, b] = await Promise.all([getReconRuns(), getReconBreaks()]); setRuns(r); setBreaks(b); }
-    finally { setLoading(false); }
+    setError(null);
+    try { const [r, b] = await Promise.all([getReconRuns(), getReconBreaks()]); setRuns(r); setBreaks(b); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
 
@@ -30,6 +31,7 @@ export default function FxReconciliationPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Reconciliation" subtitle="Daily runs per provider and the break queue." action={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <FxTabs active="reconciliation" />
+      <ErrorNote message={error} />
 
       <Card title="Recent recon runs">
         {loading ? <p style={{ color: colors.muted }}>Loading…</p> : (

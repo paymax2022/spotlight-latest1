@@ -7,6 +7,7 @@ import {
 } from '@/services/referralAdminService';
 import type { ProgramConfig, ReferralRole, FeatureFlag, ReferralAuditEntry } from '@/types/referralAdmin';
 import { Page, PageHeader, Card, Button, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+import { NOT_REPORTED, errorMessage, textOrDash, timeAgo } from '../_ui';
 
 type Tab = 'program' | 'rbac' | 'flags' | 'audit';
 const TABS: { key: Tab; label: string }[] = [
@@ -40,16 +41,6 @@ function ReferralTabs({ active }: { active: string }) {
   );
 }
 
-function timeAgo(isoStr: string): string {
-  const diff = Date.now() - new Date(isoStr).getTime();
-  const past = diff >= 0;
-  const h = Math.floor(Math.abs(diff) / 3_600_000);
-  if (h < 1) return 'just now';
-  if (h < 24) return past ? `${h}h ago` : `in ${h}h`;
-  const d = Math.floor(h / 24);
-  return past ? `${d}d ago` : `in ${d}d`;
-}
-
 function statusColor(status: string): string {
   const s = status.toLowerCase();
   if (['active', 'approved', 'resolved', 'eligible', 'paid'].includes(s)) return colors.success;
@@ -70,15 +61,26 @@ export default function ReferralConfigPage() {
   const [flags, setFlags] = useState<FeatureFlag[]>([]);
   const [audit, setAudit] = useState<ReferralAuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // One refusal used to take all four tabs down: GET /config answers the program
+  // tab, while roles, flags and the audit trail have no admin route at all
+  // (referral_routes.go registers none of /roles, /flags, /audit). Loaded
+  // independently, the config that does exist stays readable.
+  const [tabErrors, setTabErrors] = useState<Partial<Record<Tab, string>>>({});
 
   async function load() {
-    setLoading(true); setError(null);
-    try {
-      const [p, r, f, a] = await Promise.all([getProgramConfig(), getReferralRoles(), getFeatureFlags(), getReferralAudit()]);
-      setProgram(p); setRoles(r); setFlags(f); setAudit(a);
-    } catch (e) { setError(String(e)); }
-    finally { setLoading(false); }
+    setLoading(true); setTabErrors({});
+    const [p, r, f, a] = await Promise.allSettled([getProgramConfig(), getReferralRoles(), getFeatureFlags(), getReferralAudit()]);
+    const next: Partial<Record<Tab, string>> = {};
+    setProgram(p.status === 'fulfilled' ? p.value : null);
+    setRoles(r.status === 'fulfilled' ? r.value : []);
+    setFlags(f.status === 'fulfilled' ? f.value : []);
+    setAudit(a.status === 'fulfilled' ? a.value : []);
+    if (p.status === 'rejected') next.program = errorMessage(p.reason);
+    if (r.status === 'rejected') next.rbac = errorMessage(r.reason);
+    if (f.status === 'rejected') next.flags = errorMessage(f.reason);
+    if (a.status === 'rejected') next.audit = errorMessage(a.reason);
+    setTabErrors(next);
+    setLoading(false);
   }
   useEffect(() => { load(); }, []);
 
@@ -112,23 +114,33 @@ export default function ReferralConfigPage() {
 
       {loading ? (
         <p style={{ color: colors.muted }}>Loading…</p>
-      ) : error ? (
-        <p style={{ color: colors.danger }}>{error}</p>
       ) : (
         <>
+          {tabErrors[tab] ? <p style={{ color: colors.warning, fontSize: 13, marginBottom: 12 }}>{tabErrors[tab]}</p> : null}
           {tab === 'program' && program && (
             <>
               <Card title="Global program rules" style={{ marginBottom: 20 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px,1fr))', gap: 12 }}>
-                  <Field label="Program enabled" value={<StatusBadge status={program.program_enabled ? 'active' : 'closed'} label={program.program_enabled ? 'Enabled' : 'Disabled'} />} />
-                  <Field label="Default tier" value={program.default_tier} />
-                  <Field label="Qualifying action" value={program.qualifying_action.replace(/_/g, ' ')} />
-                  <Field label="Reward-to-LTV cap" value={`${program.reward_to_ltv_cap_pct}%`} />
+                  {/* Only welcome_reward_enabled is a referral_config column
+                      (backend/internal/referral/config/service.go:18). The rest
+                      live in the reward/campaign engine and no admin route
+                      serves them, so they read as not reported. */}
+                  <Field label="Program enabled" value={NOT_REPORTED} />
+                  <Field label="Default tier" value={NOT_REPORTED} />
+                  <Field label="Qualifying action" value={NOT_REPORTED} />
+                  <Field label="Reward-to-LTV cap" value={NOT_REPORTED} />
                   <Field label="Welcome reward" value={<StatusBadge status={program.welcome_reward_enabled ? 'active' : 'closed'} label={program.welcome_reward_enabled ? 'On' : 'Off'} />} />
                   <Field label="Last updated" value={timeAgo(program.updated_at)} />
                 </div>
               </Card>
               <Card title="Default tiers & caps">
+                <p style={{ fontSize: 12, color: colors.muted, marginTop: 0 }}>
+                  Not reported: GET /api/referral/admin/config returns the six referral_config columns
+                  (attribution window, grace window, fallback chain, house code, budget-neutral, welcome reward).
+                  Tier caps, the qualifying action and the LTV guardrail are not columns of that row and no admin
+                  route exposes them — see docs/ops/admin-pages-to-backend-flags.md.
+                </p>
+                {program.tiers == null ? null : (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead><tr><th style={thCell}>Tier</th><th style={thCell}>Monthly cap</th><th style={thCell}>Override %</th><th style={thCell}>Disclosure</th></tr></thead>
@@ -144,6 +156,7 @@ export default function ReferralConfigPage() {
                     </tbody>
                   </table>
                 </div>
+                )}
                 <p style={{ fontSize: 12, color: colors.warning, marginTop: 8 }}>Overrides are tied to verified network activity only — never recruitment (pyramid-line, §7).</p>
               </Card>
             </>
@@ -151,7 +164,7 @@ export default function ReferralConfigPage() {
 
           {tab === 'rbac' && (
             <Card title="referral.* roles & entitlements (read-only)">
-              {roles.length === 0 ? <p style={{ color: colors.muted }}>No roles configured.</p> : (
+              {!tabErrors.rbac && roles.length === 0 ? <p style={{ color: colors.muted }}>No roles configured.</p> : !tabErrors.rbac ? (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead><tr><th style={thCell}>Role</th><th style={thCell}>Scope</th><th style={thCell}>Permissions</th></tr></thead>
@@ -166,13 +179,13 @@ export default function ReferralConfigPage() {
                     </tbody>
                   </table>
                 </div>
-              )}
+              ) : null}
             </Card>
           )}
 
           {tab === 'flags' && (
             <Card title="Feature flags & emergency kill-switches">
-              {flags.length === 0 ? <p style={{ color: colors.muted }}>No flags defined.</p> : (
+              {!tabErrors.flags && flags.length === 0 ? <p style={{ color: colors.muted }}>No flags defined.</p> : !tabErrors.flags ? (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead><tr><th style={thCell}>Flag</th><th style={thCell}>Phase</th><th style={thCell}>State</th><th style={thCell}></th></tr></thead>
@@ -196,8 +209,8 @@ export default function ReferralConfigPage() {
                     </tbody>
                   </table>
                 </div>
-                )}
-              <p style={{ fontSize: 12, color: colors.muted, marginTop: 8 }}>Toggles are local-preview in mock mode; live mode persists to the backend with an audit event.</p>
+                ) : null}
+              <p style={{ fontSize: 12, color: colors.muted, marginTop: 8 }}>Flag toggles are a mock-mode preview only: no admin route writes referral flags, so live mode has nothing to persist to.</p>
             </Card>
           )}
 
@@ -206,7 +219,7 @@ export default function ReferralConfigPage() {
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
                 <Button variant="outline" sm>Export CSV</Button>
               </div>
-              {audit.length === 0 ? <p style={{ color: colors.muted }}>No audit entries.</p> : (
+              {!tabErrors.audit && audit.length === 0 ? <p style={{ color: colors.muted }}>No audit entries.</p> : !tabErrors.audit ? (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead><tr><th style={thCell}>Action</th><th style={thCell}>Actor</th><th style={thCell}>Entity</th><th style={thCell}>Reason</th><th style={thCell}>When</th></tr></thead>
@@ -223,7 +236,7 @@ export default function ReferralConfigPage() {
                     </tbody>
                   </table>
                 </div>
-              )}
+              ) : null}
             </Card>
           )}
         </>

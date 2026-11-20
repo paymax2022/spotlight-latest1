@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { listMerchants, formatNaira } from '@/services/referralAdminOpsService';
 import type { MerchantSummary } from '@/types/referralAdminOps';
-import { timeAgo } from '../_ui';
+import { timeAgo, money, NOT_REPORTED, textOrDash } from '../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES = ['all', 'onboarding', 'active', 'suspended', 'rejected'];
@@ -66,12 +66,12 @@ export default function MerchantsDirectoryPage() {
                     {rows.map((m) => (
                       <tr key={m.id}>
                         <td style={tdCell}><Link href={`/admin/referral/merchants/${m.id}`} style={{ fontWeight: 600 }}>{m.name}</Link><br /><code style={{ fontSize: 12, color: colors.muted }}>{m.id}</code></td>
-                        <td style={tdCell}>{m.category}</td>
+                        <td style={tdCell}>{textOrDash(m.category)}</td>
                         <td style={tdCell}><Badge text={m.status} color={badgeColor(m.status)} /></td>
-                        <td style={tdCell}><Badge text={m.kyc_status} color={badgeColor(m.kyc_status)} /></td>
-                        <td style={tdCell}>{m.campaigns}</td>
-                        <td style={tdCell}>{formatNaira(m.funded_kobo)}</td>
-                        <td style={tdCell}>{m.take_rate_pct}%</td>
+                        <td style={tdCell}>{m.kyc_status ? <Badge text={m.kyc_status} color={badgeColor(m.kyc_status)} /> : NOT_REPORTED}</td>
+                        <td style={tdCell}>{m.campaigns ?? NOT_REPORTED}</td>
+                        <td style={tdCell}>{money(m.funded_kobo)}</td>
+                        <td style={tdCell}>{m.take_rate_pct == null ? NOT_REPORTED : `${m.take_rate_pct}%`}</td>
                         <td style={tdCell}>{timeAgo(m.joined_at)}</td>
                       </tr>
                     ))}
@@ -79,6 +79,11 @@ export default function MerchantsDirectoryPage() {
                 </table>
               </div>
             )}
+            <p style={{ fontSize: 12, color: colors.muted, marginTop: 10 }}>
+              Category, KYC, campaigns, funded volume and take rate are not reported by the
+              merchants endpoint (GET /api/referral/admin/merchants answers the merchant record
+              only), so a dash means the API did not answer it — not that the partner has none.
+            </p>
         </div>
       </Card>
     </Page>

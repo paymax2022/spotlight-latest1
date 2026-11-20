@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { getAnalytics, formatNaira } from '@/services/referralAdminOpsService';
 import type { AnalyticsOverview } from '@/types/referralAdminOps';
-import { Kpi } from '../_ui';
+import { Kpi, NOT_REPORTED, errorMessage, money, numOrDash, pctOrDash } from '../_ui';
 import { Page, PageHeader, Card, Button, colors } from '@/components/ui/vuexy';
 
 const links = [
@@ -20,12 +20,20 @@ export default function AnalyticsOverviewPage() {
   async function load() {
     setLoading(true); setError(null);
     try { setData(await getAnalytics()); }
-    catch (e) { setError(String(e)); }
+    catch (e) { setError(errorMessage(e)); }
     finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
 
-  const maxCac = data ? Math.max(...data.trend.flatMap((t) => [t.referral_cac_kobo, t.paid_cac_kobo]), 1) : 1;
+  // analytics registers six leaf routes and none of them answers a time series
+  // (backend/internal/referral/analytics/service.go:142-148), so an absent trend
+  // means "no series exists", not "growth is flat". Drawing zero bars would be
+  // the second reading; drawing none and saying why is the honest one.
+  const trend = data?.trend ?? [];
+  const maxCac = trend.length ? Math.max(...trend.flatMap((t) => [t.referral_cac_kobo, t.paid_cac_kobo]), 1) : 1;
+  const kDenominators = data?.referrers != null || data?.referred_signups != null
+    ? `${numOrDash(data.referrers)} referrers · ${numOrDash(data.referred_signups)} referred signups`
+    : undefined;
 
   return (
     <Page>
@@ -47,21 +55,35 @@ export default function AnalyticsOverviewPage() {
       ) : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px,1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="K-factor (true)" value={data.k_factor.toFixed(2)} sub={`Incl. house ${data.k_factor_incl_house.toFixed(2)} — not used for growth`} accent={colors.primary} />
-            <Kpi label="Share rate" value={`${(data.share_rate * 100).toFixed(1)}%`} />
-            <Kpi label="Invite accept" value={`${(data.invite_accept_rate * 100).toFixed(1)}%`} />
-            <Kpi label="Referral CAC" value={formatNaira(data.referral_cac_kobo)} accent={data.referral_cac_kobo < data.paid_cac_kobo ? colors.success : colors.warning} />
-            <Kpi label="Paid CAC" value={formatNaira(data.paid_cac_kobo)} />
-            <Kpi label="Blended CAC" value={formatNaira(data.blended_cac_kobo)} />
+            <Kpi label="K-factor (true)" value={numOrDash(data.k_factor, 2)} accent={colors.primary}
+              sub={data.k_factor_incl_house != null
+                ? `Incl. house ${data.k_factor_incl_house.toFixed(2)} — not used for growth`
+                : kDenominators} />
+            <Kpi label="Share rate" value={pctOrDash(data.share_rate)} />
+            <Kpi label="Invite accept" value={pctOrDash(data.invite_accept_rate)} />
+            <Kpi label="Referral CAC" value={money(data.referral_cac_kobo)}
+              accent={data.referral_cac_kobo != null && data.paid_cac_kobo != null
+                ? (data.referral_cac_kobo < data.paid_cac_kobo ? colors.success : colors.warning)
+                : undefined} />
+            <Kpi label="Paid CAC" value={money(data.paid_cac_kobo)} />
+            <Kpi label="Blended CAC" value={money(data.blended_cac_kobo)} />
           </div>
 
+          {trend.length === 0 ? (
+            <Card title="Referral CAC vs paid CAC — trend">
+              <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>
+                Not reported: no analytics route returns a dated series. {NOT_REPORTED} on the KPI strip above means the
+                endpoint does not compute that metric — GET /analytics/k-factor and /analytics/cac answer current values only.
+              </p>
+            </Card>
+          ) : (
           <Card style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '14px 14px 0' }}>
               <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Referral CAC vs paid CAC — last 14 days (A-BI-03)</h2>
               <span style={{ fontSize: '0.72rem', color: colors.muted }}>Green = referral, grey = paid</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.4rem', height: 140, overflowX: 'auto', padding: 14 }}>
-              {data.trend.map((t) => (
+              {trend.map((t) => (
                 <div key={t.date} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 32 }}>
                   <div style={{ display: 'flex', gap: 2, alignItems: 'flex-end' }}>
                     <div style={{ width: 9, height: (t.referral_cac_kobo / maxCac) * 110 + 4, background: colors.success, borderRadius: 2 }} title={`Referral ${formatNaira(t.referral_cac_kobo)}`} />
@@ -72,6 +94,7 @@ export default function AnalyticsOverviewPage() {
               ))}
             </div>
           </Card>
+          )}
         </>
       )}
     </Page>

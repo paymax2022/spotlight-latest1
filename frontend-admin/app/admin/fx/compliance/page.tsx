@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getScreeningAlerts, setAlertStatus } from '@/services/fxAdminService';
 import type { ScreeningAlert, CaseStatus } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, ErrorNote, errorMessage } from '../_ui';
 import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const SEV_COLOR: Record<string, string> = { high: colors.danger, medium: colors.warning, low: colors.muted };
@@ -11,9 +11,10 @@ const SEV_COLOR: Record<string, string> = { high: colors.danger, medium: colors.
 export default function FxCompliancePage() {
   const [rows, setRows] = useState<ScreeningAlert[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  async function load() { setLoading(true); try { setRows(await getScreeningAlerts()); } finally { setLoading(false); } }
+  async function load() { setLoading(true); setError(null); try { setRows(await getScreeningAlerts()); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); } }
   useEffect(() => { load(); }, []);
 
   async function act(id: string, status: CaseStatus) { setBusy(id); try { await setAlertStatus(id, status); await load(); } finally { setBusy(null); } }
@@ -24,6 +25,7 @@ export default function FxCompliancePage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Compliance & Risk" subtitle={`${open} open · sanctions / AML / monitoring queue`} action={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <FxTabs active="compliance" />
+      <ErrorNote message={error} />
 
       <Card title="Screening & monitoring queue">
         {loading ? <p style={{ color: colors.muted }}>Loading…</p> : rows.length === 0 ? <p style={{ color: colors.muted }}>Queue is clear.</p> : (
