@@ -143,14 +143,38 @@ leaving `service_role` completely untouched.
 So deploying the Go backend changes the RLS-governed surface by exactly zero. What RLS does govern is
 **app-issued keys**, and none of them ship in this release. Measured exposure of that surface:
 
-- **mobile** is the real client-direct reader: `mobile-app/reactnative/src/lib/supabase.ts:38` builds a
-  `createClient(url, anonKey, …)`, `EXPO_PUBLIC_SUPABASE_ANON_KEY` appears in 2 files, and **83** files
-  under `app/`+`src/` call `.from(`. Those 83 are subject to the 124 `ENABLE ROW LEVEL SECURITY`
-  statements *right now*, in production, independent of this deploy.
+- **mobile** is the real client-direct reader, and the surface is **much smaller than a naive grep
+  suggests**: `mobile-app/reactnative/src/lib/supabase.ts:38` builds `createClient(url, anonKey, …)`
+  with `persistSession: true` from secure storage. **14 files** make **80** direct table calls across
+  **29 distinct tables** (top: `utility_billers` 7, `user_profiles` 6, `realtor_listings` 5,
+  `realtor_inspection_bookings` 5, `utility_transactions` 4, `realtor_units` 4,
+  `realtor_maintenance_requests` 4, `ledger_entries` 4). All 14 import the Supabase client, so the
+  scope is exact rather than approximate. **Method warning, because the first measurement was wrong:
+  `grep -rl '\.from('` returns 83 files, and 81 of those hits are `Array.from(`** — a JavaScript
+  builtin with no relation to Supabase. Match `\.from\(['"][a-z_]+['"]\)` instead, and cross-check
+  that each file imports the client.
 - **the web BFF is not** a client-direct reader: `frontend-web/app/api` has **507** `createAdminClient`
   references against **9** `createAnonClient`, and every anon site is an auth route
   (`login`, `otp-verify`, `resend-otp`, `verify-otp`) — admin clients use the service key and bypass RLS
   like the Go backend does.
+
+**The first concrete item for that audit, found while scoping it.** Mobile's most-read direct table is
+`utility_billers` (7 call sites, all in `src/api/billing.api.ts` — `getAirtimeNetworks`,
+`getDataNetworks`, `getBillerIdByCode`), and its policy set is asymmetric:
+
+- `20260613100000_utility_payment_engine.sql:176` defines
+  `CREATE POLICY "utility_billers_read_active" ON public.utility_billers FOR SELECT TO authenticated USING (status = 'active')`
+  — **`TO authenticated` only**. There is no `anon` SELECT policy.
+- So a logged-in mobile session reads active billers fine, but a **logged-out (`anon`) read of the same
+  table returns `200 []` silently** — the exact fail-quietly signature, with no error to catch. Whether
+  any of those three call sites is reachable before login is a screen-flow question, not a SQL one.
+- Note also that `20270208000000_rls_backend_only_lockdown_utility_billers.sql` says it is enabling RLS
+  *"with no policies"* and that this *"prevents a client-side token (anon or auth)"* from querying the
+  table. Both halves of that comment are stale: a policy has existed since 2026-06-13, and it explicitly
+  **permits** `authenticated` reads. Trust the policy set, not the migration's prose.
+
+Neither fact touches this release — the Go backend reads the table as `service_role` — which is exactly
+the distinction the old G4 was missing.
 
 Review procedure (unchanged, still worth running — but as its own read-only work item, on mobile's
 timeline rather than the release's):
@@ -412,7 +436,7 @@ railway-upped it by hand.
 | **G1** | Deployment currency re-read — **re-verified 2026-11-20 ~10:05Z, unchanged** | `curl -s --http1.1 https://backend-{development-502c,staging-new,production-1b33d}.up.railway.app/api/v1/public/build` | prod still `d3401f574`; dev `a05b8676e`, staging `773fe0285` — all three identical to the 09:05Z/09:36Z readings, so **nothing has deployed on any plane since the baseline was taken**. **Write the host out in full.** An abbreviated `…/api/v1/public/build` invites `https://backend-production-1b33d.railway.app`, which omits `.up.` and answers `{"message":"Not Found","requestId":…}` from the gateway — a *different* signature from the edge's `{"status":"error","code":404,"message":"Application not found"}`, and easy to misread as "the plane is down" or "the route is gone" when it is only a malformed URL. |
 | **G2** | Pin the release SHA to a CI-green main sha | `gh run list --workflow=ci.yml --branch main --limit 8`, take the newest `success` head | **PASSES as of 2026-11-20 ~10:05Z, and the pin survives main moving.** Newest green `ci.yml` head on main is **`a05b8676e`** (run `44644176137`), which is exactly the pin §2 baselined. main has advanced twice since (`36c8e666b` #1101, `f6f9bdd92` #1105 — this document), and `git diff --name-only a05b8676e origin/main -- backend/ supabase/` returns **0 files**: both commits touch only `docs/`. So the pin is still content-identical to main's tip for everything this release ships. **Do not confuse the two workflows for the same sha:** `a05b8676e` has a **SUCCESS `ci.yml`** row (`44644176137`) and a **FAILURE `release.yml`** row (`44644175704`) — the latter from staging's F2 deploy legs (§6.2), not from the code. Deploying "main right now" is still excluded: `f6f9bdd92` has no `ci.yml` row of its own, **by design** — `ci.yml`'s `push` trigger path-ignores docs-only commits (`pull_request` deliberately has no `paths-ignore`, or a docs PR's required checks would sit "Expected" forever), and that same docs-only proof is what lets `release-gates.py` return `noop_docs_only`. |
 | **G3** | Release train reaches production | verdict line of the `release gate` job **+ the three `deploy Staging (…)` conclusions** | verdict `proceed` **and** all three staging legs `success`. Measured 2026-11-20 09:05Z, refined ~10:10Z: in every run **that attempted a deploy** since 2026-11-19 14:49Z the verdict **is** `proceed` and dev is 3/3 green, but **all three staging legs fail with F2** (`44547867538`, `44560489834`, `44629671567`, `44637142432`, `44644175704`) → `smoke Staging` skipped → `deploy Production` skipped. **This gate is RED.** Precision matters here: the two runs after those — `44703323495` (11-20 08:32Z) and `44714903068` (09:56Z) — are **not** F2 failures. Both returned `### Release gate: **noop_docs_only**` with **all six** deploy/smoke legs `skipped`, including development, because both commits touched only `docs/`. So F2 is *untested* since `44644175704` at 00:14Z rather than freshly re-proven, and the sharper statement is the operative one: **no `proceed`-verdict run has reached production since then, so the train currently has no path to prod at all** — the last real evidence for staging is the 00:14Z run. Read the verdict line before calling any green Release row a deploy (§6.2). |
-| **G4** | ~~RLS review complete~~ → **not a gate: reclassified 2026-11-20 as a standing client-read audit** | §3.4 census + `--diff-filter=M` + `store.go:13` | **Passes by construction, for the reason the original row got backwards.** The 124 `ENABLE ROW LEVEL SECURITY` / 116 `CREATE POLICY` / 99 `DROP POLICY` statements in the 114 main-only migrations are **already live** (prod DB is at main's head, drift 0, §2), all 114 files are pure **additions** (zero modified), and the one artifact this release deploys connects as `service_role`, which the repo documents as bypassing RLS. A backend-only deploy therefore cannot change the RLS-enforced surface. What is still open is **not** a release risk: 83 mobile files read Supabase directly under the anon key and need the §3.4 verdict table on their own timeline. |
+| **G4** | ~~RLS review complete~~ → **not a gate: reclassified 2026-11-20 as a standing client-read audit** | §3.4 census + `--diff-filter=M` + `store.go:13` | **Passes by construction, for the reason the original row got backwards.** The 124 `ENABLE ROW LEVEL SECURITY` / 116 `CREATE POLICY` / 99 `DROP POLICY` statements in the 114 main-only migrations are **already live** (prod DB is at main's head, drift 0, §2), all 114 files are pure **additions** (zero modified), and the one artifact this release deploys connects as `service_role`, which the repo documents as bypassing RLS. A backend-only deploy therefore cannot change the RLS-enforced surface. What is still open is **not** a release risk: **14** mobile files make 80 direct table calls over 29 tables, and `utility_billers` carries a `TO authenticated`-only SELECT policy, so a logged-out read returns `200 []` silently. That is a mobile-side audit item with a concrete first entry — see §3.4. |
 | **G5** | Env-var parity, **names only** — **measured 2026-11-20, GREEN** | `railway variables --environment production --service backend …` parsed to the name column **only** | Production has **131** variables. Of the **20 keys main added beyond `prod`'s `.env.example`**, **19 are absent** from production — and that is **safe**: each has a compiled default, verified on `origin/main` — `ESTATE_CODE_RATE_PER_MIN`→10, `ESTATE_GUARD_RATE_PER_MIN`→30, `PARCEL_INSURANCE_MIN_PREMIUM_KOBO`→200000, `FOOD_RIDER_LOCATION_RETENTION_DAYS`→30, `CONSULT_MEDIA_PROVIDER`→"livekit", `WEB_APP_BASE_URL`→`https://www.spotlightng.com` (`config.go:1366`, the exact live customer domain), `R2_INSURANCE_BUCKET`→"" with a documented `R2_BUCKET` fallback. The 13 `FEATURE_*` keys being unset means those features stay **off** in production after the cut, so the release does not silently enable new surfaces — it narrows blast radius. |
 | **G6** | Client-exposure census — **measured 2026-11-20, see §3.5** | `git grep` on both tips + live BFF probes + the prod boost screen | **Resolved as to behavior, open as to audience.** The prod-lineage package picker fails **closed** (`arr()` empties an object; a `tier`-only POST 400s; Confirm needs `!!selectedTier`), the custom-date boost path survives unchanged, and there is **no silent-mispricing path**. What remains is the owner's §11 Q3: how many installed `prod`-lineage builds exist. A `tiers → pricing` alias is **not** a valid shim (different payload shape) — see §3.5. |
 | **G7** | Rollback capacity proven | existing plan **Task 3**, still open | a dated dump of the prod DB **and a restore drill into a scratch database** — a backup never restored is not a backup |
