@@ -163,6 +163,12 @@ POST   /virtual-account              POST /bills             GET  /boosts/tiers
   `base.GET("/boosts/tiers", h.BoostPricing)` as an alias on main *before* the cut, or accept
   the 404 for legacy builds. Both are one-line-or-zero-line options; neither is a reason to
   keep the fork.
+- **Re-measured 2026-11-20 09:05Z**, and one new fact matters for §8: development (`a05b8676e`)
+  answers `tiers` → 404 (as expected) but **`pricing` → 500** `INTERNAL_ERROR`, where staging
+  returns the payload (`daily_rate_kobo:10000`, presets `[1,3,7,14,30]`). Same code, different
+  database — dev's marketplace config row is absent. So **staging is the host that proves the
+  post-release shape**; a red `pricing` probe on dev is a data gap, not a contract break, and
+  must not be read as a reason to hold the release.
 
 Two method corrections that this scan forced, worth keeping so a re-run doesn't repeat them:
 `wallets/:currency` and `wallet/convert` **do** exist on main — an app-package-only grep
