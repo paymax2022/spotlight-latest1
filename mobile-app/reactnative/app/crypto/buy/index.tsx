@@ -10,6 +10,7 @@ import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
+import TopUpWalletButton from '@/components/TopUpWalletButton';
 import SegmentedControl from '@/components/SegmentedControl';
 import { AssetIcon } from '@/features/crypto/components';
 import { VolatilityWarning } from '@/features/crypto/components';
@@ -121,6 +122,7 @@ export default function BuyEntryScreen() {
             />
           </View>
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          {insufficient ? <TopUpWalletButton label="Add funds" route="/invest/wallet" style={styles.errorCta} /> : null}
           {!error && basis === 'fiat' && a.minOrderAmount > 0 ? (
             <Text style={styles.hintText}>Smallest order the market can fill: {formatFiat(a.minOrderAmount, fiat)}</Text>
           ) : null}
@@ -199,6 +201,7 @@ const styles = StyleSheet.create({
   amountInput: { flex: 1, textAlign: 'right', ...Typography.headlineMd, color: Colors.onSurface, padding: 0 },
   computed: { color: Colors.onSurfaceVariant },
   errorText: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
+  errorCta: { marginTop: Spacing.sm },
   hintText: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   swapWrap: { alignItems: 'center', justifyContent: 'center', height: 36, marginVertical: 2 },
   swapLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: Colors.surfaceContainerHigh },

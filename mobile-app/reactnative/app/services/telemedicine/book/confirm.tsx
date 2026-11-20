@@ -15,6 +15,7 @@ import { generateIdempotencyKey } from '@/utils/idempotency';
 import { TeleHeader } from '@/features/telemedicine/components';
 import type { ConsultType, BookAppointmentResult } from '@/types/telemedicine';
 import PrimaryButton from '@/components/PrimaryButton';
+import TopUpWalletButton from '@/components/TopUpWalletButton';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { readBookingQuote, slotToISO } from '@/features/telemedicine/pricing';
 
@@ -166,6 +167,12 @@ export default function ConfirmBookingScreen() {
             </View>
             {insufficient && <Text style={styles.lowBadge}>Low</Text>}
           </View>
+          {insufficient && (
+            <View style={styles.lowRow}>
+              <Text style={styles.lowText}>Insufficient wallet balance for this booking.</Text>
+              <TopUpWalletButton />
+            </View>
+          )}
         </View>
 
         <View style={[styles.card, shadow1]}>
@@ -233,6 +240,8 @@ const styles = StyleSheet.create({
   walletLabel: { ...Typography.labelMd, color: Colors.onSurface },
   walletBalance:{ ...Typography.caption, color: Colors.onSurfaceVariant },
   lowBadge:    { ...Typography.labelSm, color: Colors.error, backgroundColor: Colors.errorContainer, paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.full, overflow: 'hidden' },
+  lowRow:      { gap: Spacing.sm, marginTop: Spacing.sm },
+  lowText:     { ...Typography.labelSm, color: Colors.error, lineHeight: 18 },
   secureHead:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.md },
   secureText:  { ...Typography.labelMd, color: Colors.onSurface, flex: 1 },
   pinInput:    { height: 56, borderWidth: 1.5, borderColor: Colors.outlineVariant, borderRadius: Radius.lg, textAlign: 'center', letterSpacing: 12, ...Typography.headlineMd, color: Colors.onSurface, backgroundColor: Colors.surfaceContainerLow },

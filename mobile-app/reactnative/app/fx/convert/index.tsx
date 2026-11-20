@@ -10,6 +10,7 @@ import { Radius } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
+import TopUpWalletButton from '@/components/TopUpWalletButton';
 import SegmentedTabs from '@/components/SegmentedControl';
 import CurrencyChip from '@/features/fx/components/CurrencyChip';
 import CurrencyPickerSheet from '@/features/fx/components/CurrencyPickerSheet';
@@ -108,7 +109,15 @@ export default function ConvertScreen() {
               </Text>
             )}
           </View>
-          {insufficient ? <Text style={styles.errorText}>Insufficient {from} balance for this conversion.</Text> : null}
+          {insufficient ? (
+            <View style={styles.errorBlock}>
+              <Text style={styles.errorText}>Insufficient {from} balance for this conversion.</Text>
+              <TopUpWalletButton
+                label={`Top up ${from} wallet`}
+                route={from === 'NGN' ? '/wallet/add' : '/fx/receive'}
+              />
+            </View>
+          ) : null}
         </View>
 
         {/* Swap */}
@@ -203,7 +212,8 @@ const styles = StyleSheet.create({
   amountError: { borderColor: Colors.error },
   amountInput: { flex: 1, textAlign: 'right', ...Typography.headlineMd, color: Colors.onSurface, padding: 0 },
   amountComputed: { color: Colors.onSurfaceVariant },
-  errorText: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
+  errorText: { ...Typography.labelSm, color: Colors.error },
+  errorBlock: { gap: Spacing.sm, marginTop: Spacing.xs },
   swapWrap: { alignItems: 'center', justifyContent: 'center', height: 36, marginVertical: 2 },
   swapLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: Colors.surfaceContainerHigh },
   swapBtn: { width: 40, height: 40, borderRadius: Radius.full, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },

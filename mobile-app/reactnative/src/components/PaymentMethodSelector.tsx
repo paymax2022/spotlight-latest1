@@ -1,6 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Check, CreditCard, Wallet } from 'lucide-react-native';
+import TopUpWalletButton from '@/components/TopUpWalletButton';
 import { Colors } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -62,6 +63,7 @@ export default function PaymentMethodSelector({
               ? `Insufficient — available ${formatNairaBalance(balance)}`
               : `Available: ${formatNairaBalance(balance)}`}
           </Text>
+          {walletInsufficient && <TopUpWalletButton style={styles.topup} />}
         </View>
 
         {selected === 'WALLET' && (
@@ -165,6 +167,9 @@ const styles = StyleSheet.create({
   },
   optionSubWarn: {
     color: Colors.error,
+  },
+  topup: {
+    marginTop: Spacing.xs,
   },
   paystackBadge: {
     paddingHorizontal: 6,
