@@ -172,6 +172,12 @@ Two things to check before assuming the fix is live:
 - **The staging upload legs have been refusing** (`Failed to fetch: error decoding response body`)
   through most of 2026-11-19 and 2026-11-20 — a Railway-side fault, not this code. While they refuse,
   `deploy-production` is skipped and the prod console keeps serving the older build.
+  This commit is the proof: run `44774228871` refused 27 of 27 staging calls at 17:13-17:32Z and,
+  after `gh run rerun --failed`, another 27 of 27 at 20:19-20:39Z on 2026-11-20, while its three
+  development legs of the same attempt landed (`smoke Development` green 17:16:35-17:16:39Z).
+  Read-only afterwards, staging's newest row for all three services is still the
+  2026-11-19T15:46Z manual `serviceInstanceDeploy` refresh. Episode 17 of
+  `docs/devops/railway-upload-fault-report.md` carries the timestamps for the Railway ticket.
 - **`frontend-admin` production has not been deployed since 2026-11-18, and historically never came
   from a trigger build.** Read-only against the Railway API on 2026-11-20:
 
