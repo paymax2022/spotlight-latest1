@@ -45,6 +45,9 @@ operator opens prod.
 
 ## Owner-run commands
 
+Commands 1–4 are configuration; **Command 5 — the deploy itself — is under "How this branch reaches the
+console you opened"**, because it depends on reading what the service is actually serving first.
+
 Read-only verification for each is the curl **after** it, and the expected change is the code
 moving to the row that means "mounted". `railway variables` writes trigger a redeploy of that
 service. One caveat already burned once in this repo: `railway variables` reports what is
@@ -155,6 +158,75 @@ therefore be simulated, which is a fact to know before trusting a dev routing de
   the gate working, not a regression to route around.
 - Re-adding the allowlist line is a decision to fabricate money data in production. It is recorded
   in the script's own comment for exactly that reason.
+
+## How this branch reaches the console you opened
+
+Merging to `main` does not by itself change `frontend-admin-production-5b0c`. `release.yml` runs on
+every push to `main` and deploys development, staging and production — but the production legs are
+gated behind proof, in this order: `gates` verdict `proceed` → staging deploy → `smoke-staging`
+green → `migrate-production` → `deploy-production`. A red or skipped staging probe cascade-skips
+everything after it, on purpose ("nothing reaches production until staging is serving this commit").
+
+Two things to check before assuming the fix is live:
+
+- **The staging upload legs have been refusing** (`Failed to fetch: error decoding response body`)
+  through most of 2026-11-19 and 2026-11-20 — a Railway-side fault, not this code. While they refuse,
+  `deploy-production` is skipped and the prod console keeps serving the older build.
+- **`frontend-admin` production has not been deployed since 2026-11-18, and historically never came
+  from a trigger build.** Read-only against the Railway API on 2026-11-20:
+
+  ```
+  railway api 'query{ deployments(input:{projectId:"e7dca861-…", serviceId:"c4f1086e-…",
+    environmentId:"f84c4558-…"}, first:6){ edges{ node{ createdAt status meta } } } }'
+  2026-11-18T14:47:15Z  SUCCESS  cb02a3ca  cliCaller=agent_unknown:shell:qoder   (manual `railway up`)
+  2026-11-18T14:35:13Z  REMOVED  4069e1a2  cliMessage=2f51561fb0e3f329
+  2026-11-16T09:06:11Z  REMOVED  616bd93b  cliMessage=main-ef97ec64b-p
+  …
+  ```
+
+  Every row is a CLI upload (`cliCaller` present, or a `cliMessage` carrying a sha), none is a
+  git-source build. The live console is therefore the hand-uploaded `main`-lineage build `cb02a3ca…`
+  from 2026-11-18 — which predates this branch, so **the four crash pages keep crashing on prod until
+  someone puts this commit on the service.** `Service.deployments` is not environment-scoped by
+  default; the `environmentId` above is what makes this the production list.
+
+Read the served commit rather than the run colour. The build read-back is the **Go** service's route
+(`backend/Dockerfile:14`), and the BFF's catch-all handler (`frontend-web/app/api/v1/[...path]/route.ts`)
+forwards it, so this works from either host:
+
+```
+$ curl -s https://frontend-web-production-9259.up.railway.app/api/v1/public/build
+{"commit":"d3401f5749adbe9142f0255743d110fb0afcdeb1","source":"ldflags",
+ "started_at":"2026-11-18T16:40:40Z","uptime_seconds":169443}
+```
+
+Reproduced 2026-11-20. `started_at` is the deploy time, so production has been running the 2026-11-18
+binary for two days — direct evidence that the production legs of every Release run since have been
+skipped, not silently applied. `frontend-admin` has no such route (the same path on
+`frontend-admin-production-5b0c` returns Next `404` HTML), so for the console the proof is the
+`deployments(input:{…environmentId:"f84c4558-…"})` query above: if its newest row is not your sha, the
+console is not serving your code.
+
+### 5. Deploying this branch onto the production console (owner-run)
+
+Landing on `main` is not enough while staging refuses. The production `frontend-admin` instance reports
+`rootDirectory: null` (see the "THE UPLOAD RULE" header of `scripts/ci/railway-deploy.sh`, measured with
+`serviceInstance(serviceId, environmentId){ rootDirectory }`), so the archive root must BE the app folder —
+the same shape CI uses:
+
+```bash
+git worktree add /tmp/admin-deploy <merged-main-sha> && cd /tmp/admin-deploy
+RAILWAY_TOKEN=<production token> ~/.railway/bin/railway up frontend-admin --path-as-root \
+  --no-gitignore --service frontend-admin --environment production \
+  --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --detach --message <merged-main-sha>
+```
+
+From a clean worktree at the exact merged commit, never from a dirty checkout — the upload ships the
+working tree. Then re-run the `deployments` query and expect a new SUCCESS row whose `cliMessage` is that
+sha, and confirm `/admin/fx/spread` shows the live `—`/value distinction rather than fixture bps.
+An alternative that fixes the class rather than this one release: get a green `deploy-staging` +
+`smoke-staging` (the Railway-side F2 ask), after which every subsequent `main` merge reaches production by
+itself.
 
 ## Companion file
 
