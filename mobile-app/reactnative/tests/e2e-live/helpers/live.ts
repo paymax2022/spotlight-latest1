@@ -84,7 +84,9 @@ export async function loginViaUI(page: Page, email = LIVE_USER.email, password =
 
 /** Assert the authenticated home surface is up (post-login destination). */
 export async function expectHome(page: Page) {
-  // 'Explore Services' is the home grid header the mocked suite already uses;
-  // it renders when the LIVE module-visibility registry exposes any service.
-  await expect(page.getByText('Explore Services')).toBeVisible({ timeout: 30_000 });
+  // The landing search field, same anchor the mocked suite uses. It is rendered
+  // by the screen itself rather than the registry gate, so it is up whatever the
+  // LIVE registry publishes, and it exists only on home — a bounce to /wallet or
+  // a gate screen leaves it absent.
+  await expect(page.getByPlaceholder('Find a service')).toBeVisible({ timeout: 30_000 });
 }

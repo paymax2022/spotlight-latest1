@@ -10,7 +10,7 @@ test.describe('Auth E2E - Login flow', () => {
     await mockBillsCatalog(page);
     await loginAs(page);
 
-    await expect(page.getByText('Explore Services')).toBeVisible();
+    await expect(page.getByPlaceholder('Find a service')).toBeVisible();
   });
 
   test('shows API error on wrong credentials', async ({ page }) => {
@@ -55,7 +55,7 @@ test.describe('Auth E2E - Login flow', () => {
     await page.goto('/login', { waitUntil: 'domcontentloaded' });
 
     // AuthGate should detect the session and redirect away from login to home.
-    await expect(page.getByText('Explore Services')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByPlaceholder('Find a service')).toBeVisible({ timeout: 15_000 });
   });
 
   test('a 401 from the API clears the session and redirects to login', async ({ page }) => {

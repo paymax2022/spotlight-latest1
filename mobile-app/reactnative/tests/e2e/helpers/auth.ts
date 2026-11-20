@@ -158,7 +158,12 @@ export async function loginAs(
   // would intercept the page navigation itself and serve JSON as the document.
   await page.goto(withPin ? '/home' : '/services/bills', { waitUntil: 'domcontentloaded' });
   // Without a PIN the gate redirects to /security/set-pin, so home never renders.
-  // Dev-mode Metro mounts the home grid in ~8–15s on first paint — the default
-  // 10s expect timeout isn't enough, so widen the home-anchor assertion.
-  if (withPin) await expect(page.getByText('Explore Services')).toBeVisible({ timeout: 30_000 });
+  // The landing search field is the home anchor. It is rendered by the screen
+  // itself, not by the registry gate, so it is up even when a spec pins
+  // mockModuleVisibility to a set with no essentials in it (stays, realtor,
+  // creators do exactly that) — and it is unique to home, so the PIN-gate tests
+  // can assert the opposite: that it is NOT there.
+  // Dev-mode Metro mounts the home tree in ~8–15s on first paint — the default
+  // 10s expect timeout isn't enough, so widen the anchor.
+  if (withPin) await expect(page.getByPlaceholder('Find a service')).toBeVisible({ timeout: 30_000 });
 }
