@@ -150,8 +150,10 @@ test.describe('Wallet transfer — KYC-blocked PIN sheet', () => {
   // tier refusal — that is the false-positive this detector could most easily
   // create, since both arrive as a server sentence under the dots. What the
   // member is then offered (the funding dialog) belongs to the wallet-top-up
-  // change and is asserted there, not here: `promptWalletTopUp` has no call site
-  // in this tree, so expecting its button here tests somebody else's work.
+  // change and is asserted there, not here: `promptWalletTopUp` is called from
+  // `app/social/send.tsx`, never from the transfers rail this spec drives — the
+  // PIN sheet has no funding CTA — so expecting its button here would test
+  // another surface's work.
   test('a shortfall stays a balance problem, not a KYC problem', async ({ page }) => {
     await mockTransferFailure(page, 402, {
       success: false,
