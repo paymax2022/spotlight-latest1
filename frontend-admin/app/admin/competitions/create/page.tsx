@@ -98,7 +98,16 @@ function initialForm(): FormState {
     supportsGroupEntry: false, supportsSchoolEntry: false, requiresGuardianConsentForMinors: false,
     requiresMedical: false, requiresBootcampReadiness: false, auditionStates: [], applicantCategories: [],
     rulesText: '', bannerImageUrl: '', logoUrl: '',
+    startDate: '', endDate: '', prizePool: '',
   };
+}
+
+// A stored instant is UTC, so the first ten characters ARE the day the admin
+// chose (23:59:59.999Z stays on its own date). Only the display is reduced to a
+// day — the form keeps the full value, so an unrelated edit cannot truncate a
+// deadline somebody set precisely.
+function dayPart(value: string | undefined): string {
+  return value && value.length >= 10 ? value.slice(0, 10) : '';
 }
 
 function CreateCompetitionContent() {
@@ -220,6 +229,11 @@ function CreateCompetitionContent() {
         rulesText: c.rulesText ?? '',
         bannerImageUrl: c.bannerImageUrl ?? '',
         logoUrl: c.logoUrl ?? '',
+        // Without these three keys the editor silently reported "no deadline" for
+        // every contest, and saving then sent a payload that omitted them.
+        startDate: c.startDate ?? '',
+        endDate: c.endDate ?? '',
+        prizePool: c.prizePool ?? '',
       });
       if (c.status) setStatusState(c.status as ContestPublishStatus);
       if (c.id) setContestId(c.id);
@@ -728,6 +742,40 @@ function CreateCompetitionContent() {
               onChange={(e) => setForm((f) => ({ ...f, legalAdultAge: Number(e.target.value || 18) }))} />
           </div>
         </div>
+
+        {/*
+          The contest window and the prize. These map onto real columns
+          (contests.start_date / end_date / prize_pool) that the console had no
+          field for, which mattered because 20261223000000 mirrors the two dates
+          into connect_contests.opens_at/closes_at — the window mobile's
+          getVotingWindow enforces. With no field, every contest was open-ended:
+          votable the moment it was published, and still votable the week after
+          its deadline. Empty means unbounded, which is the old behaviour.
+        */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 4 }}>
+          <div>
+            <label style={labelStyle}>Start date</label>
+            <Input aria-label="Contest start date" style={{ width: '100%' }} type="date"
+              value={dayPart(form.startDate)}
+              onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} />
+          </div>
+          <div>
+            <label style={labelStyle}>End date</label>
+            <Input aria-label="Contest end date" style={{ width: '100%' }} type="date"
+              value={dayPart(form.endDate)}
+              onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))} />
+          </div>
+          <div>
+            <label style={labelStyle}>Price to be won</label>
+            <Input aria-label="Price to be won" style={{ width: '100%' }} type="text"
+              placeholder="₦500,000 + a management deal"
+              value={form.prizePool ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, prizePool: e.target.value }))} />
+          </div>
+        </div>
+        <p style={{ margin: '0 0 12px', fontSize: 11, color: colors.muted }}>
+          The end date is inclusive — voting stays open through that whole day. Outside this window the mobile app refuses votes; leave either side empty for no bound.
+        </p>
 
         <div style={{
           padding: 12, borderRadius: 8, marginBottom: 12,

@@ -161,6 +161,60 @@ describe('GET /api/v1/contests', () => {
     expect((byId.get(CONTEST_A) as { contestantCount: number }).contestantCount).toBe(3);
     expect((byId.get(CONTEST_B) as { contestantCount: number }).contestantCount).toBe(1);
   });
+
+  it('serves the prize and closes voting on the stored end date', async () => {
+    // The admin console can now write contests.prize_pool and end_date, and this
+    // is the surface the web voting page reads. Two behaviours matter here:
+    //  - the prize must reach the client, or the field is set-and-never-seen;
+    //  - endsAt prefers voting_ends_at but falls back to end_date, so a contest
+    //    whose deadline has passed must report isLive:false instead of the
+    //    rolling "ends tomorrow" the null case fabricates.
+    tableResults.contests = [
+      {
+        data: [
+          {
+            id: CONTEST_A, name: 'A', category: 'Music', status: 'active',
+            start_date: '2026-12-01T00:00:00.000Z', end_date: '2026-12-24T23:59:59.999Z',
+            prize_pool: '₦500,000 + a management deal',
+          },
+          {
+            id: CONTEST_B, name: 'B', category: 'Film', status: 'active',
+            start_date: null, end_date: '2020-01-01T00:00:00.000Z', prize_pool: '',
+          },
+        ],
+      },
+    ];
+    tableResults.voting_settings = [{
+      data: [
+        { contest_id: CONTEST_A, voting_enabled: true, voting_ends_at: null },
+        // B is enabled too, so the only thing that can make it not-live is the
+        // stored deadline — the flag is not doing the work.
+        { contest_id: CONTEST_B, voting_enabled: true, voting_ends_at: null },
+      ],
+    }];
+    tableResults.vote_totals = [{ data: [] }];
+    tableResults.contestants = [{ data: [{ contest_id: CONTEST_A }] }];
+
+    const res = await listContests(new Request('http://localhost/api/v1/contests'));
+    const body = (await res.json()) as Array<Record<string, unknown>>;
+    const byId = new Map(body.map((c) => [c.id as string, c]));
+
+    // The fake builder hands back the canned rows whatever the projection says, so
+    // without this assert a column missing from .select() would pass every check
+    // below — and in production PostgREST returns only projected columns, so
+    // prize_pool absent means the prize is '' forever with no error anywhere.
+    const projection = String(recorded.contests[0].calls.select[0][0]);
+    expect(projection).toContain('prize_pool');
+    expect(projection).toContain('end_date');
+
+    expect(byId.get(CONTEST_A)?.prize).toBe('₦500,000 + a management deal');
+    expect(byId.get(CONTEST_A)?.endsAt).toBe('2026-12-24T23:59:59.999Z');
+    expect(byId.get(CONTEST_A)?.isLive).toBe(true);
+    // Past deadline, voting enabled: closed, and not the fabricated fallback.
+    expect(byId.get(CONTEST_B)?.isLive).toBe(false);
+    expect(byId.get(CONTEST_B)?.endsAt).toBe('2020-01-01T00:00:00.000Z');
+    expect(byId.get(CONTEST_B)?.prize).toBe('');
+  });
 });
 
 describe('GET /api/v1/contests/[id]', () => {
