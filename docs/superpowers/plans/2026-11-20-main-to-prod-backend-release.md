@@ -365,12 +365,22 @@ railway-upped it by hand.
 | **G2** | Pin the release SHA to a CI-green main sha | `gh run list --workflow=ci.yml --branch main --limit 5`, take the newest `success` head | the sha you deploy has its own green row; **never** deploy "main right now" |
 | **G3** | Release train reaches production | verdict line of the `release gate` job **+ the three `deploy Staging (…)` conclusions** | verdict `proceed` **and** all three staging legs `success`. Measured 2026-11-20 09:05Z: verdict **is** `proceed` and dev is 3/3 green, but **all three staging legs fail with F2 in every run since 2026-11-19 14:49Z** (`44547867538`, `44560489834`, `44629671567`, `44637142432`, `44644175704`) → `smoke Staging` is skipped → `deploy Production` is skipped. **This gate is RED right now.** See §6.2. |
 | **G4** | RLS review complete | work package 3.4 | every policy on a prod-written table has a verdict row |
-| **G5** | Env-var parity, **names only** | Railway dashboard / `railway variables … \| cut -d= -f1` | every key in main's `backend/.env.example` that main newly added is either set or has a safe default; print **no values** |
+| **G5** | Env-var parity, **names only** — **measured 2026-11-20, GREEN** | `railway variables --environment production --service backend …` parsed to the name column **only** | Production has **131** variables. Of the **20 keys main added beyond `prod`'s `.env.example`**, **19 are absent** from production — and that is **safe**: each has a compiled default, verified on `origin/main` — `ESTATE_CODE_RATE_PER_MIN`→10, `ESTATE_GUARD_RATE_PER_MIN`→30, `PARCEL_INSURANCE_MIN_PREMIUM_KOBO`→200000, `FOOD_RIDER_LOCATION_RETENTION_DAYS`→30, `CONSULT_MEDIA_PROVIDER`→"livekit", `WEB_APP_BASE_URL`→`https://www.spotlightng.com` (`config.go:1366`, the exact live customer domain), `R2_INSURANCE_BUCKET`→"" with a documented `R2_BUCKET` fallback. The 13 `FEATURE_*` keys being unset means those features stay **off** in production after the cut, so the release does not silently enable new surfaces — it narrows blast radius. |
 | **G6** | Client-exposure census — **measured 2026-11-20, see §3.5** | `git grep` on both tips + live BFF probes + the prod boost screen | **Resolved as to behavior, open as to audience.** The prod-lineage package picker fails **closed** (`arr()` empties an object; a `tier`-only POST 400s; Confirm needs `!!selectedTier`), the custom-date boost path survives unchanged, and there is **no silent-mispricing path**. What remains is the owner's §11 Q3: how many installed `prod`-lineage builds exist. A `tiers → pricing` alias is **not** a valid shim (different payload shape) — see §3.5. |
 | **G7** | Rollback capacity proven | existing plan **Task 3**, still open | a dated dump of the prod DB **and a restore drill into a scratch database** — a backup never restored is not a backup |
 | **G8** | Module-flag registry parity | `platform_module_registry` rows vs main's mount list | production serves no `readiness <> 'ready'` module as live; staging's two missing flags (`PHARMACY_SYMPTOM_SEARCH`, `HEALTH_TRIAGE`) show this class of gap is real |
 | **G9** | Money-path smoke baseline captured *before* the window | `GET /api/v1/public/health`, plus the ledger's existing unauth route table | so §8 compares against a same-day baseline, not a month-old one |
 | **G10** | **Post-release boost price is an approved price list** (new, from §3.5) | read-only DB probe of `mkt_boost_daily_rate` + `mkt_boost_packages` on production, via the `ops-db-push-scoped.yml` pattern | the `id='default'` row exists (else every boost purchase 500s — `GetBoostDailyRate` has no fallback), **and** ₦100/day flat is the price the owner actually wants, given it replaces a ₦500–₦50,000 package ladder (`diamond` −80%, `enterprise` −88%) |
+
+**G5 method warning — the recipe written here originally was unsafe.** It said
+`railway variables … | cut -d= -f1`, assuming `KEY=VALUE` lines. Railway 5.71 actually prints a
+Unicode box table (`║ NAME │ VALUE ║`), so there are no `=` delimiters to cut on: that pipeline
+returns nothing useful **and** any attempt to eyeball the raw output puts secret fragments on
+screen, which happened once during this review before the format was understood. Parse the name
+column only —
+`awk -F'│' 'NF>1 {cell=$1; gsub(/[║ ]/,"",cell); if (cell ~ /^[A-Z][A-Z0-9_]{2,}$/) print cell}'`
+— pipe it straight to a file, and delete the raw dump (`rm -f`) once parsed. Do not `cat`, `head`,
+or mask-print the unfiltered output.
 
 ### 5.1 A release-train defect found during re-check, which this release must survive
 
