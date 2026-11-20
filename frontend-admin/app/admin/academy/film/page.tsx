@@ -1314,7 +1314,9 @@ function PricingFormatsCard({ onChanged }: { onChanged?: () => Promise<void> | v
   const [drafts, setDrafts] = useState<Record<string, { label: string; note: string; price: string }>>({});
   const [adding, setAdding] = useState<{ key: string; label: string; price: string } | null>(null);
 
-  const rows = useMemo(() => formats.data ?? [], [formats.data]);
+  const rows = useMemo(() => formats.data?.formats ?? [], [formats.data]);
+  /** The table did not answer: the list shown is the launch structure, not editable. */
+  const degraded = formats.data?.degraded === true;
   useEffect(() => {
     setDrafts(Object.fromEntries(rows.map((f) => [
       f.key,
@@ -1397,6 +1399,15 @@ function PricingFormatsCard({ onChanged }: { onChanged?: () => Promise<void> | v
       </p>
       <StateBlock loading={formats.loading} error={formats.error} empty={rows.length === 0}
         emptyText="No tuition formats — the apply form falls back to the launch list until you add one.">
+        {degraded ? (
+          <div style={{ border: `1px solid ${colors.warning}`, background: 'rgba(255,193,7,0.08)',
+            color: colors.warning, borderRadius: '0.375rem', padding: '0.5rem 0.7rem',
+            fontSize: '0.76rem', marginBottom: '0.7rem' }}>
+            The format table could not be read, so this is the launch list rather than
+            what your database holds — saving will not stick until migration
+            20271800000000 has been applied here.
+          </div>
+        ) : null}
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr>
             <th style={th()}>Order</th><th style={th()}>Format</th><th style={th()}>Key</th>

@@ -438,8 +438,22 @@ export async function listInterestAreas(): Promise<AcademyInterestArea[]> {
 // delete the moment any application or training still references it.
 // ────────────────────────────────────────────────────────────────────────────
 
-export async function listPricingFormats(): Promise<AcademyPricingFormat[]> {
-  return (await call<{ formats?: AcademyPricingFormat[] }>(`${B}/pricing-formats`)).formats ?? [];
+/**
+ * The format catalogue plus whether it came from the table.
+ *
+ * `degraded: true` means the read of academy_pricing_formats failed — in
+ * practice a database that has not run 20271800000000 yet (the window between
+ * merging this and applying the migration). The server answers with the launch
+ * structure so the console is never empty, but the list is not editable: those
+ * rows exist nowhere to write to. The card says so instead of letting the
+ * operator discover it as a failed Save.
+ */
+export async function listPricingFormats(): Promise<{
+  formats: AcademyPricingFormat[];
+  degraded: boolean;
+}> {
+  const body = await call<{ formats?: AcademyPricingFormat[]; degraded?: boolean }>(`${B}/pricing-formats`);
+  return { formats: body.formats ?? [], degraded: body.degraded === true };
 }
 
 export type PricingFormatInput = {
