@@ -108,15 +108,52 @@ recognised). Any re-run of this scan must keep that awareness or it will manufac
 **Finding worth stating plainly: on the DDL axis, prod's database is not currently hostile to
 prod's deployed code.** The 114 migrations are additive or widening.
 
-### 3.4 Row-Level Security — the class that is NOT yet reviewed (work package A)
+### 3.4 Row-Level Security — **reclassified 2026-11-20: a standing client-read audit, not a cutover gate**
 
-99 `DROP POLICY` and 116 `CREATE POLICY` statements live in those 114 migrations and are
-**already applied to production**. RLS is the one risk class that fails *quietly*: a tightened
-policy turns a list endpoint into `200 []` and a write into `42501`, with no deploy required
-and no error in CI, because green live-DB CI cannot see the production policy set
-(lesson recorded when #1058 landed).
+The census, **with units** (re-measured over the 114 migration files that differ between the two
+trees; `git diff --diff-filter=M origin/prod origin/main -- supabase/migrations/` returns **empty**,
+so all 114 are `--diff-filter=A` pure additions):
 
-Review procedure (all read-only, produces a table, no code change):
+| statement class | statements | files containing one |
+|---|---|---|
+| `ENABLE ROW LEVEL SECURITY` | **124** | 51 |
+| `CREATE POLICY` | 116 | 30 |
+| `DROP POLICY` | 99 | 23 |
+
+An earlier draft of this section cited only the two policy classes and never said the numbers were
+*statements* rather than tables — and it omitted `ENABLE ROW LEVEL SECURITY` altogether, which is the
+**largest** class and the one that actually changes behaviour: enabling RLS on a table that has no
+policy denies every `anon`/`authenticated` read silently (`200 []`, or `42501` on a write) while
+leaving `service_role` completely untouched.
+
+**Why this cannot gate the deploy — three repo-proven facts:**
+
+1. **The database is not moving in this release.** §2 established that the production DB is already
+   at main's migration head with drift 0, so all 124 / 116 / 99 statements above are *already live in
+   production today*, before any deploy. RLS is a property of the DB, and §4's A/B/C all leave the DB
+   where it is.
+2. **Nothing this release carries edits a live policy.** Every one of the 114 files is an addition; no
+   modified-or-deleted migration exists between the tips. A release that adds only already-applied
+   files cannot change the policy set.
+3. **The only artifact this release deploys bypasses RLS by design.** `backend/internal/academy/assistant/store.go:13`
+   states the repo's own model: *"The backend connects as service_role, which bypasses RLS; the policies
+   in 20271300000010 are what protects the same tables from an app-issued key. Both matter, and neither
+   replaces the other."* `config.go:1435` makes `SUPABASE_SERVICE_ROLE_KEY` a hard boot requirement.
+
+So deploying the Go backend changes the RLS-governed surface by exactly zero. What RLS does govern is
+**app-issued keys**, and none of them ship in this release. Measured exposure of that surface:
+
+- **mobile** is the real client-direct reader: `mobile-app/reactnative/src/lib/supabase.ts:38` builds a
+  `createClient(url, anonKey, …)`, `EXPO_PUBLIC_SUPABASE_ANON_KEY` appears in 2 files, and **83** files
+  under `app/`+`src/` call `.from(`. Those 83 are subject to the 124 `ENABLE ROW LEVEL SECURITY`
+  statements *right now*, in production, independent of this deploy.
+- **the web BFF is not** a client-direct reader: `frontend-web/app/api` has **507** `createAdminClient`
+  references against **9** `createAnonClient`, and every anon site is an auth route
+  (`login`, `otp-verify`, `resend-otp`, `verify-otp`) — admin clients use the service key and bypass RLS
+  like the Go backend does.
+
+Review procedure (unchanged, still worth running — but as its own read-only work item, on mobile's
+timeline rather than the release's):
 
 1. Enumerate protected tables and their policies from the prod DB:
    `psql … -c "select tablename, policyname, permissive, cmd, roles, qual, with_check from pg_policies where schemaname='public' order by 1,2;"`
@@ -130,8 +167,19 @@ Review procedure (all read-only, produces a table, no code change):
    against a table with rows is the RLS signature.
 4. Record per policy: `table | policy | added-by-migration | endpoints affected | verdict`.
 
-This is the release's only genuinely unbounded unknown. Budget it as a work package, not a
-checkbox.
+There is one precedent for asserting the lockdown mechanically —
+`backend/internal/transport/pin_tables_postgrest_lockdown_live_db_test.go:158` checks that neither
+`PUBLIC` nor the PostgREST roles hold table or column privileges on the PIN tables. Being honest about
+its coverage: it is **not** matched by the `TestLiveDB_` filter, so it runs only through the repo-wide
+`go test ./…` lanes (`ci.yml:395`, `_reusable-go-verify.yml:102`), it `t.Skip`s without
+`TEST_DATABASE_URL`, it covers one table family rather than the 124-enable set, and the file does not
+exist on the `prod` branch at all. It is a template for the audit, not evidence that the audit is done.
+
+What this section is **no longer** entitled to claim: it was written up as "the release's only
+genuinely unbounded unknown" and as the item that can delay the release. That was wrong — it was the
+largest unknown *when the section assumed the release moved the schema*. It does not. The items that
+can genuinely delay the cutover are §4 (the A/B/C decision), **G7** (no proven restore capacity), and
+**G10** (the boost price list changes revenue silently). RLS is none of them.
 
 ### 3.5 Route-vs-client delta — what the release unmounts (work package B, nearly closed)
 
@@ -364,7 +412,7 @@ railway-upped it by hand.
 | **G1** | Deployment currency re-read | `curl -sS --http1.1 …/api/v1/public/build` on all three backends | prod still `d3401f574`; if not, re-baseline §2 before anything else |
 | **G2** | Pin the release SHA to a CI-green main sha | `gh run list --workflow=ci.yml --branch main --limit 5`, take the newest `success` head | the sha you deploy has its own green row; **never** deploy "main right now" |
 | **G3** | Release train reaches production | verdict line of the `release gate` job **+ the three `deploy Staging (…)` conclusions** | verdict `proceed` **and** all three staging legs `success`. Measured 2026-11-20 09:05Z: verdict **is** `proceed` and dev is 3/3 green, but **all three staging legs fail with F2 in every run since 2026-11-19 14:49Z** (`44547867538`, `44560489834`, `44629671567`, `44637142432`, `44644175704`) → `smoke Staging` is skipped → `deploy Production` is skipped. **This gate is RED right now.** See §6.2. |
-| **G4** | RLS review complete | work package 3.4 | every policy on a prod-written table has a verdict row |
+| **G4** | ~~RLS review complete~~ → **not a gate: reclassified 2026-11-20 as a standing client-read audit** | §3.4 census + `--diff-filter=M` + `store.go:13` | **Passes by construction, for the reason the original row got backwards.** The 124 `ENABLE ROW LEVEL SECURITY` / 116 `CREATE POLICY` / 99 `DROP POLICY` statements in the 114 main-only migrations are **already live** (prod DB is at main's head, drift 0, §2), all 114 files are pure **additions** (zero modified), and the one artifact this release deploys connects as `service_role`, which the repo documents as bypassing RLS. A backend-only deploy therefore cannot change the RLS-enforced surface. What is still open is **not** a release risk: 83 mobile files read Supabase directly under the anon key and need the §3.4 verdict table on their own timeline. |
 | **G5** | Env-var parity, **names only** — **measured 2026-11-20, GREEN** | `railway variables --environment production --service backend …` parsed to the name column **only** | Production has **131** variables. Of the **20 keys main added beyond `prod`'s `.env.example`**, **19 are absent** from production — and that is **safe**: each has a compiled default, verified on `origin/main` — `ESTATE_CODE_RATE_PER_MIN`→10, `ESTATE_GUARD_RATE_PER_MIN`→30, `PARCEL_INSURANCE_MIN_PREMIUM_KOBO`→200000, `FOOD_RIDER_LOCATION_RETENTION_DAYS`→30, `CONSULT_MEDIA_PROVIDER`→"livekit", `WEB_APP_BASE_URL`→`https://www.spotlightng.com` (`config.go:1366`, the exact live customer domain), `R2_INSURANCE_BUCKET`→"" with a documented `R2_BUCKET` fallback. The 13 `FEATURE_*` keys being unset means those features stay **off** in production after the cut, so the release does not silently enable new surfaces — it narrows blast radius. |
 | **G6** | Client-exposure census — **measured 2026-11-20, see §3.5** | `git grep` on both tips + live BFF probes + the prod boost screen | **Resolved as to behavior, open as to audience.** The prod-lineage package picker fails **closed** (`arr()` empties an object; a `tier`-only POST 400s; Confirm needs `!!selectedTier`), the custom-date boost path survives unchanged, and there is **no silent-mispricing path**. What remains is the owner's §11 Q3: how many installed `prod`-lineage builds exist. A `tiers → pricing` alias is **not** a valid shim (different payload shape) — see §3.5. |
 | **G7** | Rollback capacity proven | existing plan **Task 3**, still open | a dated dump of the prod DB **and a restore drill into a scratch database** — a backup never restored is not a backup |
@@ -560,7 +608,7 @@ What that means for the decision in §4:
 | §4 decision (A / B / C) | **owner** | blocks everything |
 | G2 pin + G5 + G9 | agent | no |
 | G3 staging refresh at the G2 pin (manual — the train cannot do it, §6.2) | agent | **yes**, it is the canary |
-| G4 RLS work package | agent, review output signed by owner | **yes** |
+| G4 RLS client-read audit (§3.4) | agent, review output signed by owner | **no** — reclassified 2026-11-20: the DB is not moving and the backend is `service_role`, so nothing in this release can alter RLS behaviour. Runs in parallel, off the critical path. |
 | G6 client census | **agent — done** (§3.5: fails closed, custom-date path lives) | owner only for **how many** legacy builds exist |
 | G7 dump + restore drill | owner-approved credentials; agent drives | **yes** |
 | G8 module flags | agent | no, but cheap insurance |
@@ -568,7 +616,8 @@ What that means for the decision in §4:
 | §6 cutover | agent, inside an agreed window | — |
 | §8 verification + soak | agent, escalation to owner | — |
 
-Critical path is **G4 + G7**. Everything else is a command or two.
+Critical path is **§4 + G3 + G7 + G10**. G4 came off it on 2026-11-20 (§3.4 reclassification);
+everything else is a command or two.
 
 ---
 
@@ -608,8 +657,12 @@ rollback capacity.
    empty list that then 400s on confirm.)
 4. Release shape **A / B / C** — recommend C (freeze the `prod` fork, deploy main-lineage).
 5. Cutover window and the abort threshold (§9).
-6. Do you want the RLS work package (G4) run as its own read-only PR, or as an appendix to
-   this document? It is the only item that can delay the release.
+6. Do you want the RLS client-read audit (§3.4) run as its own read-only PR, or as an appendix to
+   this document? **Note the correction:** this section previously told you RLS was "the only item
+   that can delay the release". It is not — see the reclassification. The things that can actually
+   delay the cutover are this §4 decision, **G7** (rollback is unproven until a restore drill runs)
+   and **G10** (the boost price list changes revenue silently). If you want a single "what is blocking
+   me" list, it is those three.
 7. **Who chases Railway on F2?** It is now the binding constraint on the whole pipeline, not
    just an annoyance: staging has had zero successful uploads for five consecutive Release runs
    (§6.2), which means the train cannot promote *anything* to production and staging is no
@@ -624,5 +677,5 @@ rollback capacity.
    ₦15,000 → ₦3,000, while `start` 7 days rises ₦500 → ₦700. If the ladder was intentional, the
    fix is a number in the admin pricing console (`PUT /admin/pricing/boosts/daily-rate`) — but it
    has to be set **deliberately**, because the seeded default will otherwise ship silently. This
-   is gate **G10** and it is the only pre-flight I would call release-blocking on business
-   grounds, independent of the RLS work.
+   is gate **G10**, and with G4 off the critical path it is the only pre-flight that blocks this
+   release on business grounds rather than on infrastructure.
