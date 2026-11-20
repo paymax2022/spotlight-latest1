@@ -26,8 +26,9 @@ Three things run in "production", and only one of them is behind:
 So the "main-to-prod backend release" is a **single-service code move**, and its real purpose
 is to close the last lineage split in the system: the API is the only component that does not
 know it is supposed to be running main. Every main-era frontend feature that calls a new
-endpoint has been breaking in production and getting hand-ported onto `prod` to compensate
-(15 such commits; §4).
+endpoint has been breaking in production and getting hand-ported onto `prod` to compensate. The
+fork carries **16 commits since the 2026-10-15 merge-base, 11 of them explicit
+"port … onto prod" / "promote main to prod" releases** (§4, and the list is in 3.7's footnote).
 
 ```bash
 # reproduce the headline rows
@@ -45,18 +46,18 @@ git rev-parse origin/main origin/prod
 | `origin/main` head | `f8890c06e` → **`36c8e666b`** at re-check | `git rev-parse origin/main` |
 | — what landed in between | `a05b8676e` (#1096, frontend-admin only) + `36c8e666b` (#1101, docs) | `git log --oneline f8890c06e..36c8e666b` |
 | — did either touch the backend or the schema? | **no** — `backend/` delta 0 files, `supabase/migrations` delta 0 files, so every number below still holds at the tip | `git diff --name-only f8890c06e origin/main -- backend/ supabase/migrations` |
-| `origin/prod` head | `6f58f0b0a` (unchanged) | same |
+| `origin/prod` head | `6f58f0b0a` → **`bb59c7129`** at 09:36Z re-check — #1104 ported the referral three-namespace fix onto `prod` (backend-only, blobs identical to main) | `git rev-parse origin/prod`, `git fetch` |
 | Merge-base main↔prod | `94ad08c05`, **2026-10-15** | `git merge-base` |
 | Commit-count diff | meaningless — main's history was gitleaks-rewritten, `prod`'s was not | `docs/reports/` + repo sweep 2026-11-18 |
 | Differing paths main↔prod | **2,728** | `git diff --name-only origin/main origin/prod` |
-| Backend content delta | **865 files, +124,135 / −8,242** | `git diff --stat … -- backend/` |
+| Backend content delta | **863 files, +124,037 / −8,225** (was 865 / +124,135 / −8,242 before #1104's port) | `git diff --stat … -- backend/` |
 | Migration files: main / prod branch | **758 / 644** → 114 main-only | `git ls-tree -r --name-only … -- supabase/migrations` |
 | **Migrations applied on the prod DB** | **758 rows, min `20260101000000`, max `20271700000000`** | read-only CI run `44637503244` (`ops-db-push.yml environment=production mode=list`) |
 | Drift, either direction | **0 / 0** — prod DB ≡ main's file set, exactly | parsed `supabase migration list --linked` table from that run |
-| Prod-only files (exist on `prod`, absent on main) | **23** | `git diff --diff-filter=A --name-only origin/main origin/prod` |
-| Prod commits patch-absent on main | 10 (`git cherry`), of which 9 are ports *of* main features whose adapted form differs | `git cherry -v origin/main origin/prod` |
+| Prod-only files (exist on `prod`, absent on main) | **22** (was 23; #1104's port made the referral file shared) | `git diff --diff-filter=A --name-only origin/main origin/prod` |
+| Prod commits patch-absent on main | **14**, up from 10 because every squash-merged port gets its own patch-id even when the resulting blobs equal main's — this measures *branch ceremony*, not unreconciled code | `git cherry -v origin/main origin/prod` |
 | Staging backend | `773fe0285`; delta vs main = **2 referral files, 0 migrations** | `git diff --name-only 773fe0285 origin/main -- backend/ supabase/migrations` |
-| **Live backend stamps (09:05Z)** | dev `a05b8676e` · staging `773fe0285` · prod `d3401f574` — **three planes, three different commits**; `773fe0285` is a strict ancestor of main (it merely predates #1095), so this is drift, not divergence | `curl -s --http1.1 https://backend-{development-502c,staging-new,production-1b33d}.up.railway.app/api/v1/public/build`; hostnames from `scripts/ci/railway-urls.sh` @main |
+| **Live backend stamps (09:05Z, re-read 09:36Z)** | dev `a05b8676e` · staging `773fe0285` · prod `d3401f574` — **three planes, three different commits**; `773fe0285` is a strict ancestor of main (it merely predates #1095), so this is drift, not divergence. **And `bb59c7129`, merged to `prod` on 2026-11-20, is served by nothing**: the branch has the fix, the production service does not. That is the fork's failure mode in one line — on `prod`, merge does not mean deploy, and there is no train that can make it so (§6.2) | `curl -s --http1.1 https://backend-{development-502c,staging-new,production-1b33d}.up.railway.app/api/v1/public/build`; hostnames from `scripts/ci/railway-urls.sh` @main |
 
 **The single most consequential number: 758 = 758.** The production database is *already* at
 main's migration head. There is no pending schema work, no replay, no `db push` in this
@@ -179,7 +180,7 @@ method.
 
 ### 3.6 Maplerad — the headline worry, closed with live evidence
 
-`prod` still contains the whole provider: 13 of the 23 prod-only files are
+`prod` still contains the whole provider: 13 of the 22 prod-only files are
 `backend/internal/{finance,provider,orchestration}/…**/maplerad*` plus two `backend/tests/fx/`
 suites. Main deleted it deliberately in `254229cf4` (#884, 2026-10-23, *"remove Maplerad (fixes
 tuition payment_not_confirmed)… Paystack is now the sole payment/VA provider"*), and
@@ -201,7 +202,8 @@ production variables — never their values — so no secret is ever printed.
 
 ### 3.7 The prod-only residue that is not Maplerad
 
-The other 10 prod-only files, to be consciously accepted as deletions or re-ported:
+The other 9 prod-only files (22 total, 13 of them Maplerad per §3.6), to be consciously accepted as
+deletions or re-ported:
 
 ```
 frontend-web/app/{page,about,service}.js                      # replaced by main's .tsx pages
@@ -211,6 +213,31 @@ mobile-app/reactnative/app/(doctor)/profile/setup/{bank-account,tax-info}.tsx
 mobile-app/reactnative/app/crypto/withdraw/otp.tsx
 .github/workflows/development-deploy.yml
 ```
+
+**The port treadmill, measured at 09:36Z** — `git log --oneline $(git merge-base origin/prod
+origin/main)..origin/prod` gives 16 commits, and these 11 are the ones whose subject is a
+port/promote rather than a feature in its own right:
+
+```
+bb59c7129  fix(referrals): port the three-namespace code uniqueness rule onto prod (#1104)
+6f58f0b0a  fix(connect): seed the connect.contests.view permission onto prod (#1077)
+d3401f574  fix(social): put the counterparty on GET /requests so the receiver can act (#1071)
+2f51561fb  fix(voting): port the admin contest list onto prod (#1068)
+d9a2ced41  feat(academy): port the assessment plane (question bank, review, exams) (#1039)
+76f1a6103  feat(admin): port the searchable, domain-grouped sidebar menu (#1033)
+973b010cc  fix(academy): port the TMFA topic-mastery BFF plane (#1031)
+616900caf  fix(academy): port the TMFA topic-mastery console (#1030)
+5ab7c9cc0  fix(health): port the telemedicine intake fixes onto prod (#1025)
+545b01cec  chore: promote main to prod — post-#830 tail (#832)
+41c19ea2b  chore: promote main to prod (KYC automation, VertoFX flag-off…) (#830)
+```
+
+The other five are two merges of main (#785, #792), one mobile-pin fix carried with a dependabot
+guard (#689), the `readiness` axis feature (#1005) and the launch-rails release (#787).
+
+Two of those eleven (#1077, #1104) landed after the last full sync, and #1104 landed *during the
+writing of this plan* — the pace is roughly a port every two days, which is the cost side of
+option B written out plainly.
 
 All trace to `44e3fb835`/`7b1dfb5b1` (Oct-01 / May-25) — i.e. main deleted them on purpose
 later. None is load-bearing for a backend-only release (the customer site comes from main via
@@ -224,9 +251,9 @@ cPanel anyway), but a **merge** would resurrect the branch topology that contain
 |---|---|---|---|
 | Mechanism | `git merge origin/main` into `prod`, PR, then `railway up` from the merge | today's practice: N "port … onto prod" commits | `git worktree add --detach /tmp/x origin/main && railway up backend …` |
 | Schema-vs-code | aligned | aligned for the picked subset only | **aligned, immediately** |
-| Effort now | medium (resolve 2,728-path history mess) | **high and recurring** — 15 ports already, each hand-trimmed | **low** — the tree is already 758/758 with main's schema |
+| Effort now | medium (resolve 2,728-path history mess) | **high and recurring** — 11 hand-ports since Oct-15, each trimmed by hand, and #1104 landed while this plan was being written | **low** — the tree is already 758/758 with main's schema |
 | Ongoing cost | still a fork to feed | forever | ends the fork |
-| Loses prod-only work | re-adds deleted files as merge noise | no | no — the 23 files are deliberate main deletions (§3.7); snapshot first |
+| Loses prod-only work | re-adds deleted files as merge noise | no | no — the 22 files are deliberate main deletions (§3.7); snapshot first |
 | Failure mode | the merge itself becomes a release | drift re-opens within weeks | the deleted provider/boost surfaces go dark in one step (both shown inert) |
 | **Executable today?** | yes (manual `railway up`) | yes (manual `railway up`) | yes (manual `railway up`) — **and it is the only route that works**, because B's train cannot get past staging's F2 (§6.2) |
 
@@ -235,8 +262,11 @@ staging is already 2 files from main's backend, and the fork's unique value is a
 provider plus 10 intentionally-deleted files. A is more ceremony for the same tree; B is the
 pattern that created this plan. Concretely:
 
-1. Tag the current fork tip — `git tag prod-fork-final 6f58f0b0a` and push the tag; make
-   `prod` read-only (or delete the branch after a soak period, not before).
+1. Tag the current fork tip — `git tag prod-fork-final bb59c7129` and push the tag; make
+   `prod` read-only (or delete the branch after a soak period, not before). Note the target moved
+   twice while this plan was being written (`6f58f0b0a` → `bb59c7129`, #1104, the 11th port since
+   the merge-base — see §3.7's list), which is itself the argument for this option: **re-run
+   `git rev-parse origin/prod` at sign-off and tag whatever it says.**
 2. Deploy from `origin/main` per §6.
 3. Adopt the invariant going forward: **`prod` is the environment, not the branch.** One
    release train (already `release.yml` on main), with the production database promoted by the
