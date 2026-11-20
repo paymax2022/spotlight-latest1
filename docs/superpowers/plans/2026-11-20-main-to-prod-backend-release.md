@@ -43,9 +43,9 @@ git rev-parse origin/main origin/prod
 
 | Fact | Value | How it was measured |
 |---|---|---|
-| `origin/main` head | `f8890c06e` → **`36c8e666b`** at re-check | `git rev-parse origin/main` |
-| — what landed in between | `a05b8676e` (#1096, frontend-admin only) + `36c8e666b` (#1101, docs) | `git log --oneline f8890c06e..36c8e666b` |
-| — did either touch the backend or the schema? | **no** — `backend/` delta 0 files, `supabase/migrations` delta 0 files, so every number below still holds at the tip | `git diff --name-only f8890c06e origin/main -- backend/ supabase/migrations` |
+| `origin/main` head | `f8890c06e` → `36c8e666b` → **`f6f9bdd92`** (re-read 13:20Z) | `git rev-parse origin/main` |
+| — what landed in between | `a05b8676e` (#1096, frontend-admin only) + `36c8e666b` (#1101, docs) + `f6f9bdd92` (#1105 — **this document**) | `git log --oneline f8890c06e..origin/main` |
+| — did any of them touch the backend or the schema? | **no** — `backend/` delta 0 files, `supabase/migrations` delta 0 files, so every number below still holds at the tip. From the G2 pin `a05b8676e`, the whole-tree diff to the tip is exactly **2 files, both `docs/`** (`railway-upload-fault-report.md`, this plan) | `git diff --name-only f8890c06e origin/main -- backend/ supabase/migrations`; `git diff --name-only a05b8676e origin/main` |
 | `origin/prod` head | `6f58f0b0a` → **`bb59c7129`** at 09:36Z re-check — #1104 ported the referral three-namespace fix onto `prod` (backend-only, blobs identical to main) | `git rev-parse origin/prod`, `git fetch` |
 | Merge-base main↔prod | `94ad08c05`, **2026-10-15** | `git merge-base` |
 | Commit-count diff | meaningless — main's history was gitleaks-rewritten, `prod`'s was not | `docs/reports/` + repo sweep 2026-11-18 |
@@ -108,15 +108,76 @@ recognised). Any re-run of this scan must keep that awareness or it will manufac
 **Finding worth stating plainly: on the DDL axis, prod's database is not currently hostile to
 prod's deployed code.** The 114 migrations are additive or widening.
 
-### 3.4 Row-Level Security — the class that is NOT yet reviewed (work package A)
+### 3.4 Row-Level Security — **reclassified 2026-11-20: a standing client-read audit, not a cutover gate**
 
-99 `DROP POLICY` and 116 `CREATE POLICY` statements live in those 114 migrations and are
-**already applied to production**. RLS is the one risk class that fails *quietly*: a tightened
-policy turns a list endpoint into `200 []` and a write into `42501`, with no deploy required
-and no error in CI, because green live-DB CI cannot see the production policy set
-(lesson recorded when #1058 landed).
+The census, **with units** (re-measured over the 114 migration files that differ between the two
+trees; `git diff --diff-filter=M origin/prod origin/main -- supabase/migrations/` returns **empty**,
+so all 114 are `--diff-filter=A` pure additions):
 
-Review procedure (all read-only, produces a table, no code change):
+| statement class | statements | files containing one |
+|---|---|---|
+| `ENABLE ROW LEVEL SECURITY` | **124** | 51 |
+| `CREATE POLICY` | 116 | 30 |
+| `DROP POLICY` | 99 | 23 |
+
+An earlier draft of this section cited only the two policy classes and never said the numbers were
+*statements* rather than tables — and it omitted `ENABLE ROW LEVEL SECURITY` altogether, which is the
+**largest** class and the one that actually changes behaviour: enabling RLS on a table that has no
+policy denies every `anon`/`authenticated` read silently (`200 []`, or `42501` on a write) while
+leaving `service_role` completely untouched.
+
+**Why this cannot gate the deploy — three repo-proven facts:**
+
+1. **The database is not moving in this release.** §2 established that the production DB is already
+   at main's migration head with drift 0, so all 124 / 116 / 99 statements above are *already live in
+   production today*, before any deploy. RLS is a property of the DB, and §4's A/B/C all leave the DB
+   where it is.
+2. **Nothing this release carries edits a live policy.** Every one of the 114 files is an addition; no
+   modified-or-deleted migration exists between the tips. A release that adds only already-applied
+   files cannot change the policy set.
+3. **The only artifact this release deploys bypasses RLS by design.** `backend/internal/academy/assistant/store.go:13`
+   states the repo's own model: *"The backend connects as service_role, which bypasses RLS; the policies
+   in 20271300000010 are what protects the same tables from an app-issued key. Both matter, and neither
+   replaces the other."* `config.go:1435` makes `SUPABASE_SERVICE_ROLE_KEY` a hard boot requirement.
+
+So deploying the Go backend changes the RLS-governed surface by exactly zero. What RLS does govern is
+**app-issued keys**, and none of them ship in this release. Measured exposure of that surface:
+
+- **mobile** is the real client-direct reader, and the surface is **much smaller than a naive grep
+  suggests**: `mobile-app/reactnative/src/lib/supabase.ts:38` builds `createClient(url, anonKey, …)`
+  with `persistSession: true` from secure storage. **14 files** make **80** direct table calls across
+  **29 distinct tables** (top: `utility_billers` 7, `user_profiles` 6, `realtor_listings` 5,
+  `realtor_inspection_bookings` 5, `utility_transactions` 4, `realtor_units` 4,
+  `realtor_maintenance_requests` 4, `ledger_entries` 4). All 14 import the Supabase client, so the
+  scope is exact rather than approximate. **Method warning, because the first measurement was wrong:
+  `grep -rl '\.from('` returns 83 files, and 81 of those hits are `Array.from(`** — a JavaScript
+  builtin with no relation to Supabase. Match `\.from\(['"][a-z_]+['"]\)` instead, and cross-check
+  that each file imports the client.
+- **the web BFF is not** a client-direct reader: `frontend-web/app/api` has **507** `createAdminClient`
+  references against **9** `createAnonClient`, and every anon site is an auth route
+  (`login`, `otp-verify`, `resend-otp`, `verify-otp`) — admin clients use the service key and bypass RLS
+  like the Go backend does.
+
+**The first concrete item for that audit, found while scoping it.** Mobile's most-read direct table is
+`utility_billers` (7 call sites, all in `src/api/billing.api.ts` — `getAirtimeNetworks`,
+`getDataNetworks`, `getBillerIdByCode`), and its policy set is asymmetric:
+
+- `20260613100000_utility_payment_engine.sql:176` defines
+  `CREATE POLICY "utility_billers_read_active" ON public.utility_billers FOR SELECT TO authenticated USING (status = 'active')`
+  — **`TO authenticated` only**. There is no `anon` SELECT policy.
+- So a logged-in mobile session reads active billers fine, but a **logged-out (`anon`) read of the same
+  table returns `200 []` silently** — the exact fail-quietly signature, with no error to catch. Whether
+  any of those three call sites is reachable before login is a screen-flow question, not a SQL one.
+- Note also that `20270208000000_rls_backend_only_lockdown_utility_billers.sql` says it is enabling RLS
+  *"with no policies"* and that this *"prevents a client-side token (anon or auth)"* from querying the
+  table. Both halves of that comment are stale: a policy has existed since 2026-06-13, and it explicitly
+  **permits** `authenticated` reads. Trust the policy set, not the migration's prose.
+
+Neither fact touches this release — the Go backend reads the table as `service_role` — which is exactly
+the distinction the old G4 was missing.
+
+Review procedure (unchanged, still worth running — but as its own read-only work item, on mobile's
+timeline rather than the release's):
 
 1. Enumerate protected tables and their policies from the prod DB:
    `psql … -c "select tablename, policyname, permissive, cmd, roles, qual, with_check from pg_policies where schemaname='public' order by 1,2;"`
@@ -130,8 +191,19 @@ Review procedure (all read-only, produces a table, no code change):
    against a table with rows is the RLS signature.
 4. Record per policy: `table | policy | added-by-migration | endpoints affected | verdict`.
 
-This is the release's only genuinely unbounded unknown. Budget it as a work package, not a
-checkbox.
+There is one precedent for asserting the lockdown mechanically —
+`backend/internal/transport/pin_tables_postgrest_lockdown_live_db_test.go:158` checks that neither
+`PUBLIC` nor the PostgREST roles hold table or column privileges on the PIN tables. Being honest about
+its coverage: it is **not** matched by the `TestLiveDB_` filter, so it runs only through the repo-wide
+`go test ./…` lanes (`ci.yml:395`, `_reusable-go-verify.yml:102`), it `t.Skip`s without
+`TEST_DATABASE_URL`, it covers one table family rather than the 124-enable set, and the file does not
+exist on the `prod` branch at all. It is a template for the audit, not evidence that the audit is done.
+
+What this section is **no longer** entitled to claim: it was written up as "the release's only
+genuinely unbounded unknown" and as the item that can delay the release. That was wrong — it was the
+largest unknown *when the section assumed the release moved the schema*. It does not. The items that
+can genuinely delay the cutover are §4 (the A/B/C decision), **G7** (no proven restore capacity), and
+**G10** (the boost price list changes revenue silently). RLS is none of them.
 
 ### 3.5 Route-vs-client delta — what the release unmounts (work package B, nearly closed)
 
@@ -144,8 +216,9 @@ POST   /virtual-account              POST /bills             GET  /boosts/tiers
 ```
 
 - Five are the **Maplerad** group — dark in production, proven in 3.6.
-- One is a **breaking route rename on a live public endpoint**, and it is the release's only
-  measured functional regression:
+- One is a **breaking route rename on a live public endpoint**. At the HTTP-surface level it is the
+  only unmounted route, but G6 showed it is not the only behavioral change — the same commit
+  replaced the boost **pricing model**, which is the finding that matters (§3.5):
 
   | `GET /v1/marketplace/boosts/…` | production `d3401f574` | staging `773fe0285` (main-lineage) |
   |---|---|---|
@@ -160,10 +233,105 @@ POST   /virtual-account              POST /bills             GET  /boosts/tiers
   main-lineage client is orphaned. The exposure is exactly: **builds distributed from
   `prod` lineage** that call `sell.api.ts:184 mktGet('/boosts/tiers')`, plus any third-party
   or cached consumer.
-  → Gate **G6** decides whether this needs a shim, and it is cheap either way: add
-  `base.GET("/boosts/tiers", h.BoostPricing)` as an alias on main *before* the cut, or accept
-  the 404 for legacy builds. Both are one-line-or-zero-line options; neither is a reason to
-  keep the fork.
+  → **Gate G6 is now measured, and it revokes the cheap version of that fix.** The alias
+  `base.GET("/boosts/tiers", h.BoostPricing)` was written here assuming the two endpoints are
+  interchangeable. They are not, and this correction is the release's second real finding:
+
+  - **Different payload shapes.** prod's `BoostTiers` (`handler.go:578`) returns a JSON
+    **array** of `{tier, duration_days, price_kobo, weight}` built from `ListBoostPackages`
+    filtered on `is_active` (`service_boost.go:45`); main's `BoostPricing` returns a JSON
+    **object** `{daily_rate_kobo, preset_duration_days, min_duration_days, max_duration_days}`
+    (`model.go:336`). The legacy client wraps that call in
+    `client.ts:153` — `arr = Array.isArray(v) ? v : []` — so aliasing `tiers` to `pricing`
+    converts a loud 404 into a **silently empty tier list**. That is a worse outcome, not a fix.
+  - **The purchase contract changed as well.** `CreateBoostInput` is `{listing_id, tier, ends_at}`
+    on prod (`model.go:477`) and `{listing_id, duration_days, ends_at}` on main (`model.go:525`)
+    — **`tier` no longer exists**, and gin's `ShouldBindJSON` ignores unknown keys instead of
+    rejecting them. Real compatibility is therefore the read route **plus** re-accepting `tier`
+    in the money path.
+  - **But there is no silent-mispricing risk — that was the thing worth ruling out.**
+    `app/marketplace/boost/[listingId].tsx:89` builds the selection as
+    `mode === 'package' ? { tier } : { endsAt }`: exactly one, never both. A tier-only body
+    reaching main arrives at `ComputeBoostQuote(0, nil)` → **400 "duration_days or ends_at is
+    required"** (`service_boost.go:103`), and the Confirm button is gated on `!!selectedTier`
+    (line 74), which a 404 `useBoostTiers` can never satisfy. **The legacy package picker fails
+    closed; nobody can be charged a price they were not shown.**
+  - **The custom-date path survives the cut untouched.** That same screen's `mode === 'custom'`
+    branch sends `?ends_at=` and posts `{endsAt}`; main's `GetBoostQuote` reads `ends_at`
+    (`handler.go:609`) and prices duration × the admin daily rate. Legacy builds keep boosting —
+    by custom dates — after the release.
+
+  Net: the release breaks the **package picker** for `prod`-lineage builds, breaks it safely, and
+  leaves a working boost path. Restoring the picker is a ~20-line additive read endpoint (the
+  pieces already exist on main: `repository.go:1139 ListBoostPackages`, and `service_boost.go:598`
+  `BoostTier` carries prod's exact JSON tags) **plus** a money-path change to re-accept `tier`.
+  The read half on its own only re-enables a screen that 400s on confirm, so it is **not** a safe
+  reflexive shim — it belongs with §11 Q3 as an explicit owner decision, not a pre-flight to-do.
+
+- **The measured consequence nobody asked about: this release changes what boosting costs in
+  production.** `ComputeBoostQuote` prices **duration × `mkt_boost_daily_rate`**, and
+  `mkt_boost_packages` survives on main only as admin-console state — `admin_handler.go:241` is
+  its sole reader, and every purchased boost is recorded as `boostRowTier = "daily-rate"`
+  (`service_boost.go:142`). Production still charges the package table today. Measured live from
+  `GET /boosts/tiers` on the production BFF:
+
+  | legacy package | days | charged today | effective ₦/day | post-release at the seeded ₦100/day |
+  |---|---|---|---|---|
+  | `start` | 7 | ₦500 | ₦71 | **₦700** (+40%) |
+  | `vip` | 14 | ₦2,000 | ₦143 | **₦1,400** (−30%) |
+  | `vip_gold` | 30 | ₦5,000 | ₦167 | **₦3,000** (−40%) |
+  | `diamond` | 30 | ₦15,000 | ₦500 | **₦3,000** (−80%) |
+  | `enterprise` | 60 | ₦50,000 | ₦833 | **₦6,000** (−88%) |
+
+  Those five rows are byte-identical to the seed in `20270168000000_marketplace_boost_pricing_config.sql`,
+  so **no admin has ever repriced packages in production** — this is the migration default still
+  in force, which is what makes the delta real rather than stale config. A "code-only move" is
+  therefore **not revenue-neutral** on the one marketplace money path that is live.
+- **The 500 risk this creates is closed by that same migration, and dev's 500 is now explained.**
+  `GetBoostDailyRate` (`repository.go:1196`) has **no fallback** — a missing `id='default'` row is
+  `wrapInternal` → 500, and it sits on the *purchase* path, not merely the display route. Left
+  alone that would have taken out all boost purchases in production. But the migration seeds the
+  rate (`INSERT INTO public.mkt_boost_daily_rate (id, daily_rate_kobo) VALUES ('default', 10000)`),
+  and §2 proves prod's DB is at main's migration head with drift 0 — so the row exists there.
+  Development answers `/boosts/pricing` → **500** (§5.2), and a missing `id='default'` row is **the only
+  mechanism this code path permits** — but calling that the cause is an **inference, not a measurement**:
+  dev's migration ledger was never read from here, and dev's DSN has no read route in this session either
+  (same credential wall as §5.3). The 500 is also consistent with the table being absent entirely, which the
+  route cannot distinguish. One psql pair settles it: `\dt public.mkt_boost_*` and
+  `SELECT count(*) FROM public.mkt_boost_daily_rate;` against dev's DSN. New gate **G10** makes the prod
+  price an explicit sign-off rather than an accident of history.
+
+- **The remedy is a real, reachable screen — and the UI already admits the ladder is dead.**
+  `frontend-admin/app/admin/marketplace/pricing/page.tsx` renders a card titled **"Boost price — ₦ per
+  day (MO-002)"** (line 151) whose `DailyRateCard` takes a naira input, converts with
+  `rate.daily_rate_kobo / 100` (line 148), and `PUT`s `/pricing/boosts/daily-rate`; the route is mounted
+  at `backend/internal/app/marketplace_routes.go:465-466` behind `guard("marketplace.admin.pricing")`, and
+  `reason_code` is mandatory (`requireReason` at the head of `SetBoostDailyRate`,
+  `service_boost.go:467-469`, audit action `mkt.pricing.boost_daily_rate.set`). So
+  repricing needs an admin token holding **`marketplace.admin.pricing`** — that is the precondition, not the
+  form. Two corroborations from the same file: the packages card is titled **"Boost packages (no longer
+  sold)"** (line 112), i.e. main-lineage UI states §3.5's finding outright, and the fixture at
+  `marketplaceAdminService.ts:422` mirrors the seeded `{ daily_rate_kobo: 10_000 } // ₦100/day`.
+  **Do not confuse this with `base_daily_rate_kobo`**, which is a different subsystem: it belongs to
+  placement zones (`backend/internal/placement/model.go:92`, formula `base × duration_days ×
+  tier_multiplier` at `model.go:171`) and is what mobile's `app/featured/new.tsx:271` displays. It has no
+  admin UI and no admin route in this repo (repo-wide grep for `base_daily_rate` under `frontend-admin/`
+  returns nothing), and the other card on the pricing page — "Featured-slot inventory (MO-016)" — edits a
+  `max` count, not a price. So on that screen the boost rate is the only ₦/day field; the ambiguity lives
+  only in prose.
+
+- **Exposure of those legacy builds cannot be measured from here — an owner question, not a gate
+  failure.** `gh secret list` shows no Expo/EAS-named secrets, so CI has never produced a mobile
+  release; installed builds are manual and their source tree is unknown. prod's
+  `mobile-app/reactnative/eas.json` sends the `production` profile to
+  `frontend-web-production-9259` — which answers `/boosts/tiers` → **200** right now, measured —
+  and its `staging` / `preview` / `staging-aab` profiles to `frontend-web-staging-ec46`, a host
+  **absent from `scripts/ci/railway-urls.sh`**. It is genuinely serving, not a dead hostname: it
+  answers `{"error":{"code":"NOT_FOUND","message":"resource not found"}}` — the *app's* envelope —
+  whereas an unprovisioned Railway host returns the *edge's*
+  `{"status":"error","code":404,"message":"Application not found"}` (confirmed against the stale
+  `backend-production-upstream`). Anyone reading "the staging frontend" as one place should
+  re-check that fourth host during the cutover §8 probes.
 - **Re-measured 2026-11-20 09:05Z**, and one new fact matters for §8: development (`a05b8676e`)
   answers `tiers` → 404 (as expected) but **`pricing` → 500** `INTERNAL_ERROR`, where staging
   returns the payload (`daily_rate_kobo:10000`, presets `[1,3,7,14,30]`). Same code, different
@@ -289,15 +457,31 @@ railway-upped it by hand.
 
 | Gate | Check | Command / method | Pass criterion |
 |---|---|---|---|
-| **G1** | Deployment currency re-read | `curl -sS --http1.1 …/api/v1/public/build` on all three backends | prod still `d3401f574`; if not, re-baseline §2 before anything else |
-| **G2** | Pin the release SHA to a CI-green main sha | `gh run list --workflow=ci.yml --branch main --limit 5`, take the newest `success` head | the sha you deploy has its own green row; **never** deploy "main right now" |
-| **G3** | Release train reaches production | verdict line of the `release gate` job **+ the three `deploy Staging (…)` conclusions** | verdict `proceed` **and** all three staging legs `success`. Measured 2026-11-20 09:05Z: verdict **is** `proceed` and dev is 3/3 green, but **all three staging legs fail with F2 in every run since 2026-11-19 14:49Z** (`44547867538`, `44560489834`, `44629671567`, `44637142432`, `44644175704`) → `smoke Staging` is skipped → `deploy Production` is skipped. **This gate is RED right now.** See §6.2. |
-| **G4** | RLS review complete | work package 3.4 | every policy on a prod-written table has a verdict row |
-| **G5** | Env-var parity, **names only** | Railway dashboard / `railway variables … \| cut -d= -f1` | every key in main's `backend/.env.example` that main newly added is either set or has a safe default; print **no values** |
-| **G6** | Client-exposure census | build metadata + `/v1/marketplace/boosts/*` | either no installed build calls `/boosts/tiers`, or main carries a one-line `tiers → BoostPricing` alias before the cut (§3.5) |
-| **G7** | Rollback capacity proven | existing plan **Task 3**, still open | a dated dump of the prod DB **and a restore drill into a scratch database** — a backup never restored is not a backup |
-| **G8** | Module-flag registry parity | `platform_module_registry` rows vs main's mount list | production serves no `readiness <> 'ready'` module as live; staging's two missing flags (`PHARMACY_SYMPTOM_SEARCH`, `HEALTH_TRIAGE`) show this class of gap is real |
-| **G9** | Money-path smoke baseline captured *before* the window | `GET /api/v1/public/health`, plus the ledger's existing unauth route table | so §8 compares against a same-day baseline, not a month-old one |
+| **G1** | Deployment currency re-read — **re-verified 2026-11-20 ~10:05Z, unchanged** | `curl -s --http1.1 https://backend-{development-502c,staging-new,production-1b33d}.up.railway.app/api/v1/public/build` | prod still `d3401f574`; dev `a05b8676e`, staging `773fe0285` — all three identical to the 09:05Z/09:36Z readings, so **nothing has deployed on any plane since the baseline was taken**. **Write the host out in full.** An abbreviated `…/api/v1/public/build` invites `https://backend-production-1b33d.railway.app`, which omits `.up.` and answers `{"message":"Not Found","requestId":…}` from the gateway — a *different* signature from the edge's `{"status":"error","code":404,"message":"Application not found"}`, and easy to misread as "the plane is down" or "the route is gone" when it is only a malformed URL. **Third reading 13:20Z — identical shas, and `uptime_seconds` is the stronger proof that nothing re-rolled: dev 45 207 s (since 00:47:11Z), staging 77 506 s (since 2026-11-19 15:48:54Z), prod 160 800 s (since 2026-11-18 16:40:40Z). A redeploy at the same sha would reset the counter, so the monotonic uptime closes the "same commit but restarted" gap that the sha alone leaves open.** |
+| **G2** | Pin the release SHA to a CI-green main sha | `gh run list --workflow=ci.yml --branch main --limit 8`, take the newest `success` head | **PASSES as of 2026-11-20 ~10:05Z, and the pin survives main moving.** Newest green `ci.yml` head on main is **`a05b8676e`** (run `44644176137`), which is exactly the pin §2 baselined. main has advanced twice since (`36c8e666b` #1101, `f6f9bdd92` #1105 — this document), and `git diff --name-only a05b8676e origin/main -- backend/ supabase/` returns **0 files**: both commits touch only `docs/`. So the pin is still content-identical to main's tip for everything this release ships. **Do not confuse the two workflows for the same sha:** `a05b8676e` has a **SUCCESS `ci.yml`** row (`44644176137`) and a **FAILURE `release.yml`** row (`44644175704`) — the latter from staging's F2 deploy legs (§6.2), not from the code. Deploying "main right now" is still excluded: `f6f9bdd92` has no `ci.yml` row of its own, **by design** — `ci.yml`'s `push` trigger path-ignores docs-only commits (`pull_request` deliberately has no `paths-ignore`, or a docs PR's required checks would sit "Expected" forever), and that same docs-only proof is what lets `release-gates.py` return `noop_docs_only`. |
+| **G3** | Release train reaches production | verdict line of the `release gate` job **+ the three `deploy Staging (…)` conclusions** | verdict `proceed` **and** all three staging legs `success`. Measured 2026-11-20 09:05Z, refined ~10:10Z: in every run **that attempted a deploy** since 2026-11-19 14:49Z the verdict **is** `proceed` and dev is 3/3 green, but **all three staging legs fail with F2** (`44547867538`, `44560489834`, `44629671567`, `44637142432`, `44644175704`) → `smoke Staging` skipped → `deploy Production` skipped. **This gate is RED.** Precision matters here: the two runs after those — `44703323495` (11-20 08:32Z) and `44714903068` (09:56Z) — are **not** F2 failures. Both returned `### Release gate: **noop_docs_only**` with **all six** deploy/smoke legs `skipped`, including development, because both commits touched only `docs/`. So F2 is *untested* since `44644175704` at 00:14Z rather than freshly re-proven, and the sharper statement is the operative one: **no `proceed`-verdict run has reached production since then, so the train currently has no path to prod at all** — the last real evidence for staging is the 00:14Z run. Read the verdict line before calling any green Release row a deploy (§6.2). |
+| **G4** | ~~RLS review complete~~ → **not a gate: reclassified 2026-11-20 as a standing client-read audit** | §3.4 census + `--diff-filter=M` + `store.go:13` | **Passes by construction, for the reason the original row got backwards.** The 124 `ENABLE ROW LEVEL SECURITY` / 116 `CREATE POLICY` / 99 `DROP POLICY` statements in the 114 main-only migrations are **already live** (prod DB is at main's head, drift 0, §2), all 114 files are pure **additions** (zero modified), and the one artifact this release deploys connects as `service_role`, which the repo documents as bypassing RLS. A backend-only deploy therefore cannot change the RLS-enforced surface. What is still open is **not** a release risk: **14** mobile files make 80 direct table calls over 29 tables, and `utility_billers` carries a `TO authenticated`-only SELECT policy, so a logged-out read returns `200 []` silently. That is a mobile-side audit item with a concrete first entry — see §3.4. |
+| **G5** | Env-var parity, **names only** — **measured 2026-11-20, GREEN** | `railway variables --environment production --service backend …` parsed to the name column **only** | Production has **131** variables. Of the **20 keys main added beyond `prod`'s `.env.example`**, **19 are absent** from production — and that is **safe**: each has a compiled default, verified on `origin/main` — `ESTATE_CODE_RATE_PER_MIN`→10, `ESTATE_GUARD_RATE_PER_MIN`→30, `PARCEL_INSURANCE_MIN_PREMIUM_KOBO`→200000, `FOOD_RIDER_LOCATION_RETENTION_DAYS`→30, `CONSULT_MEDIA_PROVIDER`→"livekit", `WEB_APP_BASE_URL`→`https://www.spotlightng.com` (`config.go:1366`, the exact live customer domain), `R2_INSURANCE_BUCKET`→"" with a documented `R2_BUCKET` fallback. The 13 `FEATURE_*` keys being unset means those features stay **off** in production after the cut, so the release does not silently enable new surfaces — it narrows blast radius. |
+| **G6** | Client-exposure census — **measured 2026-11-20, see §3.5** | `git grep` on both tips + live BFF probes + the prod boost screen | **Resolved as to behavior, open as to audience.** The prod-lineage package picker fails **closed** (`arr()` empties an object; a `tier`-only POST 400s; Confirm needs `!!selectedTier`), the custom-date boost path survives unchanged, and there is **no silent-mispricing path**. What remains is the owner's §11 Q3: how many installed `prod`-lineage builds exist. A `tiers → pricing` alias is **not** a valid shim (different payload shape) — see §3.5. |
+| **G7** | Rollback capacity proven — **RED, and harder than this row claimed** | `docs/devops/backup-restore-runbook.md` @main, front matter *"Status: UNREHEARSED — runbook written, no restore test evidence yet"* + §5.3 | A dated dump of the prod DB **and a restore drill into a scratch database** — a backup never restored is not a backup. Three gaps, detailed in **§5.3**: (i) **no dump has ever been taken** — the runbook itself says `git grep -ln pg_dump -- ':!docs'` returns nothing and "there is still no runnable dump path in this repo", re-confirmed here across `scripts/` and every workflow; (ii) **the backup tier is unrecorded**, so PITR availability and RPO are unknown, not assumed; (iii) **no `pg_dump` credential route exists from an agent session** — the direct DSN (port 5432, not the pooler) needs `SUPABASE_DB_PASSWORD`, present only in the `Production` GitHub environment or the dashboard. Consequence for §9's "agent drives": executing G7 requires **adding a workflow**, i.e. a code change this plan is told not to make — so the fast path is the owner running §5's checklist against a downloadable backup and recording the dated row. |
+| **G8** | Module-registry parity — **measured 2026-11-20, GREEN** (and the row here cited a table that does not exist) | `supabase/migrations/20271600000000_mobile_menu_modules.sql` + `backend/internal/modules/` on both tips | **Name correction first: there is no `platform_module_registry`.** The real tables are `public.platform_modules`, `public.platform_module_environments`, `public.platform_module_audit`, read by `backend/internal/modules/service.go`; the string `platform_module_registry` appears only in three `docs/` files and in this plan's own earlier draft. Substantively the gate passes by construction: the tile rows are **migration-seeded**, both tips carry the same `modules` package (`handler.go`/`service.go`/`modulegate/` on `prod` too), and prod's DB is provably at main's head with drift 0 (§2) — the seed was applied to production on the #1058 lane (payload verified 35 = 31+7−3). Note the asymmetry this exposes: `prod`'s **branch** does not contain `20271600000000` (its newest module migration is `20271408000100_module_readiness.sql`) while its **database** has those rows — §2's schema-ahead-of-code skew again, and another reason a `db push` from the `prod` branch would not reproduce production. |
+| **G9** | Money-path smoke baseline captured *before* the window — **done 2026-11-20, see §5.2** | backend-host probes with correct methods, all three planes | baseline recorded (health 200 ×3, fx/cards 401 prod+staging, admin/contests 401 ×3, maplerad 404 ×3, boost pair as expected); §8 now compares against a same-day table, and it establishes **staging — not dev — as the canary assertion** |
+| **G10** | **Post-release boost price is an approved price list** (new, from §3.5) — **mechanism corrected 2026-11-20: the agent cannot probe production SQL, but the row's existence is provable without a probe** | derivation from §2 + `20270168000000` + `git grep` over all migrations; the only live read is an owner one-liner in the Supabase dashboard | **The probe this row specified did not exist.** `ops-db-push-scoped.yml` has exactly four inputs — `mode` (plan/apply), `versions`, `confirm`, `rbac_expect` — and `rbac_expect` runs `scripts/db/probe-rbac-grants.sh`, whose SQL is hardcoded around `permissions`/`role_permissions`/`pg_proc` (lines 147-150, 205-236). No workflow in the repo accepts free-form SQL (all 52 main workflows checked; the `psql` users are CI lanes and the ops-db-* migration scripts). **What is needed is discharged by reasoning instead:** prod's DB is provably at `20271700000000` with drift 0 (§2), the only statement in the entire migration set that writes `mkt_boost_daily_rate` is `INSERT … VALUES ('default', 10000) ON CONFLICT (id) DO NOTHING` (`20270168000000:61`), and **no migration ever `UPDATE`s, `DELETE`s or `DROP`s that table** (the only two later mentions — `20270169000000:10`, `20270224000000:51` — are comments). So the row exists at ₦100/day **unless an admin repriced it**, and every such change is audited to `public.mkt_admin_audit_log` with action `mkt.pricing.boost_daily_rate.set` (`repository.go:1745`, `service_boost.go:486`). Pass criterion therefore reduces to the owner's one decision: **accept ₦100/day as the shipping price, or set another number** in Marketplace → Pricing → "Boost price — ₦ per day (MO-002)". If a literal read is still wanted before the window, it is `SELECT daily_rate_kobo FROM public.mkt_boost_daily_rate WHERE id='default';` plus `SELECT tier, duration_days, price_kobo FROM public.mkt_boost_packages ORDER BY duration_days;` — **run by the owner in the dashboard**, because the direct DSN needs `SUPABASE_DB_PASSWORD`, which is the same G7 credential wall (§5.3). |
+
+**G5 method warning — the recipe written here originally was unsafe.** It said
+`railway variables … | cut -d= -f1`, assuming `KEY=VALUE` lines. Railway 5.71 actually prints a
+Unicode box table (`║ NAME │ VALUE ║`), so there are no `=` delimiters to cut on: that pipeline
+returns nothing useful **and** any attempt to eyeball the raw output puts secret fragments on
+screen, which happened once during this review before the format was understood. Parse the name
+column only —
+`awk -F'│' 'NF>1 {cell=$1; gsub(/[║ ]/,"",cell); if (cell ~ /^[A-Z][A-Z0-9_]{2,}$/) print cell}'`
+— pipe it straight to a file, and delete the raw dump (`rm -f`) once parsed. Do not `cat`, `head`,
+or mask-print the unfiltered output. **And never reach for `--json` or `-k/--kv` to make the parsing
+easier**: the CLI's own help for 5.71 says `-k, --kv  Show variables in KV format. This prints raw values`
+and `--json  … Variable list JSON includes raw values`. Those two flags are documented value dumpers, so the
+convenient machine-readable form is precisely the leak; names-only means the default box table filtered
+through the `awk` above. (`railway variable` is the command; `variables` is its alias, and the bare form
+takes `-s`/`-e`/`-p`, which is what makes the G5 row's invocation valid.)
 
 ### 5.1 A release-train defect found during re-check, which this release must survive
 
@@ -342,11 +526,94 @@ Four consequences for this plan:
    *this* release, and treat the F2 repair as its own open item, not a precondition we can
    hand to chance.
 
+### 5.2 G9 money-path baseline, captured read-only 2026-11-20 ~11:50Z
+
+Probed against the **backend hosts directly** (not through a BFF, so no proxy can soften a
+status), with the registered HTTP method each route declares:
+
+| plane | build stamp | `GET /api/v1/public/health` | `POST /api/v1/fx/cards` | `GET /api/connect/admin/contests` | `POST /api/webhooks/maplerad/go` | `GET /v1/marketplace/boosts/tiers` | `GET /v1/marketplace/boosts/pricing` |
+|---|---|---|---|---|---|---|---|
+| production | `d3401f574` | 200 | 401 | 401 | 404 | **200** | 404 |
+| staging | `773fe0285` | 200 | 401 | 401 | 404 | 404 | **200** |
+| development | `a05b8676e` | 200 | **404** | 401 | 404 | 404 | **500** |
+
+Four things this settles:
+
+1. **The stamps re-confirm §2 and confirm nothing deployed** during this review — all three still
+   report the same commits measured at 09:05Z.
+2. **Staging is the exact expected post-cutover answer set** for the boost pair: `tiers` 404,
+   `pricing` 200. §8 step 2 should assert that, not the production row.
+3. **Development is not a valid canary**, twice over: `/boosts/pricing` → 500 (no
+   `mkt_boost_daily_rate` seed row — §3.5/G10) *and* `POST /api/v1/fx/cards` → **404** where the
+   other two planes return 401. A 404 on a registered POST means the route is not **mounted**,
+   which is flag-gating (`FEATURE_FX_ENABLED` is set in production and absent on dev), not a
+   contract difference. So a green dev probe proves nothing about prod, and a red one proves less.
+4. **Maplerad is dark on all three planes** (404 with the correct POST method), independently
+   re-proving §3.6 — main's deletion removes dead code, not a live provider.
+
+### 5.3 G7 in detail — the procedure exists; the capability and the credential route do not
+
+G7 was written as "existing plan Task 3, still open", which understated it and missed the best asset
+in the repo. There is a dedicated runbook: **`docs/devops/backup-restore-runbook.md`** @main, whose own
+front matter reads *"**Status:** UNREHEARSED — runbook written, no restore test evidence yet"*, scoped
+to the production Supabase project ref `nmseefdlliejmdbxytej` (`spotlight-prod`) — the database holding
+`ledger_entries`, `wallets`, `vote_transactions`, `platform_users`.
+
+Three distinct gaps, and only the first is a matter of deciding to act:
+
+1. **No dump has ever been taken.** The runbook states it in its own words:
+   `git grep -ln pg_dump -- ':!docs'` returns **no file**, "i.e. there is still no runnable dump path
+   in this repo", and the 2026-11-12 staging→production migration "actually produced here: nothing
+   scheduled, and no dump taken on either side". Confirmed independently above: no `pg_dump`/`pg_restore`
+   appears in `scripts/` or any workflow.
+2. **The backup tier is unrecorded.** PITR/WAL archiving is a paid add-on, and the runbook says
+   plainly that "which tier the `spotlight-prod` project is on is not recorded in this repo". Until
+   someone reads it in Dashboard → Project Settings → Add-ons, RPO is unknown — it is *either* 7-day
+   daily base backups with no point-in-time restore, *or* PITR to an arbitrary second ~2 days back.
+   Do not let the plan imply the better one.
+3. **There is no `pg_dump` credential route from an agent session.** The command needs the **direct**
+   DSN (port 5432, not the session pooler — the same pooler that ate `PGOPTIONS` in §3.3), and the
+   password exists only as `SUPABASE_DB_PASSWORD` in the `Production` GitHub environment or the
+   dashboard. The runbook already recorded this exact obstacle as the reason staging was never dumped:
+   *"its DB password is reachable only as a masked Actions secret, so no `pg_dump` credential route
+   exists from a review session."*
+
+So §9's "owner-approved credentials; agent drives" needs correcting: **an agent can only drive this
+from inside a CI job bound to the `Production` environment, which means adding a workflow is the
+prerequisite for G7** — a code change, and this plan is explicitly not shipping code. Two honest paths:
+
+- **Owner path, zero code (fastest):** confirm the tier; if backups are downloadable, restore the
+  most recent one into a scratch project and work §5's checklist (time the restore — that is the RTO;
+  `pg_dump --schema-only` both sides; `SELECT count(*) FROM ledger_entries` and wallet-sum vs
+  ledger-projection equality). Then add the **dated row to §5 of the runbook**. That row is the only
+  evidence that closes both AUD-INFRA-009 and G7 — the runbook warns against exactly what a document
+  like this one is prone to: *"Do not treat any 'dump exists' sentence in a plan document as evidence."*
+- **Repo path, one PR (~40 lines):** a `workflow_dispatch`-only job in the `Production` environment
+  running the runbook's `pg_dump` (`--format=custom --compress=6 --no-owner --no-privileges`) into an
+  artifact, uploading to a **dedicated non-public** `spotlight-db-backups` R2 bucket (not the app's
+  `spotlight-openmic-songs`), plus a second mode that `pg_restore`s into a scratch project. The carrier
+  (Actions schedule vs `render.yaml` cron vs host cron) and retention (runbook suggests 30 daily + 12
+  monthly) are deliberately **unchosen** by that file and need an owner decision — nothing should be
+  scheduled before it is made.
+
+One framing point so G7 is not over-weighted in §4: **G7 gates the decision to move, not the ability to
+revert.** Code rollback is already proven and fast (§7: `railway up` at `d3401f574`, ≤5 min), and a dump
+restore would *destroy* newer production data (§7), so it belongs to a data-integrity incident, not to a
+bad-release recovery. The reason it is still release-blocking is narrower: main carries schema the prod
+code has never exercised, and if a migration-driven data problem appears, the repo currently has no
+tested way back.
+
 ---
 
 ## 6. Cutover runbook (execute only after §4 and all of §5)
 
 ```bash
+# 0. auth precondition — verified 2026-11-20 13:40Z against railway 5.71.0.
+#    `railway whoami` must report the owner account (it prints "Logged in as
+#    spec.ng@gmail.com"); an unauthenticated `railway up` opens a browser OAuth flow
+#    and HANGS the window waiting for a human, so check before you need it.
+railway --version && railway whoami
+
 # 1. clean tree at the pinned sha — never from a dirty checkout, never from a worktree
 #    whose node_modules are symlinked outside the workspace
 git fetch origin && git worktree add --detach /tmp/prod-cut <G2_SHA> && cd /tmp/prod-cut
@@ -354,19 +621,51 @@ git fetch origin && git worktree add --detach /tmp/prod-cut <G2_SHA> && cd /tmp/
 # 2. build + vet the exact tree being shipped (backend/ has its own go.mod)
 cd backend && go build ./... && go vet ./... && cd ..
 
-# 3. upload the backend service ONLY — see 6.1 for why
+# 3. upload the backend service ONLY — see 6.1 for why.  -y is deliberate: the CLI's
+#    own help says to pair it with --detach "for scripted or agent-driven runs", and it
+#    suppresses the auth-confirm prompt without skipping the upload.
 railway up backend --path-as-root --no-gitignore --service backend \
   --environment production --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
-  --detach --message <G2_SHA>
+  --detach --message <G2_SHA> -y
 
-# 4. watch it, then §8
-railway deployments --service backend --environment production
+# 4. watch it, then §8.  NOT `railway deployments --service backend`: `deployment` is the
+#    command (`deployments` is only its alias) and it REQUIRES a subcommand, so the bare
+#    form exits on "Usage: railway deployment <COMMAND>".  --project is required here too —
+#    /tmp/prod-cut is an unlinked worktree, so there is no linked project to default to.
+railway deployment list --service backend --environment production \
+  --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 5 --json
 ```
 
-### 6.1 Do not use the `deploy-production` dispatch
+Every flag above was checked against `railway up --help` / `railway deployment list --help`
+on 5.71.0 rather than recalled: `--detach` (`-d`), `--yes` (`-y`), `--service` (`-s`),
+`--environment` (`-e`), `--project` (`-p`), `--no-gitignore`, `--path-as-root`,
+`--message` (`-m`); and `--path-as-root` means exactly "use the path argument as the prefix
+for the archive", which is what makes step 3 ship `backend/` and not the monorepo. The CLI
+also documents that `--detach` starts the deploy **without waiting for health** — step 4's
+`list`, or the §8 read-back, is the actual completion signal.
 
-`gh workflow run deploy-production.yml -f deploy_environment=production -f confirm_deploy=DEPLOY`
-is the wrong tool here for two *measured* reasons:
+### 6.1 Do not use the production dispatch — and note it is not a file called `deploy-production.yml`
+
+**Correction made 2026-11-20 by direct inspection.** This section previously told the reader to avoid
+`gh workflow run deploy-production.yml …`. **No such workflow exists**: there is no
+`.github/workflows/deploy-production.yml` on `origin/main`, on `origin/prod`, or in `gh workflow list`, and
+neither `confirm_deploy` nor `deploy_environment` appears in any main-lineage workflow (per-file grep of
+all 52 workflow files on `origin/main` and all 47 on `origin/prod`). The real production dispatcher is **`prod`'s own
+`.github/workflows/ci.yml`** — display name **`CI — CLAUDE.md gates`** — whose `workflow_dispatch` block
+(lines 57-71 there) declares `deploy_environment` as a *choice* of `development|staging|production` and
+`confirm_deploy` as a free string, both `required: false`, with the three `deploy <Env> (${{ matrix.service }})`
+jobs gated on `github.event_name == 'workflow_dispatch' && inputs.deploy_environment == 'production' &&
+inputs.confirm_deploy == 'DEPLOY'` (line 687-689). Its own comment is the safety property: *"Both deploy
+inputs are optional: leave them blank to run CI only … so a CI-only dispatch can never trigger a release."*
+
+So the command a well-meaning operator would actually type is:
+
+```bash
+gh workflow run ci.yml --repo paymax2022/spotlight-latest1 --ref prod \
+  -f deploy_environment=production -f confirm_deploy=DEPLOY
+```
+
+and it is **still the wrong tool**, for two *measured* reasons:
 
 - its `deploy Production (frontend-admin)` leg replaces the manually-uploaded main-lineage
   console with the prod-branch UI, **163 files behind** — it regressed the console on
@@ -376,6 +675,11 @@ is the wrong tool here for two *measured* reasons:
 
 A backend-only manual upload touches exactly one service.
 
+The mis-citation is worth keeping in the text rather than deleting, because the failure mode it created is
+general: a runbook that forbids a *non-existent* command leaves the real one un-warned. Note also that
+`prod`'s `ci.yml` triggers on `push: branches: [develop, staging, prod, main]` with `paths-ignore` for
+`**.md` / `docs/**`, which is why a docs-only merge to prod is CI-only and cannot deploy by accident.
+
 ### 6.2 F2 (Railway upload) is not a blocker for *this* runbook — but it blocks option B
 
 `railway up` against **staging** dies with `Failed to fetch: error decoding response body` ×9 —
@@ -383,12 +687,16 @@ a Railway-side refusal on the request that *obtains the upload destination*, unr
 archive size (it lands ~0.7 s after `stamped backend/BUILD_COMMIT`, with `Indexing` /
 `Uploading` / `bytes:` all zero, which is why `--verbose` can never surface a status).
 
-**Measured 2026-11-20 09:05Z, this is not intermittent any more — it is total on staging.**
-Every Release run since 2026-11-19 14:49Z has `deploy Staging (backend)`,
+**Measured 2026-11-20 09:05Z, refined ~10:10Z — this is not intermittent on the runs that tried.**
+Every Release run since 2026-11-19 14:49Z **that attempted a deploy** has
+`deploy Staging (backend)`,
 `(frontend-admin)` and `(frontend-web)` all failing with 9 decode errors each
 (`44547867538`, `44560489834`, `44629671567`, `44637142432`, `44644175704`), while
 `deploy Development (…)` is 3/3 green and the gate verdict is `proceed`. It is not billing
 (`Your trial has expired` appears nowhere) and not the code (dev builds the same commit fine).
+The two runs after those (`44703323495` 08:32Z, `44714903068` 09:56Z) were `noop_docs_only` and
+skipped everything, so they neither prove nor disprove F2 — the failure is currently last observed
+at `44644175704` (11-20 00:14Z), and a code-merge run is the only thing that would retest it.
 
 What that means for the decision in §4:
 
@@ -398,8 +706,11 @@ What that means for the decision in §4:
 - **Options A and C are unaffected**, because this runbook does not use the train: it uploads
   the backend straight to the **production** environment with `railway up`, which is exactly
   the lane F2 does not touch (prod uploads have succeeded repeatedly, including the current
-  `d3401f574`). The 08:32Z `noop_docs_only` run confirms dev legs and uploads are healthy
-  generally — only staging's destination request is refused.
+  `d3401f574`). **Do not read the `noop_docs_only` runs as health evidence** — an earlier draft of
+  this bullet claimed the 08:32Z run "confirms dev legs and uploads are healthy generally", and that
+  is backwards: in a `noop_docs_only` run `deploy Development (…)` is **`skipped`**, not successful,
+  so it says nothing about any upload path. The last run where dev genuinely uploaded is
+  `44644175704` (11-20 00:14Z, 3/3 deployed) — the same run where staging refused all three.
 - **Refreshing staging for the canary needs the manual path**, not a merge:
   `railway api … serviceInstanceDeploy(serviceId, environmentId, commitSha:"<full sha>")`
   (**flat** args — `input:` is rejected), which is how staging got `773fe0285` on 2026-11-19
@@ -413,9 +724,28 @@ What that means for the decision in §4:
 
 ## 7. Rollback
 
-- **Code:** redeploy the previous known-good sha the same way — `railway up` from a clean
-  worktree at `d3401f574`, or `serviceInstanceDeploy` of the prior deployment id. Target ≤5
-  min. Keep `/tmp/prod-cut` until the soak ends.
+- **Code:** redeploy the previous known-good sha the same way. Target ≤5 min. Keep
+  `/tmp/prod-cut` until the soak ends — it saves the fetch inside the window.
+
+  ```bash
+  # the rollback sha is a prod-branch commit, NOT on main lineage (proved 2026-11-20:
+  # `git merge-base --is-ancestor d3401f574 origin/main` fails; it sits on origin/prod,
+  # dated 2026-11-18 17:36Z, and its tree does contain backend/). So this restores
+  # prod-lineage code across the fork boundary — fetch origin/prod before the window,
+  # because a clone that only tracks main cannot produce this tree.
+  git rev-parse d3401f574   # d3401f5749adbe9142f0255743d110fb0afcdeb1
+  git worktree add --detach /tmp/prod-rb d3401f574 && cd /tmp/prod-rb
+  railway up backend --path-as-root --no-gitignore --service backend \
+    --environment production --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
+    --detach --message d3401f574 -y
+  railway deployment list --service backend --environment production \
+    --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 5 --json
+  ```
+
+  The alternative is `serviceInstanceDeploy(serviceId, environmentId, commitSha:"<full sha>")`
+  — **flat args**, `input:` is rejected with `Unknown argument` — which is faster because it
+  re-deploys a sha Railway already has an artifact for, and it needs no local worktree at all.
+  Either way, §8 step 1's `/api/v1/public/build` stamp is the completion signal, not the row.
 - **Schema: do not plan a schema rollback.** The prod DB is *already* at `20271700000000`
   (§2); a code rollback returns to code that runs against that schema today, which is the
   state the DDL review in §3.3 found safe. Restoring the G7 dump would destroy production data
@@ -432,9 +762,10 @@ What that means for the decision in §4:
    POST; a GET on a POST route 404s and proves nothing): expect `POST /api/v1/fx/cards` → 401,
    `GET /api/connect/admin/contests` → 401, `POST /api/webhooks/maplerad/go` → 404 (dark
    before and after), `GET /v1/marketplace/boosts/pricing` → **200**, and
-   `GET /v1/marketplace/boosts/tiers` → 404 **unless** the G6 alias was added, in which case it
-   must also be 200. Compare against staging `773fe0285`, which already answers this exact
-   pattern.
+   `GET /v1/marketplace/boosts/tiers` → **404, and that is the expected post-release answer**
+   (§3.5: no alias is being added, so a 200 here would mean an unintended route came back). The
+   legacy app's custom-date boost path is unaffected. Compare against staging `773fe0285`, which
+   already answers this exact pattern.
 3. RBAC probe already in the scoped lane (`scripts/db/probe-rbac-grants.sh`, exit 0/1/2/3):
    `connect.contests.view` GRANTED for super-admin / system-admin / contest-manager.
 4. Money paths, no test payments beyond what the owner allows: wallet balance read, KYC tier
@@ -451,14 +782,16 @@ What that means for the decision in §4:
 | §4 decision (A / B / C) | **owner** | blocks everything |
 | G2 pin + G5 + G9 | agent | no |
 | G3 staging refresh at the G2 pin (manual — the train cannot do it, §6.2) | agent | **yes**, it is the canary |
-| G4 RLS work package | agent, review output signed by owner | **yes** |
-| G6 client census | owner (store metadata) | yes if mobile is exposed |
-| G7 dump + restore drill | owner-approved credentials; agent drives | **yes** |
+| G4 RLS client-read audit (§3.4) | agent, review output signed by owner | **no** — reclassified 2026-11-20: the DB is not moving and the backend is `service_role`, so nothing in this release can alter RLS behaviour. Runs in parallel, off the critical path. |
+| G6 client census | **agent — done** (§3.5: fails closed, custom-date path lives) | owner only for **how many** legacy builds exist |
+| G7 dump + restore drill | **owner**, or an agent only from inside a new `Production`-environment workflow (§5.3 gap iii) | **yes** — and it is the one critical-path item this session cannot clear alone |
 | G8 module flags | agent | no, but cheap insurance |
+| G10 boost price (§3.5 + §5 row) | **owner** — the existence half is derivable from §2 + the seed migration, and no workflow in the repo can run production SQL, so the agent can neither probe nor reprice | **yes** — it changes revenue silently, and until the owner acts the agent cannot even read the live number |
 | §6 cutover | agent, inside an agreed window | — |
 | §8 verification + soak | agent, escalation to owner | — |
 
-Critical path is **G4 + G7**. Everything else is a command or two.
+Critical path is **§4 + G3 + G7 + G10**. G4 came off it on 2026-11-20 (§3.4 reclassification);
+everything else is a command or two.
 
 ---
 
@@ -490,16 +823,49 @@ rollback capacity.
    provider `maplerad`, `status` not terminal)? A read-only count is enough; the schema is
    retained on main, so a non-zero answer is a data-migration question, not a code one.
 3. Are there **installed mobile/web builds from `prod` lineage** still calling
-   `/v1/marketplace/boosts/tiers` (G6)? If you don't want to census them, the cheap answer is a
-   one-line alias on main before the cut.
+   `/v1/marketplace/boosts/tiers` (G6)? The behavior is settled — §3.5 shows the picker fails
+   closed and custom-date boosts keep working, so this is now purely an **audience** question:
+   how many manual builds are out there, and is a broken *package* picker acceptable for them or
+   worth the ~20-line read endpoint **plus** re-accepting `tier` in `CreateBoostInput`? (A read
+   alias alone is not the cheap answer — it was claimed here earlier and is wrong; it yields an
+   empty list that then 400s on confirm.)
 4. Release shape **A / B / C** — recommend C (freeze the `prod` fork, deploy main-lineage).
 5. Cutover window and the abort threshold (§9).
-6. Do you want the RLS work package (G4) run as its own read-only PR, or as an appendix to
-   this document? It is the only item that can delay the release.
+6. Do you want the RLS client-read audit (§3.4) run as its own read-only PR, or as an appendix to
+   this document? **Note the correction:** this section previously told you RLS was "the only item
+   that can delay the release". It is not — see the reclassification. The things that can actually
+   delay the cutover are this §4 decision, **G7** (rollback is unproven until a restore drill runs)
+   and **G10** (the boost price list changes revenue silently). If you want a single "what is blocking
+   me" list, it is those three.
 7. **Who chases Railway on F2?** It is now the binding constraint on the whole pipeline, not
-   just an annoyance: staging has had zero successful uploads for five consecutive Release runs
-   (§6.2), which means the train cannot promote *anything* to production and staging is no
+   just an annoyance: staging has had zero successful uploads across the five consecutive runs
+   **that attempted a deploy** (§6.2) — the two since then were docs-only `noop_docs_only` runs that
+   attempted nothing, so F2 is currently untested rather than freshly re-proven — which means the
+   train cannot promote *anything* to production and staging is no
    longer a self-maintaining canary. The narrow ask that can actually be answered is Railway's
    edge-log status code for the destination-request on `backend-staging-new`. If you want me to
    file that with the evidence pack, say so; otherwise the release proceeds on the manual path
    and staging keeps drifting.
+8. **Is ₦100/day the boost price you want in production?** This is the one item in the whole
+   review that changes revenue, and it arrived as a side-effect of a route rename rather than a
+   decision (§3.5). After the cut every boost is `duration × daily_rate`, and the five legacy
+   packages stop being charged: `enterprise` 60 days goes ₦50,000 → ₦6,000, `diamond` 30 days
+   ₦15,000 → ₦3,000, while `start` 7 days rises ₦500 → ₦700. If the ladder was intentional, the
+   fix is a number in the admin pricing console — **Marketplace → Pricing → "Boost price — ₦ per day
+   (MO-002)"**, which `PUT`s `/admin/pricing/boosts/daily-rate` and requires `reason_code` and the
+   `marketplace.admin.pricing` permission (§3.5) — but it
+   has to be set **deliberately**, because the seeded default will otherwise ship silently. This
+   is gate **G10**, and with G4 off the critical path it is the only pre-flight that blocks this
+   release on business grounds rather than on infrastructure.
+9. **G7 needs three answers, and none of them are in the repo (§5.3).** (a) What tier is
+   `spotlight-prod` (`nmseefdlliejmdbxytej`) on — is the PITR add-on enabled? The runbook says the
+   tier "is not recorded in this repo", so RPO is currently unknown: 7-day daily backups with no
+   point-in-time restore, or PITR to an arbitrary second. (b) Do you want the **owner path** (restore a
+   downloadable backup into a scratch project, work §5's checklist, add the dated row — no code, and it
+   closes both AUD-INFRA-009 and G7) or the **repo path** (I add a ~40-line `workflow_dispatch` job in
+   the `Production` environment, which is the only way an agent can run a dump at all, since
+   `SUPABASE_DB_PASSWORD` is reachable only as a masked Actions secret or from the dashboard)?
+   (c) If the repo path: which carrier and retention — the runbook deliberately leaves the choice of
+   Actions schedule vs `render.yaml` cron vs host cron unmade, suggests 30 daily + 12 monthly, and asks
+   for a **dedicated non-public** `spotlight-db-backups` bucket rather than the app's
+   `spotlight-openmic-songs`. Nothing should be scheduled before you decide (b) and (c).
