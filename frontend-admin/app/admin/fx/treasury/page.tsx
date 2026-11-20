@@ -3,19 +3,20 @@
 import { useEffect, useState } from 'react';
 import { getFloats, getRebalances, rebalanceNow } from '@/services/fxAdminService';
 import type { FloatBucket, RebalanceEvent } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge, moneyFull } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, moneyFull, ErrorNote, errorMessage } from '../_ui';
 import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function FxTreasuryPage() {
   const [floats, setFloats] = useState<FloatBucket[]>([]);
   const [rebalances, setRebalances] = useState<RebalanceEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
-    try { const [f, r] = await Promise.all([getFloats(), getRebalances()]); setFloats(f); setRebalances(r); }
-    finally { setLoading(false); }
+    setError(null);
+    try { const [f, r] = await Promise.all([getFloats(), getRebalances()]); setFloats(f); setRebalances(r); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
 
@@ -29,6 +30,7 @@ export default function FxTreasuryPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Treasury & Liquidity" subtitle="Float buckets, thresholds and rebalancing." action={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <FxTabs active="treasury" />
+      <ErrorNote message={error} />
 
       <Card title="Float buckets">
         {loading ? <p style={{ color: colors.muted }}>Loading…</p> : (

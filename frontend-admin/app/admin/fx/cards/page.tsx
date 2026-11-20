@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getIssuedCards, setIssuedCardStatus, getSuspiciousCardActivity } from '@/services/fxAdminService';
 import type { IssuedCard, SuspiciousCardActivity } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge, moneyFull } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, moneyFull, ErrorNote, errorMessage } from '../_ui';
 import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const SEV_COLOR: Record<string, string> = { high: colors.danger, medium: colors.warning, low: colors.muted };
@@ -12,12 +12,13 @@ export default function FxCardsRegistryPage() {
   const [cards, setCards] = useState<IssuedCard[]>([]);
   const [suspicious, setSuspicious] = useState<SuspiciousCardActivity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
-    try { const [c, s] = await Promise.all([getIssuedCards(), getSuspiciousCardActivity()]); setCards(c); setSuspicious(s); }
-    finally { setLoading(false); }
+    setError(null);
+    try { const [c, s] = await Promise.all([getIssuedCards(), getSuspiciousCardActivity()]); setCards(c); setSuspicious(s); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
 
@@ -28,6 +29,7 @@ export default function FxCardsRegistryPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Cards" subtitle="Issued-card registry, program controls and suspicious activity." action={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <FxTabs active="cards" />
+      <ErrorNote message={error} />
 
       <Card title="Issued-card registry">
         {loading ? <p style={{ color: colors.muted }}>Loading…</p> : (

@@ -2,14 +2,20 @@
 /**
  * Controls with no backend must FAIL, not succeed.
  *
- * Step 2 of docs/audit/ADMIN_SIMULATED_WRITES.md. Each of these four actions had
+ * Step 2 of docs/audit/ADMIN_SIMULATED_WRITES.md. Each of these three actions had
  * a fixture branch that returned a success value: the operator approved a creator
- * payout, arbitrated an escrow fraud signal, bypassed a user's KYC or released a
- * referral payout, saw it confirmed, and nothing happened anywhere.
+ * payout, arbitrated an escrow fraud signal, or bypassed a user's KYC — saw it
+ * confirmed, and nothing happened anywhere.
  *
- * None of the four endpoints exists server-side. There is no honest success to
+ * None of the three endpoints exists server-side. There is no honest success to
  * return, so they now refuse — and these tests pin that, because "returns
  * success" is a state a future refactor could quietly restore.
+ *
+ * The fourth item on that original list, referral payout approval, does NOT
+ * belong here: finance/service.go:248 registers POST /finance/payouts/:id/approve
+ * under referral.payout.manage, and :249 registers the reject. The client refused
+ * an action the backend supports. That correction is pinned in
+ * referralEnvelopeUnwrap.test.ts instead.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -47,9 +53,16 @@ describe('backendless admin mutations refuse instead of faking success', () => {
     ).rejects.toThrow(/not available|no backend/i);
   });
 
-  it('referral payout approval refuses', async () => {
+  it('referral payout approval is NOT in this group — it has a real route', async () => {
+    // Guard against re-adding the false refusal: the approve endpoint exists
+    // (finance/service.go:248), so a client-side "no backend" throw here would
+    // disable a working money control and tell the operator nothing had changed.
+    const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }));
+    vi.stubGlobal('fetch', fetchFn);
     const mod = await import('@/services/referralAdminOpsService');
-    await expect(mod.approvePayout('p1', 'ok')).rejects.toThrow(/not available|no backend/i);
+
+    await expect(mod.approvePayout('p1', 'ok')).resolves.toBeTruthy();
+    expect(fetchFn).toHaveBeenCalled();
   });
 
   it('refusing does not quietly hit the network either', async () => {
@@ -125,21 +138,25 @@ describe('services with real backends are live by default', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('explicit fixture mode still never touches the network', async () => {
+  it('explicit fixture mode refuses the money actions it cannot simulate', async () => {
     vi.stubEnv('NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK', 'true');
     vi.stubEnv('NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK', 'true');
     const fetchFn = vi.fn();
     vi.stubGlobal('fetch', fetchFn);
 
-    // Settlement HAS a live endpoint now, so fixture mode has no honest answer
-    // header of investAdminService.ts and docs/audit/ADMIN_SIMULATED_WRITES.md).
+    // A settlement batch is a server-side run over real positions, so fixture
+    // mode has no honest answer for it and refuses (see the header of
+    // investAdminService.ts and docs/audit/ADMIN_SIMULATED_WRITES.md).
     const invest = await import('@/services/investAdminService');
     await expect(invest.runSettlement()).rejects.toThrow(/fixture mode/i);
 
-    // must serve that fixture, not fire a request.
+    // Approving or rejecting a crypto withdrawal asks the custody provider to
+    // broadcast — irreversible, so cryptoAdminService.ts:179 refuses in fixture
+    // mode too instead of returning a withdrawal whose status never changed.
     const crypto = await import('@/services/cryptoAdminService');
-    const decided = await crypto.adminDecideWithdrawal('wd_c1', { decision: 'reject', note: 'reviewed' } as never);
-    expect(decided.status).toBe('failed');
+    await expect(
+      crypto.adminDecideWithdrawal('wd_c1', { decision: 'reject', note: 'reviewed' } as never),
+    ).rejects.toThrow(/fixture mode/i);
 
     expect(fetchFn).not.toHaveBeenCalled();
   });

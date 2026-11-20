@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getWebhookEndpoints, getWebhookDeliveries, getApiKeys, replayDelivery, toggleEndpoint } from '@/services/fxAdminService';
 import type { WebhookEndpoint, WebhookDelivery, ApiKey } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, ErrorNote, errorMessage } from '../_ui';
 import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function FxWebhooksPage() {
@@ -11,12 +11,13 @@ export default function FxWebhooksPage() {
   const [deliveries, setDeliveries] = useState<WebhookDelivery[]>([]);
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
-    try { const [e, d, k] = await Promise.all([getWebhookEndpoints(), getWebhookDeliveries(), getApiKeys()]); setEndpoints(e); setDeliveries(d); setKeys(k); }
-    finally { setLoading(false); }
+    setError(null);
+    try { const [e, d, k] = await Promise.all([getWebhookEndpoints(), getWebhookDeliveries(), getApiKeys()]); setEndpoints(e); setDeliveries(d); setKeys(k); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
 
@@ -27,6 +28,7 @@ export default function FxWebhooksPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Webhooks & Developer" subtitle="Delivery monitor, endpoints and API keys." action={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <FxTabs active="webhooks" />
+      <ErrorNote message={error} />
 
       <Card title="Delivery monitor">
         {loading ? <p style={{ color: colors.muted }}>Loading…</p> : (

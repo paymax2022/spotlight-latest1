@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { getTransactions } from '@/services/fxAdminService';
 import type { FxTxSummary, FxTxFilter, FxTxType, FxTxStatus, Provider } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge, money } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, money, ErrorNote, errorMessage } from '../_ui';
 import { Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const TYPES: (FxTxType | 'all')[] = ['all', 'conversion', 'transfer', 'collection'];
@@ -30,7 +30,7 @@ export default function FxTransactionsPage() {
   async function load() {
     setLoading(true); setError(null);
     try { setRows(await getTransactions(filter)); }
-    catch (e) { setError(String(e)); }
+    catch (e) { setError(errorMessage(e)); }
     finally { setLoading(false); }
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
@@ -54,7 +54,7 @@ export default function FxTransactionsPage() {
         </div>
       </Card>
 
-      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      <ErrorNote message={error} />
       <Card>
         {loading ? (
           <p style={{ color: colors.muted }}>Loading transactions…</p>

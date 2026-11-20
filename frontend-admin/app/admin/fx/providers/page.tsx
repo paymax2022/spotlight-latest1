@@ -3,15 +3,16 @@
 import { useEffect, useState } from 'react';
 import { getProviders, toggleProvider, setBreaker } from '@/services/fxAdminService';
 import type { ProviderConfig, BreakerState } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge, money } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, money, ErrorNote, errorMessage } from '../_ui';
 import { Button, colors } from '@/components/ui/vuexy';
 
 export default function FxProvidersPage() {
   const [rows, setRows] = useState<ProviderConfig[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  async function load() { setLoading(true); try { setRows(await getProviders()); } finally { setLoading(false); } }
+  async function load() { setLoading(true); setError(null); try { setRows(await getProviders()); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); } }
   useEffect(() => { load(); }, []);
 
   async function act(key: string, fn: () => Promise<unknown>) {
@@ -23,6 +24,7 @@ export default function FxProvidersPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Provider Management" subtitle="Directory, health, exposure and circuit breakers." action={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <FxTabs active="providers" />
+      <ErrorNote message={error} />
 
       {loading ? <p style={{ color: colors.muted }}>Loading…</p> : rows.map((p) => {
         const exposurePct = Math.round((p.exposureUsedUsdCents / p.exposureLimitUsdCents) * 100);

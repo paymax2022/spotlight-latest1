@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { listRanksAdmin } from '@/services/referralAdminOpsService';
 import type { RankAdmin } from '@/types/referralAdminOps';
 import { Page, PageHeader, Card, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { NOT_REPORTED, numOrDash, textOrDash } from '../../_ui';
 
 export default function RanksAdminPage() {
   const [rows, setRows] = useState<RankAdmin[] | null>(null);
@@ -43,9 +44,9 @@ export default function RanksAdminPage() {
                   <tr key={r.id}>
                     <td style={tdCell}>{r.name}</td>
                     <td style={tdCell}>{r.threshold_points.toLocaleString('en-NG')} pts</td>
-                    <td style={tdCell}><Badge text={r.badge} color={colors.primary} /></td>
-                    <td style={tdCell}>{r.perks}</td>
-                    <td style={tdCell}>{r.holders.toLocaleString('en-NG')}</td>
+                    <td style={tdCell}>{r.badge ? <Badge text={r.badge} color={colors.primary} /> : NOT_REPORTED}</td>
+                    <td style={tdCell}>{textOrDash(r.perks)}</td>
+                    <td style={tdCell}>{numOrDash(r.holders)}</td>
                   </tr>
                 ))}
               </tbody>
