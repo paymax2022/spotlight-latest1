@@ -144,8 +144,9 @@ POST   /virtual-account              POST /bills             GET  /boosts/tiers
 ```
 
 - Five are the **Maplerad** group — dark in production, proven in 3.6.
-- One is a **breaking route rename on a live public endpoint**, and it is the release's only
-  measured functional regression:
+- One is a **breaking route rename on a live public endpoint**. At the HTTP-surface level it is the
+  only unmounted route, but G6 showed it is not the only behavioral change — the same commit
+  replaced the boost **pricing model**, which is the finding that matters (§3.5):
 
   | `GET /v1/marketplace/boosts/…` | production `d3401f574` | staging `773fe0285` (main-lineage) |
   |---|---|---|
@@ -193,7 +194,35 @@ POST   /virtual-account              POST /bills             GET  /boosts/tiers
   pieces already exist on main: `repository.go:1139 ListBoostPackages`, and `service_boost.go:598`
   `BoostTier` carries prod's exact JSON tags) **plus** a money-path change to re-accept `tier`.
   The read half on its own only re-enables a screen that 400s on confirm, so it is **not** a safe
-  reflexive shim — it belongs with §11 Q6 as an explicit owner decision, not a pre-flight to-do.
+  reflexive shim — it belongs with §11 Q3 as an explicit owner decision, not a pre-flight to-do.
+
+- **The measured consequence nobody asked about: this release changes what boosting costs in
+  production.** `ComputeBoostQuote` prices **duration × `mkt_boost_daily_rate`**, and
+  `mkt_boost_packages` survives on main only as admin-console state — `admin_handler.go:241` is
+  its sole reader, and every purchased boost is recorded as `boostRowTier = "daily-rate"`
+  (`service_boost.go:142`). Production still charges the package table today. Measured live from
+  `GET /boosts/tiers` on the production BFF:
+
+  | legacy package | days | charged today | effective ₦/day | post-release at the seeded ₦100/day |
+  |---|---|---|---|---|
+  | `start` | 7 | ₦500 | ₦71 | **₦700** (+40%) |
+  | `vip` | 14 | ₦2,000 | ₦143 | **₦1,400** (−30%) |
+  | `vip_gold` | 30 | ₦5,000 | ₦167 | **₦3,000** (−40%) |
+  | `diamond` | 30 | ₦15,000 | ₦500 | **₦3,000** (−80%) |
+  | `enterprise` | 60 | ₦50,000 | ₦833 | **₦6,000** (−88%) |
+
+  Those five rows are byte-identical to the seed in `20270168000000_marketplace_boost_pricing_config.sql`,
+  so **no admin has ever repriced packages in production** — this is the migration default still
+  in force, which is what makes the delta real rather than stale config. A "code-only move" is
+  therefore **not revenue-neutral** on the one marketplace money path that is live.
+- **The 500 risk this creates is closed by that same migration, and dev's 500 is now explained.**
+  `GetBoostDailyRate` (`repository.go:1196`) has **no fallback** — a missing `id='default'` row is
+  `wrapInternal` → 500, and it sits on the *purchase* path, not merely the display route. Left
+  alone that would have taken out all boost purchases in production. But the migration seeds the
+  rate (`INSERT INTO public.mkt_boost_daily_rate (id, daily_rate_kobo) VALUES ('default', 10000)`),
+  and §2 proves prod's DB is at main's migration head with drift 0 — so the row exists there. That
+  is precisely why development answers `/boosts/pricing` → **500**: dev's DB never got that seed.
+  New gate **G10** makes this an explicit sign-off rather than an accident of history.
 
 - **Exposure of those legacy builds cannot be measured from here — an owner question, not a gate
   failure.** `gh secret list` shows no Expo/EAS-named secrets, so CI has never produced a mobile
@@ -201,9 +230,12 @@ POST   /virtual-account              POST /bills             GET  /boosts/tiers
   `mobile-app/reactnative/eas.json` sends the `production` profile to
   `frontend-web-production-9259` — which answers `/boosts/tiers` → **200** right now, measured —
   and its `staging` / `preview` / `staging-aab` profiles to `frontend-web-staging-ec46`, a host
-  **absent from `scripts/ci/railway-urls.sh`** (it does answer: `/boosts/tiers` → 404, so it is
-  live and main-lineage). Anyone reading "the staging frontend" as one place should re-check that
-  fourth host during the cutover §8 probes.
+  **absent from `scripts/ci/railway-urls.sh`**. It is genuinely serving, not a dead hostname: it
+  answers `{"error":{"code":"NOT_FOUND","message":"resource not found"}}` — the *app's* envelope —
+  whereas an unprovisioned Railway host returns the *edge's*
+  `{"status":"error","code":404,"message":"Application not found"}` (confirmed against the stale
+  `backend-production-upstream`). Anyone reading "the staging frontend" as one place should
+  re-check that fourth host during the cutover §8 probes.
 - **Re-measured 2026-11-20 09:05Z**, and one new fact matters for §8: development (`a05b8676e`)
   answers `tiers` → 404 (as expected) but **`pricing` → 500** `INTERNAL_ERROR`, where staging
   returns the payload (`daily_rate_kobo:10000`, presets `[1,3,7,14,30]`). Same code, different
@@ -338,6 +370,7 @@ railway-upped it by hand.
 | **G7** | Rollback capacity proven | existing plan **Task 3**, still open | a dated dump of the prod DB **and a restore drill into a scratch database** — a backup never restored is not a backup |
 | **G8** | Module-flag registry parity | `platform_module_registry` rows vs main's mount list | production serves no `readiness <> 'ready'` module as live; staging's two missing flags (`PHARMACY_SYMPTOM_SEARCH`, `HEALTH_TRIAGE`) show this class of gap is real |
 | **G9** | Money-path smoke baseline captured *before* the window | `GET /api/v1/public/health`, plus the ledger's existing unauth route table | so §8 compares against a same-day baseline, not a month-old one |
+| **G10** | **Post-release boost price is an approved price list** (new, from §3.5) | read-only DB probe of `mkt_boost_daily_rate` + `mkt_boost_packages` on production, via the `ops-db-push-scoped.yml` pattern | the `id='default'` row exists (else every boost purchase 500s — `GetBoostDailyRate` has no fallback), **and** ₦100/day flat is the price the owner actually wants, given it replaces a ₦500–₦50,000 package ladder (`diamond` −80%, `enterprise` −88%) |
 
 ### 5.1 A release-train defect found during re-check, which this release must survive
 
@@ -496,6 +529,7 @@ What that means for the decision in §4:
 | G6 client census | **agent — done** (§3.5: fails closed, custom-date path lives) | owner only for **how many** legacy builds exist |
 | G7 dump + restore drill | owner-approved credentials; agent drives | **yes** |
 | G8 module flags | agent | no, but cheap insurance |
+| G10 boost price read-only probe + owner sign-off (§3.5) | agent probes, **owner decides the number** | **yes on business grounds** — it changes revenue silently otherwise |
 | §6 cutover | agent, inside an agreed window | — |
 | §8 verification + soak | agent, escalation to owner | — |
 
@@ -548,3 +582,12 @@ rollback capacity.
    edge-log status code for the destination-request on `backend-staging-new`. If you want me to
    file that with the evidence pack, say so; otherwise the release proceeds on the manual path
    and staging keeps drifting.
+8. **Is ₦100/day the boost price you want in production?** This is the one item in the whole
+   review that changes revenue, and it arrived as a side-effect of a route rename rather than a
+   decision (§3.5). After the cut every boost is `duration × daily_rate`, and the five legacy
+   packages stop being charged: `enterprise` 60 days goes ₦50,000 → ₦6,000, `diamond` 30 days
+   ₦15,000 → ₦3,000, while `start` 7 days rises ₦500 → ₦700. If the ladder was intentional, the
+   fix is a number in the admin pricing console (`PUT /admin/pricing/boosts/daily-rate`) — but it
+   has to be set **deliberately**, because the seeded default will otherwise ship silently. This
+   is gate **G10** and it is the only pre-flight I would call release-blocking on business
+   grounds, independent of the RLS work.
