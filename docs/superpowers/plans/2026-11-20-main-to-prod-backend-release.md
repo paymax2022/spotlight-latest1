@@ -273,7 +273,15 @@ pattern that created this plan. Concretely:
    scoped lane that already exists.
 
 If the owner rejects C, fall back to A and re-run §3 against the merge commit, because the
-23-file deletion set then needs a real review rather than a shrug.
+22-file deletion set then needs a real review rather than a shrug.
+
+**One side-effect worth putting in front of the owner:** `bb59c7129` (#1104, the referral
+three-namespace uniqueness rule) is merged onto `prod` but served by nothing, while `main`
+already contains the same fix as `f8890c06e` (#1095). Any option that deploys main lineage to the
+production backend therefore makes that port live **and** retires it; any option that waits leaves
+the fix written into a branch that cannot reach an environment. Same for `d3401f574` (#1071) — it
+is deployed, so it is already paid for, but it is only in the running code because someone
+railway-upped it by hand.
 
 ---
 
