@@ -471,7 +471,12 @@ screen, which happened once during this review before the format was understood.
 column only —
 `awk -F'│' 'NF>1 {cell=$1; gsub(/[║ ]/,"",cell); if (cell ~ /^[A-Z][A-Z0-9_]{2,}$/) print cell}'`
 — pipe it straight to a file, and delete the raw dump (`rm -f`) once parsed. Do not `cat`, `head`,
-or mask-print the unfiltered output.
+or mask-print the unfiltered output. **And never reach for `--json` or `-k/--kv` to make the parsing
+easier**: the CLI's own help for 5.71 says `-k, --kv  Show variables in KV format. This prints raw values`
+and `--json  … Variable list JSON includes raw values`. Those two flags are documented value dumpers, so the
+convenient machine-readable form is precisely the leak; names-only means the default box table filtered
+through the `awk` above. (`railway variable` is the command; `variables` is its alias, and the bare form
+takes `-s`/`-e`/`-p`, which is what makes the G5 row's invocation valid.)
 
 ### 5.1 A release-train defect found during re-check, which this release must survive
 
@@ -598,6 +603,12 @@ tested way back.
 ## 6. Cutover runbook (execute only after §4 and all of §5)
 
 ```bash
+# 0. auth precondition — verified 2026-11-20 13:40Z against railway 5.71.0.
+#    `railway whoami` must report the owner account (it prints "Logged in as
+#    spec.ng@gmail.com"); an unauthenticated `railway up` opens a browser OAuth flow
+#    and HANGS the window waiting for a human, so check before you need it.
+railway --version && railway whoami
+
 # 1. clean tree at the pinned sha — never from a dirty checkout, never from a worktree
 #    whose node_modules are symlinked outside the workspace
 git fetch origin && git worktree add --detach /tmp/prod-cut <G2_SHA> && cd /tmp/prod-cut
@@ -605,19 +616,51 @@ git fetch origin && git worktree add --detach /tmp/prod-cut <G2_SHA> && cd /tmp/
 # 2. build + vet the exact tree being shipped (backend/ has its own go.mod)
 cd backend && go build ./... && go vet ./... && cd ..
 
-# 3. upload the backend service ONLY — see 6.1 for why
+# 3. upload the backend service ONLY — see 6.1 for why.  -y is deliberate: the CLI's
+#    own help says to pair it with --detach "for scripted or agent-driven runs", and it
+#    suppresses the auth-confirm prompt without skipping the upload.
 railway up backend --path-as-root --no-gitignore --service backend \
   --environment production --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
-  --detach --message <G2_SHA>
+  --detach --message <G2_SHA> -y
 
-# 4. watch it, then §8
-railway deployments --service backend --environment production
+# 4. watch it, then §8.  NOT `railway deployments --service backend`: `deployment` is the
+#    command (`deployments` is only its alias) and it REQUIRES a subcommand, so the bare
+#    form exits on "Usage: railway deployment <COMMAND>".  --project is required here too —
+#    /tmp/prod-cut is an unlinked worktree, so there is no linked project to default to.
+railway deployment list --service backend --environment production \
+  --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 5 --json
 ```
 
-### 6.1 Do not use the `deploy-production` dispatch
+Every flag above was checked against `railway up --help` / `railway deployment list --help`
+on 5.71.0 rather than recalled: `--detach` (`-d`), `--yes` (`-y`), `--service` (`-s`),
+`--environment` (`-e`), `--project` (`-p`), `--no-gitignore`, `--path-as-root`,
+`--message` (`-m`); and `--path-as-root` means exactly "use the path argument as the prefix
+for the archive", which is what makes step 3 ship `backend/` and not the monorepo. The CLI
+also documents that `--detach` starts the deploy **without waiting for health** — step 4's
+`list`, or the §8 read-back, is the actual completion signal.
 
-`gh workflow run deploy-production.yml -f deploy_environment=production -f confirm_deploy=DEPLOY`
-is the wrong tool here for two *measured* reasons:
+### 6.1 Do not use the production dispatch — and note it is not a file called `deploy-production.yml`
+
+**Correction made 2026-11-20 by direct inspection.** This section previously told the reader to avoid
+`gh workflow run deploy-production.yml …`. **No such workflow exists**: there is no
+`.github/workflows/deploy-production.yml` on `origin/main`, on `origin/prod`, or in `gh workflow list`, and
+neither `confirm_deploy` nor `deploy_environment` appears in any main-lineage workflow (per-file grep of
+all 52 workflow files on `origin/main` and all 47 on `origin/prod`). The real production dispatcher is **`prod`'s own
+`.github/workflows/ci.yml`** — display name **`CI — CLAUDE.md gates`** — whose `workflow_dispatch` block
+(lines 57-71 there) declares `deploy_environment` as a *choice* of `development|staging|production` and
+`confirm_deploy` as a free string, both `required: false`, with the three `deploy <Env> (${{ matrix.service }})`
+jobs gated on `github.event_name == 'workflow_dispatch' && inputs.deploy_environment == 'production' &&
+inputs.confirm_deploy == 'DEPLOY'` (line 687-689). Its own comment is the safety property: *"Both deploy
+inputs are optional: leave them blank to run CI only … so a CI-only dispatch can never trigger a release."*
+
+So the command a well-meaning operator would actually type is:
+
+```bash
+gh workflow run ci.yml --repo paymax2022/spotlight-latest1 --ref prod \
+  -f deploy_environment=production -f confirm_deploy=DEPLOY
+```
+
+and it is **still the wrong tool**, for two *measured* reasons:
 
 - its `deploy Production (frontend-admin)` leg replaces the manually-uploaded main-lineage
   console with the prod-branch UI, **163 files behind** — it regressed the console on
@@ -626,6 +669,11 @@ is the wrong tool here for two *measured* reasons:
   Nov-16, because prod-branch `frontend-web` does not build.
 
 A backend-only manual upload touches exactly one service.
+
+The mis-citation is worth keeping in the text rather than deleting, because the failure mode it created is
+general: a runbook that forbids a *non-existent* command leaves the real one un-warned. Note also that
+`prod`'s `ci.yml` triggers on `push: branches: [develop, staging, prod, main]` with `paths-ignore` for
+`**.md` / `docs/**`, which is why a docs-only merge to prod is CI-only and cannot deploy by accident.
 
 ### 6.2 F2 (Railway upload) is not a blocker for *this* runbook — but it blocks option B
 
@@ -671,9 +719,28 @@ What that means for the decision in §4:
 
 ## 7. Rollback
 
-- **Code:** redeploy the previous known-good sha the same way — `railway up` from a clean
-  worktree at `d3401f574`, or `serviceInstanceDeploy` of the prior deployment id. Target ≤5
-  min. Keep `/tmp/prod-cut` until the soak ends.
+- **Code:** redeploy the previous known-good sha the same way. Target ≤5 min. Keep
+  `/tmp/prod-cut` until the soak ends — it saves the fetch inside the window.
+
+  ```bash
+  # the rollback sha is a prod-branch commit, NOT on main lineage (proved 2026-11-20:
+  # `git merge-base --is-ancestor d3401f574 origin/main` fails; it sits on origin/prod,
+  # dated 2026-11-18 17:36Z, and its tree does contain backend/). So this restores
+  # prod-lineage code across the fork boundary — fetch origin/prod before the window,
+  # because a clone that only tracks main cannot produce this tree.
+  git rev-parse d3401f574   # d3401f5749adbe9142f0255743d110fb0afcdeb1
+  git worktree add --detach /tmp/prod-rb d3401f574 && cd /tmp/prod-rb
+  railway up backend --path-as-root --no-gitignore --service backend \
+    --environment production --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
+    --detach --message d3401f574 -y
+  railway deployment list --service backend --environment production \
+    --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 5 --json
+  ```
+
+  The alternative is `serviceInstanceDeploy(serviceId, environmentId, commitSha:"<full sha>")`
+  — **flat args**, `input:` is rejected with `Unknown argument` — which is faster because it
+  re-deploys a sha Railway already has an artifact for, and it needs no local worktree at all.
+  Either way, §8 step 1's `/api/v1/public/build` stamp is the completion signal, not the row.
 - **Schema: do not plan a schema rollback.** The prod DB is *already* at `20271700000000`
   (§2); a code rollback returns to code that runs against that schema today, which is the
   state the DDL review in §3.3 found safe. Restoring the G7 dump would destroy production data
