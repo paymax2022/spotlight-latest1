@@ -296,6 +296,25 @@ POST   /virtual-account              POST /bills             GET  /boosts/tiers
   is precisely why development answers `/boosts/pricing` → **500**: dev's DB never got that seed.
   New gate **G10** makes this an explicit sign-off rather than an accident of history.
 
+- **The remedy is a real, reachable screen — and the UI already admits the ladder is dead.**
+  `frontend-admin/app/admin/marketplace/pricing/page.tsx` renders a card titled **"Boost price — ₦ per
+  day (MO-002)"** (line 151) whose `DailyRateCard` takes a naira input, converts with
+  `rate.daily_rate_kobo / 100` (line 148), and `PUT`s `/pricing/boosts/daily-rate`; the route is mounted
+  at `backend/internal/app/marketplace_routes.go:465-466` behind `guard("marketplace.admin.pricing")`, and
+  `reason_code` is mandatory (`requireReason` at the head of `SetBoostDailyRate`,
+  `service_boost.go:467-469`, audit action `mkt.pricing.boost_daily_rate.set`). So
+  repricing needs an admin token holding **`marketplace.admin.pricing`** — that is the precondition, not the
+  form. Two corroborations from the same file: the packages card is titled **"Boost packages (no longer
+  sold)"** (line 112), i.e. main-lineage UI states §3.5's finding outright, and the fixture at
+  `marketplaceAdminService.ts:422` mirrors the seeded `{ daily_rate_kobo: 10_000 } // ₦100/day`.
+  **Do not confuse this with `base_daily_rate_kobo`**, which is a different subsystem: it belongs to
+  placement zones (`backend/internal/placement/model.go:92`, formula `base × duration_days ×
+  tier_multiplier` at `model.go:171`) and is what mobile's `app/featured/new.tsx:271` displays. It has no
+  admin UI and no admin route in this repo (repo-wide grep for `base_daily_rate` under `frontend-admin/`
+  returns nothing), and the other card on the pricing page — "Featured-slot inventory (MO-016)" — edits a
+  `max` count, not a price. So on that screen the boost rate is the only ₦/day field; the ambiguity lives
+  only in prose.
+
 - **Exposure of those legacy builds cannot be measured from here — an owner question, not a gate
   failure.** `gh secret list` shows no Expo/EAS-named secrets, so CI has never produced a mobile
   release; installed builds are manual and their source tree is unknown. prod's
@@ -760,7 +779,9 @@ rollback capacity.
    decision (§3.5). After the cut every boost is `duration × daily_rate`, and the five legacy
    packages stop being charged: `enterprise` 60 days goes ₦50,000 → ₦6,000, `diamond` 30 days
    ₦15,000 → ₦3,000, while `start` 7 days rises ₦500 → ₦700. If the ladder was intentional, the
-   fix is a number in the admin pricing console (`PUT /admin/pricing/boosts/daily-rate`) — but it
+   fix is a number in the admin pricing console — **Marketplace → Pricing → "Boost price — ₦ per day
+   (MO-002)"**, which `PUT`s `/admin/pricing/boosts/daily-rate` and requires `reason_code` and the
+   `marketplace.admin.pricing` permission (§3.5) — but it
    has to be set **deliberately**, because the seeded default will otherwise ship silently. This
    is gate **G10**, and with G4 off the critical path it is the only pre-flight that blocks this
    release on business grounds rather than on infrastructure.
