@@ -439,7 +439,7 @@ railway-upped it by hand.
 | **G4** | ~~RLS review complete~~ → **not a gate: reclassified 2026-11-20 as a standing client-read audit** | §3.4 census + `--diff-filter=M` + `store.go:13` | **Passes by construction, for the reason the original row got backwards.** The 124 `ENABLE ROW LEVEL SECURITY` / 116 `CREATE POLICY` / 99 `DROP POLICY` statements in the 114 main-only migrations are **already live** (prod DB is at main's head, drift 0, §2), all 114 files are pure **additions** (zero modified), and the one artifact this release deploys connects as `service_role`, which the repo documents as bypassing RLS. A backend-only deploy therefore cannot change the RLS-enforced surface. What is still open is **not** a release risk: **14** mobile files make 80 direct table calls over 29 tables, and `utility_billers` carries a `TO authenticated`-only SELECT policy, so a logged-out read returns `200 []` silently. That is a mobile-side audit item with a concrete first entry — see §3.4. |
 | **G5** | Env-var parity, **names only** — **measured 2026-11-20, GREEN** | `railway variables --environment production --service backend …` parsed to the name column **only** | Production has **131** variables. Of the **20 keys main added beyond `prod`'s `.env.example`**, **19 are absent** from production — and that is **safe**: each has a compiled default, verified on `origin/main` — `ESTATE_CODE_RATE_PER_MIN`→10, `ESTATE_GUARD_RATE_PER_MIN`→30, `PARCEL_INSURANCE_MIN_PREMIUM_KOBO`→200000, `FOOD_RIDER_LOCATION_RETENTION_DAYS`→30, `CONSULT_MEDIA_PROVIDER`→"livekit", `WEB_APP_BASE_URL`→`https://www.spotlightng.com` (`config.go:1366`, the exact live customer domain), `R2_INSURANCE_BUCKET`→"" with a documented `R2_BUCKET` fallback. The 13 `FEATURE_*` keys being unset means those features stay **off** in production after the cut, so the release does not silently enable new surfaces — it narrows blast radius. |
 | **G6** | Client-exposure census — **measured 2026-11-20, see §3.5** | `git grep` on both tips + live BFF probes + the prod boost screen | **Resolved as to behavior, open as to audience.** The prod-lineage package picker fails **closed** (`arr()` empties an object; a `tier`-only POST 400s; Confirm needs `!!selectedTier`), the custom-date boost path survives unchanged, and there is **no silent-mispricing path**. What remains is the owner's §11 Q3: how many installed `prod`-lineage builds exist. A `tiers → pricing` alias is **not** a valid shim (different payload shape) — see §3.5. |
-| **G7** | Rollback capacity proven | existing plan **Task 3**, still open | a dated dump of the prod DB **and a restore drill into a scratch database** — a backup never restored is not a backup |
+| **G7** | Rollback capacity proven — **RED, and harder than this row claimed** | `docs/devops/backup-restore-runbook.md` @main, front matter *"Status: UNREHEARSED — runbook written, no restore test evidence yet"* + §5.3 | A dated dump of the prod DB **and a restore drill into a scratch database** — a backup never restored is not a backup. Three gaps, detailed in **§5.3**: (i) **no dump has ever been taken** — the runbook itself says `git grep -ln pg_dump -- ':!docs'` returns nothing and "there is still no runnable dump path in this repo", re-confirmed here across `scripts/` and every workflow; (ii) **the backup tier is unrecorded**, so PITR availability and RPO are unknown, not assumed; (iii) **no `pg_dump` credential route exists from an agent session** — the direct DSN (port 5432, not the pooler) needs `SUPABASE_DB_PASSWORD`, present only in the `Production` GitHub environment or the dashboard. Consequence for §9's "agent drives": executing G7 requires **adding a workflow**, i.e. a code change this plan is told not to make — so the fast path is the owner running §5's checklist against a downloadable backup and recording the dated row. |
 | **G8** | Module-registry parity — **measured 2026-11-20, GREEN** (and the row here cited a table that does not exist) | `supabase/migrations/20271600000000_mobile_menu_modules.sql` + `backend/internal/modules/` on both tips | **Name correction first: there is no `platform_module_registry`.** The real tables are `public.platform_modules`, `public.platform_module_environments`, `public.platform_module_audit`, read by `backend/internal/modules/service.go`; the string `platform_module_registry` appears only in three `docs/` files and in this plan's own earlier draft. Substantively the gate passes by construction: the tile rows are **migration-seeded**, both tips carry the same `modules` package (`handler.go`/`service.go`/`modulegate/` on `prod` too), and prod's DB is provably at main's head with drift 0 (§2) — the seed was applied to production on the #1058 lane (payload verified 35 = 31+7−3). Note the asymmetry this exposes: `prod`'s **branch** does not contain `20271600000000` (its newest module migration is `20271408000100_module_readiness.sql`) while its **database** has those rows — §2's schema-ahead-of-code skew again, and another reason a `db push` from the `prod` branch would not reproduce production. |
 | **G9** | Money-path smoke baseline captured *before* the window — **done 2026-11-20, see §5.2** | backend-host probes with correct methods, all three planes | baseline recorded (health 200 ×3, fx/cards 401 prod+staging, admin/contests 401 ×3, maplerad 404 ×3, boost pair as expected); §8 now compares against a same-day table, and it establishes **staging — not dev — as the canary assertion** |
 | **G10** | **Post-release boost price is an approved price list** (new, from §3.5) | read-only DB probe of `mkt_boost_daily_rate` + `mkt_boost_packages` on production, via the `ops-db-push-scoped.yml` pattern | the `id='default'` row exists (else every boost purchase 500s — `GetBoostDailyRate` has no fallback), **and** ₦100/day flat is the price the owner actually wants, given it replaces a ₦500–₦50,000 package ladder (`diamond` −80%, `enterprise` −88%) |
@@ -521,6 +521,58 @@ Four things this settles:
    contract difference. So a green dev probe proves nothing about prod, and a red one proves less.
 4. **Maplerad is dark on all three planes** (404 with the correct POST method), independently
    re-proving §3.6 — main's deletion removes dead code, not a live provider.
+
+### 5.3 G7 in detail — the procedure exists; the capability and the credential route do not
+
+G7 was written as "existing plan Task 3, still open", which understated it and missed the best asset
+in the repo. There is a dedicated runbook: **`docs/devops/backup-restore-runbook.md`** @main, whose own
+front matter reads *"**Status:** UNREHEARSED — runbook written, no restore test evidence yet"*, scoped
+to the production Supabase project ref `nmseefdlliejmdbxytej` (`spotlight-prod`) — the database holding
+`ledger_entries`, `wallets`, `vote_transactions`, `platform_users`.
+
+Three distinct gaps, and only the first is a matter of deciding to act:
+
+1. **No dump has ever been taken.** The runbook states it in its own words:
+   `git grep -ln pg_dump -- ':!docs'` returns **no file**, "i.e. there is still no runnable dump path
+   in this repo", and the 2026-11-12 staging→production migration "actually produced here: nothing
+   scheduled, and no dump taken on either side". Confirmed independently above: no `pg_dump`/`pg_restore`
+   appears in `scripts/` or any workflow.
+2. **The backup tier is unrecorded.** PITR/WAL archiving is a paid add-on, and the runbook says
+   plainly that "which tier the `spotlight-prod` project is on is not recorded in this repo". Until
+   someone reads it in Dashboard → Project Settings → Add-ons, RPO is unknown — it is *either* 7-day
+   daily base backups with no point-in-time restore, *or* PITR to an arbitrary second ~2 days back.
+   Do not let the plan imply the better one.
+3. **There is no `pg_dump` credential route from an agent session.** The command needs the **direct**
+   DSN (port 5432, not the session pooler — the same pooler that ate `PGOPTIONS` in §3.3), and the
+   password exists only as `SUPABASE_DB_PASSWORD` in the `Production` GitHub environment or the
+   dashboard. The runbook already recorded this exact obstacle as the reason staging was never dumped:
+   *"its DB password is reachable only as a masked Actions secret, so no `pg_dump` credential route
+   exists from a review session."*
+
+So §9's "owner-approved credentials; agent drives" needs correcting: **an agent can only drive this
+from inside a CI job bound to the `Production` environment, which means adding a workflow is the
+prerequisite for G7** — a code change, and this plan is explicitly not shipping code. Two honest paths:
+
+- **Owner path, zero code (fastest):** confirm the tier; if backups are downloadable, restore the
+  most recent one into a scratch project and work §5's checklist (time the restore — that is the RTO;
+  `pg_dump --schema-only` both sides; `SELECT count(*) FROM ledger_entries` and wallet-sum vs
+  ledger-projection equality). Then add the **dated row to §5 of the runbook**. That row is the only
+  evidence that closes both AUD-INFRA-009 and G7 — the runbook warns against exactly what a document
+  like this one is prone to: *"Do not treat any 'dump exists' sentence in a plan document as evidence."*
+- **Repo path, one PR (~40 lines):** a `workflow_dispatch`-only job in the `Production` environment
+  running the runbook's `pg_dump` (`--format=custom --compress=6 --no-owner --no-privileges`) into an
+  artifact, uploading to a **dedicated non-public** `spotlight-db-backups` R2 bucket (not the app's
+  `spotlight-openmic-songs`), plus a second mode that `pg_restore`s into a scratch project. The carrier
+  (Actions schedule vs `render.yaml` cron vs host cron) and retention (runbook suggests 30 daily + 12
+  monthly) are deliberately **unchosen** by that file and need an owner decision — nothing should be
+  scheduled before it is made.
+
+One framing point so G7 is not over-weighted in §4: **G7 gates the decision to move, not the ability to
+revert.** Code rollback is already proven and fast (§7: `railway up` at `d3401f574`, ≤5 min), and a dump
+restore would *destroy* newer production data (§7), so it belongs to a data-integrity incident, not to a
+bad-release recovery. The reason it is still release-blocking is narrower: main carries schema the prod
+code has never exercised, and if a migration-driven data problem appears, the repo currently has no
+tested way back.
 
 ---
 
@@ -641,7 +693,7 @@ What that means for the decision in §4:
 | G3 staging refresh at the G2 pin (manual — the train cannot do it, §6.2) | agent | **yes**, it is the canary |
 | G4 RLS client-read audit (§3.4) | agent, review output signed by owner | **no** — reclassified 2026-11-20: the DB is not moving and the backend is `service_role`, so nothing in this release can alter RLS behaviour. Runs in parallel, off the critical path. |
 | G6 client census | **agent — done** (§3.5: fails closed, custom-date path lives) | owner only for **how many** legacy builds exist |
-| G7 dump + restore drill | owner-approved credentials; agent drives | **yes** |
+| G7 dump + restore drill | **owner**, or an agent only from inside a new `Production`-environment workflow (§5.3 gap iii) | **yes** — and it is the one critical-path item this session cannot clear alone |
 | G8 module flags | agent | no, but cheap insurance |
 | G10 boost price read-only probe + owner sign-off (§3.5) | agent probes, **owner decides the number** | **yes on business grounds** — it changes revenue silently otherwise |
 | §6 cutover | agent, inside an agreed window | — |
@@ -712,3 +764,15 @@ rollback capacity.
    has to be set **deliberately**, because the seeded default will otherwise ship silently. This
    is gate **G10**, and with G4 off the critical path it is the only pre-flight that blocks this
    release on business grounds rather than on infrastructure.
+9. **G7 needs three answers, and none of them are in the repo (§5.3).** (a) What tier is
+   `spotlight-prod` (`nmseefdlliejmdbxytej`) on — is the PITR add-on enabled? The runbook says the
+   tier "is not recorded in this repo", so RPO is currently unknown: 7-day daily backups with no
+   point-in-time restore, or PITR to an arbitrary second. (b) Do you want the **owner path** (restore a
+   downloadable backup into a scratch project, work §5's checklist, add the dated row — no code, and it
+   closes both AUD-INFRA-009 and G7) or the **repo path** (I add a ~40-line `workflow_dispatch` job in
+   the `Production` environment, which is the only way an agent can run a dump at all, since
+   `SUPABASE_DB_PASSWORD` is reachable only as a masked Actions secret or from the dashboard)?
+   (c) If the repo path: which carrier and retention — the runbook deliberately leaves the choice of
+   Actions schedule vs `render.yaml` cron vs host cron unmade, suggests 30 daily + 12 monthly, and asks
+   for a **dedicated non-public** `spotlight-db-backups` bucket rather than the app's
+   `spotlight-openmic-songs`. Nothing should be scheduled before you decide (b) and (c).
