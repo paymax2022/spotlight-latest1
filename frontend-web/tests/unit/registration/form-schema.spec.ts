@@ -34,8 +34,8 @@ describe('schema-driven registration form', () => {
       formData: {
         'derived.formSchema': {
           version: 1,
-          includedFields: ['personal.firstName', 'personal.lastName', 'identity.idType', 'identity.idUpload'],
-          requiredOverrides: { 'identity.idType': false },
+          includedFields: ['personal.firstName', 'personal.lastName', 'media.profilePhoto', 'media.introVideo'],
+          requiredOverrides: { 'media.profilePhoto': false },
           customFields: [
             { key: 'custom.instrument', label: 'Instrument', type: 'text', step: 'category_specific', required: true },
           ],
@@ -57,10 +57,10 @@ describe('schema-driven registration form', () => {
     // Personal step: only the two selected personal fields, nothing else (no talent.*)
     expect(stepFieldKeys(steps, 'personal_information')).toEqual(['personal.firstName', 'personal.lastName']);
 
-    // Requirements step: selected identity fields + the custom question, in order
+    // Requirements step: selected catalog fields + the custom question, in order
     expect(stepFieldKeys(steps, 'category_specific')).toEqual([
-      'identity.idType',
-      'identity.idUpload',
+      'media.profilePhoto',
+      'media.introVideo',
       'custom.instrument',
     ]);
 
@@ -74,14 +74,14 @@ describe('schema-driven registration form', () => {
       formData: {
         'derived.formSchema': {
           version: 1,
-          includedFields: ['identity.idType'],
-          requiredOverrides: { 'identity.idType': false },
+          includedFields: ['media.profilePhoto'],
+          requiredOverrides: { 'media.profilePhoto': false },
           customFields: [{ key: 'custom.q1', label: 'Q1', type: 'text', step: 'category_specific', required: true }],
         },
       },
     });
     const cat = buildRegistrationSteps(draft).find((s) => s.key === 'category_specific')!;
-    expect(cat.fields.find((f) => f.key === 'identity.idType')?.required).toBe(false);
+    expect(cat.fields.find((f) => f.key === 'media.profilePhoto')?.required).toBe(false);
     expect(cat.fields.find((f) => f.key === 'custom.q1')?.required).toBe(true);
   });
 

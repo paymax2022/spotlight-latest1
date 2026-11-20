@@ -67,7 +67,7 @@ const BUSINESS_GROUPS: Array<{ title: string; keys: string[] }> = [
   },
   {
     title: 'Documents',
-    keys: ['identity.idType', 'identity.idUpload', 'identity.cacDocument', 'category.pitchDeck'],
+    keys: ['identity.cacDocument', 'category.pitchDeck'],
   },
   {
     title: 'Online presence',

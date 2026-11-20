@@ -63,9 +63,6 @@ function completeAdultForm(): RealityTvWizardForm {
     talent_uniqueStory: 'Self-taught from church choir',
 
     category_uniqueStory: 'Authentic, watchable, unfiltered',
-    identity_idType: 'National ID',
-    identity_idUploadUrl: '/api/registration/uploads/aWR1cGxvYWQ',
-    identity_idUploadName: 'id.png',
     media_rightsConfirmed: true,
     audition_format: 'Online video submission',
     publicProfile_publicVotingConsent: true,
@@ -108,10 +105,7 @@ function completeMinorForm(): RealityTvWizardForm {
   return {
     ...completeAdultForm(),
     personal_dateOfBirth: dobForAge(16),
-    identity_idType: '',
     identity_idNumber: '',
-    identity_idUploadUrl: '',
-    identity_idUploadName: '',
     guardian_fullName: 'Ngozi Obi',
     guardian_relationship: 'Mother',
     guardian_phone: '08076543210',
@@ -226,25 +220,29 @@ describe('reality-tv-show wizard field map (AUD-FE-009)', () => {
   it('hydrate round-trips a saved flat payload (including upload meta)', () => {
     const original = completeAdultForm();
     const flat = realityTvWizardFormToFlat(original, {
-      'identity.idUpload': { fileName: 'passport.png', storageKey: 'registration/u/1.png' },
+      'media.profilePhoto': { fileName: 'ada.png', storageKey: 'registration/u/1.png' },
     });
     const { form, uploadMeta } = realityTvWizardHydrate(flat);
     expect(form.personal_firstName).toBe('Ada');
-    expect(form.identity_idUploadUrl).toBe('/api/registration/uploads/aWR1cGxvYWQ');
-    expect(form.identity_idUploadName).toBe('passport.png');
+    expect(form.media_profilePhotoUrl).toBe('/api/registration/uploads/cGhvdG8');
+    expect(form.media_profilePhotoName).toBe('ada.png');
     expect(form.publicProfile_publicVotingConsent).toBe(true);
-    expect(uploadMeta['identity.idUpload']?.fileName).toBe('passport.png');
-    expect(flatErrorKeyToFormKey('identity.idType')).toBe('identity_idType');
+    expect(uploadMeta['media.profilePhoto']?.fileName).toBe('ada.png');
+    // A file field maps through the override table; everything else is the
+    // generic dot→snake transform.
+    expect(flatErrorKeyToFormKey('media.profilePhoto')).toBe('media_profilePhotoUrl');
+    expect(flatErrorKeyToFormKey('talent.strengths')).toBe('talent_strengths');
   });
 
-  it('drops government-ID verification from the schema for minors', () => {
+  it('never puts a government ID in the schema, at any age', () => {
     const minorKeys = buildRealityTvShowSteps(draftForAge(16)).flatMap((s) => s.fields.map((f) => f.key));
     expect(minorKeys.some((key) => key.startsWith('identity.'))).toBe(false);
     expect(minorKeys).not.toContain('guardian.idUpload');
 
     const adultKeys = buildRealityTvShowSteps(draftForAge(30)).flatMap((s) => s.fields.map((f) => f.key));
-    expect(adultKeys).toContain('identity.idType');
-    expect(adultKeys).toContain('identity.idUpload');
+    expect(adultKeys).not.toContain('identity.idType');
+    expect(adultKeys).not.toContain('identity.idUpload');
+    expect(adultKeys).toContain('identity.idNumber');
   });
 
   it('a minor does not need identity values to pass step 3 or full schema validation', () => {
@@ -254,16 +252,13 @@ describe('reality-tv-show wizard field map (AUD-FE-009)', () => {
     expect(realityTvWizardSchemaErrors(minor)).toEqual({});
   });
 
-  it('an adult still needs identity values for step 3 and full schema validation', () => {
-    const adult = {
-      ...completeAdultForm(),
-      identity_idType: '',
-      identity_idUploadUrl: '',
-    };
-    expect(validateRealityTvWizardStep(3, adult)).toHaveProperty('identity_idType');
-    expect(validateRealityTvWizardStep(3, adult)).toHaveProperty('identity_idUploadUrl');
-    expect(realityTvWizardSchemaErrors(adult)).toHaveProperty('identity.idType');
-    expect(realityTvWizardSchemaErrors(adult)).toHaveProperty('identity.idUpload');
+  it('an adult passes step 3 and full schema validation with no ID collected', () => {
+    const adult = completeAdultForm();
+    // The wizard form no longer even carries the slots.
+    expect(adult).not.toHaveProperty('identity_idType');
+    expect(adult).not.toHaveProperty('identity_idUploadUrl');
+    expect(validateRealityTvWizardStep(3, adult)).toEqual({});
+    expect(realityTvWizardSchemaErrors(adult)).toEqual({});
   });
 
   it('offers a fixed relationship list for minor applicants', () => {

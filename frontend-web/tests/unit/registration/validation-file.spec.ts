@@ -13,7 +13,7 @@ const step: RegistrationStep = {
   title: 'Requirements',
   description: '',
   fields: [
-    { key: 'identity.idUpload', label: 'ID upload', type: 'file', required: true },
+    { key: 'media.profilePhoto', label: 'Profile photo', type: 'file', required: true },
     { key: 'media.introVideo', label: 'Intro video', type: 'file' },
   ],
 };
@@ -21,25 +21,25 @@ const step: RegistrationStep = {
 describe('file field validation', () => {
   it('accepts an object-shaped uploaded value (mobile client)', () => {
     const res = validateStepData(step, {
-      'identity.idUpload': { previewUrl: '/api/registration/uploads/abc', fileName: 'id.png', storageKey: 'registration/u/1.png' },
+      'media.profilePhoto': { previewUrl: '/api/registration/uploads/abc', fileName: 'id.png', storageKey: 'registration/u/1.png' },
     });
     expect(res.isValid).toBe(true);
-    expect(res.errors['identity.idUpload']).toBeUndefined();
+    expect(res.errors['media.profilePhoto']).toBeUndefined();
   });
 
   it('accepts a string URL value (web client)', () => {
-    const res = validateStepData(step, { 'identity.idUpload': '/api/registration/uploads/abc' });
+    const res = validateStepData(step, { 'media.profilePhoto': '/api/registration/uploads/abc' });
     expect(res.isValid).toBe(true);
   });
 
   it('flags a missing required file', () => {
     const res = validateStepData(step, {});
     expect(res.isValid).toBe(false);
-    expect(res.errors['identity.idUpload']).toContain('required');
+    expect(res.errors['media.profilePhoto']).toContain('required');
   });
 
   it('does not flag an optional file left empty', () => {
-    const res = validateStepData(step, { 'identity.idUpload': 'x' });
+    const res = validateStepData(step, { 'media.profilePhoto': 'x' });
     expect(res.errors['media.introVideo']).toBeUndefined();
   });
 });
