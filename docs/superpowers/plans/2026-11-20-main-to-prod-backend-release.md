@@ -539,12 +539,16 @@ a Railway-side refusal on the request that *obtains the upload destination*, unr
 archive size (it lands ~0.7 s after `stamped backend/BUILD_COMMIT`, with `Indexing` /
 `Uploading` / `bytes:` all zero, which is why `--verbose` can never surface a status).
 
-**Measured 2026-11-20 09:05Z, this is not intermittent any more — it is total on staging.**
-Every Release run since 2026-11-19 14:49Z has `deploy Staging (backend)`,
+**Measured 2026-11-20 09:05Z, refined ~10:10Z — this is not intermittent on the runs that tried.**
+Every Release run since 2026-11-19 14:49Z **that attempted a deploy** has
+`deploy Staging (backend)`,
 `(frontend-admin)` and `(frontend-web)` all failing with 9 decode errors each
 (`44547867538`, `44560489834`, `44629671567`, `44637142432`, `44644175704`), while
 `deploy Development (…)` is 3/3 green and the gate verdict is `proceed`. It is not billing
 (`Your trial has expired` appears nowhere) and not the code (dev builds the same commit fine).
+The two runs after those (`44703323495` 08:32Z, `44714903068` 09:56Z) were `noop_docs_only` and
+skipped everything, so they neither prove nor disprove F2 — the failure is currently last observed
+at `44644175704` (11-20 00:14Z), and a code-merge run is the only thing that would retest it.
 
 What that means for the decision in §4:
 
@@ -554,8 +558,11 @@ What that means for the decision in §4:
 - **Options A and C are unaffected**, because this runbook does not use the train: it uploads
   the backend straight to the **production** environment with `railway up`, which is exactly
   the lane F2 does not touch (prod uploads have succeeded repeatedly, including the current
-  `d3401f574`). The 08:32Z `noop_docs_only` run confirms dev legs and uploads are healthy
-  generally — only staging's destination request is refused.
+  `d3401f574`). **Do not read the `noop_docs_only` runs as health evidence** — an earlier draft of
+  this bullet claimed the 08:32Z run "confirms dev legs and uploads are healthy generally", and that
+  is backwards: in a `noop_docs_only` run `deploy Development (…)` is **`skipped`**, not successful,
+  so it says nothing about any upload path. The last run where dev genuinely uploaded is
+  `44644175704` (11-20 00:14Z, 3/3 deployed) — the same run where staging refused all three.
 - **Refreshing staging for the canary needs the manual path**, not a merge:
   `railway api … serviceInstanceDeploy(serviceId, environmentId, commitSha:"<full sha>")`
   (**flat** args — `input:` is rejected), which is how staging got `773fe0285` on 2026-11-19
@@ -664,8 +671,10 @@ rollback capacity.
    and **G10** (the boost price list changes revenue silently). If you want a single "what is blocking
    me" list, it is those three.
 7. **Who chases Railway on F2?** It is now the binding constraint on the whole pipeline, not
-   just an annoyance: staging has had zero successful uploads for five consecutive Release runs
-   (§6.2), which means the train cannot promote *anything* to production and staging is no
+   just an annoyance: staging has had zero successful uploads across the five consecutive runs
+   **that attempted a deploy** (§6.2) — the two since then were docs-only `noop_docs_only` runs that
+   attempted nothing, so F2 is currently untested rather than freshly re-proven — which means the
+   train cannot promote *anything* to production and staging is no
    longer a self-maintaining canary. The narrow ask that can actually be answered is Railway's
    edge-log status code for the destination-request on `backend-staging-new`. If you want me to
    file that with the evidence pack, say so; otherwise the release proceeds on the manual path
