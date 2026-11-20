@@ -7,6 +7,7 @@ const KEYS = {
   activity: ['social', 'activity'] as const,
   contacts: ['social', 'contacts'] as const,
   search:   (q: string) => ['social', 'search', q] as const,
+  requests: ['social', 'requests'] as const,
   splits:   ['social', 'splits'] as const,
   split:    (id: string) => ['social', 'split', id] as const,
   pools:    ['social', 'pools'] as const,
@@ -47,6 +48,11 @@ export function useSendMoney() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEYS.activity });
       qc.invalidateQueries({ queryKey: KEYS.me });
+      // A send debits the wallet, and the Send screen pre-flights the next one
+      // against ['wallet', 'balance'] (the key TransferScreen shares). Without
+      // this the cached figure is up to staleTime old and a second send can be
+      // waved through on a balance that no longer exists.
+      qc.invalidateQueries({ queryKey: ['wallet'] });
     },
   });
 }
@@ -55,7 +61,70 @@ export function useRequestMoney() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: RequestInput) => api.requestMoney(input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.activity }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.activity });
+      // The sender's own "Requested" list is the place they now look for it.
+      qc.invalidateQueries({ queryKey: KEYS.requests });
+    },
+  });
+}
+
+// ── Money requests, from the RECEIVER's side ────────────────────────────────
+// GET /requests is one call for both directions, so the inbox, the detail
+// screen and the home badge all share ['social','requests'].
+
+export const useRequests = () =>
+  useQuery({ queryKey: KEYS.requests, queryFn: api.listRequests });
+
+// Detail read: the SAME list query, narrowed by id. There is no
+// GET /requests/:id on the backend, and party-scoping the list is what keeps a
+// stranger from reading a request they are not part of — so the detail screen
+// deliberately does not grow its own endpoint.
+export const useRequest = (id: string) =>
+  useQuery({
+    queryKey: KEYS.requests,
+    queryFn: api.listRequests,
+    enabled: !!id,
+    select: (list) => list.find((r) => r.id === id) ?? null,
+  });
+
+// Paying is a wallet debit, so it invalidates like one: the request list (the
+// row flips PENDING→PAID), the activity feed, and ['wallet'] — the key the Send
+// screen pre-flights against, which must not stay on the pre-debit balance.
+export function usePayRequest(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.payRequest(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.requests });
+      qc.invalidateQueries({ queryKey: KEYS.activity });
+      qc.invalidateQueries({ queryKey: KEYS.me });
+      qc.invalidateQueries({ queryKey: ['wallet'] });
+    },
+  });
+}
+
+// Decline (payer) and cancel (requester) change no balance — the row's state
+// and the feed are all that move.
+export function useDeclineRequest(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.declineRequest(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.requests });
+      qc.invalidateQueries({ queryKey: KEYS.activity });
+    },
+  });
+}
+
+export function useCancelRequest(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.cancelRequest(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.requests });
+      qc.invalidateQueries({ queryKey: KEYS.activity });
+    },
   });
 }
 

@@ -52,7 +52,12 @@ export default function Activity() {
           <View style={styles.card}>
             {filtered.map((a) => (
               <ActivityRow key={a.id} item={a} onPress={() => {
-                if (a.kind === 'split') router.push('/social/split/create');
+                // A request row is the one activity item with something the
+                // viewer can still DO: open it and pay or decline it. (split/
+                // pool keep their existing targets — the feed carries their id
+                // under a different key, so that needs its own fix.)
+                if (a.kind === 'request') router.push(`/social/requests/${a.id}`);
+                else if (a.kind === 'split') router.push('/social/split/create');
                 else if (a.kind === 'pool') router.push('/social/pool/create');
               }} />
             ))}

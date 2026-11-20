@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Alert, ActivityIndicator, Pressable } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import { goBack } from '@/lib/navigation';
 import { CircleCheck, AtSign, Users } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
@@ -16,6 +17,10 @@ import CashtagAvatar from '@/features/social/components/CashtagAvatar';
 import AmlBanner from '@/features/social/components/AmlBanner';
 import { useMyCashtag, useSendMoney, resolveCashtag } from '@/features/social/hooks';
 import { SocialColors, formatNaira, amlMessageFor, normalizeHandle, CASHTAG_REGEX } from '@/features/social/constants/social.constants';
+import { classifySendFailure, insufficientBalanceCopy } from '@/features/social/sendError';
+import { getWallet } from '@/api/wallet.api';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
+import { promptWalletTopUp } from '@/lib/walletTopUp';
 import type { Cashtag } from '@/features/social/types';
 import { sanitizeMoneyInput } from '@/utils/money';
 
@@ -52,13 +57,59 @@ export default function SendMoney() {
   const amlMsg = amountKobo > 0 ? amlMessageFor(amountKobo, remaining) : null;
   const canSend = amountKobo > 0 && !amlMsg && !!recipient && !resolving;
 
+  // A cashtag send is a WALLET debit (ledger: sender → escrow → recipient), so
+  // the balance that decides it is the one Add Money writes. Same query key as
+  // TransferScreen so both rails share — and invalidate — one cache entry.
+  const walletQuery = useQuery({ queryKey: ['wallet', 'balance'], queryFn: getWallet, staleTime: 30_000 });
+  const balanceKobo = Math.round((walletQuery.data?.balance ?? 0) * 100); // Wallet.balance is naira major units
+  // Only a balance the app actually read may refuse a send. When every source
+  // failed (balanceUnavailable) the read is not evidence of ₦0 — telling a
+  // funded user they are broke is worse than staying quiet — so the send goes
+  // ahead and the ledger answers 402, which this screen handles identically.
+  const balanceKnown = walletQuery.isSuccess && walletQuery.data?.balanceUnavailable !== true;
+
+  /** The dialog the user sees when a send cannot go through, with its fix. */
+  const showSendFailure = async (error: unknown) => {
+    // No balance label here on purpose: reaching the server's 402 means the
+    // client's own read did NOT flag a shortfall (it was still loading, or it
+    // disagreed with the ledger). Quoting that figure would put a number on
+    // screen the ledger just contradicted, so the server path uses the
+    // amount-free wording and only the pre-flight names both figures.
+    const failure = classifySendFailure(error);
+    if (failure.cta === 'top_up') {
+      // Shared money-rail dialog: "Insufficient balance" → Top up wallet →
+      // /wallet/add, rendered by <ConfirmHost/> on web and Alert on native.
+      await promptWalletTopUp(failure.message);
+      return;
+    }
+    if (failure.cta === 'verify') {
+      const go = await confirmAsync({
+        title: failure.title,
+        message: failure.message,
+        confirmLabel: failure.ctaLabel,
+        cancelLabel: 'Not now',
+      });
+      if (go) router.push('/kyc');
+      return;
+    }
+    await alertAsync({ title: failure.title, message: failure.message });
+  };
+
   const submit = async () => {
     if (!canSend) return;
+    // Pre-flight the wallet before spending a request the ledger will refuse.
+    // This is the path the bug report describes: enter an amount larger than
+    // the balance and the old code answered "Could not send, please try
+    // again" — true of a network blip, useless here, and silent on web.
+    if (balanceKnown && amountKobo > balanceKobo) {
+      await promptWalletTopUp(insufficientBalanceCopy(formatNaira(amountKobo), formatNaira(balanceKobo)));
+      return;
+    }
     try {
       await send.mutateAsync({ toHandle: target, amountKobo, note: note.trim() || undefined });
       setDone(true);
-    } catch {
-      Alert.alert('Could not send', 'Please try again.');
+    } catch (error) {
+      await showSendFailure(error);
     }
   };
 
