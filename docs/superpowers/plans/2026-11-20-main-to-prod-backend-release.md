@@ -369,7 +369,7 @@ railway-upped it by hand.
 | **G6** | Client-exposure census — **measured 2026-11-20, see §3.5** | `git grep` on both tips + live BFF probes + the prod boost screen | **Resolved as to behavior, open as to audience.** The prod-lineage package picker fails **closed** (`arr()` empties an object; a `tier`-only POST 400s; Confirm needs `!!selectedTier`), the custom-date boost path survives unchanged, and there is **no silent-mispricing path**. What remains is the owner's §11 Q3: how many installed `prod`-lineage builds exist. A `tiers → pricing` alias is **not** a valid shim (different payload shape) — see §3.5. |
 | **G7** | Rollback capacity proven | existing plan **Task 3**, still open | a dated dump of the prod DB **and a restore drill into a scratch database** — a backup never restored is not a backup |
 | **G8** | Module-flag registry parity | `platform_module_registry` rows vs main's mount list | production serves no `readiness <> 'ready'` module as live; staging's two missing flags (`PHARMACY_SYMPTOM_SEARCH`, `HEALTH_TRIAGE`) show this class of gap is real |
-| **G9** | Money-path smoke baseline captured *before* the window | `GET /api/v1/public/health`, plus the ledger's existing unauth route table | so §8 compares against a same-day baseline, not a month-old one |
+| **G9** | Money-path smoke baseline captured *before* the window — **done 2026-11-20, see §5.2** | backend-host probes with correct methods, all three planes | baseline recorded (health 200 ×3, fx/cards 401 prod+staging, admin/contests 401 ×3, maplerad 404 ×3, boost pair as expected); §8 now compares against a same-day table, and it establishes **staging — not dev — as the canary assertion** |
 | **G10** | **Post-release boost price is an approved price list** (new, from §3.5) | read-only DB probe of `mkt_boost_daily_rate` + `mkt_boost_packages` on production, via the `ops-db-push-scoped.yml` pattern | the `id='default'` row exists (else every boost purchase 500s — `GetBoostDailyRate` has no fallback), **and** ₦100/day flat is the price the owner actually wants, given it replaces a ₦500–₦50,000 package ladder (`diamond` −80%, `enterprise` −88%) |
 
 **G5 method warning — the recipe written here originally was unsafe.** It said
@@ -424,6 +424,31 @@ Four consequences for this plan:
    with `commitSha`, or `railway up` from a clean worktree) so it can serve as the canary for
    *this* release, and treat the F2 repair as its own open item, not a precondition we can
    hand to chance.
+
+### 5.2 G9 money-path baseline, captured read-only 2026-11-20 ~11:50Z
+
+Probed against the **backend hosts directly** (not through a BFF, so no proxy can soften a
+status), with the registered HTTP method each route declares:
+
+| plane | build stamp | `GET /api/v1/public/health` | `POST /api/v1/fx/cards` | `GET /api/connect/admin/contests` | `POST /api/webhooks/maplerad/go` | `GET /v1/marketplace/boosts/tiers` | `GET /v1/marketplace/boosts/pricing` |
+|---|---|---|---|---|---|---|---|
+| production | `d3401f574` | 200 | 401 | 401 | 404 | **200** | 404 |
+| staging | `773fe0285` | 200 | 401 | 401 | 404 | 404 | **200** |
+| development | `a05b8676e` | 200 | **404** | 401 | 404 | 404 | **500** |
+
+Four things this settles:
+
+1. **The stamps re-confirm §2 and confirm nothing deployed** during this review — all three still
+   report the same commits measured at 09:05Z.
+2. **Staging is the exact expected post-cutover answer set** for the boost pair: `tiers` 404,
+   `pricing` 200. §8 step 2 should assert that, not the production row.
+3. **Development is not a valid canary**, twice over: `/boosts/pricing` → 500 (no
+   `mkt_boost_daily_rate` seed row — §3.5/G10) *and* `POST /api/v1/fx/cards` → **404** where the
+   other two planes return 401. A 404 on a registered POST means the route is not **mounted**,
+   which is flag-gating (`FEATURE_FX_ENABLED` is set in production and absent on dev), not a
+   contract difference. So a green dev probe proves nothing about prod, and a red one proves less.
+4. **Maplerad is dark on all three planes** (404 with the correct POST method), independently
+   re-proving §3.6 — main's deletion removes dead code, not a live provider.
 
 ---
 
