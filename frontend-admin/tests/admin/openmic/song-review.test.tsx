@@ -5,14 +5,21 @@
 // gap: the decision reaches the review route in the server's field names,
 // through the web proxy, and the audio is fetched only when asked for.
 //
+// The second group guards the review screen as a *queue*: the tab renders every
+// song twice (a table above a card per row) used to be the operator's whole
+// triage, with decided songs interleaved with the ones needing work, no way to
+// narrow the list, and `approved` — the decision that shows the song to nobody —
+// pre-selected on every row.
+//
 // `fetch` is stubbed rather than the service, so what is asserted is the whole
 // client chain (panel → service → webProxyBase → request), which is exactly the
 // part that can be silently wrong: a body field named `decision` instead of
 // `status`, or a song path that skips the proxy and 404s in this app.
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import OpenMicSubmissionReviewPanel from '@/features/openmic/song-review-panel';
+import { OPEN_MIC_REVIEW_DECISION_HINTS } from '@/features/openmic/review-decisions';
 import type { OpenMicSubmissionRow } from '@/services/openMicAdminService';
 
 // Same origin jsdom is configured with (vitest.config.ts environmentOptions),
@@ -47,6 +54,17 @@ function lastCall(): Call {
   return call;
 }
 
+/** The card a row renders into, so a case with several rows can address one. */
+function card(id: string): HTMLElement {
+  return screen.getByTestId(`submission-card-${id}`);
+}
+
+function cardIds(): string[] {
+  return screen
+    .queryAllByTestId(/^submission-card-/)
+    .map((el) => String(el.getAttribute('data-testid')).replace('submission-card-', ''));
+}
+
 beforeEach(() => {
   calls.length = 0;
   responder = () => ({ ok: true, status: 200, json: {} });
@@ -73,7 +91,7 @@ describe('Open Mic song review in the admin console', () => {
 
     fireEvent.change(screen.getByLabelText('Decision'), { target: { value: 'rejected' } });
     fireEvent.change(screen.getByLabelText('Note to the artist'), { target: { value: 'The verse is the beat’s own demo.' } });
-    fireEvent.click(screen.getByRole('button', { name: /Apply/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Reject song/i }));
 
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(lastCall().method).toBe('POST');
@@ -122,19 +140,19 @@ describe('Open Mic song review in the admin console', () => {
     click.mockRestore();
   });
 
-  it('keeps Apply dead until a decision that messages the artist carries a note', async () => {
+  it('keeps the button dead until a decision that messages the artist carries a note', async () => {
     // A blank note is what sends the artist "Please review admin feedback on your
     // submission." with nothing to act on; the server accepts it, so the console
     // is the only place that can stop it.
     responder = () => ({ ok: true, status: 200, json: { success: true, submission: submission({ status: 'rejected' }) } });
     render(<OpenMicSubmissionReviewPanel submissions={[submission()]} onRefresh={() => {}} />);
     fireEvent.change(screen.getByLabelText('Decision'), { target: { value: 'rejected' } });
-    expect(screen.getByRole('button', { name: /Apply/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Reject song/i })).toBeDisabled();
     expect(screen.getByRole('alert')).toHaveTextContent(/write the note first/i);
 
     fireEvent.change(screen.getByLabelText('Note to the artist'), { target: { value: 'Re-record the hook clean.' } });
-    expect(screen.getByRole('button', { name: /Apply/i })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: /Apply/i }));
+    expect(screen.getByRole('button', { name: /Reject song/i })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: /Reject song/i }));
     await waitFor(() => expect(calls).toHaveLength(1));
   });
 
@@ -156,7 +174,8 @@ describe('Open Mic song review in the admin console', () => {
     // that may read this tab, so 403 is a real answer an operator hits.
     responder = () => ({ ok: false, status: 403, json: { error: 'Forbidden' } });
     render(<OpenMicSubmissionReviewPanel submissions={[submission()]} onRefresh={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: /Apply/i }));
+    fireEvent.change(screen.getByLabelText('Decision'), { target: { value: 'disqualified' } });
+    fireEvent.click(screen.getByRole('button', { name: /Disqualify song/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/403/);
     expect(screen.queryByRole('status')).toBeNull();
   });
@@ -173,7 +192,7 @@ describe('Open Mic song review in the admin console', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('refreshes the list after a decision so the table shows the new status', async () => {
+  it('refreshes the list after a decision so the queue shows the new status', async () => {
     responder = () => ({ ok: true, status: 200, json: { success: true, submission: submission({ status: 'published_for_voting' }) } });
     const onRefresh = vi.fn();
     render(
@@ -183,7 +202,107 @@ describe('Open Mic song review in the admin console', () => {
         refreshing={false}
       />,
     );
+    fireEvent.change(screen.getByLabelText('Note to the artist'), { target: { value: 'You are on the leaderboard.' } });
     fireEvent.click(screen.getByRole('button', { name: /Apply/i }));
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('Open Mic submissions as a review queue', () => {
+  const pending = submission({ id: 'p1', stageName: 'Laga Laga', songTitle: 'One Shot', submittedAt: '2026-11-19T09:00:00.000Z' });
+  const olderPending = submission({ id: 'p2', stageName: 'Tunde', songTitle: 'Night Run', submittedAt: '2026-11-17T09:00:00.000Z' });
+  const published = submission({ id: 'd1', stageName: 'Bisi', songTitle: 'Owambe', status: 'published_for_voting', submittedAt: '2026-11-20T09:00:00.000Z' });
+
+  it('shows the hand-ins that still need a decision first, and hides the decided ones', () => {
+    render(<OpenMicSubmissionReviewPanel submissions={[published, olderPending, pending]} onRefresh={() => {}} />);
+    // The default scope is the backlog: newest hand-in first, decided songs out.
+    expect(cardIds()).toEqual(['p1', 'p2']);
+    expect(screen.getByText(/2 awaiting a decision/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Which hand-ins to show'), { target: { value: 'all' } });
+    expect(cardIds()).toEqual(['p1', 'p2', 'd1']);
+  });
+
+  it('narrows the queue by artist or song name', () => {
+    render(<OpenMicSubmissionReviewPanel submissions={[published, olderPending, pending]} onRefresh={() => {}} />);
+    fireEvent.change(screen.getByLabelText('Which hand-ins to show'), { target: { value: 'all' } });
+    fireEvent.change(screen.getByLabelText('Search hand-ins'), { target: { value: 'night' } });
+    expect(cardIds()).toEqual(['p2']);
+  });
+
+  it('says when nothing matches, and offers one click back to the whole queue', () => {
+    render(<OpenMicSubmissionReviewPanel submissions={[published, olderPending, pending]} onRefresh={() => {}} />);
+    fireEvent.change(screen.getByLabelText('Search hand-ins'), { target: { value: 'zzz' } });
+    expect(cardIds()).toEqual([]);
+    expect(screen.getByText(/nothing matches/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Clear filters/i }));
+    expect(cardIds()).toEqual(['p1', 'p2']);
+    expect(screen.queryByText(/nothing matches/i)).toBeNull();
+  });
+
+  it('starts on the decision that actually puts the song in front of voters', () => {
+    render(<OpenMicSubmissionReviewPanel submissions={[pending]} onRefresh={() => {}} />);
+    // `approved` alone accepts the file and shows it to nobody, so pre-selecting
+    // it made the silent outcome the one-click path on every row.
+    expect((screen.getByLabelText('Decision') as HTMLSelectElement).value).toBe('published_for_voting');
+    // …which is also a decision that messages the artist, so it cannot fire blank.
+    expect(screen.getByRole('button', { name: /Apply/i })).toBeDisabled();
+  });
+
+  it('says what the chosen decision does before the operator commits to it', () => {
+    render(<OpenMicSubmissionReviewPanel submissions={[pending]} onRefresh={() => {}} />);
+    // OPEN_MIC_REVIEW_DECISION_HINTS existed for exactly this and was never rendered.
+    expect(screen.getByText(OPEN_MIC_REVIEW_DECISION_HINTS.published_for_voting)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Decision'), { target: { value: 'approved' } });
+    expect(screen.getByText(OPEN_MIC_REVIEW_DECISION_HINTS.approved)).toBeInTheDocument();
+    expect(screen.queryByText(OPEN_MIC_REVIEW_DECISION_HINTS.published_for_voting)).toBeNull();
+  });
+
+  it('carries the facts the separate table used to hold', () => {
+    render(
+      <OpenMicSubmissionReviewPanel
+        submissions={[submission({ id: 'f1', isFinalist: true, isWinner: true, voteCount: 41, submittedAt: '2026-11-18T09:00:00.000Z' })]}
+        onRefresh={() => {}}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText('Which hand-ins to show'), { target: { value: 'all' } });
+    const row = card('f1');
+    expect(within(row).getByText('Finalist')).toBeInTheDocument();
+    expect(within(row).getByText('Winner')).toBeInTheDocument();
+    expect(within(row).getByText(/41 votes/i)).toBeInTheDocument();
+    expect(within(row).getByText(/18 Nov 2026/i)).toBeInTheDocument();
+  });
+
+  it('leaves the timestamp clause out for a hand-in that carries none', () => {
+    // The card used to read "handed in no timestamp" for a row whose
+    // `submittedAt` was missing or unparsable; the clause goes instead.
+    render(
+      <OpenMicSubmissionReviewPanel
+        submissions={[submission({ id: 'n1', submittedAt: undefined })]}
+        onRefresh={() => {}}
+      />,
+    );
+    expect(within(card('n1')).queryByText(/handed in/i)).toBeNull();
+    // …without taking the rest of the meta line with it.
+    expect(within(card('n1')).getByText(/Laga Laga · Afro-fusion/)).toBeInTheDocument();
+  });
+
+  it('moves the operator to the next undecided hand-in once this one is decided', async () => {
+    responder = () => ({ ok: true, status: 200, json: { success: true, submission: submission({ id: 'p1', status: 'published_for_voting' }) } });
+    const onRefresh = vi.fn();
+    render(<OpenMicSubmissionReviewPanel submissions={[pending, olderPending]} onRefresh={onRefresh} />);
+
+    fireEvent.change(within(card('p1')).getByLabelText('Note to the artist'), { target: { value: 'On the leaderboard.' } });
+    fireEvent.click(within(card('p1')).getByRole('button', { name: /Apply/i }));
+
+    // The card stays mounted — losing the confirmation the operator just earned
+    // is what the old reload-the-tab behaviour did — and its pill shows the new
+    // status without waiting for the refetch.
+    await waitFor(() => expect(card('p1')).toBeInTheDocument());
+    await waitFor(() => expect(within(card('p1')).getByTestId('submission-status-p1')).toHaveTextContent(/published for voting/i));
+    // …while the keyboard lands on the row that still needs work.
+    await waitFor(() => expect(document.activeElement).toBe(document.getElementById('decision-p2')));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 });
