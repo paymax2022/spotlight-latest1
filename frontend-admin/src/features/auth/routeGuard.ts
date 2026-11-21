@@ -57,6 +57,24 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/open-mic', permissions: ['dashboard:view'] },
   { prefix: '/admin/contests', permissions: ['dashboard:view'] },
 
+  // The CONTESTS & PROGRAMS cluster the sidebar puts under 'Contests'. Listed
+  // with the SAME permission pairs AdminSidebar.tsx uses for those entries
+  // (contest.create / contest.update / contest.publish), because with no mapping
+  // here the whole cluster — Competitions, Participants, Results & Leaderboard,
+  // Contest Settings — fell through to the default-deny baseline, a slug no seeded
+  // role holds: the sidebar showed the links and the guard then bounced the same
+  // operator to /admin/unauthorized. Same hole the /admin/admins entry above and
+  // the Path A prefixes just above were added for.
+  { prefix: '/admin/competitions', permissions: ['contest.create', 'contest.update', 'contest.publish'] },
+  // /admin/voting/contestant/[id] is the contestant profile AND the admin-vote
+  // form, and it is what the leaderboard's rows link to — so it has to be listed
+  // AHEAD of the /admin/voting catch-all below, with the contest-operator pair in
+  // addition to votes:manage. A contest operator who can open a leaderboard must be
+  // able to follow its links; voting itself stays enforced server-side
+  // (connect.contests.manage on POST /api/connect/admin/contests/:id/admin-vote).
+  { prefix: '/admin/voting/contestant', permissions: ['votes:manage', 'contest.create', 'contest.update'] },
+  { prefix: '/admin/voting', permissions: ['votes:manage'] },
+
   // Path A console (admin consolidation, see ADR-047): data lives in
   // frontend-web, reached through /api/web-proxy, so its real permission
   // check is server-side there ('finance:view' / 'finance:adjust:initiate' —
