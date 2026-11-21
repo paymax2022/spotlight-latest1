@@ -648,12 +648,18 @@ done
 
 Four expected 401/404/401/401: the two real routes flip from 404 to 401, the invented control path stays
 404, and that is what makes the host request-for-request equal to `www.spotlightng.com`.
-`/api/v1/public/build` must keep reporting the same Go sha — the proof that only the Next layer moved. Roll
+`/api/v1/public/build` is only a before/after pair here, not an expected value: production's Go plane moves
+by itself now (§4), so read it immediately before and immediately after the upload and require that *your*
+upload did not change it. Roll
 back with `deploymentRollback("ea71b561-badf-4dc7-ad4c-052fd65745b3")`, the row that is serving now. And the
-console itself does **not** need a third pass, provided you re-check it: `main` moved three times after
-`f5bfe8848` (`bd1b2aa3e` #1124 touched workflows, `ea908fabe` #1125 touched mobile, `083bd11f9` #1127 touched
-two workflows plus two `frontend-web/tests/unit/voting/` specs and no app code) and
-`git diff --name-only f5bfe8848..origin/main -- frontend-admin` measured 0 files again at 19:28Z, so the
+console itself does **not** need a third pass, provided you re-check it: `main` has moved eight times after
+`f5bfe8848` as of 19:56Z, and exactly one of those commits touches served web code — `3baa3571b` (#1128),
+whose 4 files are `app/open-mic/[slug]/apply/page.tsx`, `app/open-mic/[slug]/enter/page.tsx`,
+`src/features/openmic/handin-record.ts` and `src/server/openmic/handin-record.ts`. So this one upload also
+carries #1128's hand-in fix to the BFF, which the cPanel host received and the Railway host did not.
+The rest of the eight are workflows, docs, mobile, and two `frontend-web/tests/unit/voting/` specs
+(`083bd11f9` #1127) that are not served code.
+`git diff --name-only f5bfe8848..origin/main -- frontend-admin` measured 0 files again at 19:56Z, so the
 deployed console build is already head-current. Re-run that one-line diff at upload time — the moment it is
 non-zero, the console needs
 its own pin again, and §6's `SERVICE=frontend-admin` recipe is the one to use.
