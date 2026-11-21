@@ -130,9 +130,22 @@ describe('readHandinRecord', () => {
   it('degrades to the empty record when the visitor is signed out', async () => {
     harness.requireUser.entry = async () => { throw new Error('UNAUTHORIZED'); };
     await expect(readHandinRecord('open-mic')).resolves.toEqual({
-      inheritance: { email: '', state: '', lga: '', source: 'none' },
+      inheritance: { email: '', state: '', lga: '', instagram: '', tiktok: '', source: 'none' },
       accountEmail: '',
     });
+  });
+
+  it('hands the recorded handles to the form', async () => {
+    // The loader does not filter answers by key, so a registration that wrote
+    // `social.instagram` reaches the screen that decides whether to confirm it.
+    harness.state.rows = [{
+      contest_slug: 'open-mic-competition',
+      updated_at: '2026-11-18T00:00:00.000Z',
+      form_data: { 'social.instagram': '@adaforce', 'social.tiktok': '@ada_tk' },
+    }];
+    const record = await readHandinRecord('open-mic');
+    expect(record.inheritance.instagram).toBe('@adaforce');
+    expect(record.inheritance.tiktok).toBe('@ada_tk');
   });
 
   it('separates the entry email from the account email', async () => {
