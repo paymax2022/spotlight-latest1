@@ -473,11 +473,17 @@ from a clean worktree at `bd1b2aa3e` whose `frontend-web/` tree is provably iden
 host still answered 200 on `/` (88,186 bytes) and 401 on `/api/admin/open-mic/contests` afterwards, so the
 running build never changed. This is the laptop arm of `docs/devops/railway-upload-fault-report.md`, whose
 size-boundary row reads "7,511,269 B accepted / 133,527,512 B refused" and reasons it to Cloudflare's ~100 s
-proxy window at 11.217 Mbps. My archive was 116 MB and the refusals landed at **46 s and 20 s**, so the
+proxy window at 11.217 Mbps. The tree I was archiving is 111 MB of tracked bytes and the refusals landed
+at **46 s and 20 s**, so the
 window is not the whole story and the practical rule is blunter: **this machine cannot upload
-`frontend-web` at all** — the upload §6 got through is near the ceiling, not the middle (measuring the tree the way the script tars it: `frontend-admin` is ~10 MB uncompressed, `frontend-web` ~116 MB, and the laptop accepted the first and refused the second inside a minute). Trimming is
-not an option: `du` puts 102 MB of that 116 MB in `frontend-web/public/` — 92 MB of it in 351 image files,
-some of them 2–5 MB PNGs — which the site serves, so any exclusion ships a different tree than CI would.
+`frontend-web` at all** — the upload §6 got through is near the ceiling, not the middle measured the way the CLI sees it: `git ls-tree -r -l origin/main` sums
+`frontend-admin` at 8.0 MB over 1,016 tracked files — that is what §6 uploaded successfully — against
+`frontend-web` at 111.1 MB over 2,128, and this laptop accepted the first and refused the second inside a
+minute). Trimming is not an option: 100.6 MB of those 111.1 MB is `frontend-web/public/`, and every one of
+its 438 files is an image (largest `assets/img/faq/season1-7.png` at 5.3 MB), which the site serves — so any
+exclusion ships a different tree than CI would. One more reason the size only bites here: both uploads ran
+from a CLEAN worktree, which has no `node_modules`; the same command from this checkout would try to carry
+925 MB of dependencies, because `railway-deploy.sh` passes `--no-gitignore`.
 
 **What is not the answer.** `deploy-railway-action.yml` is the only other runner-shaped lane and it is dark
 by design: `gh variable list` shows `RAILWAY_DEPLOY_ENABLED true` and no `RAILWAY_ACTION_DEPLOY_ENABLED`,
@@ -487,7 +493,7 @@ deployment with the commit"* — which is the exact unattributability §6 spends
 second switch and re-targeting a frozen gate to work around F2 is an unrequested change to the release
 machinery, and it would still deploy a branch whose `frontend-web` does not build.
 
-### 8. Command 6 — re-pin the production web BFF (owner-run, needs a link that can carry 116 MB)
+### 8. Command 6 — re-pin the production web BFF (owner-run, needs a link that can carry 111 MB)
 
 ```bash
 git worktree add /tmp/web-deploy <merged-main-sha> && cd /tmp/web-deploy
