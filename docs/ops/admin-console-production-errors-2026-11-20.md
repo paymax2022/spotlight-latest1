@@ -278,6 +278,13 @@ that check too. Re-measured at the time this was written, with `main` already tw
 `20271800000000_academy_pricing_formats.sql`, because neither later commit touches `frontend-admin` or a
 migration. So #1103's migration is still the single thing standing between this pin and `main`'s tip.
 
+  **Superseded the same evening, 2026-11-21:** that step was taken. `20271800000000` is now applied to the
+  production database (scoped lane: plan `44918300865` → apply `44918503337`, `✓ applied + history
+  recorded`, `recorded: 20271800000000`), and the console has been re-pinned to `f5bfe88485167330c9fe6b16c68b79615dd0c8d9`
+  — deployment `537049cc-8c0e-4e05-8db9-8ee473d8c8f1`, `SUCCESS` at 15:24:49.845Z, `reason = "deploy"`,
+  `cliMessage` = that full sha. The pin is no longer "below head for a schema reason"; §7 explains what is
+  *still* missing, and it is a different service.
+
 The absence is also readable directly rather than inferred from a skipped job. Run `44916982535`
 (`Ops DB Push (manual)`, `MODE: list`, whose job title is `supabase list (production)` — that workflow
 refuses outright if the staging project id equals the production ref, so the label is enforced, not
@@ -379,6 +386,115 @@ attributable to a commit, and it is what makes the *next* deploy revertible to a
 
 Do not "fix" a staging refusal by re-running the Release run — that also re-runs
 `migrate production database`.
+
+### 7. The applicant buttons are live in the console and dead one hop later
+
+The console is verifiably at `f5bfe8848`, and clicking a contest's applicant list still fails against
+production — for a reason nothing on `frontend-admin` can fix. The console does not answer that request
+itself. `frontend-admin/app/api/web-proxy/[...path]/route.ts` forwards it to `WEB_API_BASE_URL`, and the
+host behind that variable has not received `main` since 2026-11-16. So the feature is shipped, deployed,
+and blocked one hop outside the service this file is about.
+
+**Which host, proven without reading the value.** Run `44919798312` (`Ops - list Railway variable names`,
+job `list frontend-admin variables (production)`) prints digests, never values:
+`WEB_API_BASE_URL  (len 51, sha256 b6626bb2)`. Hashing candidates locally, `https://frontend-web-production-9259.up.railway.app`
+is len 51 / `b6626bb2` and `https://www.spotlightng.com` is len 27 / `ae218bdc`. The console therefore
+proxies to the Railway `frontend-web` production instance and cannot be proxying to the customer domain.
+
+**Reading a code on that host needs a control.** `{"success":false,"error":"No API route matches GET …"}`
+is emitted by *two* layers — `frontend-web/app/api/[...notFound]/route.ts:26` and the Go
+`backend/internal/app/noroute.go:18` — so the wording alone identifies nothing. The control is an invented
+path: `/api/admin/definitely-not-a-route` 404s on both web hosts, which is what licenses reading a 401 as
+"this route exists and its guard ran". The rule cannot be read off the console itself: production's
+`frontend-admin` answers 401 `{"error":"Not authenticated."}` for **every** `/api/web-proxy/*` path, invented
+ones included, because its session gate runs before routing, and development's console answers 500
+`WEB_API_BASE_URL is not set …` for the same reason it is useless as a control. The web host is the only
+place this is observable. Measured 2026-11-21, unauthenticated:
+
+| request | `…web-production-9259` | `www.spotlightng.com` |
+| --- | --- | --- |
+| `/api/admin/open-mic/contests` | 401 | 401 |
+| `/api/admin/academy/interest-areas` | 401 | 401 |
+| `/api/admin/open-mic/contests/<uuid>/applicants` | **404** | 401 |
+| `/api/admin/academy/pricing-formats` | **404** | 401 |
+| `/api/v1/public/build` | 200 `b9c21b534…` | 200 `b9c21b534…` |
+
+The last row matters twice: both web hosts sit in front of the *same* Go backend, so the two 404s are not
+a backend difference. They are the Next layer. `applicants` entered `main` with #1109 (`9b2ec67b7`) and
+`pricing-formats` with #1103 (`2e4829e89`), both on 2026-11-21; the customer domain has them because
+`sync-frontend-web.yml` ran for each (`44889155223` 09:20:56Z, `44896430848` 10:53:03Z, `44908742535`
+13:24:56Z). The Railway BFF does not, because nothing has deployed it.
+
+**Why nothing has deployed it.** `docs/devops/deployment-matrix.md` records this service as fed by
+`release.yml` "on every push to `main`", and `release.yml`'s production legs do exist since `ef97ec64b`
+(#1037, 2026-11-16 09:01 +0100). But `deploy Production` needs `migrate production database`, which needs
+`smoke Staging`, which needs `deploy Staging` — and `deploy Staging` is exactly where F2 kills every train.
+The service's own history says so, and says it more strongly than the matrix implies: for environment
+`f84c4558-8cbf-43e5-8e1b-f19ee3677133` the newest `SUCCESS` row is `ea71b561-badf-4dc7-ad4c-052fd65745b3`
+at **2026-11-16T09:06:41.408Z**, and reading its `meta` shows it was *not* a train — `cliCaller =
+"agent_unknown:node:qoder"`, `cliMessage = "main-ef97ec64b-prod-web"`, i.e. the hand `railway up` that
+pushed #1037's own commit five minutes after `release.yml` grew the production legs. The next attempt,
+`1282e63e-2813-40ab-a056-c7417d62c774`, FAILED at 2026-11-18T14:35:15.771Z, and there is nothing between
+that and §7's own attempts. So **no release train has ever reached production's `frontend-web`** — every
+row this service has is a CLI upload, exactly like the console's history in §5. **F2 is not a staging-only
+fault: because production is downstream of staging, it has frozen production's two frontends, and the only
+moves either of them has made since #1037 landed are hand uploads** — §6's console pin being the latest.
+
+**Why the obvious fix is wrong.** The temptation is to re-point `WEB_API_BASE_URL` at `www.spotlightng.com`
+now that the digest proves the two are distinguishable and both validate the same Supabase tenant (the
+console's login page and www both embed project `nmseefdlliejmdbxytej`, so a bearer issued to the console
+verifies at either). Do not. `docs/devops/deployment-matrix.md`'s `frontend-web` row is explicit: this host
+is *"**A different host from the cPanel row above, and not interchangeable with it**"*, it is the BFF that
+`mobile-app/reactnative/eas.json:65` bakes into the shipped store build's `EXPO_PUBLIC_API_BASE_URL`, and
+*"because a store build bakes the base URL at submission time, a stale host here cannot be re-pointed
+without a new submission"*. Re-pointing the console would leave the mobile app pointing at the stale host
+anyway. The stale host is the bug; fix the staleness.
+
+**What I tried, and the bound it refines.** Command 5's recipe, re-targeted at `frontend-web` with the
+production matrix's own shape (`upload_path: frontend-web`, `root_flag: --path-as-root`, `build_dir: ''`),
+from a clean worktree at `bd1b2aa3e` whose `frontend-web/` tree is provably identical to `origin/main`
+(`git diff --name-only … -- frontend-web` → 0 files) and to what www serves today. Two attempts, both
+`UPLOAD_FAILED … status code 524` — rows `f65b9b66-4d13-439b-944b-69ed32071011` (15:55:52.210Z) and
+`5510eee4` (15:58:45.363Z), each `reason = "deploy"` with `cliMessage = bd1b2aa3e…`, each inert: the live
+host still answered 200 on `/` (88,186 bytes) and 401 on `/api/admin/open-mic/contests` afterwards, so the
+running build never changed. This is the laptop arm of `docs/devops/railway-upload-fault-report.md`, whose
+size-boundary row reads "7,511,269 B accepted / 133,527,512 B refused" and reasons it to Cloudflare's ~100 s
+proxy window at 11.217 Mbps. My archive was 116 MB and the refusals landed at **46 s and 20 s**, so the
+window is not the whole story and the practical rule is blunter: **this machine cannot upload
+`frontend-web` at all** — the 7.7 MB that succeeded for §6 is near the ceiling, not the middle. Trimming is
+not an option: `du` puts 102 MB of that 116 MB in `frontend-web/public/` (single PNGs of 2–5 MB), which the
+site serves, so any exclusion ships a different tree than CI would.
+
+**What is not the answer.** `deploy-railway-action.yml` is the only other runner-shaped lane and it is dark
+by design: `gh variable list` shows `RAILWAY_DEPLOY_ENABLED true` and no `RAILWAY_ACTION_DEPLOY_ENABLED`,
+its branch gate still tests `refs/heads/{develop,staging,prod}` (frozen since 2026-11-15), and its own
+header records that the marketplace action *"cannot pass `--message`, so Railway will not label the
+deployment with the commit"* — which is the exact unattributability §6 spends a paragraph on. Flipping a
+second switch and re-targeting a frozen gate to work around F2 is an unrequested change to the release
+machinery, and it would still deploy a branch whose `frontend-web` does not build.
+
+### 8. Command 6 — re-pin the production web BFF (owner-run, needs a link that can carry 116 MB)
+
+```bash
+git worktree add /tmp/web-deploy <merged-main-sha> && cd /tmp/web-deploy
+SERVICE=frontend-web RAILWAY_ENV=production SHA=<merged-main-sha> \
+UPLOAD_PATH=frontend-web ROOT_FLAG=--path-as-root BUILD_DIR='' \
+RAILWAY_PROJECT=e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
+RAILWAY_HTTP_TIMEOUT=600 RAILWAY_TOKEN=<the Production token> \
+bash scripts/ci/railway-deploy.sh
+```
+
+Run it from a runner or any machine with the uplink this one lacks; the flags are the ones `release.yml`'s
+own production matrix passes, and `railway-deploy.sh` polls by `meta.cliMessage` so the row it waits for is
+attributable. The cheaper version of the same thing is fixing F2, which unblocks every leg at once.
+
+Verify after it lands: the two bold 404s above become 401, making the host request-for-request equal to
+`www.spotlightng.com`, and `/api/v1/public/build` keeps reporting the same Go sha — which is the proof that
+only the Next layer moved. Roll back with `deploymentRollback("ea71b561-badf-4dc7-ad4c-052fd65745b3")`, the
+row that is serving now. And the console itself does **not** need a third pass: `main` moved twice after
+`f5bfe8848` (`bd1b2aa3e` #1124 touched workflows, `ea908fabe` #1125 touched mobile) and
+`git diff --name-only f5bfe8848..origin/main -- frontend-admin` is 0 files, so the deployed build is already
+head-current in every `frontend-admin` path.
 
 ## Companion file
 
