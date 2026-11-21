@@ -963,6 +963,46 @@ export async function listBeatDownloads(contestId?: string) {
   }
 }
 
+/**
+ * The most recent beat download recorded for one artist in one edition.
+ *
+ * `beat_download_logs` is the only place the beat hand-off is recorded, and
+ * `logBeatDownload` deliberately treats a failed insert as non-fatal ("beat
+ * access should not fail because the analytics table is unavailable"), so this
+ * read is just as tolerant: a missing or oddly-shaped table means "we cannot
+ * show that step", never an error for the caller.
+ */
+export async function latestBeatDownloadAt(input: {
+  contestId: string;
+  userId?: string | null;
+}): Promise<string | null> {
+  if (!shouldUseDb()) return null;
+  const contestId = String(input.contestId || '').trim();
+  if (!contestId) return null;
+  try {
+    const supabase = createAdminClient();
+    let query = supabase
+      .from('beat_download_logs')
+      .select('downloaded_at')
+      .eq('competition_id', contestId)
+      .order('downloaded_at', { ascending: false })
+      .limit(1);
+    const userId = String(input.userId || '').trim();
+    if (userId) query = query.eq('user_id', userId);
+    const { data, error } = await query;
+    if (error) throw error;
+    const first = safeArray<any>(data)[0];
+    const at = first?.downloaded_at;
+    return at ? String(at) : null;
+  } catch (error) {
+    console.warn(
+      '[open-mic] beat download history unavailable:',
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
+}
+
 export async function createApplication(input: Parameters<typeof createApplicationMemory>[0]) {
   if (!shouldUseDb()) throw new Error('Open Mic DB is not configured.');
   try {

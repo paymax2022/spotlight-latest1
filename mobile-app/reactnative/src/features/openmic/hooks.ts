@@ -35,7 +35,8 @@ import {
   type OpenMicSongForm,
 } from './api';
 import { MAX_SONG_BYTES, SONG_CONTENT_TYPE, SONG_EXTENSION, looksLikeOpenMicSlug } from './constants';
-import { asDownload, asPreview } from './media';
+import { isPlayableHttpUrl } from './absolute-url';
+import { asDownload, asPreview, mediaUrl } from './media';
 import {
   identityFromUser,
   pickOpenMicApplication,
@@ -43,7 +44,14 @@ import {
   withPrefillDefaults,
   type SongFormPrefill,
 } from './prefill';
-import { deriveStage, formatStamp, type OpenMicStage } from './state';
+import {
+  canSubmitSong,
+  deriveStage,
+  describeStage,
+  formatStamp,
+  playableSongUrl,
+  type OpenMicStage,
+} from './state';
 import {
   downloadBeat,
   shareSavedBeat,
@@ -116,6 +124,67 @@ export function useArtistIdentity() {
     email: query.data?.email ?? '',
     displayName: query.data?.displayName ?? '',
     signedIn: Boolean(query.data?.userId),
+  };
+}
+
+/**
+ * Everything a screen needs to show the Open Mic phase, from one server answer.
+ *
+ * The hand-in screen and the application status screen render the same stage
+ * machine, so the derivation lives here once: which cards are on screen, the
+ * copy that explains the stage, the address the player may actually use, and
+ * the identity the beat download is logged against. A screen keeps only its own
+ * pull-to-refresh, because that is a property of the scroll view, not of Open Mic.
+ */
+/** Stages where the song card has something the artist can act on. */
+const UPLOAD_STAGES: OpenMicStage['kind'][] = [
+  'ready_to_upload',
+  'needs_submit',
+  'window_closed',
+  'song_live',
+];
+
+export interface OpenMicPhase {
+  stage: OpenMicStage;
+  eligibility: OpenMicEligibility | null;
+  copy: { title: string; body: string };
+  /** The server's own upload gate, passed through untouched. */
+  allowed: boolean;
+  /** Playable in a native player, or null — never an address that will 404. */
+  playableUrl: string | null;
+  /** The name the beat download is recorded against. */
+  artistName: string;
+  artistEmail: string;
+  showBeat: boolean;
+  showUpload: boolean;
+  /** True when the screen was opened without the edition it needs. */
+  missingSlug: boolean;
+  refresh: () => Promise<unknown>;
+  refreshing: boolean;
+}
+
+export function useOpenMicPhase(contestSlug: string): OpenMicPhase {
+  const { stage, eligibility, refresh, refreshing } = useOpenMicStage(contestSlug);
+  const identity = useArtistIdentity();
+
+  // The address is the server's, the origin is this device's, and only an
+  // http(s) result may reach a native player.
+  const resolved = mediaUrl(playableSongUrl(stage));
+  const playable = resolved && isPlayableHttpUrl(resolved) ? resolved : null;
+
+  return {
+    stage,
+    eligibility,
+    copy: describeStage(stage),
+    allowed: canSubmitSong(eligibility),
+    playableUrl: playable,
+    artistName: identity.displayName || identity.email,
+    artistEmail: identity.email,
+    showBeat: 'beat' in stage && stage.beat !== null,
+    showUpload: UPLOAD_STAGES.includes(stage.kind),
+    missingSlug: !contestSlug,
+    refresh,
+    refreshing,
   };
 }
 
