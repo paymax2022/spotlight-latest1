@@ -1,22 +1,31 @@
-// The song half of the Open Mic screen: pick the finished MP3, confirm the facts
-// the entry needs, hand it in.
+// The song half of the Open Mic screen: pick the finished MP3, name the track,
+// hand it in.
 //
 // Why the form looks the way it does:
 //
-//   • What the artist already gave is not asked for twice. Their email came from
-//     the account they signed up with, and their state and LGA are the answers on
-//     their own approved entry, so those three show as confirmed values with a
-//     "Change" escape rather than as three more required fields. `handinFieldsOnRecord`
-//     decides, and it refuses to confirm anything this form could not have
-//     produced itself — see `prefill.ts`.
+//   • It asks for the song and nothing the artist has already given. Their email
+//     is the account they signed up with; their state, LGA and social handles are
+//     the answers on their own approved entry. Those four leave the screen
+//     entirely and collapse into one "from your entry" line, because a prefilled
+//     input still reads as a question the artist has to decode. `handinFieldsOnRecord`
+//     decides what counts as given, and it refuses to speak for a fact this form
+//     could not have produced itself — see `prefill.ts`.
+//   • "Change" is never hidden behind that line. An artist who spots a typo in the
+//     email their entry gets matched on should fix it before pressing submit, not
+//     after, so one tap puts every recorded question back on screen.
 //   • `POST /api/open-mic/submissions` matches the artist by stage name and email
 //     — and a mistyped stage name is exactly what its duplicate check compares —
 //     so the answers come from the applicant's own registration. Prefill is never
 //     load-bearing: when the application read fails the fields open blank and the
 //     artist types, and nothing is ever hidden behind a value we do not have.
+//   • The recorded values still travel in the payload. The route rejects a hand-in
+//     without `country`, `state`, `lga` and at least one social handle, so the
+//     questions leave the screen while the answers stay in the request — and a
+//     handle the entry never collected stays a field, because the server would
+//     otherwise refuse a song the artist has already recorded.
 //   • The LGA select cascades off the state, like the web entry form. The server
-//     stores these three strings without validating membership, so an out-of-date
-//     option list here can only mislabel an entry, never reject one.
+//     stores these strings without validating membership, so an out-of-date option
+//     list here can only mislabel an entry, never reject one.
 //   • Upload and submit are separate steps the UI does not fuse. `complete` leaves
 //     a `draft` row that voters cannot hear; only `POST /submissions` publishes.
 //     Reporting each phase is what lets an artist whose app died mid-transfer come
@@ -68,10 +77,10 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
   const [owned, setOwned] = useState(false);
   const [samples, setSamples] = useState(false);
   const [problem, setProblem] = useState('');
-  // Tapped "Change" puts the question back on screen for the rest of the visit:
-  // the artist who corrects one of these facts should see the field, not a
-  // read-only row that silently disagrees with what they are about to submit.
-  const [correcting, setCorrecting] = useState({ email: false, location: false });
+  // Tapped "Change" puts every recorded question back on screen for the rest of
+  // the visit: the artist who corrects one of these facts should see all of them,
+  // not a read-only line that silently disagrees with what they submit.
+  const [revealed, setRevealed] = useState(false);
 
   // Only ever fills what is still empty: a prefill response that lands after the
   // artist started typing must not overwrite their edits.
@@ -91,20 +100,28 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
   }, [identity.displayName, identity.email, instagram, prefill, tiktok]);
 
   const lgaOptions = useMemo(() => lgasForState(fields.state), [fields.state]);
-  // A confirmed row may only appear while it still says exactly what the submit
-  // will send. `handinFieldsOnRecord` already refuses to confirm a fact this form
-  // could not have produced itself; these two checks keep the row honest about the
-  // live value, so the moment the artist edits it the field comes back rather than
-  // a caption that mislabels their own answer.
+  // A fact only leaves the screen while the line describing it still says exactly
+  // what the submit will send. `handinFieldsOnRecord` refuses to call a fact
+  // recorded unless this form could have produced the value itself; the live reads
+  // below keep that honest for the value in state, so a fact that is somehow blank
+  // comes back as a field instead of vanishing behind an empty caption.
   const onRecord = handinFieldsOnRecord(prefill, identity.email);
-  const emailStillMatchesRecord = fields.email === (prefill.email || identity.email);
-  const locationStillMatchesRecord =
-    fields.state === prefill.state && fields.lga === prefill.lga;
-  const emailConfirmed = onRecord.email && !correcting.email && emailStillMatchesRecord;
-  const locationConfirmed = onRecord.location && !correcting.location && locationStillMatchesRecord;
-  const emailNote = prefill.email
-    ? 'From your entry. Change it if anything has moved.'
-    : 'From your account. Update it in your profile if it has changed.';
+  const recorded = {
+    email: onRecord.email && !!fields.email.trim(),
+    location: onRecord.location && !!fields.state.trim() && !!fields.lga.trim(),
+    socials: onRecord.socials && !!(instagram.trim() || tiktok.trim()),
+  };
+  const askEmail = revealed || !recorded.email;
+  const askLocation = revealed || !recorded.location;
+  const askSocials = revealed || !recorded.socials;
+  const recordedFacts = [
+    recorded.email && { label: 'Email', value: fields.email },
+    recorded.location && { label: 'State and LGA', value: `${fields.state} · ${fields.lga}` },
+    recorded.socials && {
+      label: 'Social',
+      value: [instagram.trim(), tiktok.trim()].filter(Boolean).join(' · '),
+    },
+  ].filter(Boolean) as { label: string; value: string }[];
   // Bytes the server already holds for this artist's draft row.
   const resumeKey = resumableObjectKey(stage);
   const resumeSubmissionId = stage.kind === 'needs_submit' ? stage.submission.id : '';
@@ -115,6 +132,8 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
       key === 'state' ? { ...previous, state: value, lga: '' } : { ...previous, [key]: value });
   };
 
+  // Every fact hidden above is hidden only while its value is non-empty here, so
+  // this list can never name a question the artist cannot see.
   const missing: string[] = [];
   if (!fields.stageName.trim()) missing.push('stage name');
   if (!fields.email.trim()) missing.push('email');
@@ -224,14 +243,11 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
         onChangeText={(value) => setField('stageName', value)}
         placeholder="Exactly as it appears on your entry"
       />
-      {emailConfirmed ? (
-        <ConfirmedRow
-          label="Email"
-          value={fields.email}
-          note={emailNote}
-          onChange={() => setCorrecting((previous) => ({ ...previous, email: true }))}
-        />
-      ) : (
+      {revealed || !recordedFacts.length ? null : (
+        <RecordedFacts facts={recordedFacts} onChange={() => setRevealed(true)} />
+      )}
+
+      {askEmail ? (
         <TextInputField
           label="Email"
           value={fields.email}
@@ -240,16 +256,9 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
           keyboardType="email-address"
           autoCapitalize="none"
         />
-      )}
+      ) : null}
 
-      {locationConfirmed ? (
-        <ConfirmedRow
-          label="State and LGA"
-          value={`${fields.state} · ${fields.lga}`}
-          note="From your entry. Change it if you have moved."
-          onChange={() => setCorrecting((previous) => ({ ...previous, location: true }))}
-        />
-      ) : (
+      {askLocation ? (
         <>
           <SelectField
             label="State"
@@ -267,7 +276,7 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
             placeholder={fields.state ? 'Select your LGA' : 'Select your state first'}
           />
         </>
-      )}
+      ) : null}
 
       <SelectField
         label="Genre"
@@ -277,22 +286,26 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
         placeholder="Select a genre"
       />
 
-      <TextInputField
-        label="Instagram handle"
-        value={instagram}
-        onChangeText={setInstagram}
-        placeholder="@yourhandle"
-        autoCapitalize="none"
-      />
-      <TextInputField
-        label="TikTok handle"
-        value={tiktok}
-        onChangeText={setTiktok}
-        placeholder="@yourhandle"
-        autoCapitalize="none"
-      />
+      {askSocials ? (
+        <>
+          <TextInputField
+            label="Instagram handle"
+            value={instagram}
+            onChangeText={setInstagram}
+            placeholder="@yourhandle"
+            autoCapitalize="none"
+          />
+          <TextInputField
+            label="TikTok handle"
+            value={tiktok}
+            onChangeText={setTiktok}
+            placeholder="@yourhandle"
+            autoCapitalize="none"
+          />
 
-      <Text style={styles.hint}>At least one of Instagram or TikTok is required.</Text>
+          <Text style={styles.hint}>At least one of Instagram or TikTok is required.</Text>
+        </>
+      ) : null}
 
       <View style={styles.consents}>
         <ConsentRow
@@ -348,33 +361,38 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
   );
 }
 
-interface ConfirmedRowProps {
-  label: string;
-  value: string;
-  note: string;
+interface RecordedFactsProps {
+  facts: { label: string; value: string }[];
   onChange: () => void;
 }
 
 /**
- * A fact the artist already gave, shown as an answer instead of as a required
- * question, with the escape hatch that puts the question back on screen.
+ * The answers the artist already gave, shown on one line instead of as four more
+ * required questions.
  *
- * The note names where the value came from — the account or the approved entry —
- * because those are corrected in different places, and "Change" is never hidden:
- * an artist who spots a typo in the email their entry will be matched on should
- * fix it before pressing submit, not after.
+ * One row rather than one per fact, because these are not questions: the email came
+ * from the account they signed up with and the state, LGA and handles are the
+ * answers on their own approved entry, and the submit re-sends them verbatim.
+ * "Change" is never hidden — an artist who spots a typo in the email their entry
+ * will be matched on should fix it before pressing submit, not after — and it puts
+ * every field back at once, since someone correcting one of these details is
+ * checking the others too.
  */
-function ConfirmedRow({ label, value, note, onChange }: ConfirmedRowProps) {
+function RecordedFacts({ facts, onChange }: RecordedFactsProps) {
   return (
     <View style={styles.confirmed}>
       <View style={styles.confirmedText}>
-        <Text style={styles.confirmedLabel}>{label}</Text>
-        <Text style={styles.confirmedValue}>{value}</Text>
-        <Text style={styles.confirmedNote}>{note}</Text>
+        <Text style={styles.confirmedLabel}>From your entry</Text>
+        {facts.map((fact) => (
+          <Text key={fact.label} style={styles.confirmedValue}>
+            {`${fact.label}: ${fact.value}`}
+          </Text>
+        ))}
+        <Text style={styles.confirmedNote}>Already on record, so you do not need to fill these in again.</Text>
       </View>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Change ${label.toLowerCase()}`}
+        accessibilityLabel="Change these details"
         onPress={onChange}
         hitSlop={8}
       >
