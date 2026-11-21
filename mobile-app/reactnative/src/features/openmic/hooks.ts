@@ -203,7 +203,16 @@ export function useSongPrefill(contestSlug: string) {
     retry: false,
     staleTime: 60_000,
   });
-  return { prefill: query.data ?? withPrefillDefaults(null), refreshing: query.isFetching };
+  // `loaded` is what the form needs, not `refreshing`: while the read is still
+  // outstanding the entry's answers are unknown, and a box filled from the account
+  // in that window is a box the entry can no longer reach. A failed read counts as
+  // loaded — nothing else is coming, so the account is the best answer available.
+  const loaded = !contestSlug || query.isSuccess || query.isError;
+  return {
+    prefill: query.data ?? withPrefillDefaults(null),
+    refreshing: query.isFetching,
+    loaded,
+  };
 }
 
 export async function fetchSongPrefill(contestSlug: string): Promise<SongFormPrefill> {
