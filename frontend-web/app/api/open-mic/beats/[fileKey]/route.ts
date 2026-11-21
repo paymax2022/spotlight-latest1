@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { assertR2ObjectExists, createR2DownloadUrl, hasR2Config, sanitizeObjectFileName } from '@/src/lib/storage/r2';
-import { contentTypeForKey, readLocalUpload } from '@/src/lib/storage/local-uploads';
+import { buildAudioResponse } from '@/src/server/openmic/song-stream';
 import { decodeBeatFileKey, isPublicBeatObjectKey } from '@/src/features/openmic/beat-storage';
 
 /**
@@ -22,26 +22,20 @@ export async function GET(request: Request, ctx: { params: Promise<{ fileKey: st
 
   const wantsDownload = new URL(request.url).searchParams.get('download') === '1';
   const disposition: 'inline' | 'attachment' = wantsDownload ? 'attachment' : 'inline';
+  const fileName = sanitizeObjectFileName(objectKey.split('/').pop() || 'beat.mp3');
 
   if (!hasR2Config()) {
-    const buffer = await readLocalUpload(objectKey);
-    if (!buffer) return new NextResponse('Not found', { status: 404 });
-    return new NextResponse(new Uint8Array(buffer), {
-      status: 200,
-      headers: {
-        // Canonical, from the extension — never the uploader's client-supplied
-        // type (SEC-007).
-        'Content-Type': contentTypeForKey(objectKey),
-        // A bare `inline` is what the banner reader has always sent and what the
-        // <audio> element needs; only a download names a file, so only a download
-        // needs a name at all.
-        'Content-Disposition': wantsDownload
-          ? `attachment; filename="${sanitizeObjectFileName(objectKey.split('/').pop() || 'beat.mp3')}"`
-          : 'inline',
-        // Public and immutable: the key carries a uuid, so a given URL always
-        // addresses the same bytes.
-        'Cache-Control': 'public, max-age=31536000, immutable',
-      },
+    // The same byte server the song reader uses, rather than a second, weaker
+    // copy of it: an `<audio>` element asks for ranges, and a route that answers
+    // a range request with a whole 200 file gives the player nothing to scrub.
+    // `immutable` is safe here because the key carries the beat's uuid, so this
+    // URL always addresses these exact bytes.
+    return buildAudioResponse({
+      objectKey,
+      fileName,
+      rangeHeader: request.headers.get('range'),
+      cacheControl: 'public, max-age=31536000, immutable',
+      disposition,
     });
   }
 
@@ -52,7 +46,6 @@ export async function GET(request: Request, ctx: { params: Promise<{ fileKey: st
   }
 
   // The signed GET names the file on both dispositions, so this one is not wasted.
-  const fileName = sanitizeObjectFileName(objectKey.split('/').pop() || 'beat.mp3');
   const signedUrl = await createR2DownloadUrl({ key: objectKey, fileName, disposition });
   return NextResponse.redirect(signedUrl, { status: 302 });
 }

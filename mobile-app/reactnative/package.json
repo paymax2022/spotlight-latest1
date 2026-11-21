@@ -76,7 +76,8 @@
     "test:film-academy": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/filmAcademy/*.spec.ts\"",
     "test:crypto": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/crypto/utils/__tests__/*.test.ts\"",
     "test:social-send": "node --experimental-strip-types --test \"src/features/social/__tests__/*.test.ts\"",
-    "test:social-requests": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/social/*.spec.ts\""
+    "test:social-requests": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/social/*.spec.ts\"",
+    "test:openmic": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/openmic/*.spec.ts\""
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^13.0.0",
@@ -87,14 +88,15 @@
     "@livekit/react-native-webrtc": "150.1.1",
     "@maplibre/maplibre-react-native": "^10.4.2",
     "@react-native-async-storage/async-storage": "3.1.1",
+    "@react-native-community/cli": "latest",
     "@react-native-community/netinfo": "12.0.1",
     "@sentry/react-native": "~8.34.0",
     "@supabase/server": "^1.9.2",
     "@supabase/supabase-js": "^2.119.0",
     "@tanstack/react-query": "^5.107.1",
-    "@react-native-community/cli": "latest",
     "axios": "^1.21.1",
     "expo": "~54.0.38",
+    "expo-audio": "~1.1.1",
     "expo-build-properties": "~1.0.10",
     "expo-camera": "~17.0.10",
     "expo-clipboard": "~8.0.8",

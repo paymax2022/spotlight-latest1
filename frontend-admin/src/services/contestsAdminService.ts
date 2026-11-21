@@ -81,6 +81,10 @@ export type ContestCategory =
 export type ContestType =
   | 'online_contest' | 'physical_audition' | 'hybrid_contest'
   | 'public_voting_contest' | 'bootcamp_reality_show' | 'housemate_reality_show'
+  // The Open Mic engine type (`one_beat_one_verse`). Without it the edit builder's
+  // type select has no option for an Open Mic edition, so opening one and saving
+  // rewrites the value the beat/song routes key on.
+  | 'one_beat_one_verse'
   | 'pitch_competition' | 'school_vs_school_contest' | 'regional_contest'
   | 'national_contest' | 'international_entry';
 

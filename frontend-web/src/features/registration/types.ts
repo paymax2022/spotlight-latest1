@@ -33,6 +33,10 @@ export type ContestType =
   | 'physical_audition'
   | 'hybrid_contest'
   | 'public_voting_contest'
+  /** The Open Mic engine type. An Open Mic edition is created and voted through
+   *  `src/server/openmic`, which keys on this value, so the catalog declares it
+   *  rather than the generic `public_voting_contest` it used to borrow. */
+  | 'one_beat_one_verse'
   | 'bootcamp_reality_show'
   | 'housemate_reality_show'
   | 'pitch_competition'

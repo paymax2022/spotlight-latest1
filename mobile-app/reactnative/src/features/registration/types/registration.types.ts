@@ -23,6 +23,11 @@ export type ContestType =
   | 'physical_audition'
   | 'hybrid_contest'
   | 'public_voting_contest'
+  // Open Mic's engine type. The web catalog declares this for `open-mic-competition`
+  // (src/features/registration/reference-data.ts), and the phone reads the same
+  // contest records, so the union has to carry it or a fetched Open Mic contest
+  // types as a value the app says cannot exist.
+  | 'one_beat_one_verse'
   | 'bootcamp_reality_show'
   | 'housemate_reality_show'
   | 'pitch_competition'
@@ -167,7 +172,11 @@ export type RegistrationVotingReason =
   | 'not_promoted'
   | 'no_contest'
   | 'contestant_inactive'
-  | 'contest_not_open';
+  | 'contest_not_open'
+  // Open Mic only: approved, on the roster, contest open — but the artist has
+  // not handed in a song, so there is nothing for a voter to hear. The server
+  // (`registration-v2/registration-voting.ts`) decides this, the card explains it.
+  | 'song_not_submitted';
 
 export interface RegistrationVotingContest {
   id: string;
@@ -213,6 +222,47 @@ export interface RegistrationVoting {
 export interface RegistrationVotingResponse {
   success: boolean;
   voting: RegistrationVoting;
+}
+
+// The Open Mic progress past approval, mirrored from
+// frontend-web/src/server/registration-v2/workflow-steps.ts and served by a new
+// route (/applications/:id/workflow) because the status route is
+// brownfield-protected. Each step is backed by a row that already exists —
+// `beat_download_logs` and the edition's entry — so a step with no timestamp of
+// its own is simply absent rather than dated by guesswork.
+export type WorkflowStepKind =
+  | 'beat_downloaded'
+  | 'song_uploaded'
+  | 'song_submitted'
+  | 'song_reviewed';
+
+export interface WorkflowStep {
+  id: string;
+  kind: WorkflowStepKind;
+  label: string;
+  /** ISO timestamp, or null for a decision whose time column was never written. */
+  at: string | null;
+  note?: string;
+}
+
+export interface ApplicationWorkflowEdition {
+  id: string;
+  slug: string;
+  title: string;
+  description: string;
+  status: string;
+}
+
+export interface ApplicationWorkflow {
+  /** False for every contest that is not an Open Mic edition. */
+  isOpenMic: boolean;
+  edition: ApplicationWorkflowEdition | null;
+  steps: WorkflowStep[];
+}
+
+export interface ApplicationWorkflowResponse {
+  success: boolean;
+  workflow: ApplicationWorkflow;
 }
 
 export interface RegistrationStatusEvent {

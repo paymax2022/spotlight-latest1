@@ -210,7 +210,11 @@ export const contestRegistrationCatalog: ContestRegistrationDefinition[] = [
     slug: 'open-mic-competition',
     title: 'Spotlight Open Mic Competition',
     contestCategory: 'open_mic',
-    contestType: 'public_voting_contest',
+    // Must stay `one_beat_one_verse`: that is the type the Open Mic server module
+    // (src/server/openmic) and the beat/song routes key on. `public_voting_contest`
+    // here used to publish an Open Mic edition that every Open Mic screen then
+    // treated as a different contest. See src/server/openmic/edition-identity.ts.
+    contestType: 'one_beat_one_verse',
     seasonOrEdition: '2026',
     regionScope: 'regional',
     isPaid: true,

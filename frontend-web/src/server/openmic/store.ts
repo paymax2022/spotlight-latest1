@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { defaultPrizePackages, defaultVotingConfig } from '@/src/features/openmic/constants';
+import { applyReview, projectReview } from '@/src/server/openmic/review-rules';
 import type {
   OpenMicApplication,
   OpenMicApplicationStatus,
@@ -769,38 +770,23 @@ export function reviewSubmission(submissionId: string, review: OpenMicSubmission
   ensureSeeded();
   const current = store.submissions.get(submissionId);
   if (!current) throw new Error('Submission not found.');
+  // The decision's rules live in review-rules.ts so the database path applies
+  // exactly the same ones to exactly the same row. Reaching them THROUGH this
+  // map was the old bug: `persistence.reviewSubmission` called this function as
+  // its projector, and in DB mode the map is empty by design ("Open Mic data
+  // should come from real DB records"), so every real song hand-in answered
+  // "Submission not found." and an admin could not approve or reject a song.
   const now = nowIso();
-  const updated: OpenMicSubmission = {
-    ...current,
-    status: review.status,
-    reviewNote: review.note,
-    approvedAt: review.status === 'approved' ? now : current.approvedAt,
-    publishedAt: review.status === 'published_for_voting' ? now : current.publishedAt,
-    isFinalist: review.status === 'finalist' ? true : current.isFinalist,
-    isWinner: review.status === 'winner' ? true : current.isWinner,
-    updatedAt: now,
-  };
+  const notice = projectReview(current, review, now).notification;
+  const updated = applyReview(current, review, now);
   store.submissions.set(submissionId, updated);
-  if (review.status === 'published_for_voting') {
+  if (notice) {
     queueNotification({
       contestId: updated.contestId,
       submissionId: updated.id,
       audience: 'artist',
       channel: 'in_app',
-      eventKey: 'song_approved_for_voting',
-      title: 'Song Approved for Voting',
-      message: `Your song "${updated.songTitle}" is now live for public voting.`,
-    });
-  }
-  if (review.status === 'rejected' || review.status === 'correction_requested') {
-    queueNotification({
-      contestId: updated.contestId,
-      submissionId: updated.id,
-      audience: 'artist',
-      channel: 'in_app',
-      eventKey: review.status === 'rejected' ? 'song_rejected' : 'song_correction_requested',
-      title: review.status === 'rejected' ? 'Song Rejected' : 'Song Correction Required',
-      message: review.note || 'Please review admin feedback on your submission.',
+      ...notice,
     });
   }
   return updated;

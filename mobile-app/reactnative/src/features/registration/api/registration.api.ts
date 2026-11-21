@@ -28,6 +28,8 @@ import type {
   StatusResponse,
   RegistrationVoting,
   RegistrationVotingResponse,
+  ApplicationWorkflow,
+  ApplicationWorkflowResponse,
   UploadResponse,
   PickedUpload,
   UploadedFileValue,
@@ -273,13 +275,35 @@ export async function getRegistrationVoting(id: string): Promise<RegistrationVot
   return res.voting;
 }
 
+/**
+ * The milestones an Open Mic edition records past approval — beat downloaded,
+ * song uploaded, song handed in, decision — plus the edition itself.
+ *
+ * A NEW route, not extra fields on /status: that file is brownfield-protected,
+ * and the data comes from different tables (`beat_download_logs` and
+ * `competition_entries`, not `registration_status_events`).
+ *
+ * An empty workflow is a normal answer, not a failure — every other contest has
+ * no beat and no song hand-in — so the screen never needs to branch on errors
+ * to stay correct for a non-Open-Mic entry.
+ */
+export async function getApplicationWorkflow(id: string): Promise<ApplicationWorkflow> {
+  if (REGISTRATION_USE_MOCK) {
+    // Mock drafts have no edition, no beat log and no song, so there is nothing
+    // honest to report. Fabricating steps would put timestamps on the screen
+    // that no organiser ever recorded.
+    return waitMock<ApplicationWorkflow>({ isOpenMic: false, edition: null, steps: [] });
+  }
+  const res = await regGet<ApplicationWorkflowResponse>(`${REG_BASE}/applications/${id}/workflow`);
+  return res.workflow;
+}
+
 export async function withdrawApplication(id: string, note?: string): Promise<RegistrationDraft> {
   if (REGISTRATION_USE_MOCK) {
     const entry = mockDrafts.get(id);
     if (!entry) throw new Error('Application not found');
     const now = new Date().toISOString();
-    const draft: RegistrationDraft = { ...entry.draft, status: 'withdrawn', updatedAt: now };
-    entry.timeline.push({ id: `${id}-ev${entry.timeline.length}`, applicationId: id, oldStatus: entry.draft.status, newStatus: 'withdrawn', note: note || 'Application withdrawn by applicant', createdAt: now, actorRole: 'public_user' });
+    const draft: RegistrationDraft = { ...entry.draft, status: 'withdrawn', updatedAt: now };    entry.timeline.push({ id: `${id}-ev${entry.timeline.length}`, applicationId: id, oldStatus: entry.draft.status, newStatus: 'withdrawn', note: note || 'Application withdrawn by applicant', createdAt: now, actorRole: 'public_user' });
     mockDrafts.set(id, { ...entry, draft });
     saveMockDrafts();
     return waitMock(draft);

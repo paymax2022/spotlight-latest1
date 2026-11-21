@@ -65,3 +65,54 @@ export async function readLocalUpload(key: string): Promise<Buffer | null> {
     return null;
   }
 }
+
+/**
+ * Size of a stored object, or null when it is not there.
+ *
+ * The upload-complete routes need "did the bytes land?" without reading a
+ * 50 MB song into memory the way `readLocalUpload` would.
+ */
+export async function statLocalUpload(key: string): Promise<{ sizeBytes: number } | null> {
+  try {
+    const target = resolveLocalPath(key);
+    const stats = await fs.stat(target);
+    return stats.isFile() ? { sizeBytes: stats.size } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Byte slice of a stored object, for ranged audio/video playback.
+ *
+ * `end` is inclusive, like the HTTP Range header it serves. Seek works in the
+ * browser only when the reader can answer 206 with the right Content-Range, so
+ * the local fallback has to support slicing and not just whole-file reads —
+ * otherwise development gets a player that plays once and then cannot scrub.
+ * Returns `totalBytes` of the whole object so the caller can build the header.
+ */
+export async function readLocalUploadRange(
+  key: string,
+  range: { start: number; end?: number },
+): Promise<{ buffer: Buffer; start: number; end: number; totalBytes: number } | null> {
+  const target = resolveLocalPath(key);
+  let handle;
+  try {
+    handle = await fs.open(target, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    const { size: totalBytes } = await handle.stat();
+    if (totalBytes === 0) return { buffer: Buffer.alloc(0), start: 0, end: -1, totalBytes };
+    const start = Math.max(0, range.start);
+    if (start >= totalBytes) return { buffer: Buffer.alloc(0), start, end: start, totalBytes };
+    const end = range.end === undefined ? totalBytes - 1 : Math.min(range.end, totalBytes - 1);
+    const length = end - start + 1;
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, start);
+    return { buffer, start, end, totalBytes };
+  } finally {
+    await handle.close();
+  }
+}

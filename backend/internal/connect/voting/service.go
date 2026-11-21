@@ -416,7 +416,7 @@ func (s *Service) ListRoster(ctx context.Context, contestID string, includeInact
 	if err != nil {
 		return nil, err
 	}
-	return s.withPhotoList(list), nil
+	return s.withSongList(s.withPhotoList(list)), nil
 }
 
 // FreeVoteAllowance reports how many free votes a user has left in a contest.
@@ -458,7 +458,11 @@ func (s *Service) GetContestant(ctx context.Context, contestantID, viewerID stri
 	if e == nil {
 		return nil, ErrNotFound
 	}
-	return s.withPhoto(e), nil
+	// Photos and songs are resolved at this boundary, not in the scan: the
+	// stored value is a route, and only the service knows this deployment's web
+	// origin. Same reason LikeContestant re-reads through here — every caller of
+	// GetContestant must see the identical shape.
+	return s.withSong(s.withPhoto(e)), nil
 }
 
 // LikeContestant records the caller's like. Idempotent — liking twice is not
@@ -562,7 +566,11 @@ func (s *Service) ResolveShare(ctx context.Context, token string) (*RosterEntry,
 	if e == nil {
 		return nil, ErrShareNotFound
 	}
-	return s.withPhoto(e), nil
+	// The song belongs on the share landing page: the shared link IS how a voter
+	// reaches an artist, and Open Mic's whole point is that the uploaded song is
+	// what gets shared. Still public-safe — only statuses in
+	// publiclyPlayableSongStatuses were ever selected, and the reader re-checks.
+	return s.withSong(s.withPhoto(e)), nil
 }
 
 // ErrNotContestant is returned when a caller asks for a contestant's supporters

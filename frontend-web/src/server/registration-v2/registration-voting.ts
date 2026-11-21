@@ -19,6 +19,8 @@
 // contest and joins them. Per CLAUDE.md § Brownfield safety and the hook's own
 // guidance, new registration behaviour lives in registration-v2/.
 import { createAdminClient } from '@/lib/supabase/server';
+import { getContestBySlug, listSubmissions } from '@/src/server/openmic/persistence';
+import { pickPlayableSong } from '@/src/server/openmic/voter-song';
 
 export interface RegistrationVotingContest {
   id: string;
@@ -61,7 +63,8 @@ export interface RegistrationVoting {
     | 'not_promoted'
     | 'no_contest'
     | 'contestant_inactive'
-    | 'contest_not_open';
+    | 'contest_not_open'
+    | 'song_not_submitted';
   applicationStatus: string;
   contest: RegistrationVotingContest | null;
   contestant: RegistrationVotingContestant | null;
@@ -101,6 +104,52 @@ function notVotable(
 }
 
 /**
+ * The Open Mic song rule, kept apart from the queries so the ordering is
+ * testable without a database.
+ *
+ * On an Open Mic edition the applicant's job does not end at approval: the beat
+ * is downloaded, a song is recorded over it, and the file is handed in. Until
+ * that file exists there is nothing for a voter to hear, so a roster row that is
+ * otherwise perfectly votable must not offer a vote button — the alternative,
+ * which is what shipped before this rule, let voters spend money on a contestant
+ * whose entry is silent.
+ *
+ * A blank or missing artist id blocks rather than passes: `user_id` is nullable
+ * on the roster (guest registrations promote with NULL) and a song is only ever
+ * uploaded by a signed-in artist, so there is no submission to look for.
+ */
+export function decideOpenMicSongGate(input: {
+  isOpenMicEdition: boolean;
+  artistUserId: string | null;
+  hasPlayableSong: boolean;
+}): { blocked: boolean; reason: RegistrationVoting['reason'] } {
+  if (!input.isOpenMicEdition) return { blocked: false, reason: null };
+  const artist = String(input.artistUserId ?? '').trim();
+  if (input.hasPlayableSong && artist) return { blocked: false, reason: null };
+  return { blocked: true, reason: 'song_not_submitted' };
+}
+
+/**
+ * The three facts `decideOpenMicSongGate` needs, read from the Open Mic plane.
+ * Returns `null` for anything that is not an Open Mic edition, which the caller
+ * treats as "do not gate" — a film-academy or SME-pitch applicant has no song
+ * plane at all and their vote button must stay as it was.
+ */
+async function readOpenMicSongState(input: {
+  contestSlug: string | null;
+  artistUserId: string | null;
+}): Promise<{ isOpenMicEdition: true; hasPlayableSong: boolean } | null> {
+  const slug = String(input.contestSlug ?? '').trim();
+  if (!slug) return null;
+  const edition = await getContestBySlug(slug);
+  if (!edition) return null;
+  const artist = String(input.artistUserId ?? '').trim();
+  if (!artist) return { isOpenMicEdition: true, hasPlayableSong: false };
+  const submissions = await listSubmissions({ contestId: edition.id, userId: artist });
+  return { isOpenMicEdition: true, hasPlayableSong: pickPlayableSong(submissions) !== null };
+}
+
+/**
  * Resolve the voting context for one registration.
  *
  * Returns a fully-populated object in every case — the caller renders the
@@ -117,7 +166,7 @@ export async function getRegistrationVoting(
 
   const { data: registration, error: regErr } = await supabase
     .from('registrations')
-    .select('id, status')
+    .select('id, status, contest_slug')
     .eq('id', registrationId)
     .maybeSingle();
 
@@ -133,7 +182,7 @@ export async function getRegistrationVoting(
   const { data: rosterRow, error: rosterErr } = await supabase
     .from('contestants')
     .select(
-      'id, name, stage_name, photo_url, category, state, total_votes, ranking, is_active, is_verified, status, connect_contest_id',
+      'id, name, stage_name, photo_url, category, state, total_votes, ranking, is_active, is_verified, status, connect_contest_id, user_id',
     )
     .eq('registration_id', registrationId)
     .maybeSingle();
@@ -210,6 +259,23 @@ export async function getRegistrationVoting(
   }
   if (contest.status !== 'open') {
     return notVotable(applicationStatus, 'contest_not_open', contest, contestant);
+  }
+
+  // Open Mic only, and only last: an artist who has not handed in a song is
+  // still approved, still on the roster, still in an open contest — the single
+  // thing missing is the audio a voter would hear.
+  const artistUserId = String((rosterRow as any).user_id ?? '').trim() || null;
+  const songState = await readOpenMicSongState({
+    contestSlug: contest.slug ?? ((registration as any).contest_slug as string | null) ?? null,
+    artistUserId,
+  });
+  const songGate = decideOpenMicSongGate({
+    isOpenMicEdition: songState !== null,
+    artistUserId,
+    hasPlayableSong: songState?.hasPlayableSong === true,
+  });
+  if (songGate.blocked) {
+    return notVotable(applicationStatus, songGate.reason, contest, contestant);
   }
 
   const displayName = contestant.stageName || contestant.name;

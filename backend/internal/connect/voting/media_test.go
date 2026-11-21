@@ -56,3 +56,40 @@ func TestServiceWithMediaRewritesBothFields(t *testing.T) {
 		t.Error("withMedia(nil) must stay nil")
 	}
 }
+
+// A contestant's song reaches a phone through frontend-web's reader, so the
+// roster must hand out that reader's ABSOLUTE url — the app has no same-origin
+// relative fetch to hang it on. Two things this pins: an entry with no song
+// never gets a url (a player that 404s is worse than no player), and the origin
+// comes from this deployment's wiring, never from whatever host was used when
+// the file was uploaded.
+func TestServiceWithSongBuildsTheReaderURL(t *testing.T) {
+	s := &Service{}
+	s.SetMediaBaseURL("https://web.test")
+
+	got := s.withSong(&RosterEntry{ContestantID: "ct1", SongSubmissionID: "11111111-2222-3333-4444-555555555555"})
+	if want := "https://web.test/api/open-mic/songs/11111111-2222-3333-4444-555555555555"; got.SongURL != want {
+		t.Errorf("song url: got %q, want %q", got.SongURL, want)
+	}
+
+	silent := s.withSong(&RosterEntry{ContestantID: "ct2"})
+	if silent.SongURL != "" {
+		t.Errorf("an entry with no submission must have no url, got %q", silent.SongURL)
+	}
+
+	// No base means the path survives as-is, exactly like the image routes: a
+	// relative reader path is still resolvable inside the web app, and guessing
+	// an origin is how the localhost-banner bug started.
+	rel := (&Service{}).withSong(&RosterEntry{SongSubmissionID: "abc"})
+	if rel.SongURL != "/api/open-mic/songs/abc" {
+		t.Errorf("without a base the reader path should survive as-is, got %q", rel.SongURL)
+	}
+
+	list := s.withSongList([]RosterEntry{{SongSubmissionID: "a"}, {}})
+	if list[0].SongURL != "https://web.test/api/open-mic/songs/a" || list[1].SongURL != "" {
+		t.Errorf("withSongList: %+v", list)
+	}
+	if s.withSong(nil) != nil {
+		t.Error("withSong(nil) must stay nil")
+	}
+}
