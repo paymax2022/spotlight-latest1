@@ -274,6 +274,20 @@ describe('Open Mic submissions as a review queue', () => {
     expect(within(row).getByText(/18 Nov 2026/i)).toBeInTheDocument();
   });
 
+  it('leaves the timestamp clause out for a hand-in that carries none', () => {
+    // The card used to read "handed in no timestamp" for a row whose
+    // `submittedAt` was missing or unparsable; the clause goes instead.
+    render(
+      <OpenMicSubmissionReviewPanel
+        submissions={[submission({ id: 'n1', submittedAt: undefined })]}
+        onRefresh={() => {}}
+      />,
+    );
+    expect(within(card('n1')).queryByText(/handed in/i)).toBeNull();
+    // …without taking the rest of the meta line with it.
+    expect(within(card('n1')).getByText(/Laga Laga · Afro-fusion/)).toBeInTheDocument();
+  });
+
   it('moves the operator to the next undecided hand-in once this one is decided', async () => {
     responder = () => ({ ok: true, status: 200, json: { success: true, submission: submission({ id: 'p1', status: 'published_for_voting' }) } });
     const onRefresh = vi.fn();

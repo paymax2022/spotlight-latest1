@@ -61,10 +61,14 @@ const HANDED_IN_FORMAT = new Intl.DateTimeFormat('en-GB', {
   hour12: false,
 });
 
+/**
+ * `''` when the row carries no usable timestamp, so the meta line drops the
+ * whole "handed in" clause instead of reading "handed in no timestamp".
+ */
 function handedIn(iso?: string): string {
-  if (!iso) return 'no timestamp';
+  if (!iso) return '';
   const parsed = new Date(iso);
-  return Number.isNaN(parsed.getTime()) ? 'no timestamp' : HANDED_IN_FORMAT.format(parsed);
+  return Number.isNaN(parsed.getTime()) ? '' : HANDED_IN_FORMAT.format(parsed);
 }
 
 function statusTone(status: string): string {
@@ -152,6 +156,7 @@ export function SubmissionReviewCard({
   }
 
   const tone = statusTone(status);
+  const handedInAt = handedIn(submission.submittedAt);
 
   return (
     <div
@@ -166,7 +171,7 @@ export function SubmissionReviewCard({
           <div style={{ fontSize: 12, color: colors.muted }}>
             {submission.stageName || 'Unknown artist'}
             {submission.genre ? ` · ${submission.genre}` : ''}
-            {` · handed in ${handedIn(submission.submittedAt)}`}
+            {handedInAt ? ` · handed in ${handedInAt}` : ''}
             {typeof submission.voteCount === 'number' ? ` · ${submission.voteCount} votes` : ''}
           </div>
         </div>
