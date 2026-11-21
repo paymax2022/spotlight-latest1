@@ -120,7 +120,7 @@ func newLabAdminFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) l
 	}
 
 	t.Cleanup(func() {
-		bg := t.Context()
+		bg := context.WithoutCancel(t.Context())
 		_, _ = pool.Exec(bg, `DELETE FROM lab_custody_events WHERE sample_id=$1`, f.sampleID)
 		_, _ = pool.Exec(bg, `DELETE FROM lab_samples WHERE id=$1`, f.sampleID)
 		_, _ = pool.Exec(bg, `DELETE FROM lab_orders WHERE id IN ($1,$2,$3)`, f.scheduledID, f.releasedID, f.closedID)

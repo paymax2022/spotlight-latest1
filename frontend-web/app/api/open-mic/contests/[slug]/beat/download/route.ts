@@ -1,5 +1,6 @@
+import { publicBeatUrl } from '@/src/features/openmic/beat-storage';
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
-import { getContestBySlug } from '@/src/server/openmic/persistence';
+import { getContestBySlug, logBeatDownload } from '@/src/server/openmic/persistence';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { NextResponse } from 'next/server';
 
@@ -24,6 +25,20 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
   }
 }
 
+/**
+ * The consented hand-over of the official beat.
+ *
+ * Recording it is the reason this POST exists: it used to answer the beat's URLs
+ * and log nothing, which left `beat_download_logs` — the table the admin's beat
+ * analytics reads via `listBeatDownloads` — permanently empty. `logBeatDownload`
+ * re-validates the terms, the download lock and the paid-entry rule, and its
+ * refusal sentences map to the status an artist can act on.
+ *
+ * An unavailable analytics store must not strand an applicant, though: the same
+ * posture `logBeatDownload` already keeps around its own insert extends here to a
+ * deployment with no Open Mic database configured, where the download stays
+ * allowed and only the record is lost.
+ */
 export async function POST(request: Request, context: { params: Promise<{ slug: string }> }) {
   try {
     const user = await requireRequestUser(request);
@@ -42,14 +57,40 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     if (!contest) return errorResponse('Contest not found', 404);
     if (!contest.beat) return errorResponse('Beat is not available for this contest', 400);
 
+    try {
+      await logBeatDownload({
+        contestSlug: slug,
+        userId: user.id,
+        artistName: body.artistName.trim(),
+        artistEmail: body.artistEmail?.trim() || undefined,
+        termsAccepted: true,
+        paidAccessConfirmed: body.paidAccessConfirmed === true,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message.trim() : '';
+      if (/not configured/i.test(message)) {
+        // Storage of the audit row is unavailable, not the beat: keep going.
+      } else if (/locked|paid entry/i.test(message)) {
+        return errorResponse(message, 403);
+      } else if (/not found/i.test(message)) {
+        return errorResponse('Contest not found', 404);
+      } else if (message) {
+        return errorResponse(message, 400);
+      }
+    }
+
     return successResponse(
       {
         success: true,
         beat: {
           id: contest.beat.id,
           title: contest.beat.beatTitle,
-          previewUrl: contest.beat.previewUrl,
-          downloadUrl: contest.beat.downloadUrl,
+          // The same public-reader rule the eligibility endpoint uses: a stored
+          // value that is an owner-only path or an off-origin string is not
+          // something an applicant can fetch, so it must not be handed back as
+          // if it were.
+          previewUrl: publicBeatUrl(contest.beat.previewUrl) || publicBeatUrl(contest.beat.downloadUrl),
+          downloadUrl: publicBeatUrl(contest.beat.downloadUrl) || publicBeatUrl(contest.beat.previewUrl),
           usageRules: contest.beat.usageRules,
         },
       },

@@ -147,10 +147,16 @@ export interface SpreadRule {
   corridor: string;
   tier: string;
   bps: number;             // markup basis points
-  fixedMinor: number;      // fixed fee component
+  fixedMinor: number;      // fixed fee component (0 on the markup rail: it prices a percentage only)
   minBps: number;
   maxBps: number;
-  version: number;
+  /**
+   * fx_markup_rates has no version counter — the change history is the audit
+   * trail (GET /api/finance/admin/fx/markup/audit), which records before/after
+   * per write. Optional so the console prints "—" rather than a number it
+   * invented.
+   */
+  version?: number;
   updatedAt: string;
   active: boolean;
 }

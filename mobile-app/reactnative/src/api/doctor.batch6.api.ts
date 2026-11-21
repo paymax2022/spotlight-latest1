@@ -106,7 +106,6 @@ export const DEMO_RECORDS_DASHBOARD: DoctorRecordsDashboard = {
     { category: 'imaging',       count: 41,  lastUpdated: iso(4) },
     { category: 'referrals',     count: 33,  lastUpdated: iso(5) },
     { category: 'hmo',           count: 67,  lastUpdated: iso(1) },
-    { category: 'pets',          count: 24,  lastUpdated: iso(3) },
   ],
   pendingShares: 2,
 };

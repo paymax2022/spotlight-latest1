@@ -75,6 +75,24 @@ export function useRegistrationVoting(id: string) {
   });
 }
 
+/**
+ * The Open Mic milestones past approval, for the status screen's history list.
+ *
+ * `refresh` is exported because downloading the beat and handing in a song both
+ * create the very rows this reads, and the artist should see the entry appear
+ * without leaving the page. Polling would be wrong: the only reliable signal
+ * that the list changed is the action that changed it.
+ */
+export function useApplicationWorkflow(id: string) {
+  const query = useQuery({
+    queryKey: [KEY, 'workflow', id],
+    queryFn: () => reg.getApplicationWorkflow(id),
+    enabled: !!id,
+    staleTime: 15_000,
+  });
+  return { workflow: query.data ?? null, refresh: query.refetch, refreshing: query.isFetching };
+}
+
 export function useWithdraw(id: string) {
   const qc = useQueryClient();
   return useMutation({

@@ -128,6 +128,39 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+# See build-apk.sh's identical guard for why this belongs before EXPECTED_API:
+# the bundle check below cannot catch an env file that declares the wrong plane,
+# because the host it greps for is read out of that same file. The extraction
+# below is byte-identical to that script's, and reproduces what dotenv 16.4.7
+# (which @expo/env loads through) reads — see build-apk.sh for the rules, and
+# docs/devops/production-migration-ledger.md §15 for the fixture table they came
+# from.
+# `LC_ALL=C` stops a byte sequence that is illegal in the host locale from
+# killing sed inside `$(...)`: under `set -euo pipefail` that abort would end
+# the script HERE, before the remedy below can print. `|| true` is the same
+# defence for any other pipeline failure. Both leave an empty extraction, which
+# the comparison reads as "not production" — so a broken read refuses the build,
+# it never passes one.
+_declared_env="$(LC_ALL=C sed -nE \
+  's/^[[:space:]]*(export[[:space:]]+)?EXPO_PUBLIC_APP_ENV([[:space:]]*=[[:space:]]*|:[[:space:]]+)(.*)$/\3/p' \
+  "$ENV_FILE" \
+  | tail -1 \
+  | awk '{
+      sub(/\r.*$/, "")
+      sub(/[[:space:]]*#.*$/, "")
+      sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "")
+      q = substr($0, 1, 1)
+      if (length($0) > 1 && substr($0, length($0), 1) == q &&
+          (q == sprintf("%c", 34) || q == sprintf("%c", 39) || q == sprintf("%c", 96)))
+        $0 = substr($0, 2, length($0) - 2)
+      print
+    }' || true)"
+if [[ "$NODE_ENV" == "production" && "${_declared_env:-}" != "production" ]]; then
+  echo "❌ $ENV_FILE declares EXPO_PUBLIC_APP_ENV=${_declared_env:-<unset>}; a production release must declare production." >&2
+  echo "   Regenerate it from the tracked profile: node scripts/export-eas-profile-env.mjs production" >&2
+  exit 1
+fi
+
 # `|| true`: under `set -e`+pipefail a non-matching grep would abort the script
 # before it could print the explanatory error below.
 EXPECTED_API="$(grep -E '^EXPO_PUBLIC_API_BASE_URL=' "$ENV_FILE" | tail -1 | cut -d= -f2- || true)"
@@ -139,14 +172,34 @@ if [[ -z "$EXPECTED_API" ]]; then
 fi
 
 # A higher-priority file would silently override $ENV_FILE. Refuse to build blind.
+# APP_ENV joins that list only for a production build, exactly as in build-apk.sh:
+# there it would abort the dev build the printed remedy recommends, because
+# declaring the plane in .env.<mode>.local is how a dev override is written.
+_shadow_keys='API_BASE_URL|SUPABASE_URL'
+if [[ "$NODE_ENV" == "production" ]]; then
+  _shadow_keys='API_BASE_URL|SUPABASE_URL|APP_ENV'
+fi
 for shadow in ".env.${NODE_ENV}.local" ".env.local"; do
-  if [[ -f "$shadow" ]] && grep -qE '^EXPO_PUBLIC_(API_BASE_URL|SUPABASE_URL)=' "$shadow"; then
-    echo "❌ $shadow sets API/Supabase URLs and OUTRANKS $ENV_FILE." >&2
+  if [[ -f "$shadow" ]] && grep -qE "^EXPO_PUBLIC_(${_shadow_keys})=" "$shadow"; then
+    echo "❌ $shadow sets an API/Supabase URL or the plane declaration and OUTRANKS $ENV_FILE." >&2
     echo "   Expo precedence: .env.<mode>.local > .env.local > .env.<mode> > .env" >&2
     echo "   Rename it to .env.development.local so it applies to dev only." >&2
     exit 1
   fi
 done
+
+# The plane interlock: $ENV_FILE must describe the same plane as eas.json's profile
+# of that name. Nothing else can catch it — .env.production is gitignored, so no
+# tracked file contradicts it; these scripts run local Gradle, so eas.json's own
+# `env` block never applies; and the artifact is stamped app-release-$NODE_ENV
+# whatever the file actually holds. Found 2026-11-15 with a .env.production carrying
+# the staging API host, the staging Supabase project and EXPO_PUBLIC_APP_ENV=staging
+# — which also enables the on-device server switch (serverProfile.ts) and would have
+# made the production module registry govern nothing in a store build.
+if ! node scripts/check-env-plane.mjs "$ENV_FILE"; then
+  echo "❌ $ENV_FILE disagrees with eas.json's $NODE_ENV profile — fix it before building." >&2
+  exit 1
+fi
 
 # Every *_USE_MOCK flag referenced anywhere in source must be "false" in
 # $ENV_FILE — a flag left unset defaults to MOCK (see client.ts per module), so

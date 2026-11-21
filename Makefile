@@ -8,9 +8,9 @@ MIGRATIONS_DIR ?= supabase/migrations
 REGISTRY ?= ghcr.io/spotlight
 SHA ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
-.PHONY: bootstrap build vet test tsc tsc-web tsc-admin migrate-up migrate-reset \
+.PHONY: bootstrap build vet test tsc tsc-web tsc-admin migrate-up pending-list migrate-reset \
         fakes security-scan contract-check ci verify docker-build dev dev-down \
-        rls-check db-push help \
+        rls-check flag-parity db-push help \
         marketplace-build marketplace-indexer-run marketplace-cron-run \
         marketplace-test marketplace-loadtest marketplace-up marketplace-down \
         transport-scheduler-run transport-scheduling-test transport-scheduling-loadtest \
@@ -94,6 +94,9 @@ migrate-up: # apply all additive supabase migrations to $(DATABASE_URL)
 	  psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -q -f "$$f"; \
 	done; echo "migrations applied"
 
+pending-list: # unapplied migrations vs a captured remote state: make pending-list REMOTE_TABLE=/tmp/prod_table.txt (read-only, no DB connection)
+	@bash scripts/db/list-pending.sh $(if $(REMOTE_TABLE),--remote-table "$(REMOTE_TABLE)",--remote "$(REMOTE)") --migrations $(MIGRATIONS_DIR)
+
 migrate-reset: # drop + recreate public schema, then re-apply from zero (fresh-replay check)
 	psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
 	$(MAKE) migrate-up
@@ -113,6 +116,9 @@ rls-check: # fail if any public table lacks RLS (fintech go-live gate; allowlist
 	  exit 1; \
 	fi; \
 	echo "rls-check ✓ — every public table has RLS enabled (allowlist: $(RLS_ALLOWLIST))"
+
+flag-parity: # fail if a BFF feature gate is not declared in the prod flag file
+	@bash scripts/ci/check-prod-flag-parity.sh
 
 db-push: # apply tracked migrations to the LINKED remote Supabase project (prod promotion)
 	@command -v supabase >/dev/null 2>&1 || { echo "supabase CLI not found"; exit 1; }

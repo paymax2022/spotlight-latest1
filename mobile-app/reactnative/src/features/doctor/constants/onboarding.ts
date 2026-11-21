@@ -25,11 +25,11 @@ export const PROVIDER_TYPE_OPTIONS: ProviderTypeOption[] = [
     description: 'Practise within a recognised specialty (cardiology, dermatology, etc.).',
     icon: 'pulse-outline', routesTo: 'doctor_profile_builder',
   },
-  {
-    type: 'veterinarian', label: 'Veterinary Doctor',
-    description: 'Provide veterinary consultations and care for animals.',
-    icon: 'paw-outline', routesTo: 'vet_profile_builder',
-  },
+  // No `veterinarian` here on purpose. A vet onboards through the landing page Vet
+  // module (app/health/provider-onboarding.tsx -> /health/vet/provider/onboarding),
+  // which runs its own provider onboarding; listing it here presented veterinary as
+  // a sub-feature of being a doctor. The ProviderType union keeps the member because
+  // the API still speaks it. Pinned by scripts/ci/check-doctor-vet-boundary.py.
 ];
 
 export const LEGAL_DOC_LABELS: Record<LegalDocKind, string> = {

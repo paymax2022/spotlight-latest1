@@ -2,9 +2,9 @@
  * The address line a wallet-to-wallet confirmation shows under the recipient's
  * name.
  *
- * Extracted so the rule is testable without rendering a screen (same shape as
- * features/transfers/kycBlock.ts). Both transfer entry points — the full-screen
- * TransferSheet and the tab PaymentActionScreen — print this line, and they
+ * Extracted as a pure function so the rule is testable without rendering a
+ * screen. Both transfer entry points — the full-screen TransferSheet and the
+ * tab PaymentActionScreen — print this line, and they
  * must print the same thing: it is the last thing a sender reads before
  * approving an irreversible debit.
  */

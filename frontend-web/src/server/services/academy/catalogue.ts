@@ -1,24 +1,28 @@
 // The Film Academy catalogue as PUBLIC surfaces read it: the admin-managed areas
-// of study, the five priced formats each area carries, and the intakes a visitor
-// could still join.
+// of study, the admin-managed formats each area is offered in, and the intakes a
+// visitor could still join.
 //
 // GET /api/academy/apply answers the same questions for someone mid-application;
 // this answers them for a signed-out visitor, from the same rows with the same
 // filters, and returns no applicant data at all. Keeping the reads here means a
-// marketing page can never quote a price or an intake that the application
-// endpoint would reject.
+// marketing page can never quote a price, a format name, or an intake that the
+// application endpoint would reject — which is the property that matters once
+// the operator can rename and reorder the list: the page is right because it
+// reads the same catalogue the money path validates against, not because a
+// comment promised the copy was kept in step.
 //
 // The areas tables are deny-all to the browser by RLS, so this runs on the
 // admin client server-side and hands the page plain, already-priced rows.
 
 import { createAdminClient } from '@/lib/supabase/server';
 import { getActiveAcademySettings } from '@/src/server/services/academy';
+import { tryGetTrainingFormats } from './formats';
 import {
   ACADEMY_DELIVERABLES,
   ACADEMY_FEE_EXCLUSIONS,
-  ACADEMY_PRICING_STRUCTURE,
   MAX_INTEREST_AREAS_PER_APPLICATION,
   attachPricingOptions,
+  pricingStructureFor,
   type AcademyPricingOption,
   type AreaPricingOptionRow,
 } from './pricing';
@@ -116,6 +120,12 @@ export async function getAcademyCatalogue(): Promise<AcademyCatalogue> {
     .select('area_id, key, label, note, price_ngn, sort_order');
   if (optionError) loadErrors.push('tuition');
 
+  // The operator's own format list — names, order, what is on offer. Read once
+  // here and handed to every pricing helper below, so the page cannot show a
+  // format the application endpoint would refuse (or hide one it would accept).
+  const { formats, degraded } = await tryGetTrainingFormats();
+  if (degraded) loadErrors.push('tuition formats');
+
   // A batch offers EXACTLY the trainings linked to it. An empty entry is that
   // batch offering nothing yet — not a query that failed.
   const areaSlugsByBatch: Record<string, string[]> = {};
@@ -141,6 +151,7 @@ export async function getAcademyCatalogue(): Promise<AcademyCatalogue> {
       }),
     ),
     (optionRows ?? []) as AreaPricingOptionRow[],
+    formats,
   );
   // The uuid keyed the pricing rows — it is not part of any public contract.
   const areas = pricedAreas.map(({ id: _id, ...area }) => area);
@@ -156,12 +167,10 @@ export async function getAcademyCatalogue(): Promise<AcademyCatalogue> {
   return {
     areas,
     intakes: openIntakes.map((intake) => ({ ...intake, areaSlugs: areaSlugsByBatch[intake.id] ?? [] })),
-    pricingStructure: ACADEMY_PRICING_STRUCTURE.map(({ key, label, note, sort_order }) => ({
-      key,
-      label,
-      note,
-      sort_order,
-    })),
+    // Format identity only — each area's own pricing_options carry the money,
+    // and both come from the same catalogue read, so the page cannot show a
+    // format the application endpoint would refuse.
+    pricingStructure: pricingStructureFor(formats),
     deliverables: ACADEMY_DELIVERABLES,
     feeExclusions: ACADEMY_FEE_EXCLUSIONS,
     maxAreas: MAX_INTEREST_AREAS_PER_APPLICATION,

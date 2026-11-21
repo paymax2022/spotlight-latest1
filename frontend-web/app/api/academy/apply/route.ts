@@ -7,20 +7,19 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { getActiveAcademySettings, getBatchAreaSlugs } from '@/src/server/services/academy';
 import { isIntakeOpen } from '@/src/server/services/academy/catalogue';
 import { approveAfterPayment } from '@/src/server/services/academy/service';
+import { getTrainingFormats } from '@/src/server/services/academy/formats';
 import {
   ACADEMY_DELIVERABLES,
   ACADEMY_FEE_EXCLUSIONS,
-  ACADEMY_PRICING_FALLBACK_KEY,
-  ACADEMY_PRICING_STRUCTURE,
   MAX_INTEREST_AREAS_PER_APPLICATION,
+  activeFormatKeys,
   attachPricingOptions,
-  isPricingKey,
-  pricingDefinition,
+  fallbackFormatKey,
+  pricingStructureFor,
   tuitionForFormat,
   tuitionForSelections,
   tuitionPlanShape,
   parseAreaSelections,
-  type AcademyPricingKey,
   type AreaPricingOptionRow,
 } from '@/src/server/services/academy/pricing';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
@@ -232,18 +231,28 @@ export async function POST(request: Request) {
     // Accordion selection: the client may send each area WITH its own format —
     // {"areas_of_interest": ["acting"], "area_selections": [{slug, key}]}.
     // When present, the selections are authoritative and define the areas.
-    const areaSelections = parseAreaSelections(body.area_selections);
+    //
+    // The format catalogue is read once per request and everything below prices
+    // against that one read: what may be chosen, what a client that chose
+    // nothing is priced in, and what the total is summed against. An operator
+    // renaming or withdrawing a format between two reads inside one request
+    // would otherwise price an application in a format the same request already
+    // refused.
+    const formats = await getTrainingFormats();
+    const offeredKeys = activeFormatKeys(formats);
+    const areaSelections = parseAreaSelections(body.area_selections, offeredKeys);
     if (areaSelections === 'invalid') {
-      return errorResponse('Each selection needs a known area and a valid training format', 400);
+      return errorResponse('Each selection needs a known area and a training format on offer', 400);
     }
     const areasOfInterest = areaSelections
       ? Object.keys(areaSelections)
       : getStringArray(body.areas_of_interest);
     // Which training format the tuition is priced in. Optional: a client from
-    // before this structure sends nothing, and is priced in the cheapest
-    // (weekend, no boarding) format rather than the retired per-area fee.
+    // before this structure sends nothing, and is priced in the cheapest format
+    // ON OFFER rather than the retired per-area fee. A key the operator has not
+    // created — or has withdrawn — is refused here, before it can reach money.
     const pricingOptionKey = getString(body.pricing_option_key);
-    if (pricingOptionKey && !isPricingKey(pricingOptionKey)) {
+    if (pricingOptionKey && !offeredKeys.has(pricingOptionKey)) {
       return errorResponse('Unknown training format', 400);
     }
     const motivation = getString(body.motivation);
@@ -319,9 +328,9 @@ export async function POST(request: Request) {
     // This was previously added to the amount collected at submit, which would
     // have taken ~₦255,000 up front, non-refundably, for a Film Directing
     // application nobody had reviewed yet.
-    const effectivePricingKey: AcademyPricingKey = isPricingKey(pricingOptionKey)
+    const effectivePricingKey = offeredKeys.has(pricingOptionKey)
       ? pricingOptionKey
-      : ACADEMY_PRICING_FALLBACK_KEY;
+      : fallbackFormatKey(formats);
     const { data: tuitionOptionRows, error: tuitionOptionsError } = await supabase
       .from('academy_area_pricing_options')
       .select('area_id, key, label, note, price_ngn, sort_order')
@@ -329,8 +338,8 @@ export async function POST(request: Request) {
     if (tuitionOptionsError) throw tuitionOptionsError;
     const optionRows = (tuitionOptionRows ?? []) as AreaPricingOptionRow[];
     const tuitionTotal = areaSelections
-      ? tuitionForSelections(activeAreas, areaSelections, optionRows)
-      : tuitionForFormat(activeAreas, effectivePricingKey, optionRows);
+      ? tuitionForSelections(activeAreas, areaSelections, optionRows, formats)
+      : tuitionForFormat(activeAreas, effectivePricingKey, optionRows, formats);
 
     // The only thing payable at APPLICATION time. Non-refundable per
     // academy_settings.application_fee_refundable.
@@ -692,10 +701,16 @@ export async function GET(request: Request) {
 
     const settings = await getActiveAcademySettings();
 
+    // The operator's format catalogue, read once and used for both the per-area
+    // prices and the structure below, so a client can never be offered a format
+    // its own tuition figures were not priced in.
+    const formats = await getTrainingFormats();
+
     // Admin-managed areas of interest. Applicants are priced by the composite
-    // format structure (academy_area_pricing_options) — five formats per area,
-    // delivered alongside each area so the form can show the real price for
-    // the format chosen. fee_ngn travels only so an older client still renders.
+    // format structure (academy_area_pricing_options) — every format on offer,
+    // per area — delivered alongside each area so the form can show the real
+    // price for the format chosen. fee_ngn travels only so an older client
+    // still renders.
     const { data: areaRows } = await supabase
       .from('academy_interest_areas')
       .select('id, slug, label, description, fee_ngn')
@@ -731,6 +746,7 @@ export async function GET(request: Request) {
         fee_ngn: Number(a.fee_ngn ?? 0),
       })),
       (areaOptionRows ?? []) as AreaPricingOptionRow[],
+      formats,
     );
     // The uuid keyed the pricing rows — it is not part of the client contract.
     const interestAreas = pricedAreas.map((a) => ({
@@ -751,9 +767,7 @@ export async function GET(request: Request) {
       // so the structure can never drift from what an area is actually priced
       // at. Deliverables and fee exclusions travel the same way: no client
       // hardcodes this copy.
-      pricingStructure: ACADEMY_PRICING_STRUCTURE.map(({ key, label, note, sort_order }) => ({
-        key, label, note, sort_order,
-      })),
+      pricingStructure: pricingStructureFor(formats),
       deliverables: ACADEMY_DELIVERABLES,
       feeExclusions: ACADEMY_FEE_EXCLUSIONS,
     });

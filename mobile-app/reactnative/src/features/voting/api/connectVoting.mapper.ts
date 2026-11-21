@@ -39,6 +39,15 @@ export interface BackendRosterEntry {
   like_count?: number;
   share_count?: number;
   liked_by_me?: boolean;
+  /**
+   * Emitted by the Go roster only for a song whose status is publicly playable
+   * (`omitempty`, so absent means "nothing to play"). `song_url` is absolute
+   * when the backend has a media base configured and root-relative when it has
+   * not — pass it through `mediaUrl()` before handing it to a player.
+   */
+  song_submission_id?: string;
+  song_status?: string;
+  song_url?: string;
 }
 
 /** One row of GET /api/v1/connect/contests. */
@@ -158,6 +167,8 @@ export function mapContestant(raw: BackendRosterEntry, contestId: string): Conte
     photo: raw.photo_url || undefined,
     mediaUrl: raw.media_url || undefined,
     bio: raw.bio || undefined,
+    songUrl: raw.song_url || undefined,
+    songStatus: raw.song_status || undefined,
     rank: raw.rank,
     votes: raw.total_votes,
     likeCount: raw.like_count ?? 0,

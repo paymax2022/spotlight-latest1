@@ -240,7 +240,7 @@ func (h *Handler) SaveReminderSettings(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, res)
+	c.JSON(http.StatusOK, SaveReminderSettingsResult{Reminders: *res})
 }
 
 func (h *Handler) SetTimezone(c *gin.Context) {

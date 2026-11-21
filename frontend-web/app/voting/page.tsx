@@ -28,12 +28,6 @@ interface Contest {
   endsAt: string;
   isLive: boolean;
   isTrending: boolean;
-  /**
-   * "Price to be won", set in the console and stored on contests.prize_pool.
-   * Empty for every contest created before that field existed, so the header only
-   * shows it when there is something to show.
-   */
-  prize?: string;
 }
 
 function getInitials(name: string): string {
@@ -336,13 +330,6 @@ export default function VotingPage() {
                       <span style={{ color: '#4caf50', marginLeft: '10px' }}>● Live</span>
                     )}
                   </p>
-                  {/* Only when the console has one — every older contest has no
-                      prize row, and "Prize: " on its own reads as a defect. */}
-                  {activeContest.prize ? (
-                    <p style={{ marginTop: 6 }}>
-                      Prize to be won: <strong>{activeContest.prize}</strong>
-                    </p>
-                  ) : null}
                 </div>
                 <label>
                   Find a contestant

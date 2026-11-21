@@ -35,6 +35,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import TextInputField from '@/components/TextInputField';
 import IdNumberField from '@/features/kycverify/components/IdNumberField';
 import { validateIdNumber } from '@/features/kycverify/idFormats';
+import { tierWalletLimitLabel, tier0ClaimPanelCopy, walletTierNotice } from '@/features/account/tierCopy';
 import DatePickerField from '@/components/DatePickerField';
 import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -104,7 +105,7 @@ const TIER_OPTIONS: Array<{
     subtitle: 'Quick start',
     requirement: 'Email · Date of birth · Phone',
     what: 'Auto-verified — no document needed',
-    limit: '₦10,000 / day',
+    limit: tierWalletLimitLabel(0),
     allowedDocs: [],
   },
   {
@@ -113,7 +114,7 @@ const TIER_OPTIONS: Array<{
     subtitle: 'BVN verification',
     requirement: 'Submit your Bank Verification Number',
     what: 'BVN only — links your wallet to your bank identity',
-    limit: '₦50,000 / day',
+    limit: tierWalletLimitLabel(1),
     allowedDocs: ['BVN'],
   },
   {
@@ -122,7 +123,7 @@ const TIER_OPTIONS: Array<{
     subtitle: 'NIN verification',
     requirement: 'Submit your National Identification Number',
     what: 'NIN only — confirms your NIMC-registered identity',
-    limit: '₦200,000 / day',
+    limit: tierWalletLimitLabel(2),
     allowedDocs: ['NIN'],
   },
   {
@@ -131,10 +132,12 @@ const TIER_OPTIONS: Array<{
     subtitle: 'Government photo ID',
     requirement: 'Submit a valid Passport or Driver\'s Licence',
     what: 'Photo ID reviewed by our compliance team — highest limits',
-    limit: '₦5,000,000 / day',
+    limit: tierWalletLimitLabel(3),
     allowedDocs: ['PASSPORT', 'DRIVERS_LICENSE'],
   },
 ];
+
+const TIER0_PANEL = tier0ClaimPanelCopy();
 
 function blankToUndefined(value: string) {
   const trimmed = value.trim();
@@ -442,11 +445,11 @@ export default function ProfileScreen() {
             <View style={styles.statusTextWrap}>
               <Text style={styles.statusTitle}>KYC {statusCopy(kyc?.status)}</Text>
               <Text style={styles.statusSub}>
-                {kyc?.status === 'pending' && kyc.requestedTier
-                  ? `Tier ${kyc.requestedTier} request is awaiting admin review.`
-                  : currentTier > 0
-                    ? `Your active account level is Tier ${currentTier}.`
-                    : 'Complete KYC to unlock higher wallet limits.'}
+                {walletTierNotice({
+                  tier: currentTier,
+                  status: kyc?.status ?? 'unverified',
+                  requestedTier: kyc?.requestedTier,
+                })}
               </Text>
             </View>
           </View>
@@ -549,8 +552,8 @@ export default function ProfileScreen() {
             {/* Tier 0 auto-verification block */}
             {(currentTier === 0 && kyc?.status !== 'verified') && (
               <View style={styles.tier0Card}>
-                <Text style={styles.tier0Title}>Tier 0 — Quick Activation</Text>
-                <Text style={styles.tier0Sub}>Provide your email, date of birth and phone to activate Tier 0 instantly. No documents required.</Text>
+                <Text style={styles.tier0Title}>{TIER0_PANEL.title}</Text>
+                <Text style={styles.tier0Sub}>{TIER0_PANEL.sub}</Text>
                 <View style={styles.tier0Checks}>
                   <View style={styles.tier0Row}>
                     {currentEmail && currentEmail !== 'No email'
@@ -572,7 +575,7 @@ export default function ProfileScreen() {
                   </View>
                 </View>
                 <PrimaryButton
-                  label="Activate Tier 0"
+                  label={TIER0_PANEL.cta}
                   onPress={() => {
                     setKycError('');
                     if (!profileForm.phone.trim()) {

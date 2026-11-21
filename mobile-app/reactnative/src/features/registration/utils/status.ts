@@ -2,29 +2,10 @@
 import type { ApplicationStatus } from '../types/registration.types';
 import { Colors } from '@/constants/tokens';
 
-export function statusLabel(status: ApplicationStatus): string {
-  const map: Record<ApplicationStatus, string> = {
-    draft: 'Draft',
-    submitted: 'Submitted',
-    awaiting_payment: 'Awaiting payment',
-    payment_failed: 'Payment failed',
-    under_review: 'Under review',
-    more_information_requested: 'More info requested',
-    shortlisted: 'Shortlisted',
-    callback_invited: 'Callback invited',
-    approved: 'Approved',
-    rejected: 'Rejected',
-    waitlisted: 'Waitlisted',
-    disqualified: 'Disqualified',
-    audition_scheduled: 'Audition scheduled',
-    selected_for_bootcamp: 'Selected for bootcamp',
-    selected_for_public_voting: 'Selected for voting',
-    eliminated: 'Eliminated',
-    winner: 'Winner',
-    withdrawn: 'Withdrawn',
-  };
-  return map[status] ?? status;
-}
+// The wording lives in `status-labels.ts`, which is free of `react-native` so a
+// `node --test` spec can reuse it. Re-exported here because that is where the
+// screen-facing status helpers already live.
+export { statusLabel } from './status-labels';
 
 // Returns { fg, bg } tones for a status chip from the design tokens.
 export function statusTone(status: ApplicationStatus): { fg: string; bg: string } {

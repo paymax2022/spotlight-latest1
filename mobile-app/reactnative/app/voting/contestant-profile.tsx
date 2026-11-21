@@ -27,6 +27,9 @@ import ContestantStatsCard from '@/features/voting/components/ContestantStatsCar
 import VoteConfirmationSheet from '@/features/voting/components/VoteConfirmationSheet';
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
 import { formatVoteCount } from '@/features/voting/utils/voteFormatters';
+import SongPlayer from '@/features/openmic/components/SongPlayer';
+import { isPlayableHttpUrl } from '@/features/openmic/absolute-url';
+import { mediaUrl } from '@/features/openmic/media';
 import type { VotePackage } from '@/features/voting/types/voting.types';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
@@ -78,6 +81,12 @@ export default function ContestantProfileScreen() {
   const qc = useQueryClient();
 
   const sampleUrl = safeMediaUrl(contestant?.mediaUrl);
+  // The roster's song address is minted by our own backend, but it still passes
+  // the same allowlist as any other value handed to a native player, and
+  // `mediaUrl` is what turns a root-relative reader path into one this device
+  // can reach — a phone's `localhost` is the phone.
+  const rawSongUrl = mediaUrl(contestant?.songUrl);
+  const songUrl = rawSongUrl && isPlayableHttpUrl(rawSongUrl) ? rawSongUrl : null;
   const openSample = async () => {
     if (!sampleUrl) return;
     const ok = await Linking.canOpenURL(sampleUrl).catch(() => false);
@@ -263,6 +272,22 @@ export default function ContestantProfileScreen() {
             <View style={[styles.section, shadow1]}>
               <Text style={styles.sectionTitle}>About</Text>
               <Text style={styles.bio}>{contestant.bio}</Text>
+            </View>
+          )}
+
+          {/* The finished song, for voters and for the artist themselves.
+              Rendered on the URL alone: the Go roster leaves `song_url` empty
+              for a draft upload and for every moderated state, so an absent
+              address here means "the server has not published audio", not
+              "the player is broken". */}
+          {songUrl && (
+            <View style={[styles.section, shadow1]}>
+              <Text style={styles.sectionTitle}>Their song</Text>
+              <SongPlayer
+                url={songUrl}
+                kind="song"
+                label={`${contestant.stageName ?? contestant.name} — official beat entry`}
+              />
             </View>
           )}
 

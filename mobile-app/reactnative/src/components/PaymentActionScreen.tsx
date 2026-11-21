@@ -21,6 +21,7 @@ import {
   calculateBankTransferFee,
 } from '@/api/beneficiaries.api';
 import { fetchBanks } from '@/features/transfers/api';
+import { recipientAddressLine } from '@/features/transfers/recipientDisplay';
 import { kycBlockFor, type KycBlock } from '@/features/transfers/kycBlock';
 import BankPicker from '@/features/transfers/components/BankPicker';
 import TripPinInput from '@/features/mobility/components/TripPinInput';
@@ -268,7 +269,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
 
   const resolveMutation = useMutation({
     mutationFn: async () => {
-      if (!recipient.trim()) throw new Error('Enter a phone number or email address.');
+      if (!recipient.trim()) throw new Error('Enter a cashtag, phone number, or email address.');
       if (!amountKobo || amountKobo < 100) throw new Error('Enter an amount of at least ₦1.');
       return resolvePaymaxRecipient(recipient.trim());
     },
@@ -651,7 +652,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
             {kind === 'transfer' && (
               <TextInputField
                 label="Recipient"
-                placeholder="Phone number or email"
+                placeholder="@cashtag, phone, or email"
                 value={recipient}
                 onChangeText={setRecipient}
               />
@@ -752,7 +753,9 @@ function TransferConfirmCard({
         <View style={{ flex: 1 }}>
           <Text style={styles.confirmLabel}>Sending to</Text>
           <Text style={styles.confirmValue}>{recipient.displayName}</Text>
-          <Text style={styles.confirmSub}>{recipient.maskedPhone}</Text>
+          {/* The handle for a cashtag send, the masked phone otherwise: what the
+              sender typed is what they should approve against. */}
+          <Text style={styles.confirmSub}>{recipientAddressLine(recipient)}</Text>
         </View>
         <Icons.BadgeCheck size={20} color={Colors.teal} strokeWidth={2} />
       </View>

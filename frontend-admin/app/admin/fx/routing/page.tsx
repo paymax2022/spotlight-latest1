@@ -3,12 +3,13 @@
 import { useEffect, useState } from 'react';
 import { getRoutingWeights, saveRoutingWeights, simulateRoute } from '@/services/fxAdminService';
 import type { RoutingWeights, RouteSimResult, Provider } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, ErrorNote, errorMessage } from '../_ui';
 import { Button, colors, thCell, tdCell, tint } from '@/components/ui/vuexy';
 
 export default function FxRoutingPage() {
   const [rows, setRows] = useState<RoutingWeights[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
@@ -17,7 +18,7 @@ export default function FxRoutingPage() {
   const [sim, setSim] = useState<RouteSimResult | null>(null);
   const [simBusy, setSimBusy] = useState(false);
 
-  async function load() { setLoading(true); try { setRows(await getRoutingWeights()); } finally { setLoading(false); } }
+  async function load() { setLoading(true); setError(null); try { setRows(await getRoutingWeights()); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); } }
   useEffect(() => { load(); }, []);
 
   const patch = (i: number, p: Partial<RoutingWeights>) => setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...p } : r)));
@@ -39,6 +40,7 @@ export default function FxRoutingPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Routing Configuration" subtitle="Weights, provider enablement and bias per corridor." action={<Button variant="primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save changes'}</Button>} />
       <FxTabs active="routing" />
+      <ErrorNote message={error} />
       {savedAt ? <p style={{ color: colors.success, fontSize: '0.82rem' }}>Saved at {savedAt}. All changes are audit-logged.</p> : null}
 
       <Card title="Score weights (w_cost / w_cover / w_liq / w_rel)">

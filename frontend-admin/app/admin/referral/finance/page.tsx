@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listPayouts, approvePayout, getBudgetBurn, formatNaira } from '@/services/referralAdminOpsService';
 import type { Payout, BudgetBurn } from '@/types/referralAdminOps';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { NOT_REPORTED, textOrDash } from '../_ui';
 
 const STATUSES = ['all', 'pending', 'approved', 'paid', 'on_hold', 'rejected'];
 
@@ -111,10 +112,10 @@ export default function FinancePayoutsPage() {
               <tbody>
                 {rows.map((p) => (
                   <tr key={p.id}>
-                    <td style={tdCell}>{p.beneficiary_name}<br /><code style={{ fontSize: '0.72rem', color: colors.muted }}>{p.beneficiary_id}</code></td>
+                    <td style={tdCell}>{textOrDash(p.beneficiary_name)}<br /><code style={{ fontSize: '0.72rem', color: colors.muted }}>{p.beneficiary_id}</code></td>
                     <td style={tdCell}><strong>{formatNaira(p.amount_kobo)}</strong></td>
                     <td style={tdCell}>{p.reward_ids.length}</td>
-                    <td style={tdCell}><StatusBadge status={p.risk_flag} /></td>
+                    <td style={tdCell}>{p.risk_flag ? <StatusBadge status={p.risk_flag} /> : NOT_REPORTED}</td>
                     <td style={tdCell}><StatusBadge status={p.status} /></td>
                     <td style={tdCell}>{timeAgo(p.requested_at)}</td>
                     <td style={tdCell}>

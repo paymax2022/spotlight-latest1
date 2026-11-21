@@ -265,6 +265,17 @@ describe('resolvePaymaxUser by cashtag', () => {
     expect(capture.tables).toEqual(['cashtag_handles']);
   });
 
+  it('answers a directory outage as an outage, not as an unclaimed handle', async () => {
+    // The Go rail pins the same split (TestCashtagLookupFailureKeepsOutageApartFromUnclaimed).
+    // A 404 here would tell the sender their `@handle` does not exist when the
+    // truth is that we could not read the directory — and on a money path that
+    // difference decides whether they retry, give up, or send to someone else.
+    queryError = { message: 'connection reset by peer' };
+
+    await expect(resolvePaymaxUser('@bisi_2', ME)).rejects.toMatchObject({ status: 500 });
+    expect(capture.tables).toEqual(['cashtag_handles']);
+  });
+
   it('never builds the phone LIKE pattern for a handle-shaped input', async () => {
     // '%8%1%5…' is a superset filter on purpose for numbers. For a name it would
     // be a guess, and a guess on this path pays a stranger irreversibly.

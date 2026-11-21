@@ -20,6 +20,8 @@ import type {
   HouseLedger,
   Reassignment,
   ReassignDecision,
+  HouseAccount,
+  HouseLedgerEntry,
 } from '@/types/referralAdmin';
 
 export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK);
@@ -211,7 +213,20 @@ const HOUSE_LEDGER: HouseLedger = {
   total_house_volume: 5610,
   total_house_value_kobo: 22_540_000_00,
   budget_neutral: true,
-  entries: REWARD_LEDGER.filter((r) => r.is_house),
+  // Projected onto the seven columns house.Handler.Ledger actually selects
+  // (house/service.go:175): the house view has no beneficiary, campaign,
+  // ledger-link or idempotency column, so the fixture carries none either.
+  entries: REWARD_LEDGER.filter((r) => r.is_house).map((r) => ({
+    id: r.id,
+    referred_user_id: r.referred_user_id ?? null,
+    kind: r.kind,
+    state: r.state,
+    amount_kobo: r.amount_kobo,
+    currency: r.currency,
+    excluded_from_override: r.excluded_from_override,
+    excluded_from_kfactor: r.excluded_from_kfactor,
+    created_at: r.created_at ?? '',
+  })),
 };
 
 const REASSIGNMENTS: Reassignment[] = [
@@ -319,37 +334,178 @@ export async function getReferralDashboardFigures(): Promise<DashboardFigures> {
   };
 }
 
+/**
+ * The program tab reads the ONLY config route the backend mounts:
+ * GET /api/referral/admin/config (referral_routes.go:143, guard
+ * referral.config.view), which answers referralconfig.Config —
+ * attribution_window_hours, grace_window_hours, fallback_chain,
+ * house_account_code, budget_neutral, welcome_reward_enabled. Of the fields
+ * this tab shows, only the welcome-reward switch is in that row; the program
+ * on/off, default tier, tier ladder, qualifying action, reward-to-LTV cap and
+ * last-updated have no column and no other route, so they stay absent and the
+ * page renders an em-dash instead of a fabricated "Enabled".
+ *
+ * It used to call GET /config/program, a path Go never registers: the page died
+ * with "Request failed (404)" before showing anything real.
+ */
 export async function getProgramConfig(): Promise<ProgramConfig> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(PROGRAM_CONFIG)); }
-  return getJson<ProgramConfig>('/config/program');
+  const cfg = await getJson<ConfigRowWire>('/config');
+  return { welcome_reward_enabled: cfg.welcome_reward_enabled === true };
 }
 
+/**
+ * GET /api/referral/admin/ledger — the reward ledger list (ledger.Handler.
+ * AdminList, referral_routes.go:155, guard referral.ledger.view).
+ *
+ * The route answers `{entries: […]}` (ledger/service.go:667), which the page's
+ * `!rows || rows.length === 0` guard is not false for, so the array has to be
+ * lifted here; and it takes only ?beneficiary=, so the state and kind dropdowns
+ * narrow the rows it returned rather than being dropped on the floor. The
+ * handler reads 200 rows newest-first — the table says so in its footnote.
+ */
+interface LedgerEntryWire {
+  id: string;
+  beneficiary_id?: string;
+  house_account_id?: string;
+  referred_user_id?: string;
+  kind: string;
+  state: string;
+  amount_kobo: number;
+  currency: string;
+  is_house: boolean;
+  excluded_from_override: boolean;
+  excluded_from_kfactor: boolean;
+}
+
+export async function listRewardLedger(filters?: { state?: string; kind?: string; beneficiary?: string }): Promise<RewardLedgerEntry[]> {
+  if (USE_MOCK) {
+    await delay();
+    let rows = [...REWARD_LEDGER];
+    if (filters?.state && filters.state !== 'all') rows = rows.filter((r) => r.state === filters.state);
+    if (filters?.kind && filters.kind !== 'all') rows = rows.filter((r) => r.kind === filters.kind);
+    return rows;
+  }
+  const qs = new URLSearchParams();
+  if (filters?.beneficiary) qs.set('beneficiary', filters.beneficiary);
+  const q = qs.toString();
+  const body = await getJson<unknown>(`/ledger${q ? `?${q}` : ''}`);
+  const rows = Array.isArray(body) ? body as LedgerEntryWire[] : (body as { entries?: LedgerEntryWire[] }).entries ?? [];
+  return rows
+    .filter((r) => (!filters?.state || filters.state === 'all' || r.state === filters.state)
+      && (!filters?.kind || filters.kind === 'all' || r.kind === filters.kind))
+    .map((r) => ({
+      id: r.id,
+      beneficiary_id: r.beneficiary_id,
+      referred_user_id: r.referred_user_id,
+      house_account_id: r.house_account_id,
+      kind: r.kind as RewardLedgerEntry['kind'],
+      state: r.state as RewardLedgerEntry['state'],
+      amount_kobo: r.amount_kobo,
+      currency: r.currency,
+      is_house: r.is_house,
+      excluded_from_override: r.excluded_from_override,
+      excluded_from_kfactor: r.excluded_from_kfactor,
+      // ledger.Entry has no created_at/updated_at, no campaign and no
+      // idempotency key: the "Updated" column renders "not reported" rather
+      // than an "in NaNd ago" made of an undefined timestamp.
+    }));
+}
+
+export async function getRewardEntry(id: string): Promise<RewardLedgerEntry | null> {
+  if (USE_MOCK) { await delay(); return REWARD_LEDGER.find((r) => r.id === id) ?? null; }
+  // No single-entry route exists: the ledger package registers GET /ledger
+  // (AdminList) and nothing keyed by reward id, so /rewards/:id was always a
+  // 404. The list carries every field the row has.
+  throw new Error(`Opening reward ${id} ${NO_BACKEND_YET} The ledger is read as a list (GET /ledger); no route serves one entry by id.`);
+}
+
+export async function manualGrant(input: ManualGrantInput): Promise<{ id: string }> {
+  // No backend at all: the reward ledger defines a KindManual entry kind
+  // (backend/internal/referral/ledger/service.go) but no handler or route
+  // anywhere in backend/internal/referral lets an admin create one via the API
+  // — only reads (AdminList) are wired.
+  void input;
+  throw new Error(`Granting a manual reward ${NO_BACKEND_YET} POST /ledger/:id/clawback and the campaign fund routes are the reward money actions that exist.`);
+}
+
+/**
+ * The three admin tabs beyond the config row have no backend: the referral
+ * admin group registers GET and PUT /config only (referral_routes.go:143-146),
+ * so /config/rbac, /config/flags and /config/audit were invented paths whose
+ * 404 killed the whole page through Promise.all. Refusing here says what is
+ * missing; the page shows each tab on its own.
+ */
 export async function getReferralRoles(): Promise<ReferralRole[]> {
   if (USE_MOCK) { await delay(); return [...ROLES]; }
-  return getJson<ReferralRole[]>('/config/rbac');
+  throw new Error(`Listing referral RBAC roles ${NO_BACKEND_YET} The admin group registers GET and PUT /config only; no RBAC roster route exists in backend/internal/referral.`);
 }
 
 export async function getFeatureFlags(): Promise<FeatureFlag[]> {
   if (USE_MOCK) { await delay(); return [...FLAGS]; }
-  return getJson<FeatureFlag[]>('/config/flags');
+  throw new Error(`Listing referral feature flags ${NO_BACKEND_YET} No kill-switch or flag catalogue route is registered; the platform module registry lives behind /api/v1/admin, not in the referral console.`);
 }
 
 export async function getReferralAudit(): Promise<ReferralAuditEntry[]> {
   if (USE_MOCK) { await delay(); return [...AUDIT]; }
-  return getJson<ReferralAuditEntry[]>('/config/audit');
+  throw new Error(`Reading the referral audit trail ${NO_BACKEND_YET} The referral_engine_events stream is written by the engine (events package) and has no admin read route.`);
 }
 
+/**
+ * referralconfig.Config (backend/internal/referral/config/service.go:18) — the
+ * singleton referral_config row, which IS the attribution configuration.
+ */
+interface ConfigRowWire {
+  attribution_window_hours?: number;
+  grace_window_hours?: number;
+  fallback_chain?: string[];
+  house_account_code?: string;
+  budget_neutral?: boolean;
+  welcome_reward_enabled?: boolean;
+}
+
+/**
+ * Attribution config is the same GET /config row the program tab reads — the
+ * route is not /attribution/config (no such registration exists anywhere in
+ * backend/internal/referral, which is why the tab 404'd). fallback_chain is a
+ * plain array of tier names in Go, lifted into the entries the UI labels.
+ * self_referral_blocked and updated_at have no column in that row.
+ */
 export async function getAttributionConfig(): Promise<AttributionConfig> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(ATTRIBUTION_CONFIG)); }
-  return getJson<AttributionConfig>('/attribution/config');
+  const cfg = await getJson<ConfigRowWire>('/config');
+  return {
+    attribution_window_hours: cfg.attribution_window_hours ?? 0,
+    grace_window_hours: cfg.grace_window_hours ?? 0,
+    fallback_chain: (cfg.fallback_chain ?? []).map((tier) => ({
+      tier: tier as AttributionConfig['fallback_chain'][number]['tier'],
+      label: tier.replace(/_/g, ' '),
+      enabled: true,
+    })),
+    house_account_code: cfg.house_account_code ?? '',
+    budget_neutral: cfg.budget_neutral === true,
+    welcome_reward_enabled: cfg.welcome_reward_enabled === true,
+  };
 }
 
+/**
+ * The attribution WRITE has no route either: PUT /config updates the same
+ * singleton row with the program fields, and no /attribution/config exists, so
+ * saving this form used to POST into a 404 and still show a success banner.
+ */
 export async function updateAttributionConfig(cfg: AttributionConfig): Promise<AttributionConfig> {
-  // No backend at all: the referral admin group has PUT /config (a general
-  // ProgramConfig, a different type from AttributionConfig) but no
-  // /attribution/config route of its own anywhere in backend/internal/referral.
-  if (USE_MOCK) throw new Error(`Updating attribution config ${NO_BACKEND_YET}`);
-  return sendJson<AttributionConfig>('PUT', '/attribution/config', cfg);
+  // Same row, same route as the read: PUT /api/referral/admin/config (guard
+  // referral.config.manage). referralconfig.Update accepts the attribution
+  // fields, which are exactly what this form holds.
+  if (USE_MOCK) throw new Error(`Updating attribution config ${NOT_IN_FIXTURE_MODE}`);
+  return sendJson<AttributionConfig>('PUT', '/config', {
+    attribution_window_hours: cfg.attribution_window_hours,
+    grace_window_hours: cfg.grace_window_hours,
+    fallback_chain: cfg.fallback_chain.map((f) => f.tier),
+    house_account_code: cfg.house_account_code,
+    budget_neutral: cfg.budget_neutral,
+    welcome_reward_enabled: cfg.welcome_reward_enabled,
+  });
 }
 
 export async function listCampaigns(status?: string): Promise<CampaignSummary[]> {
@@ -379,42 +535,8 @@ export async function setCampaignStatus(id: string, status: CampaignDetail['stat
   return sendJson<{ ok: true }>('POST', `/campaigns/${id}/${verb}`, {});
 }
 
-export async function listRewardLedger(filters?: { state?: string; kind?: string }): Promise<RewardLedgerEntry[]> {
-  if (USE_MOCK) {
-    await delay();
-    let rows = [...REWARD_LEDGER];
-    if (filters?.state && filters.state !== 'all') rows = rows.filter((r) => r.state === filters.state);
-    if (filters?.kind && filters.kind !== 'all') rows = rows.filter((r) => r.kind === filters.kind);
-    return rows;
-  }
-  const qs = new URLSearchParams();
-  if (filters?.state && filters.state !== 'all') qs.set('state', filters.state);
-  if (filters?.kind && filters.kind !== 'all') qs.set('kind', filters.kind);
-  const q = qs.toString();
-  return getJson<RewardLedgerEntry[]>(`/rewards${q ? `?${q}` : ''}`);
-}
-
-export async function getRewardEntry(id: string): Promise<RewardLedgerEntry | null> {
-  if (USE_MOCK) { await delay(); return REWARD_LEDGER.find((r) => r.id === id) ?? null; }
-  return getJson<RewardLedgerEntry>(`/rewards/${id}`);
-}
-
-export async function manualGrant(input: ManualGrantInput): Promise<{ id: string }> {
-  // No backend at all: the reward ledger defines a KindManual entry kind
-  // (backend/internal/referral/ledger/service.go) but no handler or route
-  // anywhere in backend/internal/referral lets an admin create one via the API
-  // — only reads (AdminList) are wired.
-  if (USE_MOCK) throw new Error(`Granting a manual reward ${NO_BACKEND_YET}`);
-  // Money mutation: backend requires an Idempotency-Key + audit event.
-  const res = await fetch(`${adminBase()}/rewards/grant`, {
-    method: 'POST',
-    headers: { ...authHeaders(), 'Idempotency-Key': crypto.randomUUID() },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) throw new Error(`Request failed (${res.status})`);
-  const j = await res.json();
-  return (j?.data ?? j) as { id: string };
-}
+// listRewardLedger, getRewardEntry and manualGrant live above, on the routes
+// the ledger package actually registers (GET /ledger; no by-id read, no grant).
 
 export async function executeClawback(input: ClawbackInput): Promise<{ ok: true }> {
   if (USE_MOCK) throw new Error(`Executing a clawback ${NOT_IN_FIXTURE_MODE}`);
@@ -430,9 +552,38 @@ export async function executeClawback(input: ClawbackInput): Promise<{ ok: true 
   return { ok: true };
 }
 
+/**
+ * The house ledger reads GET /house/ledger.
+ *
+ * It used to read GET /house, which is the sibling route that answers with the
+ * house ACCOUNT only (house/service.go:147 GetGlobal marshals an Account, no
+ * entries, no totals). The page then did `data.entries.map(...)` over undefined
+ * and the whole screen fell over, which is why /admin/referral/house reported
+ * "This page couldn't load" rather than showing a ledger.
+ *
+ * The envelope from Ledger() is named — {house, non_withdrawable, total_count,
+ * total_kobo, entries} — so the console's own field names are mapped here:
+ * total_count is the volume the KPI labels, and budget_neutral comes from the
+ * account's non_withdrawable flag rather than a switch the API never reports.
+ */
 export async function getHouseLedger(): Promise<HouseLedger> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(HOUSE_LEDGER)); }
-  return getJson<HouseLedger>('/house');
+  const raw = await getJson<HouseLedgerPayload>('/house/ledger');
+  return {
+    accounts: [raw.house],
+    total_house_volume: raw.total_count ?? 0,
+    total_house_value_kobo: raw.total_kobo ?? 0,
+    budget_neutral: Boolean(raw.non_withdrawable ?? raw.house?.non_withdrawable),
+    entries: raw.entries ?? [],
+  };
+}
+
+interface HouseLedgerPayload {
+  house: HouseAccount;
+  non_withdrawable?: boolean;
+  total_count?: number;
+  total_kobo?: number;
+  entries?: HouseLedgerEntry[];
 }
 
 export async function listReassignments(status?: string): Promise<Reassignment[]> {

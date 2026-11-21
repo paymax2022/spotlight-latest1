@@ -6,10 +6,12 @@ import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   Payout,
+  PayoutStatus,
   Reconciliation,
   BudgetBurn,
   Float,
   RiskDashboard,
+  RiskAlert,
   RiskRule,
   CaseDetail,
   BlocklistEntry,
@@ -34,6 +36,7 @@ import type {
   AgentNetwork,
   OverridePolicy,
   MerchantSummary,
+  MerchantStatus,
   MerchantDetail,
   BudgetLine,
 } from '@/types/referralAdminOps';
@@ -424,20 +427,77 @@ const MERCHANT_DETAIL: Record<string, MerchantDetail> = {
   },
 };
 
+/** The wire row: backend/internal/referral/finance/repo.go:415 Payout. */
+interface PayoutRow {
+  id: string;
+  beneficiary_id: string;
+  reward_id?: string;
+  amount_kobo: number;
+  currency: string;
+  status: string;
+  requested_by?: string;
+  approved_by?: string;
+  reject_reason?: string;
+  created_at: string;
+  decided_at?: string | null;
+}
+
+/**
+ * finance.Handler.ListPayouts answers `gin.H{"payouts": list}` (service.go:275),
+ * not a bare array. getJson hands back the parsed object, so without this unwrap
+ * the queue page's `!rows || rows.length === 0` guard is false for an object and
+ * `rows.map` throws — which is the "This page couldn't load" the operator saw.
+ *
+ * Two names differ from the console's own type and are mapped here rather than
+ * pushed into the page: created_at is what the queue labels "Requested", and a
+ * payout carries ONE reward id, while the table counts a list.
+ */
+function toPayout(r: PayoutRow): Payout {
+  return {
+    id: r.id,
+    beneficiary_id: r.beneficiary_id,
+    wallet_id: undefined,
+    reward_ids: r.reward_id ? [r.reward_id] : [],
+    amount_kobo: r.amount_kobo,
+    currency: r.currency,
+    status: r.status as PayoutStatus,
+    requested_at: r.created_at,
+    approved_by: r.approved_by || null,
+    approved_at: r.decided_at ?? null,
+  };
+}
+
 export async function listPayouts(status?: string): Promise<Payout[]> {
   if (USE_MOCK) { await delay(); return status && status !== 'all' ? PAYOUTS.filter((p) => p.status === status) : [...PAYOUTS]; }
-  return getJson<Payout[]>(`/finance/payouts${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
+  const raw = await getJson<{ payouts?: PayoutRow[] } | PayoutRow[]>('/finance/payouts');
+  const list = Array.isArray(raw) ? raw : raw.payouts ?? [];
+  const rows = list.map(toPayout);
+  return status && status !== 'all' ? rows.filter((r) => r.status === status) : rows;
 }
+/**
+ * Approve a queued payout.
+ *
+ * The refusal above this function claimed no endpoint existed. It does:
+ * finance/service.go:248 registers POST /finance/payouts/:id/approve behind
+ * referral.payout.manage, and ApprovePayout returns the decided row. Dead code
+ * after a `throw` made that invisible, so the console disabled a working money
+ * control and told the operator nothing had changed — the same class of bug as
+ * the fabricated successes in docs/audit/ADMIN_SIMULATED_WRITES.md, pointing the
+ * other way. Idempotency-Key stays, because this settles a payout.
+ */
 export async function approvePayout(id: string, note: string): Promise<{ ok: true }> {
-    // No endpoint exists for this action, so there is nothing this can do but
-    // say so. Returning a success value here told the operator the decision had
-    // been applied when nothing had — see docs/audit/ADMIN_SIMULATED_WRITES.md.
-    // Client-side validation above still runs, so bad input is still caught.
-    throw new Error(
-      'Referral payout approval is not available in this environment — no backend endpoint exists yet. Nothing was changed.',
-    );
-  // Money mutation: backend requires Idempotency-Key + audit event.
-  return sendJson<{ ok: true }>('POST', `/finance/payouts/${id}/approve`, { note }, true);
+  if (!id) throw new Error('A payout id is required to approve a payout.');
+  if (!note || !note.trim()) throw new Error('An operator note is required before approving a payout.');
+  await sendJson<{ payout?: unknown }>('POST', `/finance/payouts/${encodeURIComponent(id)}/approve`, { note }, true);
+  return { ok: true };
+}
+
+/** Reject a queued payout with the reason the backend stores as reject_reason. */
+export async function rejectPayout(id: string, reason: string): Promise<{ ok: true }> {
+  if (!id) throw new Error('A payout id is required to reject a payout.');
+  if (!reason || !reason.trim()) throw new Error('A reason is required before rejecting a payout.');
+  await sendJson<{ ok: boolean }>('POST', `/finance/payouts/${encodeURIComponent(id)}/reject`, { reason }, true);
+  return { ok: true };
 }
 export async function getReconciliation(): Promise<Reconciliation> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(RECONCILIATION)); }
@@ -481,10 +541,73 @@ export async function getFloat(): Promise<Float> {
   return getJson<Float>('/finance/float');
 }
 
+/**
+ * The risk page's one read, assembled from the two routes that exist.
+ *
+ * risk/service.go registers GET /risk/dashboard and GET /risk/alerts separately,
+ * and each answers a named envelope ({dashboard}, {alerts}). Reading only the
+ * first is what left the page with an object shaped like nothing it renders.
+ *
+ * DashboardCounts is four integers — open_alerts, open_cases, queued_reviews,
+ * active_blocks (repo.go:596). fraud_rate, amount-at-risk, blocked-24h,
+ * clawbacks-30d and the burn trend are NOT computed anywhere in that package, so
+ * they stay absent here. The page labels them "not returned by the API" instead
+ * of drawing a 0, because on a fraud screen a zero is a claim of cleanliness.
+ */
 export async function getRiskDashboard(): Promise<RiskDashboard> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(RISK_DASHBOARD)); }
-  return getJson<RiskDashboard>('/risk/dashboard');
+  const [counts, alertRows] = await Promise.all([
+    getJson<{ dashboard?: DashboardCountsRow } | DashboardCountsRow>('/risk/dashboard'),
+    getRiskAlerts(),
+  ]);
+  const d = ('dashboard' in counts ? counts.dashboard : counts) as DashboardCountsRow;
+  return {
+    open_cases: d.open_cases ?? 0,
+    open_alerts: d.open_alerts ?? 0,
+    queued_reviews: d.queued_reviews ?? 0,
+    active_blocks: d.active_blocks ?? 0,
+    alerts: alertRows,
+  };
 }
+
+interface DashboardCountsRow {
+  open_alerts?: number;
+  open_cases?: number;
+  queued_reviews?: number;
+  active_blocks?: number;
+}
+/**
+ * risk.Handler.ListAlerts answers `gin.H{"alerts": list}` (risk/handlers.go:124),
+ * so the dashboard's alert table needs the unwrap as much as the queue does.
+ *
+ * risk.Alert (service.go:552) names the fired rule `rule_code` and the reason
+ * `reason_code`; the console calls those `kind` and `detail`. It has no amount
+ * column at all, so amount_at_risk_kobo stays unset and the row shows an em-dash.
+ */
+interface AlertRow {
+  id: string;
+  subject_id?: string;
+  rule_code: string;
+  reason_code: string;
+  severity: string;
+  status?: string;
+  created_at: string;
+}
+
+async function getRiskAlerts(): Promise<RiskAlert[]> {
+  const raw = await getJson<{ alerts?: AlertRow[] } | AlertRow[]>('/risk/alerts');
+  const list = Array.isArray(raw) ? raw : raw.alerts ?? [];
+  return list.map((a) => ({
+    id: a.id,
+    kind: a.rule_code,
+    severity: a.severity as RiskAlert['severity'],
+    subject_id: a.subject_id ?? '',
+    detail: a.reason_code,
+    status: a.status,
+    created_at: a.created_at,
+  }));
+}
+
 export async function listRiskRules(): Promise<RiskRule[]> {
   if (USE_MOCK) { await delay(); return [...RISK_RULES]; }
   return getJson<RiskRule[]>('/risk/rules');
@@ -582,26 +705,175 @@ export async function interveneUser(input: InterveneInput): Promise<{ ok: true }
   return sendJson<{ ok: true }>('POST', `/users/${input.user_id}/intervene`, input, true);
 }
 
-export async function listMissionsAdmin(status?: string): Promise<MissionAdmin[]> {
-  if (USE_MOCK) { await delay(); return status && status !== 'all' ? MISSIONS.filter((m) => m.status === status) : [...MISSIONS]; }
-  return getJson<MissionAdmin[]>(`/gamification/missions${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
-}
-export async function listRanksAdmin(): Promise<RankAdmin[]> {
-  if (USE_MOCK) { await delay(); return [...RANKS]; }
-  return getJson<RankAdmin[]>('/gamification/ranks');
-}
-export async function listLeaderboards(): Promise<LeaderboardConfig[]> {
-  if (USE_MOCK) { await delay(); return [...LEADERBOARDS]; }
-  return getJson<LeaderboardConfig[]>('/gamification/leaderboards');
-}
-export async function listContests(): Promise<ContestAdmin[]> {
-  if (USE_MOCK) { await delay(); return [...CONTESTS]; }
-  return getJson<ContestAdmin[]>('/gamification/contests');
+/**
+ * gamification.Mission (backend/internal/referral/gamification/service.go:186).
+ * The row has title/description/mission_type/target_count/points_reward/
+ * cash_reward_kobo/is_active/starts_at/ends_at — and no counters of any kind.
+ */
+interface MissionWire {
+  id: string;
+  title: string;
+  description?: string;
+  mission_type: string;
+  target_count: number;
+  points_reward: number;
+  cash_reward_kobo?: number;
+  is_active: boolean;
+  starts_at?: string;
+  ends_at?: string | null;
 }
 
+/** gamification.Rank (service.go:212) — perks is a JSON object, not prose. */
+interface RankWire {
+  id: string;
+  slug?: string;
+  name: string;
+  tier_order: number;
+  min_points: number;
+  perks?: Record<string, unknown>;
+}
+
+/** gamification.Contest (service.go:242). */
+interface ContestWire {
+  id: string;
+  slug?: string;
+  title: string;
+  description?: string;
+  status: string;
+  starts_at?: string;
+  ends_at?: string | null;
+  prize_config?: Record<string, unknown>;
+}
+
+/**
+ * Both shapes in one place: Go answers these admin routes with a NAMED
+ * envelope ({missions}, {ranks}, {contests} — gamification/handlers.go:188,
+ * 101, 225), and a page guard of `!rows || rows.length === 0` is false for a
+ * plain object, so the array the page expects has to be lifted at this
+ * boundary. The bare-array branch is kept because the house ledger and payout
+ * rails have differed before.
+ */
+function unwrapList<T>(body: unknown, key: string): T[] {
+  if (Array.isArray(body)) return body as T[];
+  const rows = (body as Record<string, unknown> | null)?.[key];
+  return Array.isArray(rows) ? rows as T[] : [];
+}
+
+export async function listMissionsAdmin(status?: string): Promise<MissionAdmin[]> {
+  if (USE_MOCK) { await delay(); return status && status !== 'all' ? MISSIONS.filter((m) => m.status === status) : [...MISSIONS]; }
+  const rows = unwrapList<MissionWire>(
+    await getJson<unknown>(`/gamification/missions${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`),
+    'missions',
+  );
+  return rows.map((m) => ({
+    id: m.id,
+    name: m.title,
+    condition: m.description || m.mission_type,
+    points_reward: m.points_reward,
+    // is_active is the only lifecycle field the row carries. An inactive
+    // mission may be a draft or an ended one — the console does not pick.
+    status: m.is_active ? 'active' : undefined,
+    starts_at: m.starts_at,
+    ends_at: m.ends_at ?? null,
+  }));
+}
+
+/**
+ * Rank.Perks and Contest.PrizeConfig are JSON objects on the Go row, not
+ * sentences (service.go:212, :242). The tables have one text column each, so the
+ * pairs are flattened in key order — the operator reads what the row actually
+ * defines instead of an empty cell that would read as "no perks configured".
+ */
+function structuredToText(obj: Record<string, unknown> | undefined | null): string | undefined {
+  if (!obj || typeof obj !== 'object') return undefined;
+  const keys = Object.keys(obj).sort();
+  if (keys.length === 0) return undefined;
+  return keys.map((k) => {
+    const v = obj[k];
+    return `${k}: ${v !== null && typeof v === 'object' ? JSON.stringify(v) : String(v)}`;
+  }).join(' · ');
+}
+
+export async function listRanksAdmin(): Promise<RankAdmin[]> {
+  if (USE_MOCK) { await delay(); return [...RANKS]; }
+  const rows = unwrapList<RankWire>(await getJson<unknown>('/gamification/ranks'), 'ranks');
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    threshold_points: r.min_points,
+    tier_order: r.tier_order,
+    perks: structuredToText(r.perks),
+  }));
+}
+
+export async function listLeaderboards(): Promise<LeaderboardConfig[]> {
+  if (USE_MOCK) { await delay(); return [...LEADERBOARDS]; }
+  // There is no admin leaderboard route. gamification/handlers.go:36 mounts
+  // GET /gamification/leaderboard on the MEMBER group only — the caller's own
+  // board — and the admin group registers missions, ranks and contests. This
+  // used to GET /gamification/leaderboards, a spelling Go has never answered,
+  // which took the whole gamification page down with it.
+  throw new Error(`Listing leaderboard configs ${NO_BACKEND_YET} The leaderboard that does exist is a member route (GET /gamification/leaderboard), not an admin one.`);
+}
+
+export async function listContests(): Promise<ContestAdmin[]> {
+  if (USE_MOCK) { await delay(); return [...CONTESTS]; }
+  const rows = unwrapList<ContestWire>(await getJson<unknown>('/gamification/contests'), 'contests');
+  return rows.map((c) => ({
+    id: c.id,
+    name: c.title,
+    status: c.status,
+    starts_at: c.starts_at,
+    ends_at: c.ends_at ?? null,
+    prize: structuredToText(c.prize_config),
+  }));
+}
+
+/** analytics.KFactor (analytics/service.go:71) and analytics.CAC (service.go:85). */
+interface KFactorWire { referrers: number; referred_signups: number; house_signups: number; k_factor: number; }
+interface CacWire { referral_spend_kobo: number; referred_signups: number; referral_cac_kobo: number; paid_cac_kobo: number; }
+
+/**
+ * The KPI strip, composed from the leaf routes that exist.
+ *
+ * analytics.Register (backend/internal/referral/analytics/service.go:142-148)
+ * mounts /analytics/k-factor, /funnel, /cac, /cohorts, /channels and
+ * /segmentation — there is NO GET /analytics aggregate. Asking for one is what
+ * made this page die with "Request failed (404)".
+ *
+ * Only k_factor and the two CAC figures are answered; share rate, invite-accept
+ * rate, blended CAC, an incl-house K-factor and a 14-day CAC trend have no
+ * source in that package, so they stay absent. The page renders an em-dash for
+ * them: 0.0 on a growth KPI is a claim, and an empty trend array used to divide
+ * by zero in the chart's own maximum.
+ */
 export async function getAnalytics(): Promise<AnalyticsOverview> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(ANALYTICS)); }
-  return getJson<AnalyticsOverview>('/analytics');
+  const [kRaw, cacRaw] = await Promise.all([
+    getJson<unknown>('/analytics/k-factor'),
+    getJson<unknown>('/analytics/cac'),
+  ]);
+  const k = unwrapNamed<KFactorWire>(kRaw, 'k_factor');
+  const cac = unwrapNamed<CacWire>(cacRaw, 'cac');
+  return {
+    k_factor: k.k_factor,
+    referrers: k.referrers,
+    referred_signups: k.referred_signups,
+    house_signups: k.house_signups,
+    referral_cac_kobo: cac.referral_cac_kobo,
+    paid_cac_kobo: cac.paid_cac_kobo,
+    referral_spend_kobo: cac.referral_spend_kobo,
+  };
+}
+
+/**
+ * {k_factor: {...}} / {cac: {...}} — the same named-envelope problem as the
+ * list routes, but the envelope key here is also a scalar on some bodies, so
+ * only an OBJECT under that key counts as the wrapper.
+ */
+function unwrapNamed<T>(body: unknown, key: string): T {
+  const inner = (body as Record<string, unknown> | null)?.[key];
+  return (inner && typeof inner === 'object' ? inner : body) as T;
 }
 export async function getFunnel(): Promise<FunnelData> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(FUNNEL)); }
@@ -638,20 +910,93 @@ export async function getOverridePolicy(): Promise<OverridePolicy> {
   return getJson<OverridePolicy>('/ambassadors/override-policy');
 }
 
+/** The wire row: merchant/service.go:258 Merchant — six fields, no KYC or revenue share. */
+interface MerchantRow {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  owner_user_id?: string;
+  created_at: string;
+}
+
+/**
+ * merchant.Handler.List answers `gin.H{"merchants": list}` (handlers.go:160).
+ *
+ * The summary table asks for category, KYC status, campaign count, funded
+ * volume and take rate; the Merchant record carries none of them, so they stay
+ * absent and the table renders an em-dash with a note. Listing a 0 funded
+ * campaign for a partner that has never been funded and one the backend simply
+ * did not report are two different statements, and only the first is supportable.
+ */
+function toMerchant(m: MerchantRow): MerchantSummary {
+  return { id: m.id, name: m.name, status: m.status as MerchantStatus, joined_at: m.created_at };
+}
+
 export async function listMerchants(status?: string): Promise<MerchantSummary[]> {
   if (USE_MOCK) { await delay(); return status && status !== 'all' ? MERCHANTS.filter((m) => m.status === status) : [...MERCHANTS]; }
-  return getJson<MerchantSummary[]>(`/merchants${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
+  const raw = await getJson<{ merchants?: MerchantRow[] } | MerchantRow[]>('/merchants');
+  const list = Array.isArray(raw) ? raw : raw.merchants ?? [];
+  const rows = list.map(toMerchant);
+  return status && status !== 'all' ? rows.filter((r) => r.status === status) : rows;
 }
 export async function getMerchant(id: string): Promise<MerchantDetail | null> {
   if (USE_MOCK) { await delay(); return MERCHANT_DETAIL[id] ?? MERCHANT_DETAIL.mer_2 ?? null; }
-  return getJson<MerchantDetail>(`/merchants/${id}`);
+  // Three routes, because the profile route answers one struct:
+  //   GET /merchants/:id          → merchant.Merchant          (handlers.go:183)
+  //   GET /merchants/:id/campaigns→ gin.H{"campaigns": […]}    (handlers.go:192)
+  //   GET /merchants/:id/keys     → gin.H{"keys": […]}         (handlers.go:261)
+  // Reading campaign_list off the profile alone is what made this page throw on
+  // the first click from the directory; a failing sibling rejects the whole read
+  // rather than becoming "this partner has no campaigns".
+  const [m, campaignsRaw, keysRaw] = await Promise.all([
+    getJson<MerchantRow>(`/merchants/${id}`),
+    getJson<{ campaigns?: MerchantCampaignRow[] } | MerchantCampaignRow[]>(`/merchants/${id}/campaigns`),
+    getJson<{ keys?: PartnerKeyRow[] } | PartnerKeyRow[]>(`/merchants/${id}/keys`),
+  ]);
+  const campaigns = Array.isArray(campaignsRaw) ? campaignsRaw : campaignsRaw.campaigns ?? [];
+  const keys = Array.isArray(keysRaw) ? keysRaw : keysRaw.keys ?? [];
+  const funded = campaigns.reduce((sum, c) => sum + (c.funded_kobo ?? 0), 0);
+  const settled = campaigns.reduce((sum, c) => sum + (c.settled_kobo ?? 0), 0);
+  return {
+    ...toMerchant(m),
+    // A real zero here means the campaigns route answered with none, which is a
+    // measurement; the absent fields above are the ones no route reports.
+    funded_kobo: funded,
+    campaigns: campaigns.length,
+    outstanding_balance_kobo: funded - settled,
+    api_key_active: keys.some((k) => k.status === 'active'),
+    campaign_list: campaigns.map((c) => ({
+      id: c.id, name: c.name, status: c.status, funded_kobo: c.funded_kobo, spent_kobo: c.settled_kobo,
+    })),
+  };
+}
+/** merchant/service.go:269 MerchantCampaign. Settled is what the table labels Spent. */
+interface MerchantCampaignRow {
+  id: string;
+  name: string;
+  status: string;
+  funded_kobo: number;
+  settled_kobo: number;
+  created_at: string;
+}
+/** merchant/service.go:281 PartnerKey — status is 'active' until revoke flips it. */
+interface PartnerKeyRow {
+  id: string;
+  key_prefix: string;
+  status: string;
+  created_at: string;
 }
 export async function approveMerchantCampaign(merchantId: string, campaignId: string, note: string): Promise<{ ok: true }> {
   // No "approve" action exists: the merchant admin surface has POST /campaigns
   // (create), /campaigns/:mcid/fund, and /campaigns/:mcid/settle
-  // (merchant.Handler.{CreateCampaign,Fund,Settle}) — no separate approval step.
-  if (USE_MOCK) throw new Error(`Approving a merchant campaign ${NO_BACKEND_YET}`);
-  return sendJson<{ ok: true }>('POST', `/merchants/${merchantId}/campaigns/${campaignId}/approve`, { note }, true);
+  // (merchant.Handler.{CreateCampaign,Fund,Settle}) — no separate approval step,
+  // and funding the envelope is what actually commits the partner's budget.
+  // The live branch used to POST /campaigns/:mcid/approve, a path Go answers 404
+  // for; refusing in both modes says what is missing instead of surfacing a
+  // status code the operator cannot act on.
+  void merchantId; void campaignId; void note;
+  throw new Error(`Approving a merchant campaign ${NO_BACKEND_YET} Funding a campaign (POST /merchants/campaigns/:mcid/fund) is the step that exists.`);
 }
 
 // These hit the endpoints the Go backend actually exposes:

@@ -14,7 +14,9 @@
  * announce winner, build/lock finale playlist) are not yet ported. Editing
  * contest metadata now IS wired (Edit Contest tab, below) — PATCH
  * /api/admin/open-mic/contests/:id already existed server-side; this is its
- * first client wiring.
+ * first client wiring — as is reviewing a handed-in song (Submissions tab,
+ * `OpenMicSubmissionReviewPanel`), which is the action that decides whether an
+ * artist's track is playable by voters at all.
  */
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useParams } from 'next/navigation';
@@ -40,8 +42,11 @@ import {
   type OpenMicApplicationRow,
   type OpenMicContest,
   type OpenMicContestEditInput,
+  type OpenMicSubmissionRow,
 } from '@/services/openMicAdminService';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { submissionWindowNotice, toDateTimeLocalInput } from '@/features/openmic/submission-window';
+import OpenMicSubmissionReviewPanel from '@/features/openmic/song-review-panel';
 
 const TABS = [
   'Edit Contest', 'Applications', 'Submissions', 'Finalists', 'Winners', 'Payments',
@@ -79,6 +84,9 @@ type EditFormState = {
   finalistsTarget: number; judgeWeight: number; publicVoteWeight: number; selectionModel: string;
   venueName: string; venueType: string; address: string; city: string; state: string;
   date: string; showStartTime: string; playbackMode: string;
+  /** `datetime-local` wall-clock strings ('' = unset), hydrated from the stored
+   *  ISO values by toDateTimeLocalInput and turned back into ISO on save. */
+  submissionStartAt: string; submissionEndAt: string;
 };
 
 function formFromContest(c: OpenMicContest): EditFormState {
@@ -94,7 +102,22 @@ function formFromContest(c: OpenMicContest): EditFormState {
     venueName: c.finale.venueName, venueType: c.finale.venueType, address: c.finale.address,
     city: c.finale.city, state: c.finale.state, date: c.finale.date ?? '', showStartTime: c.finale.showStartTime ?? '',
     playbackMode: c.finale.playbackMode ?? 'top_10',
+    submissionStartAt: toDateTimeLocalInput(c.submissionStartAt), submissionEndAt: toDateTimeLocalInput(c.submissionEndAt),
   };
+}
+
+/**
+ * What a datetime-local field holds → what the server stores. An empty field is
+ * sent as null, not dropped, because PATCH merges `{...existing, ...patch}`: a
+ * key that is absent leaves the old date in place, so clearing a window would
+ * silently not clear it.
+ */
+function fromDateTimeLocalInput(value: string): string | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const withSeconds = raw.length === 16 ? `${raw}:00` : raw;
+  const ms = Date.parse(withSeconds);
+  return Number.isNaN(ms) ? withSeconds : new Date(ms).toISOString();
 }
 
 function StatTile({ label, value, color }: { label: string; value: string | number; color?: string }) {
@@ -323,10 +346,29 @@ export default function OpenMicContestAdminPage() {
     [editForm],
   );
 
+  // An inverted window is not a typo the server will notice: it simply refuses
+  // every hand-in, which reads to the artist as "closed" and to the operator as
+  // "nobody applied". The strict rule is describeSubmissionWindow's, so the
+  // editor checks it before saving rather than after.
+  const windowInvalid = useMemo(() => {
+    if (!editForm) return false;
+    const start = fromDateTimeLocalInput(editForm.submissionStartAt);
+    const end = fromDateTimeLocalInput(editForm.submissionEndAt);
+    if (!start || !end) return false;
+    const startMs = Date.parse(start);
+    const endMs = Date.parse(end);
+    if (Number.isNaN(startMs) || Number.isNaN(endMs)) return false;
+    return endMs <= startMs;
+  }, [editForm]);
+
   async function saveContest() {
     if (!editForm || !contestId) return;
     if (weightsInvalid) {
       setSaveError('Judge weight and public vote weight must add up to 100%.');
+      return;
+    }
+    if (windowInvalid) {
+      setSaveError('The submission window cannot end before it starts — leave either date empty to clear it.');
       return;
     }
     setSaving(true);
@@ -358,6 +400,11 @@ export default function OpenMicContestAdminPage() {
         judgeWeight: editForm.judgeWeight,
         publicVoteWeight: editForm.publicVoteWeight,
         selectionModel: editForm.selectionModel,
+        // Sent on every save, empty included, so clearing a date clears it:
+        // updateContest spreads the patch over the stored row, so an absent key
+        // would leave the old window in place no matter what the picker shows.
+        submissionStartAt: fromDateTimeLocalInput(editForm.submissionStartAt),
+        submissionEndAt: fromDateTimeLocalInput(editForm.submissionEndAt),
       };
       const updated = await updateOpenMicContest(contestId, patch);
       setContest(updated);
@@ -383,6 +430,29 @@ export default function OpenMicContestAdminPage() {
   // against rows fetched for that same tab.
   const [loadedTab, setLoadedTab] = useState<Tab | null>(null);
 
+  /**
+   * The same rows the Submissions table shows, held apart from `rows` so the
+   * review panel can refresh itself without flipping `loading`. Flipping it
+   * would unmount the panel on every Apply click, which is precisely when the
+   * operator needs to read the "status is now …" line and pick the next row.
+   */
+  const [submissionRows, setSubmissionRows] = useState<OpenMicSubmissionRow[] | null>(null);
+  const [refreshingSubmissions, setRefreshingSubmissions] = useState(false);
+
+  const refreshSubmissions = useCallback(async () => {
+    if (!contestId) return;
+    setRefreshingSubmissions(true);
+    try {
+      const list = await listOpenMicSubmissions(contestId);
+      setSubmissionRows(list);
+      setRows(list);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRefreshingSubmissions(false);
+    }
+  }, [contestId]);
+
   useEffect(() => {
     if (!contestId) return;
     getOpenMicContest(contestId)
@@ -400,7 +470,15 @@ export default function OpenMicContestAdminPage() {
         // above) rather than a per-tab endpoint — nothing to fetch here.
         case 'Edit Contest': break;
         case 'Applications': setRows(await listOpenMicApplications(contestId)); break;
-        case 'Submissions': setRows(await listOpenMicSubmissions(contestId)); break;
+        case 'Submissions': {
+          // One request feeds both the table and the review panel:
+          // /api/admin/open-mic/submissions returns whole submission objects,
+          // so songUrl/songObjectKey/reviewNote are already in the payload.
+          const list = await listOpenMicSubmissions(contestId);
+          setRows(list);
+          setSubmissionRows(list);
+          break;
+        }
         case 'Finalists': setRows(await listOpenMicFinalists(contestId)); break;
         case 'Winners': setRows((await listOpenMicSubmissions(contestId)).filter((s) => s.isWinner)); break;
         case 'Payments': setRows(await listOpenMicPayments(contestId)); break;
@@ -572,6 +650,39 @@ export default function OpenMicContestAdminPage() {
             </section>
 
             <section>
+              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Submission Window</h3>
+              {/* The window is what decides whether an approved artist can hand a
+                  song in at all, and the rule is strict-by-default: with neither
+                  bound set, only the `submission_open` status accepts uploads.
+                  Without these fields an operator could publish an edition, get
+                  zero hand-ins, and have nothing on screen to explain it. */}
+              <p
+                role="status"
+                style={{
+                  margin: '0 0 12px', fontSize: 12,
+                  color: submissionWindowNotice(contest).tone === 'ok' ? colors.success : colors.warning,
+                }}
+              >
+                {submissionWindowNotice(contest).text}
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={fieldWrap}>
+                  <label style={labelStyle} htmlFor="submission-start-at">Submissions Open From</label>
+                  <Input id="submission-start-at" type="datetime-local" value={editForm.submissionStartAt} onChange={(e) => setEditField('submissionStartAt', e.target.value)} style={{ width: '100%' }} />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle} htmlFor="submission-end-at">Submissions Close At</label>
+                  <Input id="submission-end-at" type="datetime-local" value={editForm.submissionEndAt} onChange={(e) => setEditField('submissionEndAt', e.target.value)} style={{ width: '100%' }} />
+                </div>
+              </div>
+              {windowInvalid && (
+                <p role="alert" style={{ color: colors.danger, fontSize: 12, margin: '0 0 12px' }}>
+                  The close date is not after the open date. Save would lock every hand-in out.
+                </p>
+              )}
+            </section>
+
+            <section>
               <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Finale Venue</h3>
               <div style={fieldWrap}>
                 <label style={labelStyle}>Venue Name</label>
@@ -650,15 +761,44 @@ export default function OpenMicContestAdminPage() {
           />
         )}
 
-        {!loading && !error && loadedTab === 'Submissions' && (
-          <Table
-            columns={['Artist', 'Song', 'Status', 'Votes', 'Finalist', 'Winner']}
-            rows={(rows as Awaited<ReturnType<typeof listOpenMicSubmissions>>).map((s) => [
-              s.stageName, s.songTitle, s.status?.replace(/_/g, ' '), s.voteCount,
-              s.isFinalist ? <Badge key="f" text="Finalist" color={colors.primary} /> : '—',
-              s.isWinner ? <Badge key="w" text="Winner" color={colors.success} /> : '—',
-            ])}
-          />
+        {!error && loadedTab === 'Submissions' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {loading ? (
+              <p style={{ color: colors.muted, margin: 0 }}>Loading submissions…</p>
+            ) : (
+              <Table
+                columns={['Artist', 'Song', 'Status', 'Handed In', 'Votes', 'Finalist', 'Winner']}
+                rows={(rows as OpenMicSubmissionRow[]).map((s) => [
+                  s.stageName, s.songTitle, s.status?.replace(/_/g, ' '),
+                  s.submittedAt ? new Date(s.submittedAt).toLocaleString() : '—',
+                  s.voteCount,
+                  s.isFinalist ? <Badge key="f" text="Finalist" color={colors.primary} /> : '—',
+                  s.isWinner ? <Badge key="w" text="Winner" color={colors.success} /> : '—',
+                ])}
+              />
+            )}
+
+            {/* The decision panel is rendered apart from `loading` on purpose:
+                it refetches itself after every decision (refreshSubmissions),
+                and unmounting it there would wipe the row the operator is
+                working through along with the confirmation they need to read. */}
+            <section style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <h3 style={{ fontSize: 13, fontWeight: 700, margin: 0 }}>Song review</h3>
+              <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>
+                Listen, then decide. Only ‘Publish for voting’ puts a track on the artist profile, the leaderboard and
+                the mobile app; ‘Approve the hand-in’ alone accepts the file and shows it to nobody.
+              </p>
+              {submissionRows === null ? (
+                <p style={{ color: colors.muted, margin: 0 }}>Loading submissions…</p>
+              ) : (
+                <OpenMicSubmissionReviewPanel
+                  submissions={submissionRows}
+                  onRefresh={refreshSubmissions}
+                  refreshing={refreshingSubmissions}
+                />
+              )}
+            </section>
+          </div>
         )}
 
         {!loading && !error && loadedTab === 'Finalists' && (

@@ -41,6 +41,12 @@ interface PageData {
   resetAt: string;
 }
 
+/** What the Open Mic plane knows about this contestant's entered song. */
+interface ContestantSong {
+  audioUrl: string;
+  songTitle: string;
+}
+
 const GracePeriodCountdown = ({ endsAt }: { endsAt: string }) => {
   const [hoursRemaining, setHoursRemaining] = useState(0);
   const [minutesRemaining, setMinutesRemaining] = useState(0);
@@ -78,6 +84,7 @@ export default function PublicVotingPage() {
   const shareCode = searchParams?.get('ref') ?? undefined;
 
   const [data, setData] = useState<PageData | null>(null);
+  const [song, setSong] = useState<ContestantSong | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showVoteModal, setShowVoteModal] = useState(false);
@@ -96,6 +103,27 @@ export default function PublicVotingPage() {
       if (!res.ok) throw new Error('Failed to load contestant profile');
       const json = await res.json();
       setData(json);
+
+      // The contestant's Open Mic song. `/api/vote-page` is a protected-legacy
+      // route whose payload has always ended in `audioUrl: null`, and the song
+      // lives on another plane (`competition_entries`), so it is asked for here
+      // instead of editing that response. No song, or a non-Open-Mic contest,
+      // leaves this null and no player renders.
+      const songContestSlug = String(json?.contestant?.contestSlug || contestSlug || '');
+      const songContestantId = String(json?.contestant?.id || '');
+      try {
+        const songRes = await fetch(
+          `/api/open-mic/songs/by-contestant?contestSlug=${encodeURIComponent(songContestSlug)}&contestantId=${encodeURIComponent(songContestantId)}`,
+        );
+        const songJson = await songRes.json().catch(() => ({}));
+        setSong(
+          songRes.ok && songJson?.audioUrl
+            ? { audioUrl: String(songJson.audioUrl), songTitle: String(songJson.songTitle || '') }
+            : null,
+        );
+      } catch {
+        setSong(null);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
@@ -223,6 +251,21 @@ export default function PublicVotingPage() {
 
           {/* Info */}
           <div className="p-6">
+            {/* The song this artist entered. It is what their share link is for:
+                a voter hears the record, then votes. `contestant.audioUrl` is kept
+                as the fallback in case the voting payload ever carries one. */}
+            {(song?.audioUrl || contestant.audioUrl) && (
+              <div className="mb-4 bg-gray-800 rounded-xl p-4">
+                <p className="text-amber-400 text-xs font-semibold uppercase tracking-wider mb-2">
+                  Their entry
+                </p>
+                {song?.songTitle && (
+                  <p className="text-white text-sm mb-2">🎵 {song.songTitle}</p>
+                )}
+                <audio controls preload="metadata" src={song?.audioUrl || contestant.audioUrl || undefined} className="w-full" />
+              </div>
+            )}
+
             <div className="flex items-start justify-between mb-2">
               <p className="text-amber-400 text-sm font-medium uppercase tracking-wider">
                 {contestant.category ?? contestant.contestName}

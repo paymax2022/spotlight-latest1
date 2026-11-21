@@ -7,17 +7,23 @@ export type PayoutStatus = 'pending' | 'approved' | 'paid' | 'rejected' | 'on_ho
 export interface Payout {
   id: string;
   beneficiary_id: string;
-  beneficiary_name: string;
-  wallet_id: string;
+  /**
+   * Payout fields below are optional because finance.Payout (repo.go:415) does
+   * not carry them: the row names a beneficiary_id and a wallet is a separate
+   * surface, so the queue shows an em-dash instead of a value the API never sent.
+   */
+  beneficiary_name?: string;
+  wallet_id?: string;
   reward_ids: string[];
   amount_kobo: number;
   currency: string;
   status: PayoutStatus;
-  risk_flag: 'low' | 'normal' | 'high' | 'critical';
+  risk_flag?: 'low' | 'normal' | 'high' | 'critical';
   requested_at: string;
   approved_by: string | null;
   approved_at: string | null;
-  idempotency_key: string;
+  idempotency_key?: string;
+  reject_reason?: string;
 }
 
 export interface ReconRow {
@@ -81,17 +87,29 @@ export interface RiskAlert {
   severity: 'low' | 'normal' | 'high' | 'critical';
   subject_id: string;
   detail: string;
-  amount_at_risk_kobo: number;
+  /** risk.Alert has no amount column; a real alert is money-at-risk only if the
+   * backend says so, so an unset value means "not reported", not "nothing". */
+  amount_at_risk_kobo?: number;
+  status?: string;
   created_at: string;
 }
 export interface RiskDashboard {
-  fraud_rate: number; // 0..1
+  /**
+   * risk.DashboardCounts (repo.go:596) is four integers. Everything outside them
+   * is optional HERE because no handler in internal/referral/risk computes it,
+   * and the page must be able to tell "the API does not have this" apart from a
+   * zero — the reading an operator would act on.
+   */
+  fraud_rate?: number; // 0..1
   open_cases: number;
-  amount_at_risk_kobo: number;
-  blocked_24h: number;
-  clawbacks_30d_kobo: number;
+  open_alerts?: number;
+  queued_reviews?: number;
+  active_blocks?: number;
+  amount_at_risk_kobo?: number;
+  blocked_24h?: number;
+  clawbacks_30d_kobo?: number;
   alerts: RiskAlert[];
-  burn_anomaly_trend: { date: string; expected_kobo: number; actual_kobo: number }[];
+  burn_anomaly_trend?: { date: string; expected_kobo: number; actual_kobo: number }[];
 }
 
 export interface RiskRule {
@@ -245,27 +263,50 @@ export interface InterveneInput {
   reason: string;
 }
 
+/**
+ * gamification.Mission (backend/internal/referral/gamification/service.go:186)
+ * as GET /api/referral/admin/gamification/missions answers it.
+ *
+ * Go gives title / description / mission_type / target_count / points_reward /
+ * cash_reward_kobo / is_active / starts_at / ends_at. It counts NO participants
+ * and NO completions, and `is_active` cannot tell a draft from an ended
+ * mission, so those three stay absent — a 0/0 in the Completions column reads
+ * as "nobody has finished this" when the truth is "the route never counted".
+ */
 export interface MissionAdmin {
   id: string;
   name: string;
   condition: string; // e.g. "refer 5 KYC-verified users"
   points_reward: number; // non-cash
-  status: 'draft' | 'active' | 'ended';
-  participants: number;
-  completions: number;
-  starts_at: string;
-  ends_at: string | null;
+  status?: 'draft' | 'active' | 'ended';
+  participants?: number;
+  completions?: number;
+  starts_at?: string;
+  ends_at?: string | null;
 }
 
+/**
+ * gamification.Rank (service.go:212): id / slug / name / tier_order /
+ * min_points / perks. perks is a structured JSON object in the row rather than
+ * a sentence, and no route names a badge or counts holders.
+ */
 export interface RankAdmin {
   id: string;
   name: string;
   threshold_points: number;
-  badge: string;
-  perks: string;
-  holders: number;
+  tier_order?: number;
+  badge?: string;
+  perks?: string;
+  holders?: number;
 }
 
+/**
+ * There is NO admin leaderboard route: gamification/handlers.go:36 mounts GET
+ * /gamification/leaderboard on the MEMBER group only (the caller's own board),
+ * and the admin group registers missions, ranks and contests. listLeaderboards
+ * therefore refuses rather than rendering a board nobody asked the backend
+ * about, and the gamification page shows the KPI as not reported.
+ */
 export interface LeaderboardConfig {
   id: string;
   name: string;
@@ -276,27 +317,48 @@ export interface LeaderboardConfig {
   status: 'active' | 'paused';
 }
 
+/**
+ * gamification.Contest (service.go:242): id / slug / title / status /
+ * starts_at / ends_at / prize_config. prize_config is a structured pool
+ * definition, not a display string, and nothing counts participants.
+ */
 export interface ContestAdmin {
   id: string;
   name: string;
-  starts_at: string;
-  ends_at: string;
-  participants: number;
-  status: 'scheduled' | 'active' | 'ended';
-  prize: string;
+  starts_at?: string;
+  ends_at?: string | null;
+  participants?: number;
+  status: 'scheduled' | 'active' | 'ended' | string;
+  prize?: string;
 }
 
+/**
+ * What the analytics KPI strip can actually show.
+ *
+ * backend/internal/referral/analytics/service.go:142-148 registers SIX leaf
+ * routes (/k-factor, /funnel, /cac, /cohorts, /channels, /segmentation) and NO
+ * aggregate endpoint, so the console composes the two that answer these KPIs.
+ * share_rate, invite-accept, blended CAC, an incl-house K-factor and a 14-day
+ * trend have no source anywhere in that package — they are absent here, and the
+ * page says so instead of printing 0.00 on a growth screen or drawing an empty
+ * chart that reads as "flat".
+ */
 export interface AnalyticsOverview {
   // A-BI-01 true K-factor EXCLUDES house captures (§7A.6)
-  k_factor: number;
-  k_factor_incl_house: number;
-  share_rate: number; // 0..1
-  invite_accept_rate: number; // 0..1
+  k_factor?: number;
+  k_factor_incl_house?: number;
+  share_rate?: number; // 0..1
+  invite_accept_rate?: number; // 0..1
   // A-BI-03 CAC vs paid
-  referral_cac_kobo: number;
-  paid_cac_kobo: number;
-  blended_cac_kobo: number;
-  trend: { date: string; k_factor: number; referral_cac_kobo: number; paid_cac_kobo: number }[];
+  referral_cac_kobo?: number;
+  paid_cac_kobo?: number;
+  blended_cac_kobo?: number;
+  trend?: { date: string; k_factor: number; referral_cac_kobo: number; paid_cac_kobo: number }[];
+  // The denominators the same two routes answer, shown next to the ratios.
+  referrers?: number;
+  referred_signups?: number;
+  house_signups?: number;
+  referral_spend_kobo?: number;
 }
 
 // A-BI-02 acquisition funnel: invite→click→signup→KYC→activate→retain
@@ -368,21 +430,36 @@ export type MerchantStatus = 'onboarding' | 'active' | 'suspended' | 'rejected';
 export interface MerchantSummary {
   id: string;
   name: string;
-  category: string;
+  /**
+   * merchant.Merchant (service.go:258) is id/name/slug/status/owner/created_at.
+   * These five come from a different surface than the list route, so the table
+   * leaves them unset rather than showing a category or a take rate invented
+   * client-side.
+   */
+  category?: string;
   status: MerchantStatus;
-  kyc_status: 'pending' | 'verified' | 'failed';
-  campaigns: number;
-  funded_kobo: number;
-  take_rate_pct: number;
+  kyc_status?: 'pending' | 'verified' | 'failed';
+  campaigns?: number;
+  funded_kobo?: number;
+  take_rate_pct?: number;
   joined_at: string;
 }
 export interface MerchantDetail extends MerchantSummary {
-  contact_email: string;
-  contact_phone: string;
+  /**
+   * merchant.Handler.Get answers the Merchant struct alone (handlers.go:183 →
+   * service.go:258: id/name/slug/status/owner/funding wallet/created_at). The
+   * campaigns and partner keys come from their sibling routes (/:id/campaigns,
+   * /:id/keys), and everything below them is a column no admin route serves, so
+   * the profile card dashes it instead of filling it in.
+   */
+  contact_email?: string;
+  contact_phone?: string;
   api_key_active: boolean;
-  revenue_share_pct: number;
+  revenue_share_pct?: number;
   outstanding_balance_kobo: number;
   campaign_list: { id: string; name: string; status: string; funded_kobo: number; spent_kobo: number }[];
-  invoices: { id: string; period: string; amount_kobo: number; status: 'paid' | 'due' | 'overdue' }[];
-  audit: { ts: string; actor: string; action: string }[];
+  /** No invoice route exists under /api/referral/admin/merchants — absent, not empty. */
+  invoices?: { id: string; period: string; amount_kobo: number; status: 'paid' | 'due' | 'overdue' }[];
+  /** Same: the console has no merchant audit endpoint to read. */
+  audit?: { ts: string; actor: string; action: string }[];
 }

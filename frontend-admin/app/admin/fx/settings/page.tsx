@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getCatalogue, toggleFlag, toggleCorridor, toggleCurrency } from '@/services/fxAdminService';
 import type { FxSettingsCatalogue } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, ErrorNote, errorMessage } from '../_ui';
 import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 function Toggle({ on, busy, onClick }: { on: boolean; busy: boolean; onClick: () => void }) {
@@ -18,9 +18,10 @@ function Toggle({ on, busy, onClick }: { on: boolean; busy: boolean; onClick: ()
 export default function FxSettingsPage() {
   const [cat, setCat] = useState<FxSettingsCatalogue | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  async function load() { setLoading(true); try { setCat(await getCatalogue()); } finally { setLoading(false); } }
+  async function load() { setLoading(true); setError(null); try { setCat(await getCatalogue()); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); } }
   useEffect(() => { load(); }, []);
 
   async function act(key: string, fn: () => Promise<unknown>) { setBusy(key); try { await fn(); await load(); } finally { setBusy(null); } }
@@ -29,6 +30,7 @@ export default function FxSettingsPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="FX Settings" subtitle="Feature flags, corridor & currency / rail catalogues (§13-N)." action={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <FxTabs active="settings" />
+      <ErrorNote message={error} />
 
       {loading || !cat ? <p style={{ color: colors.muted }}>Loading…</p> : (
         <>

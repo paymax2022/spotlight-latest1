@@ -118,6 +118,8 @@ var (
 	ErrInvalidAmount       = errors.New("doctor: amount must be a positive integer (kobo)")
 	ErrDuplicateRequest    = errors.New("doctor: duplicate request (idempotency replay)")
 	ErrScheduleRequired    = errors.New("doctor: schedule is required")
+	ErrInvalidTimezone     = errors.New("doctor: unknown timezone")
+	ErrInvalidReminders    = errors.New("doctor: reminder settings are malformed")
 )
 
 func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, error) {
@@ -191,8 +193,33 @@ func (s *Service) ListNotifications(ctx context.Context, userID string) ([]Notif
 	return s.repo.ListNotifications(ctx, userID)
 }
 
+// GetSettings answers the instant-consult flag from the availability row rather
+// than doctor_settings.auto_accept_instant — see instantConsultEnabled.
 func (s *Service) GetSettings(ctx context.Context, userID string) (*Settings, error) {
-	return s.repo.GetSettings(ctx, userID)
+	res, err := s.repo.GetSettings(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	instant, err := s.instantConsultEnabled(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	res.AutoAcceptInstant = instant
+	return res, nil
+}
+
+// instantConsultEnabled reads the one store the instant-consult decision lives
+// in. It goes through the Service's availability read on purpose: a doctor who
+// has never saved a schedule has no availability row, and the availability and
+// schedule screens answer that case with a synthesized default. Asking the same
+// question the same way is what keeps /settings, /availability and the dashboard
+// presence label from giving three different answers.
+func (s *Service) instantConsultEnabled(ctx context.Context, userID string) (bool, error) {
+	a, err := s.GetAvailability(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return a.AcceptsInstant, nil
 }
 
 // GetEarnings PROJECTS earnings from the double-entry ledger — it never reads a
@@ -250,8 +277,25 @@ func (s *Service) ReviewLabResult(ctx context.Context, userID, resultID, idemKey
 	return s.repo.ReviewLabResult(ctx, userID, resultID, idemKey, req)
 }
 
+// UpdateSettings applies the settings screen's partial update.
+//
+// `autoAcceptInstant` is the same decision as the availability screen's instant
+// consults toggle, so it is written to the store GetSettings reads from —
+// doctor_availability.accepts_instant — and withheld from the settings upsert,
+// which leaves the never-again-read settings column alone. The other toggles
+// stay on the settings row.
 func (s *Service) UpdateSettings(ctx context.Context, userID string, req UpdateSettingsRequest) (*Settings, error) {
-	return s.repo.UpsertSettings(ctx, userID, req)
+	partial := req
+	partial.AutoAcceptInstant = nil
+	if req.AutoAcceptInstant != nil {
+		if err := s.repo.SetAcceptsInstant(ctx, userID, *req.AutoAcceptInstant); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := s.repo.UpsertSettings(ctx, userID, partial); err != nil {
+		return nil, err
+	}
+	return s.GetSettings(ctx, userID)
 }
 
 func (s *Service) MarkNotificationRead(ctx context.Context, userID, id string) error {

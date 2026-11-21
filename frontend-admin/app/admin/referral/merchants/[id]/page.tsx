@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getMerchant, approveMerchantCampaign, formatNaira } from '@/services/referralAdminOpsService';
 import type { MerchantDetail } from '@/types/referralAdminOps';
-import { timeAgo } from '../../_ui';
+import { timeAgo, money, NOT_REPORTED, textOrDash } from '../../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 function badgeColor(status: string): string {
@@ -68,15 +68,17 @@ export default function MerchantDetailPage() {
                 <Badge text={data.status} color={badgeColor(data.status)} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px,1fr))', gap: 10 }}>
-                <Kpi label="Category" value={data.category} />
-                <Kpi label="KYC" value={data.kyc_status} accent={data.kyc_status === 'verified' ? colors.success : colors.warning} />
-                <Kpi label="API key" value={data.api_key_active ? 'Active' : 'Inactive'} sub="A-MER-05 credentials" />
-                <Kpi label="Take rate" value={`${data.take_rate_pct}%`} />
-                <Kpi label="Revenue share" value={`${data.revenue_share_pct}%`} />
-                <Kpi label="Funded" value={formatNaira(data.funded_kobo)} />
+                <Kpi label="Category" value={textOrDash(data.category)} />
+                <Kpi label="KYC" value={textOrDash(data.kyc_status)} accent={data.kyc_status === 'verified' ? colors.success : undefined} />
+                <Kpi label="API key" value={data.api_key_active ? 'Active' : 'Inactive'} sub="GET /merchants/:id/keys" />
+                <Kpi label="Take rate" value={data.take_rate_pct == null ? NOT_REPORTED : `${data.take_rate_pct}%`} />
+                <Kpi label="Revenue share" value={data.revenue_share_pct == null ? NOT_REPORTED : `${data.revenue_share_pct}%`} />
+                <Kpi label="Funded" value={money(data.funded_kobo)} />
                 <Kpi label="Outstanding" value={formatNaira(data.outstanding_balance_kobo)} accent={data.outstanding_balance_kobo > 0 ? colors.warning : colors.success} />
               </div>
-              <p style={{ fontSize: 12, color: colors.muted, marginTop: 12 }}>{data.contact_email} · {data.contact_phone} · joined {timeAgo(data.joined_at)}</p>
+              <p style={{ fontSize: 12, color: colors.muted, marginTop: 12 }}>
+                {textOrDash(data.contact_email)} · {textOrDash(data.contact_phone)} · joined {timeAgo(data.joined_at)}
+              </p>
             </Card>
 
             <Card title="Campaigns & approval (A-MER-02)" style={{ marginBottom: 16 }}>
@@ -106,7 +108,13 @@ export default function MerchantDetailPage() {
             </Card>
 
             <Card title="Invoices & billing (A-MER-04)" style={{ marginBottom: 16 }}>
-              {data.invoices.length === 0 ? <p style={{ color: colors.muted }}>No invoices.</p> : (
+              {!data.invoices ? (
+                <p style={{ fontSize: 13, color: colors.muted, marginTop: 14 }}>
+                  Not reported by the backend — no invoice route is registered under
+                  /api/referral/admin/merchants, so this section is left empty rather than filled
+                  with an invented billing history.
+                </p>
+              ) : data.invoices.length === 0 ? <p style={{ color: colors.muted }}>No invoices.</p> : (
                 <div style={{ overflowX: 'auto', marginTop: 14 }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead><tr><th style={thCell}>Invoice</th><th style={thCell}>Period</th><th style={thCell}>Amount</th><th style={thCell}>Status</th></tr></thead>
@@ -126,6 +134,11 @@ export default function MerchantDetailPage() {
             </Card>
 
             <Card title="Audit trail">
+              {!data.audit ? (
+                <p style={{ fontSize: 13, color: colors.muted, marginTop: 14 }}>
+                  Not reported by the backend for this merchant.
+                </p>
+              ) : (
               <div style={{ overflowX: 'auto', marginTop: 14 }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead><tr><th style={thCell}>When</th><th style={thCell}>Actor</th><th style={thCell}>Action</th></tr></thead>
@@ -136,6 +149,7 @@ export default function MerchantDetailPage() {
                   </tbody>
                 </table>
               </div>
+              )}
             </Card>
           </>
         )}

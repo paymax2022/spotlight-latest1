@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getOverview } from '@/services/fxAdminService';
 import type { FxOverview } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Kpi, Badge, money } from './_ui';
+import { PageHeader, FxTabs, Card, Kpi, Badge, money, ErrorNote, errorMessage } from './_ui';
 import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const DASH = '—';
@@ -19,7 +19,7 @@ export default function FxOverviewPage() {
   async function load() {
     setLoading(true); setError(null);
     try { setData(await getOverview()); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    catch (e) { setError(errorMessage(e)); }
     finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
@@ -33,7 +33,7 @@ export default function FxOverviewPage() {
       />
       <FxTabs active="overview" />
 
-      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      <ErrorNote message={error} />
       {loading || !data ? (
         <p style={{ color: colors.muted }}>Loading dashboard…</p>
       ) : (

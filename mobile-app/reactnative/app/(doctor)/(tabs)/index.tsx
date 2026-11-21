@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-  Bell, CalendarDays, Wallet, Stethoscope, ClipboardList, FlaskConical, Settings, ChevronRight, PawPrint, BarChart3,
+  Bell, CalendarDays, Wallet, Stethoscope, ClipboardList, FlaskConical, Settings, ChevronRight, BarChart3,
   Inbox, Users, MessageSquare, Smile, Video, AlertTriangle, ShieldAlert, UserCog, CalendarClock, Pill, RefreshCw, BadgeCheck, Clock,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -18,7 +18,7 @@ import { formatKobo } from '@/api/doctor.api';
 import { useDoctorProfile, useAppointments, useEarnings, useNotifications, useSettings, useDashboard, useAnnouncement, useSetPresence, useDismissAnnouncement } from '@/features/doctor/hooks';
 import { StatCard, AppointmentRow, StateView, AlertCard, AnnouncementBanner, SectionCard } from '@/features/doctor/components';
 import { DoctorAvatar } from '@/features/telemedicine/components';
-import { mapHeaderAvatar } from '@/features/doctor/mapping';
+import { isTodaySlot, mapHeaderAvatar } from '@/features/doctor/mapping';
 import { DASHBOARD_ALERT_SEVERITY_RANK, PRESENCE_LABELS } from '@/features/doctor/constants';
 import type { DashboardAlert, DashboardAlertKind, DashboardAlertSeverity } from '@/types/doctor.batch1';
 
@@ -68,7 +68,12 @@ export default function DoctorDashboardScreen() {
   const dismissAnnouncement = useDismissAnnouncement();
 
   const unread = notifications.filter((n) => !n.read).length;
-  const todays = appointments.filter((a) => ACTIVE_STATUSES.includes(a.status));
+  // Status alone put a booking three days out under "Today's queue". The day
+  // comes from the server's `todayDate` — already the doctor's own zone, which
+  // a device-time `new Date()` comparison would not be.
+  const todays = appointments.filter(
+    (a) => ACTIVE_STATUSES.includes(a.status) && isTodaySlot(a.slotDate, dashboard?.todayDate),
+  );
   // doctor_profiles.is_online is the real presence store: PUT /presence writes
   // it and GET /profile reads it back. `showOnlineStatus` is a *privacy* flag
   // (whether patients see the dot), so reading the switch off it left the
@@ -299,13 +304,6 @@ export default function DoctorDashboardScreen() {
 
         {/* Phase 3 entry points */}
         <View style={styles.phase3Row}>
-          <Pressable style={styles.phase3Link} onPress={() => router.push('/(doctor)/vet')} accessibilityRole="button" accessibilityLabel="Veterinary mode">
-            <View style={[styles.phase3Icon, { backgroundColor: Colors.iconBgPurple }]}>
-              <PawPrint size={18} color={Colors.primary} strokeWidth={2} />
-            </View>
-            <Text style={styles.phase3Label} numberOfLines={1}>Vet mode</Text>
-            <ChevronRight size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
-          </Pressable>
           <Pressable style={styles.phase3Link} onPress={() => router.push('/(doctor)/analytics')} accessibilityRole="button" accessibilityLabel="Quality analytics">
             <View style={[styles.phase3Icon, { backgroundColor: Colors.iconBgBlue }]}>
               <BarChart3 size={18} color={Colors.secondary} strokeWidth={2} />

@@ -1293,7 +1293,7 @@ paths:
       summary: Save reminder settings
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+      responses: { '400': { $ref: '#/components/responses/BadRequest' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
   /doctor/schedule/recurring:
     put:
       tags: [doctor-batch1]
@@ -1307,7 +1307,7 @@ paths:
       summary: Set timezone
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+      responses: { '400': { $ref: '#/components/responses/BadRequest' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
   /doctor/queue:
     get: { tags: [doctor-batch1], summary: Consultation queue, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
   /doctor/appointment-requests:

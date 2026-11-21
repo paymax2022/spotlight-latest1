@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { getAttributionConfig, updateAttributionConfig } from '@/services/referralAdminService';
 import type { AttributionConfig, FallbackChainEntry } from '@/types/referralAdmin';
-import { ReferralTabs, timeAgo } from '../_ui';
+import { NOT_REPORTED, ReferralTabs, timeAgo } from '../_ui';
 import { Page, PageHeader, Card, Button, Input, Badge, colors } from '@/components/ui/vuexy';
 
 export default function AttributionConfigPage() {
@@ -158,14 +158,19 @@ export default function AttributionConfigPage() {
   );
 }
 
-function ToggleRow({ label: lbl, hint, value, onChange, onText = 'On', offText = 'Off' }: { label: string; hint: string; value: boolean; onChange: (v: boolean) => void; onText?: string; offText?: string }) {
+function ToggleRow({ label: lbl, hint, value, onChange, onText = 'On', offText = 'Off' }: { label: string; hint: string; value: boolean | null | undefined; onChange: (v: boolean) => void; onText?: string; offText?: string }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.6rem 0.75rem' }}>
       <div>
         <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{lbl}</div>
         <div style={{ fontSize: '0.75rem', color: colors.muted, maxWidth: 620 }}>{hint}</div>
       </div>
-      <Button variant="outline" sm onClick={() => onChange(!value)} style={{ whiteSpace: 'nowrap', color: value ? colors.success : colors.muted, fontWeight: 600 }}>{value ? onText : offText}</Button>
+      {/* An absent value is not "Off". referralconfig.Config (service.go:18) has
+          no self-referral column, so the row cannot be read and cannot be
+          written — offering a toggle would imply the PUT /config accepts it. */}
+      {value == null
+        ? <span style={{ whiteSpace: 'nowrap', color: colors.muted, fontSize: '0.8rem', alignSelf: 'center' }}>{NOT_REPORTED} · no column on the config row</span>
+        : <Button variant="outline" sm onClick={() => onChange(!value)} style={{ whiteSpace: 'nowrap', color: value ? colors.success : colors.muted, fontWeight: 600 }}>{value ? onText : offText}</Button>}
     </div>
   );
 }

@@ -68,3 +68,86 @@ describe('GET /api/web-proxy/[...path] upstream failures', () => {
     expect(await res.json()).toEqual({ error: 'nope' });
   });
 });
+
+/**
+ * Open Mic hands the console an <audio> element and a download button, both of
+ * which point their src/href at this proxy (src/features/openmic/song-src.ts).
+ * A media element asks for a byte range and a download asks for a disposition,
+ * so the headers that carry those two things are part of the payload, not
+ * metadata we may drop: forwarding `Range` and returning `Content-Range`,
+ * `Accept-Ranges` and `Content-Disposition` verbatim is what makes the console's
+ * player seekable and its download button download instead of play.
+ */
+describe('GET /api/web-proxy/[...path] audio and download headers', () => {
+  const SONG_CTX = {
+    params: Promise.resolve({ path: ['api', 'open-mic', 'songs', 'a1d98b6e-0000-4000-8000-000000000000'] }),
+  };
+
+  it("forwards the caller's Range header to the web app", async () => {
+    const { GET } = await loadRoute('http://localhost:3005');
+    const seen: Array<Record<string, string | undefined>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: { headers?: Record<string, string> }) => {
+      seen.push(init?.headers ?? {});
+      return new Response(new Uint8Array([1, 2, 3]), { status: 206 });
+    }));
+
+    await GET(new Request('http://localhost:3006/api/web-proxy/api/open-mic/songs/a1d98b6e-0000-4000-8000-000000000000', {
+      headers: { Range: 'bytes=1000-2000' },
+    }), SONG_CTX);
+
+    expect(seen[0].Range).toBe('bytes=1000-2000');
+  });
+
+  it('keeps the partial-response headers the browser needs to trust a 206', async () => {
+    const { GET } = await loadRoute('http://localhost:3005');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array(1001), {
+      status: 206,
+      headers: {
+        'Content-Type': 'audio/mpeg',
+        'Content-Range': 'bytes 1000-2000/112893',
+        'Accept-Ranges': 'bytes',
+      },
+    })));
+
+    const res = await GET(new Request('http://localhost:3006/api/web-proxy/api/open-mic/songs/a1d98b6e-0000-4000-8000-000000000000', {
+      headers: { Range: 'bytes=1000-2000' },
+    }), SONG_CTX);
+
+    expect(res.status).toBe(206);
+    expect(res.headers.get('Content-Range')).toBe('bytes 1000-2000/112893');
+    expect(res.headers.get('Accept-Ranges')).toBe('bytes');
+    expect(res.headers.get('Content-Type')).toBe('audio/mpeg');
+  });
+
+  it('keeps the attachment disposition a download button asks for', async () => {
+    const { GET } = await loadRoute('http://localhost:3005');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array(8), {
+      status: 200,
+      headers: {
+        'Content-Type': 'audio/mpeg',
+        'Content-Disposition': 'attachment; filename="song.mp3"',
+        'Accept-Ranges': 'bytes',
+      },
+    })));
+
+    const res = await GET(
+      new Request('http://localhost:3006/api/web-proxy/api/open-mic/songs/a1d98b6e-0000-4000-8000-000000000000?download=1'),
+      SONG_CTX,
+    );
+
+    expect(res.headers.get('Content-Disposition')).toBe('attachment; filename="song.mp3"');
+  });
+
+  it('still answers JSON with a Content-Type and nothing else inherited', async () => {
+    const { GET } = await loadRoute('http://localhost:3005');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"success":true}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+
+    const res = await GET(request(), CONTEXT);
+    expect(res.headers.get('Content-Type')).toBe('application/json');
+    expect(res.headers.get('Content-Disposition')).toBeNull();
+    expect(await res.json()).toEqual({ success: true });
+  });
+});

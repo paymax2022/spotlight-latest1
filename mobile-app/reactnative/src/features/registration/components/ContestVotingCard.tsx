@@ -55,6 +55,10 @@ const REASON_COPY: Record<RegistrationVotingReason, { title: string; body: strin
     title: 'Voting is not open yet',
     body: 'You are on the roster. Voting will appear here as soon as the contest opens.',
   },
+  song_not_submitted: {
+    title: 'Your vote button opens with your song',
+    body: 'Voters cannot back an Open Mic entry they cannot hear. Submit your finished MP3 and this unlocks straight away — download the beat and hand in your song below.',
+  },
 };
 
 export default function ContestVotingCard({ voting }: { voting: RegistrationVoting }) {
@@ -70,6 +74,14 @@ export default function ContestVotingCard({ voting }: { voting: RegistrationVoti
   if (!votable) {
     const copy = reason ? REASON_COPY[reason] : null;
     if (!copy) return null;
+
+    // The artist is on the roster and the contest is open — the ONLY thing
+    // missing is a song. Showing just a paragraph would hide the button they
+    // can see everyone else getting, so the button shows here in the state it
+    // is really in: present, and not tappable until the hand-in lands.
+    const waitingForSong = reason === 'song_not_submitted' && contest && contestant;
+    const waitingName = contestant?.stageName || contestant?.name || '';
+
     return (
       <View style={[styles.card, shadow1]}>
         <View style={styles.headRow}>
@@ -78,6 +90,17 @@ export default function ContestVotingCard({ voting }: { voting: RegistrationVoti
         </View>
         <Text style={styles.muted}>{copy.body}</Text>
         {contest ? <Text style={styles.contestLine}>{contest.title}</Text> : null}
+
+        {waitingForSong && (
+          <View
+            style={styles.disabledAction}
+            accessibilityState={{ disabled: true }}
+            accessibilityLabel={`Vote for ${waitingName} is unavailable until your song is submitted`}
+          >
+            <Vote size={18} color={Colors.outline} />
+            <Text style={styles.disabledActionText}>Vote for {waitingName}</Text>
+          </View>
+        )}
       </View>
     );
   }
@@ -180,6 +203,12 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: Spacing.md, marginTop: Spacing.sm,
   },
   primaryActionText: { ...Typography.labelLg, color: Colors.onPrimary },
+  disabledAction: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs,
+    backgroundColor: Colors.surfaceContainerHigh, borderRadius: Radius.md, paddingVertical: Spacing.md,
+    marginTop: Spacing.sm, borderWidth: 1, borderColor: Colors.outlineVariant, borderStyle: 'dashed',
+  },
+  disabledActionText: { ...Typography.labelLg, color: Colors.outline },
   secondaryAction: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs,
     backgroundColor: Colors.surfaceContainerHigh, borderRadius: Radius.md, paddingVertical: Spacing.md,

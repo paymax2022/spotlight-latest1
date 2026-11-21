@@ -10,19 +10,26 @@
  * assertAdminPermission used everywhere else) — nothing changed there, only a
  * client + service on this side reaching it through the proxy.
  *
- * WRITES WIRED SO FAR: contest metadata (updateOpenMicContest), creating a
- * contest, beat upload, and every applicant decision plus the applicant contact
- * edit (applyOpenMicApplicantAction / updateOpenMicApplicantContact) — the last
- * two are why the Applications tab can now be worked from this page instead of
- * /admin/registration.
+ * WRITES WIRED SO FAR — an operator can run an edition end to end from this
+ * console: creating the contest, uploading its beat, editing its metadata and
+ * submission window (createOpenMicContest / uploadOpenMicBeat /
+ * updateOpenMicContest), every applicant decision plus the applicant contact
+ * edit (applyOpenMicApplicantAction / updateOpenMicApplicantContact — the last
+ * two are why the Applications tab can be worked here instead of
+ * /admin/registration), and reviewing a handed-in song
+ * (`reviewOpenMicSubmission`, which is what approves or rejects the track the
+ * voters play, with previewOpenMicSubmissionSong serving the audio the review
+ * decision gates).
  *
  * STILL NOT PORTED, documented rather than silent: resolving a fraud alert,
  * marking a notification sent, reconciling a payment event, triggering
  * finalist generation, announcing a winner, and building/locking the finale
  * playlist. Each of those API routes already exists and is Path-A-ready (see
- * the GET counterparts wired below); wiring the write side is follow-up work.
+ * the GET counterparts wired above); wiring the write side is follow-up work.
  */
 import { webProxyBase } from '@/config/env';
+import { playableSongSrc } from '@/features/openmic/song-src';
+import type { OpenMicReviewDecision } from '@/features/openmic/review-decisions';
 
 export type OpenMicContest = {
   id: string;
@@ -54,6 +61,17 @@ export type OpenMicContest = {
   judgeWeight?: number;
   publicVoteWeight?: number;
   selectionModel: string;
+  /**
+   * The window during which an approved artist may hand a song in. These are
+   * read from and written to `contests.sponsor_assets` by mapContestRow, and
+   * the rule in src/features/openmic/submission-window.ts is strict: with
+   * neither bound set, an edition that is not in `submission_open` status
+   * accepts no hand-ins at all. So an editor that never shows these two dates
+   * can leave a published edition permanently closed with nothing on screen to
+   * explain it.
+   */
+  submissionStartAt?: string | null;
+  submissionEndAt?: string | null;
 };
 
 /**
@@ -77,6 +95,8 @@ export type OpenMicContestEditInput = Partial<{
   judgeWeight: number;
   publicVoteWeight: number;
   selectionModel: string;
+  submissionStartAt: string | null;
+  submissionEndAt: string | null;
 }>;
 
 export type OpenMicApplicationRow = {
@@ -118,6 +138,21 @@ export type OpenMicSubmissionRow = {
   isWinner: boolean;
   genre?: string;
   submittedAt?: string;
+  /**
+   * Present in the list payload because /api/admin/open-mic/submissions returns
+   * whole OpenMicSubmission objects. In local (no-R2) dev `songUrl` is the
+   * public reader path and `songObjectKey` is the on-disk key; in an R2
+   * deployment `songUrl` is the stored object URL and the key is what a fresh
+   * signature is minted from. The console never builds a playable address from
+   * these two directly — it asks `previewOpenMicSubmissionSong`, which asks the
+   * server for the address it considers correct for this deployment.
+   */
+  songUrl?: string;
+  songObjectKey?: string;
+  songFileName?: string;
+  /** The note the last decision carried, shown so an operator sees why a row
+   *  was rejected before writing a new one. OpenMicSubmission.reviewNote. */
+  reviewNote?: string;
 };
 
 export type OpenMicPaymentEventRow = {
@@ -344,6 +379,70 @@ export async function listOpenMicFinalists(contestId: string): Promise<{ finalis
   const json = await getJson<{ finalists: OpenMicSubmissionRow[]; leaderboard: OpenMicSubmissionRow[] }>(
     `/api/admin/open-mic/contests/${contestId}/finalists`, 'Finalists');
   return { finalists: json.finalists ?? [], leaderboard: json.leaderboard ?? [] };
+}
+
+/**
+ * The console's shape for a review action. The server speaks `{status, note}`
+ * (`OpenMicSubmissionReviewInput` in frontend-web), and this function is where
+ * the two vocabularies meet: `decision` becomes `status`, `feedback` becomes
+ * `note`. Nothing else is sent — the timestamps, the finalist/winner flags and
+ * the artist notice are all derived server-side from the decision, so a client
+ * that sent them would only be able to contradict it.
+ */
+export type OpenMicReviewInput = { decision: OpenMicReviewDecision; feedback?: string };
+
+/**
+ * POST /api/admin/open-mic/submissions/:id/review
+ * (assertOpenMicScoreAdmin — the score-admin role, which is narrower than
+ * either admin role the read routes accept, so a read-only operator sees a 403
+ * here and the message below says so.)
+ *
+ * This is the call that puts a song in front of voters: the reader serves
+ * playback only for the statuses this route can write, and refuses every other
+ * one with 404. A 400 comes back as `Unknown review decision: <value>` when the
+ * value is not on the server's list.
+ */
+export async function reviewOpenMicSubmission(id: string, input: OpenMicReviewInput): Promise<OpenMicSubmissionRow> {
+  const res = await fetch(`${webBase()}/api/admin/open-mic/submissions/${encodeURIComponent(id)}/review`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: input.decision, note: input.feedback ?? '' }),
+  });
+  const json = (await res.json().catch(() => ({}))) as { submission?: OpenMicSubmissionRow; error?: string };
+  if (res.status === 401) throw new Error('Review failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Review failed: 403 — this account cannot review Open Mic songs.');
+  if (res.status === 404) throw new Error('Review failed: that hand-in no longer exists. Refresh the list.');
+  if (!res.ok || !json.submission) throw new Error(`Review failed: ${json.error || res.status}`);
+  return json.submission;
+}
+
+/**
+ * Ask the server for a playable/downloadable address for one hand-in and
+ * resolve it against the proxy.
+ *
+ * Lazy by design: `app/api/web-proxy/[...path]/route.ts` buffers the whole
+ * upstream body, does not forward `Range`, and gives up at
+ * `WEB_PROXY_TIMEOUT_MS ?? 20_000`. An `<audio src>` rendered per row would
+ * therefore fetch every song in the list up front and could not seek inside one
+ * that arrives faster than it plays. So the address is fetched when the
+ * operator presses the button, and `download` is a second call with
+ * `?download=1`, which the server turns into an attachment disposition (or,
+ * locally, the reader's download query).
+ *
+ * Returns null only when the server answered with something this app cannot
+ * turn into an address — a malformed value, or a relative path with no
+ * absolute base to hang it on.
+ */
+export async function previewOpenMicSubmissionSong(
+  id: string,
+  options: { download?: boolean } = {},
+): Promise<string | null> {
+  const label = options.download ? 'Song download' : 'Song preview';
+  const json = await getJson<{ signedUrl?: string }>(
+    `/api/admin/open-mic/submissions/${encodeURIComponent(id)}/song${options.download ? '?download=1' : ''}`,
+    label,
+  );
+  return playableSongSrc(json.signedUrl, webBase());
 }
 
 export async function listOpenMicPayments(contestId: string): Promise<OpenMicPaymentEventRow[]> {

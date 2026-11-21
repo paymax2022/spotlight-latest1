@@ -9,6 +9,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const readLocalUpload = vi.hoisted(() => vi.fn());
+// The reader shares the song reader's byte server now, and that server stats
+// the object before slicing it -- an `<audio>` element asks for ranges, so the
+// route has to answer them. Both are written in terms of readLocalUpload so a
+// test still decides what storage holds with one mockResolvedValue call.
+const statLocalUpload = vi.hoisted(() => vi.fn(async (key: string) => {
+  const buffer = await readLocalUpload(key);
+  return buffer ? { sizeBytes: buffer.length } : null;
+}));
+const readLocalUploadRange = vi.hoisted(() => vi.fn(async (key: string, range: { start: number; end?: number }) => {
+  const buffer = await readLocalUpload(key);
+  if (!buffer) return null;
+  const totalBytes = buffer.length;
+  const start = range.start;
+  const end = range.end === undefined ? totalBytes - 1 : Math.min(range.end, totalBytes - 1);
+  if (start > end) return null;
+  return { buffer: Buffer.from(buffer.subarray(start, end + 1)), start, end, totalBytes };
+}));
 // Hoisted so the R2 describe at the bottom can flip the flag. Production is the
 // R2 branch, so it has to be reachable from a test.
 const hasR2Config = vi.hoisted(() => vi.fn(() => false));
@@ -24,6 +41,8 @@ vi.mock('@/src/server/admin/auth', () => ({ assertAdminPermission }));
 
 vi.mock('@/src/lib/storage/local-uploads', () => ({
   readLocalUpload,
+  statLocalUpload,
+  readLocalUploadRange,
   saveLocalUpload,
   contentTypeForKey: (key: string) => (key.endsWith('.mp3') ? 'audio/mpeg' : 'application/octet-stream'),
 }));
@@ -127,7 +146,11 @@ describe('GET /api/open-mic/beats/[fileKey]', () => {
     const res = await get(encodeBeatFileKey('openmic-beats/c1/u.mp3'));
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('audio/mpeg');
-    expect(res.headers.get('content-disposition')).toBe('inline');
+    // `inline` is the contract; the reader names the file on both dispositions
+    // now because the same byte server answers the song reader, whose player
+    // shows the filename.
+    expect(res.headers.get('content-disposition')).toContain('inline');
+    expect(res.headers.get('accept-ranges')).toBe('bytes');
     expect(res.headers.get('cache-control')).toContain('immutable');
   });
 

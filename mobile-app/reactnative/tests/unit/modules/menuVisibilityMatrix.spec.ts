@@ -21,18 +21,22 @@ const HIDDEN_IN_STAGING = [
 
 const VISIBLE_IN_STAGING = [
   'crypto', 'education', 'naija-driver', 'film-academy',
-  'connect', 'marketplace', 'shopping', 'parcel',
+  'connect', 'marketplace',
   'contest', 'property',
-  // The landing row's contest sections ride the same voteBridge key as the
-  // Contest tile, so publishing contests publishes the shelf with them.
+  // The landing row's contest sections ride `voteBridge` (serviceModuleKeys.ts),
+  // which staging publishes, so the shelf is live with the voting engine.
   'open-mic', 'talent-hunt', 'rising-star',
 ] as const;
+
+// Reconciled with #996: these two are coming-soon placeholders, not published
+// modules, so they are deliberately ungated and always render with their badge.
+const UNGATED_COMING_SOON = ['shopping', 'parcel'] as const;
 
 const STAGING: ModuleVisibility = {
   environment: 'staging',
   modules: [
     'crypto', 'education', 'arena', 'filmAcademy', 'connect',
-    'marketplace', 'shopping', 'parcel', 'voteBridge', 'realtor',
+    'marketplace', 'voteBridge', 'competitions', 'realtor',
   ],
   comingSoon: [],
 };
@@ -55,6 +59,12 @@ describe('staging menu-visibility matrix (2026-11-17 decision)', () => {
       const key = registryKeyFor(id);
       assert.ok(key, `${id} must be registry-gated`);
       assert.equal(moduleStateFor(STAGING, key), 'visible');
+    });
+  }
+
+  for (const id of UNGATED_COMING_SOON) {
+    it(`leaves the coming-soon tile ${id} ungated`, () => {
+      assert.equal(registryKeyFor(id), null);
     });
   }
 });

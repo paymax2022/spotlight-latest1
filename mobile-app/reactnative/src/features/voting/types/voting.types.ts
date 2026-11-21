@@ -76,6 +76,16 @@ export interface Contestant {
   state?: string;
   photo?: string;
   mediaUrl?: string;
+  /**
+   * The Open Mic track this artist handed in, when the server considers it
+   * publicly playable. `songUrl` is the reader URL and is the permission signal:
+   * the Go roster only fills it for rows whose status is in
+   * PUBLICLY_PLAYABLE_SONG_STATUSES, so a `draft` upload or a moderated entry
+   * arrives with no URL at all. Render the player on the URL, never on the
+   * status. `songStatus` is the server's word on the stage, for a caption only.
+   */
+  songUrl?: string;
+  songStatus?: string;
   rank: number;
   /**
    * Contestant vote count. May be `null` when vote counts are hidden for the

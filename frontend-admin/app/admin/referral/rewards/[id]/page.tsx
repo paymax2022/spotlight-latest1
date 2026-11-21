@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getRewardEntry, executeClawback, formatNaira } from '@/services/referralAdminService';
 import type { RewardLedgerEntry } from '@/types/referralAdmin';
-import { ReferralTabs, timeAgo } from '../../_ui';
+import { ReferralTabs, errorMessage, textOrDash, timeAgo } from '../../_ui';
 import { Page, PageHeader, Card, Button, Input, Badge, colors } from '@/components/ui/vuexy';
 
 function badgeColor(status: string): string {
@@ -36,7 +36,7 @@ export default function RewardDetailPage() {
   async function load() {
     setLoading(true); setError(null);
     try { setData(await getRewardEntry(id)); }
-    catch (e) { setError(String(e)); }
+    catch (e) { setError(errorMessage(e)); }
     finally { setLoading(false); }
   }
   useEffect(() => { if (id) load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
@@ -45,7 +45,7 @@ export default function RewardDetailPage() {
     if (!data || !reason.trim()) { setError('A reason is required to claw back.'); return; }
     setBusy(true); setError(null);
     try { await executeClawback({ reward_id: data.id, reason: reason.trim() }); setData({ ...data, state: 'clawed_back' }); setDone(true); }
-    catch (e) { setError(String(e)); }
+    catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
 
@@ -71,14 +71,14 @@ export default function RewardDetailPage() {
                 <Badge text={data.state.replace(/_/g, ' ')} color={badgeColor(data.state)} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px,1fr))', gap: 12 }}>
-                <Field label="Beneficiary" value={<><code>{data.beneficiary_id}</code>{data.is_house && <> <Badge text="house" color={badgeColor('house')} /></>}</>} />
+                <Field label="Beneficiary" value={<><code>{textOrDash(data.beneficiary_id)}</code>{data.is_house && <> <Badge text="house" color={badgeColor('house')} /></>}</>} />
                 <Field label="Referred user" value={data.referred_user_id ? <code>{data.referred_user_id}</code> : '—'} />
                 <Field label="Campaign" value={data.campaign_id ? <Link href={`/admin/referral/campaigns/${data.campaign_id}`}>{data.campaign_id}</Link> : '—'} />
                 <Field label="Kind" value={<Badge text={data.kind} color={badgeColor('normal')} />} />
                 <Field label="Amount" value={<strong>{formatNaira(data.amount_kobo)}</strong>} />
                 <Field label="Currency" value={data.currency} />
                 <Field label="Ledger entry" value={data.ledger_entry_id ? <code>{data.ledger_entry_id}</code> : '—'} />
-                <Field label="Idempotency key" value={<code style={{ fontSize: 12 }}>{data.idempotency_key}</code>} />
+                <Field label="Idempotency key" value={<code style={{ fontSize: 12 }}>{textOrDash(data.idempotency_key)}</code>} />
                 <Field label="Excluded from K-factor" value={data.excluded_from_kfactor ? 'Yes' : 'No'} />
                 <Field label="Excluded from override" value={data.excluded_from_override ? 'Yes' : 'No'} />
                 <Field label="Created" value={timeAgo(data.created_at)} />

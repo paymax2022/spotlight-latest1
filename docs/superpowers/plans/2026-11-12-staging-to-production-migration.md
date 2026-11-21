@@ -30,13 +30,14 @@ These are the numbers the plan closes. Re-measure each at Task 1; if a figure ha
 | Drift, prod backend → `origin/main` | **710 commits** total, **239** touching `backend/` | 0 |
 | Go API, staging | `886d857f19…`, started 2026-11-02, **224 commits** behind `origin/main` | same SHA as prod |
 | Prod schema | `supabase_migrations.schema_migrations` = **667** rows (read-only scoped run `42983741548`, 2026-11-11T08:01:35Z); `origin/main` carries **750** files in `supabase/migrations/`, every one named `20<12 digits>_…sql` → **≈83 pending**. Measured on the last captured table (2026-11-07, 663 applied) the classifier instead prints **87 pending = 69 above-max additive + 18 below-max additive + 0 NON-ADDITIVE** — the 4-version difference is the four days between the two reads, not two answers | 0 pending |
+| Prod schema, **re-read 2026-11-16** | Through the session pooler: `schema_migrations` = **756** rows (all versions numeric), max applied `20271500000000`, `information_schema.tables` where `table_schema='public'` = **1416**. `origin/main` (`f90b3ef30`) carries **756** `supabase/migrations/*.sql`, and `comm` in both directions prints **0 / 0** — identical sets, no drift either way | **0 pending**, so the rows above ("≈83 pending", "111 files newer than prod") are superseded, not refined |
 | Migrations added prod→main | **111** files under `supabase/migrations/` newer than prod's deployed state, against ≈83 unrecorded — the 28-file difference is **not yet explained** (already-applied academy-era files is the likely reading, not a proven one). Task 2 Step 6 produces the authoritative pending set, and the ledger must reconcile the two numbers before Phase 2 | — |
 | Prod web module flags | `www.spotlightng.com/api/v1/restaurant/<uuid>` → **503** "Restaurant delivery is not available."; `/api/v1/referral/my-rewards` family → **503** "Referrals are not available."; `/api/v1/association/mine` → **503** | **401** Unauthorized (gate passed, auth refused) |
 | Prod web runtime env | `spotlight-latest` `deploy-cpanel.yml` Finalize writes `.env.production.local` with exactly **4 keys**: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GO_BACKEND_URL` — **zero `FEATURE_*`** | 4 + the 36 reviewed flags |
 | Host env-file inventory | That run's own probe step (`Probe prod Supabase runtime env (read-only)`, run `43037664704` 2026-11-11T14:23:27Z) lists **one** `.env*` file in `APP_DIR` — `.env.production.local`, mtime `2026-11-11T07:50:07` — holding those same 4 keys, and no `FEATURE_*` | unchanged; Task 8's truncate-and-write therefore drops nothing it did not itself write |
 | Prod BFF for mobile | `frontend-web-production-9259.up.railway.app` same probe → **401** (its Railway env carries 49 `FEATURE_*`, 46 ON) | unchanged for the 36; **but see the academy row — that build predates some routes entirely** |
 | Academy gates, both web planes | `GET /api/academy/topics` and `/api/academy/exams` → **503 on `www.spotlightng.com` AND on staging**; `/api/academy/certificates/verify/<id>` → **503 "Credential verification is not available yet"** on both. Cause: `FEATURE_FILM_ACADEMY_TOPICS_ENABLED`, `FEATURE_FILM_ACADEMY_ASSESSMENT_ENABLED`, `FEATURE_FILM_ACADEMY_PILOT_DELIVERY_ENABLED` are **absent from staging's `frontend-web` env too**, so "copy staging's ON set" reproduces a broken product area. The same probe on the mobile-facing prod BFF → **404 "No API route matches GET /api/academy/topics"**, i.e. that plane's served build has no academy routes at all | a decision per name in Task 7 Step 5, recorded in the flag file as an explicit `=false` unless promoted |
-| Full flag sweep (code-derived routes) | The Task 14 probe (`scripts/flagprobe.sh`, wrapper-aware) against today's `www.spotlightng.com`, over all 45 names in `production-module-flags.env`: **85 gated route lines → 48×503, 25×405, 1×401, 10 NO-ROUTE**. Of the 36 declared `true`, **28 answer 503 on at least one real gated route**, **7 resolve to no `app/api` route at all** (`estate`, `healthLab`, `healthPharmacy`, `healthVet`, `otpEmail`, `voteBridge`, plus the test-only `VOTES_BRIDGE_ENABLED` — their sole reader `isModuleVisible` at `frontend-web/src/server/modules/visibility.ts:59-66` has zero callers, so they are inert in the web plane and no HTTP probe can prove them), and only `FEATURE_REALTOR_ENABLED` is clean. `FEATURE_UTILITY_BILLS_GO_PROXY_ENABLED` is **not** inert: it gates three real routes through the `utilityGoProxyEnabled()` wrapper in `app/api/v1/utility/_utils.ts:67`, which is why the probe follows wrappers — the first, route-only draft of it mis-filed that flag with the inert seven. Production therefore serves almost none of the promoted modules today | 503 must disappear for every flag with a GET handler; the 7 inert names get recorded as "not HTTP-provable", not as passing |
+| Full flag sweep (code-derived routes) | The Task 14 probe (`scripts/flagprobe.sh`, wrapper-aware) against today's `www.spotlightng.com`, over all 45 names in `production-module-flags.env`: **85 gated route lines → 48×503, 25×405, 1×401, 10 NO-ROUTE** (the four buckets total 84; the capture does not record the 85th line's class). Of the 36 declared `true`, **28 answer 503 on at least one real gated route**, **5 resolve to no `app/api` route at all** (`estate`, `healthLab`, `healthPharmacy`, `healthVet`, `otpEmail` — their sole reader `isModuleVisible` at `frontend-web/src/server/modules/visibility.ts:59-66` has zero callers, so they are inert in the web plane), **2 are provable by an HTTP flip** (403 while off, not 200: `FEATURE_VOTE_BRIDGE_ENABLED`, read directly at `app/api/v2/votes/wallet/route.ts:78`, and `VOTES_BRIDGE_ENABLED`, read at runtime by `isBridgeEnabled()` in `frontend-web/src/server/voting-bridge/feature-flag.ts:14` — the two the draft called inert), and only `FEATURE_REALTOR_ENABLED` is clean. The draft's list was wrong because the probe follows `featureFlags.X(` accessors and `requireFeature('X')` but neither direct `process.env.FEATURE_*` reads nor helpers a route calls (which is how the runtime reader above was missed). `FEATURE_UTILITY_BILLS_GO_PROXY_ENABLED` is **not** inert: it gates three real routes through the `utilityGoProxyEnabled()` wrapper in `app/api/v1/utility/_utils.ts:67`, which is why the probe follows wrappers — the first, route-only draft of it mis-filed that flag with the inert names. Production therefore serves almost none of the promoted modules today | 503 must disappear for every flag with a GET handler; the 5 inert names get recorded as "not HTTP-provable", not as passing |
 | Backend Railway flags | prod has 54 `FEATURE_*` (50 ON) vs staging 64 (62 ON) → **12** staging-ON names not ON in prod | flag-for-flag parity |
 | Backend non-flag keys | prod is missing 5 names staging holds: `DOJAH_BASE_URL`, `DOJAH_PUBLIC_KEY`, `R2_ENDPOINT`, `R2_BUCKET_NAME`, `QUIDAX_WEBHOOK_SECRET` (+ `ADMIN_SIGNUP_CODE`, `AUTH_IDENTITY_CACHE_TTL_SECONDS`); prod holds 4 staging lacks: `CORS_ALLOW_ORIGINS`, `MAPLERAD_PROD`, `REDIS_PRIVATE_URL`, `WS_TICKET_SIGNING_SECRET` | decided per name, in Task 12 |
 | `frontend-admin` prod | lacks `PAYSTACK_PUBLIC_KEY` / `PAYSTACK_SECRET_KEY` that staging holds; `WEB_API_BASE_URL=https://frontend-web-production-9259.up.railway.app` while the public site is `https://www.spotlightng.com` | Task 13 |
@@ -319,7 +320,7 @@ awk -F'|' '/`20[0-9]{12}`[ ]*\|/ { v = $2; gsub(/[` ]/, "", v); if (v ~ /^20[0-9
 Two facts about these numbers, both measured on this project:
 
 - **The table cannot see an applied version whose file is gone.** Every row in the 2026-11-07 prod table has a filled `Local` cell — 663 applied + 86 local-only = the 749 lines carrying a version — and **0 rows with a blank `Local`**. So a version recorded in `supabase_migrations` but absent from the tree does not appear in this text at all, and the table alone cannot tell "none exist" from "the CLI hid them". The *only* detector is the comparison: psql `N` above the parsed `recorded:` count means `N − recorded` applied versions have no migration file, i.e. schema changes this repo does not describe. Record any such gap in the ledger and name it in Task 3's rehearsal, because a restore-and-replay of the tree will not reproduce them.
-- **These two figures agreed on the same date, and the plan's earlier ≈83 estimate came from a later one.** The lane's own comment (`ops-db-push-scoped.yml:165`) records prod reading `663 history rows`, and the parsed table from that run also yields 663 — no gap. The `667` in this plan comes from the 2026-11-11 prod dump restore, four days later. So prod's true current pending count is `files − 667` (≈83 on a 750-file tree), while the 87 measured below is what the stale table shows; a fresh `mode=list` run closes the difference. Do not read the two numbers as a contradiction — read them as two dates.
+- **These two figures agreed on the same date, and the plan's earlier ≈83 estimate came from a later one.** The lane's own comment (`ops-db-push-scoped.yml:165`) records prod reading `663 history rows`, and the parsed table from that run also yields 663 — no gap. The `667` in this plan comes from the 2026-11-11 prod dump restore, four days later. So prod's true current pending count is `files − 667` (≈83 on a 750-file tree), while the 87 measured below is what the stale table shows; a fresh `mode=list` run closes the difference. Do not read the two numbers as a contradiction — read them as two dates. **Re-read 2026-11-16 and the sentence is now obsolete:** prod is at **756** applied versions against a **756**-file tree with set-difference **0** in both directions, so `files − 667` describes a backlog that no longer exists. Prod has been written since this line was written — first by the two `ops-db-push-scoped` applies, then to 755 and 756 — and Task 6's remaining obligation is only the authoritative `mode=list` confirmation, not an 83-migration sweep.
 
 - [ ] **Step 6: Run the classifier against the live tree at the release SHA**
 
@@ -385,7 +386,7 @@ Expected: one commit, three paths. Verify the `Makefile` hunk only adds a target
 
 Do this in the Supabase dashboard (PITR/backup list) — there is no CI path to it, and `gh` cannot mint it. Record: backup id, start/finish time, size.
 
-- [ ] **Step 2: Take a logical dump through the session pooler**
+- [x] **Step 2: Take a logical dump through the session pooler**
 
 The direct host `db.nmseef….supabase.co` is AAAA-only and GitHub runners (and many local networks) have no IPv6 route; the pooler is the address that works (`ops-db-push-scoped.yml:86`). From a machine that holds the prod DB password:
 
@@ -397,7 +398,7 @@ ls -l /tmp/prod-pre-cutover.dump
 
 Expected: a non-zero-length file. **Never** commit or paste the DSN; keep it in a shell variable. If no local copy of the password exists, run the dump from `ops-db-push.yml`-equivalent CI context instead of asking anyone to paste it into chat.
 
-- [ ] **Step 3: Rehearse the restore into a throwaway database**
+- [x] **Step 3: Rehearse the restore into a throwaway database**
 
 Two shapes will bite if copied from a generic runbook. The dump is of Supabase's `postgres` database, so `pg_restore --create` tries to create a database named `postgres`, which already exists — make the target DB yourself and restore into it by name. And a fresh Postgres has no `auth`/`storage` schemas and no `anon`/`authenticated`/`service_role` roles, so the dump's GRANT/COMMENT statements abort the restore: run this repo's own Supabase-compat prelude first, the same one `integration-verify.yml` runs. Use the postgis image for the same reason Task 4 does.
 
@@ -416,11 +417,11 @@ psql "$R" -tAc 'select count(*) from supabase_migrations.schema_migrations;'
 psql "$R" -tAc "select count(*) from information_schema.tables where table_schema='public';"
 ```
 
-Expected: history count **667**, matching the baseline — that equality is the whole point of the rehearsal, because it proves the dump carries the migration ledger, which is what a rollback would have to reconcile against. Record the public-table count as the control Task 6's post-check compares to. A restore that lands fewer history rows is not a usable rollback: stop and fix the dump before Phase 2.
+Expected: history count **equal to prod's own live count at the moment the dump is taken** — re-measured 2026-11-16 as **756**, not the `667` this plan was written against, because prod has since been written to 755 and then 756 (see the ledger's release-lane section). Take the live count first (`select count(*) from supabase_migrations.schema_migrations` through the pooler), dump, restore, and compare the rehearsal against *that* number; `667` is a 2026-11-11 figure and must not be used as the pass condition. That equality is the whole point of the rehearsal, because it proves the dump carries the migration ledger, which is what a rollback would have to reconcile against. Record the public-table count as the control Task 6's post-check compares to — **1416** measured 2026-11-16. A restore that lands fewer history rows is not a usable rollback: stop and fix the dump before Phase 2.
 
 `pg_restore` reports non-fatal `ERROR:` lines for `ALTER TABLE … OWNER TO` when `--no-owner` is omitted and roles differ; read the exit status, not the noise, and re-run with the offending object named in the ledger if the exit is non-zero.
 
-- [ ] **Step 4: Tear the rehearsal down and read the targets Phase 2 will replay**
+- [x] **Step 4: Tear the rehearsal down and read the targets Phase 2 will replay**
 
 ```bash
 cd /Users/paymax/Documents/spotlight/main
@@ -430,7 +431,7 @@ git show origin/main:Makefile | sed -n '91,116p'
 
 Expected: the quoted `migrate-up` / `migrate-reset` / `rls-check` bodies are the exact commands Task 4 replays, so the local rehearsal and the CI lane are provably the same procedure.
 
-- [ ] **Step 5: Append `## Backup` to the ledger and commit**
+- [x] **Step 5: Append `## Backup` to the ledger and commit**
 
 Include: backup id, dump size, restore-rehearsal counts, teardown confirmation, and the one-line rollback instruction (`pg_restore` into a fresh DB is proven; in-place prod rollback needs the dashboard restore, which is a human action).
 
@@ -576,6 +577,18 @@ Expected: `0`, and `recorded:` on that table's last line equals the repo's file 
 
 ### Task 6: Stage 3 — apply production's backlog in reviewable batches
 
+> **Disposition, 2026-11-16 — the backlog this task was sized for no longer exists, and Steps 1–4 are
+> superseded, not pending.** Prod reached `recorded: 756` against a tree of 756 files with **0 pending**
+> through two writes this task did not schedule: `ops-db-push.yml mode=push` on 2026-11-15T19:54Z (676→755)
+> and a `db-migrate.yml` dispatch with `dry_run: false` on 2026-11-16T15:20Z (755→756). Neither used the
+> scoped lane this task names as the only permitted prod writer, and neither was batched. Step 5's proof
+> was then run fresh and passes, on four reads — see the ledger's `## Stage 3`, §6.1 and §6.3. **Also
+> obsolete as written:** this task's "parks for review / budget a second reviewer approval" steps.
+> `Production`'s required reviewers were removed on 2026-11-15 (`db-migrate.yml:11-17`), the env now reads
+> `protection_rules: ["branch_policy"]`, and my `mode=list` dispatch of 2026-11-16 began in the same second
+> it was created. Do not read an unchecked Step 1–4 box as work left to do; do read §6.4 as the safety
+> change that came with this one closing.
+
 The only prod DB writer this plan uses is `ops-db-push-scoped.yml`: `environment: production-db-scoped` (no reviewers, deliberately — `Production`'s rule also gates `ops-db-rotate`, which rewrites the prod password), max 12 versions, re-greps the exact bytes for destructive shapes, and refuses the staging ref. It composes the session-pooler DSN because the direct host is IPv6-only.
 
 **Files:**
@@ -585,7 +598,7 @@ The only prod DB writer this plan uses is `ops-db-push-scoped.yml`: `environment
 - Consumes: `/tmp/pending.txt` filtered to `additive` + `above-max`, then `below-max`; `scripts/db/list-pending.sh`.
 - Produces: prod history == repo file count; per-batch post-check lines.
 
-- [ ] **Step 1: Build the batch plan, forward-dated files first**
+- [ ] **Step 1: Build the batch plan, forward-dated files first** — **SUPERSEDED** (0 pending; see the Disposition)
 
 ```bash
 cd /Users/paymax/Documents/spotlight/main
@@ -603,7 +616,7 @@ cat /tmp/batch_* /tmp/backdated_* | wc -l
 
 Verified on today's backlog: 6 `batch_` files (12,12,12,12,12,9) + 2 `backdated_` files (12,6) = **87 versions across 8 prod writes**, each list in ascending version order, and the final `wc -l` must equal the pending count from Task 5 Step 2 — if it does not, a file fell out of both greps and the batch plan is silently incomplete. Re-derive both lists from your own `/tmp/pending.txt`; if its `NON-ADDITIVE` count is above 0, those versions come out of the batches entirely and go to Task 2's stop-event path instead. The two prefixes are kept apart because the above-max set goes first and the back-dated set is reviewed separately: `--apply-one` takes the version by name, so back-dating is not an obstacle to applying — only a review requirement, because history order and execution order will differ.
 
-- [ ] **Step 2: Dry-run the first batch through the lane's own guard**
+- [ ] **Step 2: Dry-run the first batch through the lane's own guard** — **SUPERSEDED** (no batch to dry-run)
 
 ```bash
 gh workflow run ops-db-push-scoped.yml --repo paymax2022/spotlight-latest1 \
@@ -621,7 +634,7 @@ Three numbers appear here and they are not the same quantity — reading them as
 
 `M` exceeding `N` is normal and is not drift — the difference is this plan's own pending backlog. What *is* drift: **`N` above the parsed `recorded:` count**, because an applied version with no file in the tree never appears in the CLI table (0 blank-`Local` rows in the 2026-11-07 table, so the table cannot reveal one). Name any such version in the ledger and carry it into Task 3's rehearsal, which replays files and therefore cannot reproduce it. The lane exits 1 when `M < 100`, which means psql works while the CLI cannot book history — the "DDL applied with no history row" drift, and the reason `migration repair` gets proved read-only before this lane may write. Zero active `academy_interest_areas` triggers a warning only.
 
-- [ ] **Step 3: Apply the batch**
+- [ ] **Step 3: Apply the batch** — **SUPERSEDED**; prod was written whole-remote twice instead (§6.1), never in batches
 
 ```bash
 gh workflow run ops-db-push-scoped.yml --repo paymax2022/spotlight-latest1 \
@@ -631,7 +644,7 @@ gh run watch --repo paymax2022/spotlight-latest1 --exit-status <run-id>
 
 Expected: `== applying <version> ==` per file, then the `always()` post-check step's read-only assertions pass. A run that dies mid-batch leaves a half-applied set: re-run `mode=plan` on the same versions and read which are now `RECORDED on remote` before dispatching anything else. Never re-apply a version whose DDL already ran.
 
-- [ ] **Step 4: Repeat for every batch, ledger entry per batch**
+- [ ] **Step 4: Repeat for every batch, ledger entry per batch** — **SUPERSEDED** (there were no batches)
 
 Re-read the pending list between batches rather than trusting the earlier count:
 
@@ -640,7 +653,10 @@ gh run view <plan-run-for-next-batch> --repo paymax2022/spotlight-latest1 --log 
   | grep -E 'remote history rows|RECORDED|not recorded'
 ```
 
-- [ ] **Step 5: Prove prod reached 0 pending, then check RLS on prod itself**
+- [x] **Step 5: Prove prod reached 0 pending, then check RLS on prod itself** — **DONE 2026-11-16, ledger
+  `## Stage 3` §6.3.** `43916692518` produced the table, `list-pending.sh` printed
+  `remote max applied: 20271500000000 | recorded: 756` with `grep -c '^pending'` → **0**, and the prod
+  RLS predicate returned **0 rows**.
 
 Re-read from the remote rather than trusting the batch logs. **Use `ops-db-push.yml mode=list`, not the scoped lane**: the scoped workflow prints only its own `remote history rows` / per-version `RECORDED` lines and never the CLI table, so filtering its log for `Migration list (before)` yields an empty file — and an empty applied set is precisely what `list-pending.sh` refuses (exit 2, `refusing: remote version list is missing or empty`). If you see `0` from the `grep -c` below alongside that refusal, the read is empty, not clean.
 
@@ -648,7 +664,8 @@ Re-read from the remote rather than trusting the batch logs. **Use `ops-db-push.
 cd /Users/paymax/Documents/spotlight/main
 gh workflow run ops-db-push.yml --repo paymax2022/spotlight-latest1 \
   -f environment=production -f mode=list
-# parks for review: same reviewers as Task 2 Step 5 (18039055 / 59900242)
+# does NOT park: `Production`'s required reviewers were removed on 2026-11-15, so the run starts the
+# second it is created. (Historic note: this line used to name reviewers 18039055 / 59900242.)
 gh run watch --repo paymax2022/spotlight-latest1 --exit-status <new-run-id>
 gh run view <new-run-id> --repo paymax2022/spotlight-latest1 --log \
   | awk -F'\t' '$2 == "Migration list (before)"' > /tmp/prod_versions_final.txt
@@ -657,7 +674,11 @@ bash scripts/db/list-pending.sh --remote-table /tmp/prod_versions_final.txt \
   | grep -c '^pending' || true
 ```
 
-Expected: a table with a `recorded:` count equal to the release SHA's file count, and `0` pending. Budget a second reviewer approval for this read, and ask for both (this and Task 2 Step 5's opening read) in one request so the ladder does not stall twice.
+Expected: a table with a `recorded:` count equal to the release SHA's file count, and `0` pending.
+This step was written assuming the read needs a reviewer; measured 2026-11-16 it needs none, and the
+dispatch is the cheapest prod write-adjacent action in the repo — so verify `mode=list` before pressing it,
+because the same form with `mode=push` and `confirm=PUSH` applies to production with no gate and, unlike
+`db-migrate.yml`, no additive-only guard in the workflow at all (§6.4).
 
 Then confirm no table shipped unguarded, using the same predicate as `make rls-check` (read-only, through the scoped lane's connection shape):
 
@@ -986,7 +1007,7 @@ echo "prod-flag-parity ✓ — $((on + off)) flags declared ($on on, $off off)"
 bash scripts/ci/test-prod-flag-parity.sh && bash scripts/ci/check-prod-flag-parity.sh
 ```
 
-Expected: `PASS` (four cases) then `prod-flag-parity ✓ — 45 flags declared (36 on, 9 off)`. Both numbers are checked, not decorative: 45 is every name `feature-flags.ts` reads through `envFlag()`, and 36 is staging's ON set intersected with it.
+Expected: `PASS` (four cases) then `prod-flag-parity ✓ — 45 flags declared (36 on, 9 off)`. Both numbers are checked, not decorative: 45 is every name `feature-flags.ts` reads through `envFlag()`, and 36 is staging's ON set intersected with it. Read the 45 as accessor-declared names; direct `process.env` reads are outside this gate — one money-path name today (`FEATURE_UTILITY_CARD_LEDGER`), recorded in the ledger §10.3 — so green here is not "the whole BFF gate surface is declared".
 
 - [ ] **Step 4: Wire the job into `ci.yml` and `Makefile`**
 
@@ -1074,6 +1095,37 @@ Expected in the ledger: one paragraph per name with the reason, which plane read
 
 ### Task 11: Bring the production Go API to the release SHA
 
+> **Mechanism superseded 2026-11-16 — read this before executing.** Steps 1-2 of
+> this task are written against the promotion-branch model: pushing
+> `RELEASE_SHA` to `refs/heads/prod` and dispatching `ci.yml` with
+> `deploy_environment=production, confirm_deploy=DEPLOY`. Neither works any more.
+> `ci.yml`'s three deploy jobs were deleted, `prod`/`staging`/`develop` are frozen
+> with their tips archived as `archive/prod-2026-11-15` and
+> `archive/staging-2026-11-15`, and the dispatch now fails on unknown inputs.
+>
+> What replaces it: `release.yml` deploys on every push to `main` — see
+> [docs/devops/deployment-matrix.md](../../devops/deployment-matrix.md)'s
+> `release.yml` row, its Promotion-model section, and the Probe contract. The goal
+> below is unchanged (`/api/v1/public/build` reporting `RELEASE_SHA` on both
+> backends), and the procedure that reaches it is now "get `RELEASE_SHA` onto
+> `main`" — which it already is: `git merge-base --is-ancestor c49b395643473ba6ff7a225d7a7a339a41eddfe6 origin/main`
+> exits 0, measured 2026-11-16. **Do not read that as Task 11 being closed.**
+> Production currently serves `585bd2ca7`, and `git rev-list --count 585bd2ca7
+> ^origin/main` is **7** — those seven commits exist only on the prod-serving side,
+> so the first `main` deploy replaces them with `main`'s version of the same area;
+> the matrix's `backend` row owns that comparison and its re-read requirement
+> (`/api/v1/public/build` at execution time, never a figure quoted from a doc).
+> **Re-read 2026-11-16, and the sentence above is already the stale value:** prod
+> reports `5ab7c9cc0bf3d2b42aa43215fe5df9630dfbc421` (`started_at 2026-11-15T09:00:26Z`),
+> which is **8** ahead / **756** behind `origin/main` and still not an ancestor of it, so
+> the promote-only set grew by one and prod's Go plane has been moved twice by hand since
+> this task was written. That read also exposed a second, larger fact this task never
+> stated: the tree prod's binary was built from carries **643** of `main`'s 756
+> `supabase/migrations/*.sql`, while prod's database holds all **756** — so prod's schema is
+> 113 migrations ahead of prod's code, today's own apply included, and every whole-remote
+> `db push` widens that gap while Task 11 stays open. Ledger `## Stage 3`, §6.7.
+
+
 Production's API is 710 commits / 239 backend commits behind `main` and has not been redeployed since 2026-10-17; staging is 224 behind. Both must land on the same SHA or the two planes diverge again.
 
 **Files:**
@@ -1083,7 +1135,7 @@ Production's API is 710 commits / 239 backend commits behind `main` and has not 
 - Consumes: `RELEASE_SHA`, a green Phase 2/3 (prod schema reconciled, flags committed), `refs/heads/prod` pointing at `RELEASE_SHA`.
 - Produces: `GET /api/v1/public/build` reporting `RELEASE_SHA` on both prod and staging backends.
 
-- [ ] **Step 1: Move the `prod` branch pointer by plumbing, not by touching the dirty worktree**
+- [ ] **Step 1: Move the `prod` branch pointer by plumbing, not by touching the dirty worktree** *(retired — `prod` is frozen; see the banner)*
 
 `ci.yml:687` requires `github.ref == 'refs/heads/prod'`, plus `inputs.deploy_environment == 'production'`, `confirm_deploy == 'DEPLOY'`, `vars.RAILWAY_DEPLOY_ENABLED == 'true'` (it is) and every one of the 22 `needs` jobs non-failing.
 
@@ -1096,7 +1148,7 @@ git -c credential.helper='!gh auth git-credential' push origin "${RELEASE_SHA}:r
 
 Expected: the push updates `prod` and nothing else — `git rev-parse origin/prod` afterwards prints `RELEASE_SHA`. **There is no second push here:** do not push to `refs/heads/staging`. The repo's policy forbids staging-branch releases, staging's Railway git source tracks `main` rather than that branch, and an earlier draft of this step carried a `push … :refs/heads/staging || echo "SKIP"` line that a shell would have *executed* — `|| echo` skips the echo, not the push.
 
-- [ ] **Step 2: Dispatch the production deploy and watch it**
+- [ ] **Step 2: Dispatch the production deploy and watch it** *(retired — see the banner; `ci.yml` has no deploy job to dispatch and `Production` has no reviewers)*
 
 ```bash
 gh workflow run ci.yml --repo paymax2022/spotlight-latest1 --ref prod \
@@ -1329,11 +1381,11 @@ cd /Users/paymax/Documents/spotlight/main
 /usr/bin/awk '{print $NF}' /tmp/prod_gates.txt | /usr/bin/sort | /usr/bin/uniq -c | /usr/bin/sort -rn
 ```
 
-Measured at baseline (2026-11-12, 85 route lines over the 45 declared names): **48×503, 25×405, 1×401, 10 NO-ROUTE**. Of the 36 flags declared `true`, **28 answer 503 on at least one real gated route** (prod's web runtime carries zero `FEATURE_*` — this is the defect Tasks 11–13 remove), **7 have no BFF route at all**, and only `FEATURE_REALTOR_ENABLED` is clean. Read the three result classes as rules, not noise:
+Measured at baseline (2026-11-12, 85 route lines over the 45 declared names): **48×503, 25×405, 1×401, 10 NO-ROUTE** (the four buckets total 84; the capture does not record the 85th line's class). Of the 36 flags declared `true`, **28 answer 503 on at least one real gated route** (prod's web runtime carries zero `FEATURE_*` — this is the defect Tasks 11–13 remove), **5 have no BFF route at all** (the other two this line once put in that class are provable by an HTTP flip), and only `FEATURE_REALTOR_ENABLED` is clean. Read the three result classes as rules, not noise:
 
 - `=true` → **not-503** is the pass condition. 405/404 on a *different* route of the same flag is fine; one 503 anywhere is a fail.
 - `=false` → 503 is the **expected** answer (the rail is deliberately dark; Task 10).
-- `NO-ROUTE-IN-app/api` → the flag is inert in the web plane, so no HTTP probe can prove it. The 7 `=true` names in that class (`FEATURE_ESTATE_ENABLED`, `FEATURE_HEALTH_LAB_ENABLED`, `FEATURE_HEALTH_PHARMACY_ENABLED`, `FEATURE_HEALTH_VET_ENABLED`, `FEATURE_OTP_EMAIL_ENABLED`, `FEATURE_VOTE_BRIDGE_ENABLED`, `VOTES_BRIDGE_ENABLED`) are why: their only reader is `isModuleVisible` in `frontend-web/src/server/modules/visibility.ts:59-66`, which has zero callers, and `VOTES_BRIDGE_ENABLED` appears only in a unit test. Do not report them as passing — record them as "not HTTP-provable; nav visibility comes from the Go backend's own flag". The three `=false` names in that class are equally inert and equally dark, so nothing to fix.
+- `NO-ROUTE-IN-app/api` → the flag is inert in the web plane, so no HTTP probe can prove it. The 5 `=true` names in that class (`FEATURE_ESTATE_ENABLED`, `FEATURE_HEALTH_LAB_ENABLED`, `FEATURE_HEALTH_PHARMACY_ENABLED`, `FEATURE_HEALTH_VET_ENABLED`, `FEATURE_OTP_EMAIL_ENABLED`) are why: their only reader is `isModuleVisible` in `frontend-web/src/server/modules/visibility.ts:59-66`, which has zero callers. The two names an earlier draft filed here are not inert: `FEATURE_VOTE_BRIDGE_ENABLED` gates `app/api/v2/votes/wallet/route.ts:78` (403 while off, so a flip is observable) and `VOTES_BRIDGE_ENABLED` is read at runtime by `isBridgeEnabled()` (`frontend-web/src/server/voting-bridge/feature-flag.ts:14`), not only in a unit test; the probe missed both because it follows `featureFlags.X(` and `requireFeature('X')` but neither direct `process.env` reads nor helpers a route calls (here `isBridgeEnabled()`). Do not report the 5 as passing — record them as "not HTTP-provable; nav visibility comes from the Go backend's own flag". The three `=false` names in that class are equally inert and equally dark, so nothing to fix.
 
 Then run the three named probes that were red at baseline and require the exact flip:
 
@@ -1348,10 +1400,21 @@ Expected: **401 Unauthorized** on all three (baseline: 503 on all three).
 - [ ] **Step 2: Money paths stay dark**
 
 ```bash
-/usr/bin/curl -s -o /tmp/b.txt -w "%{http_code} " --max-time 25 "https://www.spotlightng.com/api/v1/crypto/balances"; /usr/bin/head -c 60 /tmp/b.txt; echo
+# Prod's Go API host directly, on the paths crypto.Register actually mounts
+# (backend/internal/crypto/handler.go:274-324 — assets, portfolio, eligibility),
+# plus a control that proves the host and its not-found handler are both alive.
+for P in /api/v1/crypto/assets /api/v1/crypto/portfolio /api/v1/crypto/eligibility /api/v1/public/build; do
+  printf '%-32s ' "$P"
+  /usr/bin/curl -s -o /tmp/b.txt -w "%{http_code} " --max-time 25 "https://backend-production-1b33d.up.railway.app$P"
+  /usr/bin/head -c 70 /tmp/b.txt; echo
+done
 ```
 
-Expected: **503** or **404** — crypto must NOT be reachable, per Task 10. If it answers 401, `FEATURE_CRYPTO_ENABLED` leaked into production and the ledger needs an entry explaining who set it.
+Expected: the three crypto leaves **404 `No API route matches`** and the control **200**. Crypto is dark exactly when its group is unmounted, and the group is mounted only inside `if cfg.FeatureCryptoEnabled` (`backend/internal/app/finance_routes.go:3638-3656`, skip log at `:3708`), so 404-vs-401 on a *registered* leaf is the whole test. Re-measured 2026-11-16 unauthenticated: all three leaves → **404**, control → **200** with `commit` = `5ab7c9cc0…` → **crypto is not reachable on prod, as Task 10 ruled.** Ledger §10.3 already prescribed this probe and recorded the same 404/401 pair on 2026-11-13.
+
+**Do not probe the web host for this flag.** `https://www.spotlightng.com/api/v1/crypto/<anything>` answers **401** to an anonymous request whether or not the Go group exists: the catch-all proxy authenticates before it forwards — `app/api/v1/crypto/[...path]/route.ts:13` calls `requireRequestUser`, which throws `UNAUTHORIZED` at `src/lib/auth/request.ts:14` for a missing bearer token, and `handleApiError` maps that to `errorResponse('Unauthorized', 401)` at `src/lib/api/responses.ts:50`. The flag cannot "leak into production" through the web plane either: zero case-insensitive `crypto` hits in `src/lib/feature-flags.ts`, so `FEATURE_CRYPTO_ENABLED` is not in the 45-name surface and can never appear in `.env.production.local` (§9.7).
+
+An earlier draft of this step probed `www.spotlightng.com/api/v1/crypto/balances` and declared a 401 to mean "`FEATURE_CRYPTO_ENABLED` leaked into production and the ledger needs an entry explaining who set it." Two defects, the same class §10.3 already names for the `/api/finance/crypto` guess: `balances` is not in `crypto.Register`'s list, so the path 404s on prod Go regardless of the flag, and on www the guard answers before the proxy runs, so the 401 is a fact about `requireRequestUser` and carries no information about the gate. As written the assertion could not have failed for the right reason — it would have demanded a leak entry for a leak that had not happened. The 401 seen on 2026-11-16 during the post-lane probe round is that guard, not a gate.
 
 - [ ] **Step 3: Data plane — the two counts mean different things, so read them separately**
 
@@ -1383,7 +1446,7 @@ git commit -m "feat(scripts): probe module flags through their real gated routes
 git show --stat --format=%s HEAD | /usr/bin/head -5
 ```
 
-Expected: the stat lists **only** those two paths. Neither matches `sync-frontend-web.yml`'s `frontend-web/**` filter nor `db-migrate.yml`'s `supabase/migrations/**` filter, so this commit releases nothing by itself; Task 16 Step 2 pushes the doc set.
+Expected: the stat lists **only** those two paths — and note that from 2026-11-16 the answer to "does this release anything?" comes from a different place than the two filters this step used to cite. `release.yml` landed as `ef97ec64b` ("every push to main releases itself", `on: push: branches: [main]`, no `paths` filter, no approval), so a push to `main` now runs gates → migrate-staging → deploy-staging → smoke-staging → migrate-production → deploy-production → smoke-production. It stays inert for a **docs-only** commit because `ci.yml:69-71` and `integration-verify.yml:15-17` carry `paths-ignore: ['**.md','docs/**']`, which makes the gate classify the SHA `noop_docs_only` (`scripts/ci/release-gates.py:191-209`) and every deploy/migrate job tests `verdict == 'proceed'`. Measured on this exact commit's own SHA in the ledger's "Task 14 (partial)" section (2026-11-16). The consequence for the rest of this plan is the other half: **any push that is not docs-only is aimed at production, migrations included.** Measured 2026-11-16, though, none of the three non-docs pushes that day got there: `migrate staging database` succeeded each time, all three `deploy Staging (…)` jobs failed on Railway's upload-decode error, and `smoke Staging` → `migrate production database` → `deploy Production` cascade-skipped behind them. So production is currently shielded by a defect rather than by a gate, and that shield ends the moment the staging leg goes green — which is why Task 3's dump has to precede any staging-leg fix. Task 16 Step 2's command list is where to check it; measure before pushing, not after, and read the ledger's release-lane section for today's run ids.
 
 ### Task 15: Reconcile the mobile production plane with the web plane
 
@@ -1551,9 +1614,12 @@ At minimum, from this session's measurements: `SPOTLIGHT/Banners/*` art — 9 of
 cd /Users/paymax/Documents/spotlight/main
 git -c credential.helper='!gh auth git-credential' push origin HEAD:refs/heads/main
 gh run list --repo paymax2022/spotlight-latest1 --workflow sync-frontend-web.yml --limit 2 --json headSha,status,conclusion
+gh run list --repo paymax2022/spotlight-latest1 --workflow release.yml --limit 2 --json headSha,status,conclusion,event,createdAt
 ```
 
-Expected: **no** sync run for a docs-only push (path-filtered to `frontend-web/**`), and no `DB Migrate` run (filtered to `supabase/migrations/**` + `db-migrate.yml` itself). If either appears, stop and read why before pushing anything else — and check `gh api repos/paymax2022/spotlight-latest1/actions/runs?status=waiting` for a parked prod approval that must be **declined**, not deferred.
+Expected, as re-measured 2026-11-16: **no** `sync-frontend-web.yml` run for a docs-only push (that lane really is filtered to `frontend-web/**`), and **yes** a `Release (main → development, staging, production)` run for every push to `main`, docs included — `release.yml` (`ef97ec64b`) has no `paths` filter at all. The push is still inert for a docs-only commit, but read the reason from the gate rather than from a filter: `ci.yml:69-71` and `integration-verify.yml:15-17` ignore `**.md` and `docs/**` on push, so the gate classifies the SHA `noop_docs_only` (`scripts/ci/release-gates.py:191-209`) and each deploy/migrate job requires `verdict == 'proceed'`. Observed on the docs-only merge `479bcd10b`: push run `43887543175` at 14:36:47Z ended with **zero jobs** and conclusion `cancelled`, and the re-dispatch `43893246842` at 15:08:55Z printed `### Release gate: **failed**` with all eight downstream jobs skipped — `noop_docs_only` is valid only for a push (`release-gates.py:185-190`), so a red gate on a docs SHA is the classifier refusing to infer silence from a dispatch, not evidence that docs deploy. The positive case arrived with the next docs-only merge: `f90b3ef30` (#1043) produced push run `43905831788`, whose gate printed `### Release gate: **noop_docs_only**` after ten polls and skipped all eight downstream jobs, cPanel run `43905831719` skipped too. What this step must now say plainly: **a non-docs push to `main` releases itself toward production, migrations included**, with no dispatch, no typed `DEPLOY`, no promotion branch and no approval — and as of 2026-11-16 it stops short of arriving, because the staging deploy leg is red on Railway's upload-decode error and `migrate-production` sits behind `smoke-staging` in the `needs` chain. Treat that as luck, not as a control: fix the staging leg and the claim becomes live, so Task 3 must be closed first.
+
+Before pushing, list what the commit touches (`git diff --name-only origin/main..HEAD`); if any path is not under `docs/` or a `.md`, treat the push as the release it is. Then read the run page rather than its colour: `gh run view <id> --json jobs`. Checking `gh api "repos/paymax2022/spotlight-latest1/actions/runs?status=waiting"` for a parked approval that must be **declined**, not deferred, is still the right reflex — quote the URL or zsh globs the `?` — but `release.yml` removed the approval from the automatic path, so what sits in `waiting` now is other workflows' dispatch gates.
 
 - [ ] **Step 3: Declare the migration done only against this checklist**
 
