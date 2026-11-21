@@ -3,11 +3,17 @@
 //
 // Why the form looks the way it does:
 //
-//   • Most fields arrive filled. `POST /api/open-mic/submissions` matches the
-//     artist by stage name and email — and a mistyped stage name is exactly what
-//     its duplicate check compares — so the answers come from the applicant's own
-//     registration (see `prefill.ts`). Prefill is never load-bearing: when the
-//     application read fails the form is simply blank, and the artist types.
+//   • What the artist already gave is not asked for twice. Their email came from
+//     the account they signed up with, and their state and LGA are the answers on
+//     their own approved entry, so those three show as confirmed values with a
+//     "Change" escape rather than as three more required fields. `handinFieldsOnRecord`
+//     decides, and it refuses to confirm anything this form could not have
+//     produced itself — see `prefill.ts`.
+//   • `POST /api/open-mic/submissions` matches the artist by stage name and email
+//     — and a mistyped stage name is exactly what its duplicate check compares —
+//     so the answers come from the applicant's own registration. Prefill is never
+//     load-bearing: when the application read fails the fields open blank and the
+//     artist types, and nothing is ever hidden behind a value we do not have.
 //   • The LGA select cascades off the state, like the web entry form. The server
 //     stores these three strings without validating membership, so an out-of-date
 //     option list here can only mislabel an entry, never reject one.
@@ -27,6 +33,7 @@ import TextInputField from '@/components/TextInputField';
 import { Colors, Radius, Spacing, Typography } from '@/constants/tokens';
 import { MAX_SONG_BYTES } from '../constants';
 import { OPEN_MIC_COUNTRY, STATE_OPTIONS, lgasForState } from '../location';
+import { handinFieldsOnRecord } from '../prefill';
 import { useArtistIdentity, useSongHandin, useSongPrefill, type SongHandinForm } from '../hooks';
 import { resumableObjectKey, type OpenMicStage } from '../state';
 import ConsentRow from './ConsentRow';
@@ -61,6 +68,10 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
   const [owned, setOwned] = useState(false);
   const [samples, setSamples] = useState(false);
   const [problem, setProblem] = useState('');
+  // Tapped "Change" puts the question back on screen for the rest of the visit:
+  // the artist who corrects one of these facts should see the field, not a
+  // read-only row that silently disagrees with what they are about to submit.
+  const [correcting, setCorrecting] = useState({ email: false, location: false });
 
   // Only ever fills what is still empty: a prefill response that lands after the
   // artist started typing must not overwrite their edits.
@@ -80,6 +91,20 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
   }, [identity.displayName, identity.email, instagram, prefill, tiktok]);
 
   const lgaOptions = useMemo(() => lgasForState(fields.state), [fields.state]);
+  // A confirmed row may only appear while it still says exactly what the submit
+  // will send. `handinFieldsOnRecord` already refuses to confirm a fact this form
+  // could not have produced itself; these two checks keep the row honest about the
+  // live value, so the moment the artist edits it the field comes back rather than
+  // a caption that mislabels their own answer.
+  const onRecord = handinFieldsOnRecord(prefill, identity.email);
+  const emailStillMatchesRecord = fields.email === (prefill.email || identity.email);
+  const locationStillMatchesRecord =
+    fields.state === prefill.state && fields.lga === prefill.lga;
+  const emailConfirmed = onRecord.email && !correcting.email && emailStillMatchesRecord;
+  const locationConfirmed = onRecord.location && !correcting.location && locationStillMatchesRecord;
+  const emailNote = prefill.email
+    ? 'From your entry. Change it if anything has moved.'
+    : 'From your account. Update it in your profile if it has changed.';
   // Bytes the server already holds for this artist's draft row.
   const resumeKey = resumableObjectKey(stage);
   const resumeSubmissionId = stage.kind === 'needs_submit' ? stage.submission.id : '';
@@ -199,30 +224,51 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
         onChangeText={(value) => setField('stageName', value)}
         placeholder="Exactly as it appears on your entry"
       />
-      <TextInputField
-        label="Email"
-        value={fields.email}
-        onChangeText={(value) => setField('email', value)}
-        placeholder="you@example.com"
-        keyboardType="email-address"
-        autoCapitalize="none"
-      />
+      {emailConfirmed ? (
+        <ConfirmedRow
+          label="Email"
+          value={fields.email}
+          note={emailNote}
+          onChange={() => setCorrecting((previous) => ({ ...previous, email: true }))}
+        />
+      ) : (
+        <TextInputField
+          label="Email"
+          value={fields.email}
+          onChangeText={(value) => setField('email', value)}
+          placeholder="you@example.com"
+          keyboardType="email-address"
+          autoCapitalize="none"
+        />
+      )}
 
-      <SelectField
-        label="State"
-        value={fields.state}
-        options={STATE_OPTIONS}
-        onChange={(value) => setField('state', value)}
-        placeholder="Select your state"
-      />
-      <SelectField
-        label="LGA"
-        value={fields.lga}
-        options={lgaOptions}
-        onChange={(value) => setField('lga', value)}
-        disabled={!lgaOptions.length}
-        placeholder={fields.state ? 'Select your LGA' : 'Select your state first'}
-      />
+      {locationConfirmed ? (
+        <ConfirmedRow
+          label="State and LGA"
+          value={`${fields.state} · ${fields.lga}`}
+          note="From your entry. Change it if you have moved."
+          onChange={() => setCorrecting((previous) => ({ ...previous, location: true }))}
+        />
+      ) : (
+        <>
+          <SelectField
+            label="State"
+            value={fields.state}
+            options={STATE_OPTIONS}
+            onChange={(value) => setField('state', value)}
+            placeholder="Select your state"
+          />
+          <SelectField
+            label="LGA"
+            value={fields.lga}
+            options={lgaOptions}
+            onChange={(value) => setField('lga', value)}
+            disabled={!lgaOptions.length}
+            placeholder={fields.state ? 'Select your LGA' : 'Select your state first'}
+          />
+        </>
+      )}
+
       <SelectField
         label="Genre"
         value={fields.genre}
@@ -302,6 +348,42 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
   );
 }
 
+interface ConfirmedRowProps {
+  label: string;
+  value: string;
+  note: string;
+  onChange: () => void;
+}
+
+/**
+ * A fact the artist already gave, shown as an answer instead of as a required
+ * question, with the escape hatch that puts the question back on screen.
+ *
+ * The note names where the value came from — the account or the approved entry —
+ * because those are corrected in different places, and "Change" is never hidden:
+ * an artist who spots a typo in the email their entry will be matched on should
+ * fix it before pressing submit, not after.
+ */
+function ConfirmedRow({ label, value, note, onChange }: ConfirmedRowProps) {
+  return (
+    <View style={styles.confirmed}>
+      <View style={styles.confirmedText}>
+        <Text style={styles.confirmedLabel}>{label}</Text>
+        <Text style={styles.confirmedValue}>{value}</Text>
+        <Text style={styles.confirmedNote}>{note}</Text>
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Change ${label.toLowerCase()}`}
+        onPress={onChange}
+        hitSlop={8}
+      >
+        <Text style={styles.changeLink}>Change</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   card: {
     backgroundColor: Colors.surfaceContainerLowest,
@@ -315,6 +397,21 @@ const styles = StyleSheet.create({
   title: { ...Typography.bodyMd, color: Colors.onSurface },
   resume: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   hint: { ...Typography.caption, color: Colors.onSurfaceVariant },
+  confirmed: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    backgroundColor: Colors.surfaceContainerLow,
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.outlineVariant,
+  },
+  confirmedText: { flex: 1, gap: 2 },
+  confirmedLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  confirmedValue: { ...Typography.bodyMd, color: Colors.onSurface },
+  confirmedNote: { ...Typography.caption, color: Colors.onSurfaceVariant },
+  changeLink: { ...Typography.labelSm, color: Colors.primary },
   pick: { marginTop: Spacing.xs },
   fileRow: {
     flexDirection: 'row',

@@ -8,12 +8,14 @@
 //
 // Prefill is never load-bearing: if the application read fails, the form is blank
 // and still submittable. That is why this module is pure mapping and the fetch
-// that feeds it lives in `hooks.ts` with a swallow-everything wrapper.
+// that feeds it lives in `hooks.ts` with a swallow-everything wrapper. The same
+// rule applies to `handinFieldsOnRecord` below, which decides whether a fact is
+// worth showing as confirmed or asking as a field.
 //
 // Pure module — no `expo`, no `react-native` — so `node --test` can cover it.
 
 import type { RegistrationDraft } from '../registration/types/registration.types';
-import { OPEN_MIC_COUNTRY } from './location';
+import { OPEN_MIC_COUNTRY, knownStateName, lgasForState } from './location';
 
 export interface SongFormPrefill {
   stageName: string;
@@ -92,6 +94,46 @@ export function prefillFromRegistrationFormData(
 /** Merge a sparse prefill onto the defaults, so callers get a complete object. */
 export function withPrefillDefaults(prefill: Partial<SongFormPrefill> | null | undefined): SongFormPrefill {
   return { ...EMPTY_PREFILL, ...prefill };
+}
+
+/**
+ * Which hand-in facts are already on record, so the form can confirm them
+ * instead of asking for them a second time.
+ *
+ * WHY THIS IS A RULE AND NOT A PREFILL DETAIL
+ * Prefilling a field still leaves the question on the screen: an artist who
+ * already signed up with an email and already picked their state and LGA while
+ * applying sees three required inputs and has to work out whether they are
+ * being asked again. This answers the earlier question — is there anything here
+ * to ask at all? — and the card renders a confirmed value when the answer is yes.
+ *
+ * The `location` pair is only inherited when it is a value THIS form could have
+ * produced: the state must be one the LGA cascade knows, and the LGA must be in
+ * that state's own list. A record holding 'Lagos State' or an LGA that belongs to
+ * another state would otherwise lock the artist out of an answer they are allowed
+ * to correct — the registration's city question and the hand-in's LGA question
+ * share a list but not a label, so a stale or foreign spelling is possible.
+ * Anything that cannot be shown as confirmed stays an ordinary, answerable field.
+ * (The `knownStateName` read restates what `lgasForState` already does by failing
+ * closed for an unlisted state; mutation-proving it on 2026-11-21 found no test
+ * that separates the two, so it stays as documentation of the rule, not as a gate.)
+ */
+export interface HandinOnRecord {
+  email: boolean;
+  location: boolean;
+}
+
+export function handinFieldsOnRecord(
+  prefill: Partial<SongFormPrefill> | null | undefined,
+  accountEmail?: string,
+): HandinOnRecord {
+  const email = text(prefill?.email) || text(accountEmail);
+
+  const state = text(prefill?.state);
+  const lga = text(prefill?.lga);
+  const location = !!state && !!lga && !!knownStateName(state) && lgasForState(state).includes(lga);
+
+  return { email: !!email, location };
 }
 
 /**
