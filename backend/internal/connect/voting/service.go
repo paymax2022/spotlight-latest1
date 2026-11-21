@@ -145,12 +145,25 @@ func (s *Service) ListContestsByStatus(ctx context.Context, limit int, statuses 
 	return s.withMediaList(list), err
 }
 
-// GetContest returns one contest.
+// GetContest returns one contest, with its prize ladder attached.
+//
+// The ladder is a second query, and it is attached HERE rather than inside
+// Repository.GetContest because six other callers (Results, FreeVote, PaidVote,
+// ListRoster, FreeVoteAllowanceFor, AdminVote) read a contest for its status and
+// price, or only to prove it exists — none of them renders a prize, so folding the
+// ladder into the repository would make every vote and roster read pay for a query
+// it throws away. A contest with no ladder is normal, not an error: the field stays
+// empty and mobile hides the section.
 func (s *Service) GetContest(ctx context.Context, id string) (*Contest, error) {
 	c, err := s.repo.GetContest(ctx, id)
 	if err != nil {
 		return nil, ErrNotFound
 	}
+	prizes, err := s.repo.ListContestPrizes(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	c.Prizes = prizes
 	return s.withMedia(c), nil
 }
 
@@ -691,11 +704,38 @@ type Contest struct {
 	// created straight into connect_contests and has no such record).
 	Slug string `json:"slug,omitempty"`
 
+	// PrizeText is the contest's headline "price to be won" — the free text the
+	// admin console writes to public.contests.prize_pool. It has no column of its
+	// own here because the legacy row already owns it and 20261223000000 preserves
+	// id across the two planes, so the mirror row can read it (see prizeTextColumn).
+	// Omitted when empty: mobile hides the whole prize block rather than rendering
+	// an empty section.
+	PrizeText string `json:"prize_text,omitempty"`
+	// Prizes is the per-position ladder from public.voting_contest_prizes, lowest
+	// position first — the structured form of the same promise. Detail reads only:
+	// the list query would need a join or an N+1 to fill it, and a card does not
+	// show the ladder.
+	Prizes []ContestPrize `json:"prizes,omitempty"`
+
 	// Roster/tally summary, populated by the list + detail queries so a client
 	// rendering a contest card does not have to fetch the whole roster to show
 	// "N contestants / M votes" (which would be an N+1 across the list).
 	ContestantCount int   `json:"contestant_count"`
 	TotalVotes      int64 `json:"total_votes"`
+}
+
+// ContestPrize is one row of public.voting_contest_prizes: what finishing at
+// `position` wins. Read ascending by position (Repository.ListContestPrizes),
+// because contest-details.tsx paints the first entry gold and labels it the winner —
+// an unordered read hands the runner-up the top spot and nothing downstream can tell.
+//
+// ValueKobo is nil when the organizer described the prize without pricing it
+// ("a management deal"), which the table explicitly allows; mobile then renders
+// the description alone instead of a made-up amount.
+type ContestPrize struct {
+	Position    int    `json:"position"`
+	Description string `json:"description"`
+	ValueKobo   *int64 `json:"value_kobo,omitempty"`
 }
 
 // Vote mirrors a row of public.connect_votes (immutable). A free vote has
