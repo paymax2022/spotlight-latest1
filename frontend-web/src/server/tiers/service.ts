@@ -99,9 +99,14 @@ export async function enforceWalletLimit(
         limitKobo: 0,
         denied: true,
       });
+      // The code is the contract, not the wording: it mirrors the Go rail
+      // (backend/internal/finance/transfers/decision.go `wallet_disabled`), and
+      // the mobile PIN sheet keys its "Verify my account" call-to-action on it.
+      // Prose-only 403s left the customer with a dead sentence and no way out.
       throw new ApiError(
         'Wallet is disabled for unverified accounts. Complete KYC to enable your wallet.',
         403,
+        'wallet_disabled',
       );
     }
     if (amountKobo > tier0Allowance.perTransactionMaxKobo) {
@@ -176,6 +181,7 @@ export async function enforceWalletLimit(
     throw new ApiError(
       `Daily wallet limit of ₦${(dailyLimitKobo / 100).toLocaleString('en-NG')} reached for your KYC tier.`,
       403,
+      'daily_limit_exceeded',
     );
   }
 
