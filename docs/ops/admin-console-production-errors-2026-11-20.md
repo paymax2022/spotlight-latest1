@@ -280,19 +280,31 @@ The pin is also the safer side of an asymmetry, which is why re-pinning should f
 than precede it. `20271800000000` is not purely additive: it drops the closed five-literal
 `academy_area_pricing_options_key_check` and replaces it with a key-pattern check plus a foreign key to
 `academy_pricing_formats`, and that table is seeded **from the `academy_area_pricing_options` rows that
-already exist**. So the console at `6082f2d80` — whose key set is the same closed five in
-`filmAcademyAdminService.ts` and `frontend-web/src/server/services/academy/pricing.ts` — keeps working after
-the migration on any environment where those five keys already have rows. Where one of the five is absent
-from prod's pricing rows, the seeded catalogue lacks it too, and the pinned console's next insert of that
-key is refused by the foreign key instead of succeeding. Read-only before applying the migration:
+already exist** (`INSERT … SELECT DISTINCT ON (key) … FROM academy_area_pricing_options … ON CONFLICT DO
+NOTHING`). So the console at `6082f2d80` — whose key set is the same closed five in `AcademyPricingKey` in
+`filmAcademyAdminService.ts` and `ACADEMY_PRICING_STRUCTURE` in
+`frontend-web/src/server/services/academy/pricing.ts` — keeps working after the migration on any
+environment where those five keys already have rows. Where one of the five is absent from prod's pricing
+rows, the seeded catalogue lacks it too, and the pinned console's next insert of that key is refused by the
+foreign key instead of succeeding. This is not a hypothetical: saving tuition calls
+`updateInterestArea({ id, pricing })` with `{ key, price_ngn }` entries, and its `applyAll` branch then
+sends the same array to every other interest area — "The structure applies to every area, so the console
+offers setting it once" — so one repricing can try to create rows for keys an area never had, which is
+precisely where a missing catalogue row turns into a refusal. Check which keys the seed will cover before
+applying the migration (an ordinary read; run it against the production database):
 
 ```sql
-SELECT key, count(*) FROM public.academy_area_pricing_options GROUP BY key ORDER BY key;
+-- every launch key, with a zero count where the table has no rows for it yet
+SELECT k.key, count(o.id) AS option_rows
+FROM (VALUES ('weekend_day'), ('weekend_boarding'), ('weekday_day'),
+             ('weekday_boarding'), ('full_time_boarding')) AS k(key)
+LEFT JOIN public.academy_area_pricing_options o ON o.key = k.key
+GROUP BY k.key ORDER BY k.key;
 ```
 
-All five of `weekend_day`, `weekend_boarding`, `weekday_day`, `weekday_boarding`, `full_time_boarding`
-present means the swap is inert for this console; a missing key means either seed
-`academy_pricing_formats` for it explicitly or land the re-pin first.
+All five with a non-zero count means the swap is inert for this console. A key at zero means either insert
+that key into `academy_pricing_formats` first — with the `default_price_ngn` you want a new training to
+start at, since the column is `NOT NULL CHECK (> 0)` — or land the re-pin in the same window.
 
 The window this upload actually spans is not free of migrations, and it was checked rather than assumed.
 The 2026-11-18 build's commit is not recorded anywhere — that row's `cliMessage` is `null` and `cb02a3ca…`
