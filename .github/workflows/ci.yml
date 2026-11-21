@@ -835,19 +835,23 @@ jobs:
   #     `needs:` only reaches jobs in this file (same reason as `integration-verify`
   #     below). Gating an unattended deploy on the audits means either running them
   #     as jobs here or having ship-scope query the check rollup for $GITHUB_SHA and
-  #     refuse on a red. Until one of those exists, this leg's bar is the 25 lanes of
-  #     this workflow and nothing else.
-  #   * security.yml's lanes as of the next@16.4.6 + go@1.27.4 port: `npm audit
-  #     (frontend-web)`, `(frontend-admin)`, `gitleaks` and both `govulncheck`
-  #     matrices are green on prod content. `npm audit (mobile-app/reactnative)` and
-  #     `trivy` are not. The mobile red is NOT a baseline problem: prod's mobile tree
-  #     predates main's expo/RN arc, so its transitive node-forge, undici,
-  #     follow-redirects and decode-uri-component sit behind, and clearing `zod`
-  #     means the 3 → 4 major main already took. Do not baseline those 30 entries for
-  #     a green badge — main proves they clear by upgrading, and npm's own suggested
-  #     fixes here are wrong twice over (it offers `axios@0.7.0`, a 2015 downgrade,
-  #     and `expo-router@58`, a SDK major). `trivy` is marked
-  #     `continue-on-error: # advisory` in security.yml, so its row is advisory only.
+  #     refuse on a red. Until one of those exists, this leg's bar is only the lanes
+  #     THIS file runs for the pushed paths — measured on the #1126 push: 30 jobs are
+  #     defined, 11 ran and 19 were skipped by their own `paths:` filters.
+  #   * security.yml's lanes as of the next@16.4.6 + go@1.27.4 port, measured on run
+  #     44936697456: `npm audit (frontend-web)`, `(frontend-admin)`, `gitleaks` and
+  #     BOTH `govulncheck` matrices (backend, mobile-app/reactnative/backend) are
+  #     green on prod content. `npm audit (mobile-app/reactnative)` and `trivy-fs` are
+  #     red, and the mobile red is pre-existing, not caused by this port: it reports
+  #     the same 30 advisories as prod's own earlier run 44710869964. It is NOT a
+  #     baseline problem either — prod's mobile tree predates main's expo/RN arc, so its
+  #     transitive node-forge, undici, follow-redirects and decode-uri-component sit
+  #     behind, and clearing `zod` means the 3 → 4 major main already took. Do not
+  #     baseline those 30 entries for a green badge — main proves they clear by
+  #     upgrading, and npm's own suggested fixes here are wrong twice over (it offers
+  #     `axios@0.7.0`, a 2015 downgrade, and `expo-router@58`, an SDK major). `trivy-fs`
+  #     carries `continue-on-error: true # advisory during launch`, so its row cannot
+  #     block anything even while it is red.
   #   * integration-verify is a different workflow, so `needs:` cannot reach it. It
   #     gates the merge, not this push.
   #   * the production DATABASE is not migrated by anything here. That is why
