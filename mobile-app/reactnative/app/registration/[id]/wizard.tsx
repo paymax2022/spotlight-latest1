@@ -22,7 +22,10 @@ import type { RegistrationStep } from '@/features/registration/types/registratio
 
 /**
  * Fields this screen never renders. Payment is collected on the dedicated
- * payment screen, not in the wizard, and the ID fields are not asked for here.
+ * payment screen, not in the wizard, and a government ID is not asked for at
+ * all — the schema no longer declares identity.idType / identity.idUpload, but
+ * a draft can still carry an older admin formSchema snapshot that does, so the
+ * keys stay listed here as well.
  *
  * Anything listed here is also excluded from validation (see visibleStep below):
  * validating a field the user cannot see can only ever dead-end them.
@@ -30,6 +33,8 @@ import type { RegistrationStep } from '@/features/registration/types/registratio
 const HIDDEN_FIELD_KEYS = [
   'payment.method',
   'payment.transactionReference',
+  'identity.idType',
+  'identity.idUpload',
   'id.cardType',
   'id.number',
   'personal.idCardType',

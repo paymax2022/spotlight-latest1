@@ -15,7 +15,7 @@ import type { RegistrationStepKey } from './types';
  * Bespoke wizards (e.g. RealityTvShowApplicationWizard) save the whole form on
  * every step transition, not one schema step at a time. Every reality-tv step
  * other than `contest_selection` carries schema-required fields the wizard
- * never renders (identity.idUpload, medical.*, emergency.state/city,
+ * never renders (medical.*, emergency.state/city,
  * audition.format, several legal.* consents…), so saving under those keys
  * would fail validation and persist nothing. `contest_selection`'s only
  * required field, `contest.title`, is server-locked from the resolved contest,

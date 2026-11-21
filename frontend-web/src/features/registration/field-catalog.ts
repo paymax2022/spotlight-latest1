@@ -73,9 +73,7 @@ export const FIELD_CATALOG: CatalogField[] = [
   { key: 'guardian.digitalSignature', label: 'Guardian digital signature (typed name)', type: 'text', step: 'personal_information', group: 'Guardian consent (minors)', minorOnly: true, defaultRequired: true },
   { key: 'guardian.consentGranted', label: 'Guardian authorizes participation', type: 'checkbox', step: 'personal_information', group: 'Guardian consent (minors)', minorOnly: true, defaultRequired: true },
 
-  { key: 'identity.idType', label: 'Government-issued ID type', type: 'select', step: 'category_specific', group: 'Identity', options: ['National ID', 'International passport', 'Voter card', 'Driver’s license', 'School ID', 'Birth certificate', 'Other approved ID'], defaultRequired: true },
   { key: 'identity.idNumber', label: 'ID number', type: 'text', step: 'category_specific', group: 'Identity' },
-  { key: 'identity.idUpload', label: 'ID upload', type: 'file', step: 'category_specific', group: 'Identity', accept: '.jpg,.jpeg,.png,.pdf', defaultRequired: true },
   { key: 'identity.schoolId', label: 'School ID (student category)', type: 'file', step: 'category_specific', group: 'Identity', accept: '.jpg,.jpeg,.png,.pdf' },
   { key: 'identity.cacDocument', label: 'CAC / business registration', type: 'file', step: 'category_specific', group: 'Identity', accept: '.jpg,.jpeg,.png,.pdf' },
 
@@ -227,7 +225,7 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
   general_reality_show: [
     'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
     'talent.primarySkill', 'talent.strengths', 'talent.uniqueStory',
-    'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.rightsConfirmed',
+    'media.profilePhoto', 'media.rightsConfirmed',
     'category.housemateReadiness', 'category.dailyFilmingConsent', 'category.uniqueStory',
     'social.instagram', 'social.willingToInviteVoting',
     'bootcamp.availableFullPeriod', 'bootcamp.canTravel',
@@ -240,7 +238,7 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
   stem_innovation: [
     'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone', 'personal.educationLevel',
     'academic.schoolName', 'academic.fieldOfStudy', 'academic.teamMembers',
-    'identity.idType', 'identity.idUpload', 'identity.schoolId',
+    'identity.schoolId',
     'category.innovationCategory', 'category.projectTitle', 'category.problemStatement', 'category.solutionSummary', 'category.currentStage', 'category.pitchDeckUpload', 'category.prototypeVideo', 'category.projectRepoLink', 'category.openToInvestorReview',
     'social.linkedin', 'social.website',
     'compliance.ownWork', 'compliance.codeOfConductAgreement',
@@ -249,7 +247,7 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
   sme_pitch: [
     'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
     'founder.roleInBusiness', 'founder.yearsRunning',
-    'identity.idType', 'identity.idUpload', 'identity.cacDocument',
+    'identity.cacDocument',
     'category.businessName', 'category.businessSector', 'category.businessStage', 'category.productDescription', 'category.problemSolved', 'category.revenueModel', 'category.tractionMetrics', 'category.fundingNeeded', 'category.pitchDeck',
     'social.website', 'social.instagram', 'social.linkedin',
     'compliance.registeredBusiness', 'compliance.ownWork', 'compliance.codeOfConductAgreement',
@@ -258,7 +256,7 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
   open_mic: [
     'personal.firstName', 'personal.lastName', 'personal.stageName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
     'talent.primarySkill', 'talent.strengths',
-    'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.rightsConfirmed',
+    'media.profilePhoto', 'media.rightsConfirmed',
     'category.performanceType', 'category.genre', 'category.durationMinutes', 'category.audioUpload', 'category.sampleLink', 'category.ownsRights',
     'social.instagram', 'social.tiktok', 'social.willingToInviteVoting',
     'compliance.codeOfConductAgreement',
@@ -279,7 +277,7 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
   film_production: [
     'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
     'talent.filmExperience', 'talent.careerGoal',
-    'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.sampleUpload', 'media.rightsConfirmed',
+    'media.profilePhoto', 'media.sampleUpload', 'media.rightsConfirmed',
     'category.filmRole', 'category.productionExperience', 'category.portfolioLink', 'category.longHoursConsent',
     'social.instagram', 'social.website',
     'bootcamp.availableFullPeriod', 'bootcamp.canTravel',
@@ -293,7 +291,7 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
 
 const GENERAL_PRESET: string[] = [
   'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
-  'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.rightsConfirmed',
+  'media.profilePhoto', 'media.rightsConfirmed',
   'social.instagram',
   'compliance.codeOfConductAgreement',
   'publicProfile.publicVotingConsent',

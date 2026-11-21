@@ -49,9 +49,7 @@ const guardianConsentFields: RegistrationField[] = [
 ];
 
 const identityFields: RegistrationField[] = [
-  { key: 'identity.idType', label: 'Government-issued ID type', type: 'select', options: ['National ID', 'International passport', 'Voter card', 'Driver’s license', 'Other approved ID'], required: true },
   { key: 'identity.idNumber', label: 'ID number', type: 'text' },
-  { key: 'identity.idUpload', label: 'ID upload', type: 'file', required: true, accept: '.jpg,.jpeg,.png,.pdf' },
 ];
 
 const filmRoleFields: RegistrationField[] = [
