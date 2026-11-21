@@ -454,6 +454,38 @@ row this service has is a CLI upload, exactly like the console's history in §5.
 fault: because production is downstream of staging, it has frozen production's two frontends, and the only
 moves either of them has made since #1037 landed are hand uploads** — §6's console pin being the latest.
 
+**Re-tested live while this file was open, and F2 refused again.** Release run `44922280434` (16:01:38Z →
+16:53:35Z, head `ea908fabe`, `### Release gate: **proceed**`) is the cleanest possible natural experiment:
+its head carries both new routes, `migrate staging database` succeeded, and all three
+`deploy Development (…)` legs plus all three dev smokes succeeded. Then all three staging legs refused —
+job `136909721274` (backend), `136909721330` (frontend-admin), `136909721425` (frontend-web) — each running
+the full ladder (`with-retry: attempt 8/9 failed (exit 1); retrying in 148s`, then a ninth
+`Failed to fetch: error decoding response body`, the last at 16:53:32Z), each logging 9 `Failed to fetch`
+lines and 18 lines carrying the phrase — the arithmetic of one exhausted 9-try ladder. That is the F2
+signature and not a runner flake (`GnuTLS recv error`: 0 lines) and not account state (`Your trial
+has expired`: 0 lines). `smoke Staging` → `migrate production database` → `deploy Production` →
+`smoke Production` all reported `skipped`, so production `frontend-web` is still `ea71b561` and still
+answers 404. **A train that could have fixed this did run, and F2 is the only reason it did not.**
+
+**What Command 6 actually buys, checked statically.** So that the owner is not uploading on a hope: at
+`ea908fabe` the two admin trees the console reaches expose **69 route files**
+(`git ls-tree -r --name-only ea908fabe frontend-web/app/api/admin/open-mic frontend-web/app/api/admin/academy`),
+and every `/api/admin/open-mic/**` and `/api/admin/academy/**` path the console itself calls — including the
+seven applicant actions `OPEN_MIC_APPLICANT_ACTIONS` lists (`approve`, `shortlist`, `waitlist`, `reject`,
+`disqualify`, `request_information`, `withdraw`) plus the contact edit, all of them on
+`contests/[id]/applicants/[applicationId]` — resolves to one of them. The applicants read needs only two
+columns, `contests.slug` and `contests.contest_type`, and both come from
+`supabase/migrations/20260410190000_one_beat_one_verse_foundation.sql` (its `ADD COLUMN IF NOT EXISTS
+contest_type` and its `idx_contests_slug_unique`), an April migration far below the version recorded in
+production's history (`20271800000000`, §6). And that is not an inference: the live production Go backend
+queries `contests?contest_type=eq.one_beat_one_verse` from
+`backend/internal/repositories/competition_supabase_repository.go`, so the column is demonstrably there
+rather than merely expected.
+That last check matters because `assertOpenMicReadAdmin` and `assertOpenMicAdmin` run *before* any query: a
+401 from the stale host proves the route is mounted but says nothing about the read, which is why §7 needed a
+static check to claim the buttons will work rather than merely appear. Nothing else has to move — no DB
+change, no console rebuild, no mobile submission.
+
 **Why the obvious fix is wrong.** The temptation is to re-point `WEB_API_BASE_URL` at `www.spotlightng.com`
 now that the digest proves the two are distinguishable and both validate the same Supabase tenant (the
 console's login page and www both embed project `nmseefdlliejmdbxytej`, so a bearer issued to the console
@@ -508,13 +540,28 @@ Run it from a runner or any machine with the uplink this one lacks; the flags ar
 own production matrix passes, and `railway-deploy.sh` polls by `meta.cliMessage` so the row it waits for is
 attributable. The cheaper version of the same thing is fixing F2, which unblocks every leg at once.
 
-Verify after it lands: the two bold 404s above become 401, making the host request-for-request equal to
-`www.spotlightng.com`, and `/api/v1/public/build` keeps reporting the same Go sha — which is the proof that
-only the Next layer moved. Roll back with `deploymentRollback("ea71b561-badf-4dc7-ad4c-052fd65745b3")`, the
-row that is serving now. And the console itself does **not** need a third pass: `main` moved twice after
+Verify after it lands — and verify it **against the web host itself**, not through the console: on
+`frontend-admin-production-*` the proxy guard answers 401 for *invented* paths too (the four-plane table in
+§7's last paragraph), so a 401 there proves nothing about the target. Run the pair directly:
+
+```bash
+H=frontend-web-production-<the b6626bb2 host>.up.railway.app
+for p in /api/admin/open-mic/contests /api/admin/definitely-not-a-route \
+         /api/admin/open-mic/contests/00000000-0000-0000-0000-000000000000/applicants \
+         /api/admin/academy/pricing-formats; do
+  printf '%s -> %s\n' "$p" "$(curl -s -o /dev/null -w '%{http_code}' "https://$H$p")"
+done
+```
+
+Four expected 401/404/401/401: the two real routes flip from 404 to 401, the invented control path stays
+404, and that is what makes the host request-for-request equal to `www.spotlightng.com`.
+`/api/v1/public/build` must keep reporting the same Go sha — the proof that only the Next layer moved. Roll
+back with `deploymentRollback("ea71b561-badf-4dc7-ad4c-052fd65745b3")`, the row that is serving now. And the
+console itself does **not** need a third pass, provided you re-check it: `main` moved twice after
 `f5bfe8848` (`bd1b2aa3e` #1124 touched workflows, `ea908fabe` #1125 touched mobile) and
-`git diff --name-only f5bfe8848..origin/main -- frontend-admin` is 0 files, so the deployed build is already
-head-current in every `frontend-admin` path.
+`git diff --name-only f5bfe8848..origin/main -- frontend-admin` was 0 files, so the deployed console build is
+already head-current. Re-run that one-line diff at upload time — the moment it is non-zero, the console needs
+its own pin again, and §6's `SERVICE=frontend-admin` recipe is the one to use.
 
 ## Companion file
 
