@@ -63,6 +63,30 @@ jobs:
       - name: Config contracts (feature-flag defaults + middleware placement)
         run: npx vitest run tests/unit/config
 
+      # Same blind spot as the step above, found from the other end: the contest
+      # suite sat in tests/unit/contests and in ONE file of tests/unit/voting, and
+      # nothing on main ran either — `git grep tests/unit/voting origin/main --
+      # .github/workflows` returns no hits, and neither does `test:voting`. So the
+      # guards written for the "price to be won" feature (route projects
+      # contests.prize_pool as `prize`; /voting renders it only when it is set)
+      # were only ever run on a laptop, and every break in that chain is silent: a
+      # field renamed on one side of the fetch boundary renders nothing and throws
+      # nothing, and tsc cannot see it because the page's own interface declares
+      # the field optional.
+      #
+      # Scoped on purpose, and measured rather than assumed. tests/unit/voting
+      # holds 54 spec files and exactly one is contest wiring; the directory as a
+      # whole is RED on main today, so it cannot be a required step at all:
+      #   default parallelism    2 failed / 495 passed in 102 s
+      #   --no-file-parallelism  1 failed / 496 passed in 421 s
+      #   the two files solo     both fail, `Test timed out in 5000ms`, every time
+      # (ad004-free-vote-rules-sync and settings-contest-sync, last edited 2026-09-23
+      # and 2026-10-06 — pre-existing, not this feature.) Adding them here would make
+      # every main-bound PR unmergeable. The six files this step runs are 37 tests,
+      # green, and cost about six seconds.
+      - name: Contest guards (prize projection + /voting wiring)
+        run: npx vitest run tests/unit/contests tests/unit/voting/voting-page-prize.spec.ts
+
       - name: Contract check (implementation vs openapi.yaml)
         run: npm run contract:check
 
