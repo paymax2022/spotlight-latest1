@@ -195,6 +195,74 @@ RB="$( cd "$tree" && env -u GITHUB_OUTPUT bash "$script" --before "$base" \
 check '10 runs without GITHUB_OUTPUT' "$RC" '0'
 has '10 and still states the decision' 'ship=' "$RB"
 
+# ── 12-19. reconcile: production should be SERVING prod's tip ────────────────
+# Classifying the push alone is not enough, and this is the case that proves it:
+# the PR that installs this gate changes no backend/** file, so a diff-only rule
+# would merge, announce "nothing to ship", and leave production running the commit
+# from before the referral fix — the exact hole the gate was written to close. So
+# the caller also passes what production reports serving today, and an outdated
+# production ships regardless of what the push touched.
+#
+# Precedence, pinned here because each ordering is a decision:
+#   migration hard-stop > already-serving > range-unresolvable fail-open >
+#   backend-changed > prod-behind > no-backend-change
+head="$(fresh 'backend again' backend/internal/a.go)"
+run --before "$base" --sha "$head" --serving "$head"
+check '12 already serving this commit: no rebuild' "$(ship_of)" 'false'
+check '12 exits 0' "$RC" '0'
+has '12 says why' 'already-serving' "$OUT"
+
+head_docs="$(fresh 'docs only' docs/guide.md)"
+run --before "$base" --sha "$head_docs" --serving "$base"
+check '13 prod behind + docs-only push: still ships' "$(ship_of)" 'true'
+has '13 names the reason' 'prod-behind' "$OUT"
+
+run --before "$base" --sha "$head_docs" --serving 'unknown'
+check '14 unreadable production falls back to the diff' "$(ship_of)" 'false'
+
+run --before "$base" --sha "$head" --serving 'unknown'
+check '15 unreadable production still ships backend/**' "$(ship_of)" 'true'
+
+# A migration outranks "we are already serving it": code that is live with an
+# unapplied schema is a red job a human must see, never a quiet no-op.
+head_mig="$(fresh 'schema again' supabase/migrations/20271900000002_z.sql)"
+run --before "$base" --sha "$head_mig" --serving "$head_mig"
+check '16 migration outranks already-serving' "$RC" '1'
+
+# The bootstrap case, as an assertion. Linear, because that is what a prod push is:
+# a backend commit lands, then a docs commit lands on top of it, and the docs push
+# is the first one this gate ever runs under. Production still serves the old build,
+# so the docs push ships the backend that has been waiting. A diff-only rule would
+# have reported "nothing to ship" here and the referral fix would still be undeployed.
+git -C "$tree" reset -q --hard "$base"
+pending="$(commit 'backend work production is owed' backend/internal/a.go)"
+tip="$(commit 'docs on top' docs/guide.md)"
+run --before "$pending" --sha "$tip" --serving "$base"
+check '17 a production that is behind ships on a docs-only push' "$(ship_of)" 'true'
+has '17 and says it is closing a gap, not reacting to Go' 'prod-behind' "$OUT"
+
+# Deleting a migration is the migration-guard lane's problem, not a reason to stop
+# a deploy: the schema is what it is either way, and refusing here would block a
+# release for a fact this job cannot act on. The range is paired with
+# `--serving = the tip`, which is the answer that route 2 would give if the guard
+# stayed quiet, so exit 0 isolates the guard from every other decision (compare
+# case 16, which outranks the same serving value and exits 1).
+git -C "$tree" reset -q --hard "$base"
+with_mig="$(commit 'add a migration' supabase/migrations/20271900000003_w.sql)"
+rm -f "$tree/supabase/migrations/20271900000003_w.sql"
+git -C "$tree" add -A >/dev/null
+git -C "$tree" commit -qm 'delete it again' >/dev/null
+deleted="$(git -C "$tree" rev-parse HEAD)"
+run --before "$with_mig" --sha "$deleted" --serving "$deleted"
+check '18 a deleted migration does not refuse the deploy' "$RC" '0'
+has '18 and the decision is the ordinary one' 'already-serving' "$OUT"
+
+# A caller that reads nothing from the build endpoint must not accidentally assert
+# "production is behind". `--serving ''` is a failed read, not a fact about the
+# world, and the difference is a false rebuild in front of live traffic.
+run --before "$base" --sha "$head_docs" --serving ''
+check '19 an empty --serving is not read as prod-behind' "$(ship_of)" 'false'
+
 echo
 if [ "$failn" -gt 0 ]; then
   echo "FAILED: $failn of $((pass + failn)) assertions"
