@@ -786,9 +786,9 @@ jobs:
   # ── automatic production backend ─────────────────────────────────────────────
   # Everything above this line is CI unless a human dispatches it with a typed
   # DEPLOY. The two jobs below are the exception: a green push to `prod` that
-  # changes the backend — or finds production behind the branch it came from — puts
-  # that backend in front of production with nobody at the keyboard. It exists
-  # because the alternative was a hand-run `railway up backend`, which is not a
+  # changes the backend — or finds the deployed image older than the branch it came
+  # from — puts that backend in front of production with nobody at the keyboard. It
+  # exists because the alternative was a hand-run `railway up backend`, which is not a
   # release process: it is an unlogged build from whatever the operator's working
   # tree happened to contain, it is invisible to the next person, and in practice it
   # gets forgotten. Measured 2026-11-21: production served d3401f574 while `prod`
@@ -802,12 +802,25 @@ jobs:
   #
   # THE DECISION HAS TWO INPUTS, because one of them is not enough:
   #   1. did this push change `backend/**`?  — the image's own dependency set.
-  #   2. is production serving prod's tip?   — read live from /api/v1/public/build.
+  #   2. does the commit production serves build a DIFFERENT `backend/`? The served
+  #      sha is read live from /api/v1/public/build and compared as a tree diff.
   # (2) is what turns this from an event handler into a reconciliation. Diff-only
   # would have failed the change that introduces it: the PR installing these two jobs
   # touches no `backend/**` file, so it would merge, announce "nothing to ship", and
   # leave production on the build from before the referral fix. With (2), the merge
   # that installs the gate also ships what the gate exists to stop losing.
+  #
+  # WHY (2) COMPARES THE IMAGE AND NOT THE SHA
+  # "Ship when the served sha differs from this sha" fires on every push that gets
+  # this far, because a new commit is by definition a different sha. It would roll a
+  # fresh container in front of live traffic for a workflow-only or console-only
+  # change — quietly voiding the reason `backend/**` is the predicate in the first
+  # place. The question worth asking is whether the artifact production RUNS is older
+  # than the artifact production would BUILD, which is a diff of `backend/` between
+  # two commits. `git diff` compares trees, not history, so a production uploaded from
+  # a divergent lineage still gets a correct answer (case 23 of
+  # scripts/ci/test-prod-ship-scope.sh). When the two trees match, the served sha
+  # being different is not staleness and nothing ships (cases 13/21).
   #
   # WHERE THE RECONCILIATION DOES NOT REACH: this workflow ignores docs-only pushes
   # (`paths-ignore` above), so a gap is closed by the next push that touches
@@ -854,10 +867,12 @@ jobs:
       - name: Read what production serves today
         id: served
         # Never fails this job, and that is the point: the read only makes the
-        # decision smarter. With it, a docs-only push still ships a backend
-        # production was never handed (the merge that installs this gate, and every
-        # forgotten manual upload since). Without it the gate falls back to
-        # classifying the push — cases 14/15/19 of scripts/ci/test-prod-ship-scope.sh.
+        # decision smarter, and it makes it smarter in BOTH directions. With it, a
+        # docs-only push still ships a backend production was never handed (the merge
+        # that installs this gate, and every forgotten manual upload since), and a
+        # push that leaves `backend/` byte-identical does not restart live traffic.
+        # Without it the gate falls back to classifying the push — cases
+        # 14/15/19/20 of scripts/ci/test-prod-ship-scope.sh.
         # A 20-second blip on a public endpoint must not turn into a red release;
         # that is how a gate earns being switched off.
         run: |
@@ -923,8 +938,13 @@ jobs:
     # Nine upload attempts with the measured backoff, plus a Railway build (~150 s
     # for this image) and the read-back poll (up to 5 min). Comfortably inside this.
     timeout-minutes: 45
-    # The `Production` environment: no required reviewers, branch policy already
-    # allows `prod`, and it is what scopes RAILWAY_TOKEN_PRODUCTION to this job.
+    # The `Production` environment: no required reviewers and the branch policy
+    # already allows `prod` (measured 2026-11-21: 0 reviewers, can_admins_bypass
+    # true), so it never holds an unattended deploy waiting. It is here for the
+    # deployment record and for whatever protection is added later — NOT for secret
+    # scoping: RAILWAY_TOKEN_PRODUCTION is a repository-level secret
+    # (environment_ids is null), so any job in this repo could already read it, and
+    # the `Production` environment itself holds only SUPABASE_DB_PASSWORD.
     environment: production
     concurrency:
       group: deploy-production-backend

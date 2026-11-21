@@ -25,9 +25,20 @@
 # Cases 2, 2b and 3 assert `ship=false`: a script that always ships passes case 1
 # and dies here. Case 4/5 assert exit 1: a script that lost the migration guard
 # dies there. Case 6/7 assert the fail-open, so a script that skipped on an
-# unresolvable range dies. To see it: delete the `^backend/` predicate in a scratch
-# copy and re-run — cases 2/2b/3 go red. A suite that prints PASS whatever the
-# script does is not a gate.
+# unresolvable range dies. Cases 13/21/22 are the ones that pin the CONTRAST
+# between the sha and the artifact: production serves a different commit while
+# `backend/` is byte-identical, and they demand `ship=false`, so the sha-based
+# reconciliation this file replaced — which shipped on every push — dies there.
+# Cases 17/23 demand `ship=true` for a stale image that the push itself did not
+# touch, so a script that lost the reconciliation dies there.
+# Two mutants, both run against this suite on 2026-11-21 with the reds recorded
+# here rather than asserted:
+#   * route 3's `grep -qE '^backend/'` matched nothing -> 3 reds: cases 1, 8, 15
+#     (the predicate is what makes a backend push ship on the push alone).
+#   * the tree diff became the sha comparison `[ "$serving" != "$sha" ]` -> 5 reds:
+#     cases 13, 21 and 22 (both their ship=false and their reason= assertions),
+#     which is precisely the sha-based reconciliation this revision replaces.
+# A suite that prints PASS whatever the script does is not a gate.
 #
 # Run:  bash scripts/ci/test-prod-ship-scope.sh
 set -uo pipefail
@@ -195,17 +206,24 @@ RB="$( cd "$tree" && env -u GITHUB_OUTPUT bash "$script" --before "$base" \
 check '10 runs without GITHUB_OUTPUT' "$RC" '0'
 has '10 and still states the decision' 'ship=' "$RB"
 
-# ── 12-19. reconcile: production should be SERVING prod's tip ────────────────
+# ── 12-22. reconcile: production should serve the IMAGE prod's tip would build ─
 # Classifying the push alone is not enough, and this is the case that proves it:
 # the PR that installs this gate changes no backend/** file, so a diff-only rule
 # would merge, announce "nothing to ship", and leave production running the commit
 # from before the referral fix — the exact hole the gate was written to close. So
-# the caller also passes what production reports serving today, and an outdated
-# production ships regardless of what the push touched.
+# the caller also passes what production reports serving today.
+#
+# The comparison is the IMAGE, not the SHA. A sha-based rule ("ship whenever the
+# served sha differs from this push's sha") fires on every push that reaches this
+# workflow, because a new commit is by definition a different sha — so it would
+# roll a container in front of live traffic for a workflow-only change and quietly
+# void the reason `backend/**` is the predicate at all. Comparing backend/ between
+# the served commit and this one asks the only question that matters: is the
+# artifact production runs older than the artifact production would build?
 #
 # Precedence, pinned here because each ordering is a decision:
 #   migration hard-stop > already-serving > range-unresolvable fail-open >
-#   backend-changed > prod-behind > no-backend-change
+#   backend-changed > backend-stale | image-current > prod-uncomparable > no-backend-change
 head="$(fresh 'backend again' backend/internal/a.go)"
 run --before "$base" --sha "$head" --serving "$head"
 check '12 already serving this commit: no rebuild' "$(ship_of)" 'false'
@@ -214,8 +232,8 @@ has '12 says why' 'already-serving' "$OUT"
 
 head_docs="$(fresh 'docs only' docs/guide.md)"
 run --before "$base" --sha "$head_docs" --serving "$base"
-check '13 prod behind + docs-only push: still ships' "$(ship_of)" 'true'
-has '13 names the reason' 'prod-behind' "$OUT"
+check '13 a different sha with an identical image does not ship' "$(ship_of)" 'false'
+has '13 names the reason' 'image-current' "$OUT"
 
 run --before "$base" --sha "$head_docs" --serving 'unknown'
 check '14 unreadable production falls back to the diff' "$(ship_of)" 'false'
@@ -231,15 +249,17 @@ check '16 migration outranks already-serving' "$RC" '1'
 
 # The bootstrap case, as an assertion. Linear, because that is what a prod push is:
 # a backend commit lands, then a docs commit lands on top of it, and the docs push
-# is the first one this gate ever runs under. Production still serves the old build,
-# so the docs push ships the backend that has been waiting. A diff-only rule would
-# have reported "nothing to ship" here and the referral fix would still be undeployed.
+# is the first one this gate ever runs under. Production still serves the build from
+# before the backend commit, so the docs push ships it. A push-only rule would have
+# reported "nothing to ship" here and the referral fix would still be undeployed —
+# which is exactly what happened on 2026-11-21: production served d3401f574 while
+# prod carried bb59c7129 (backend) plus two merges after it.
 git -C "$tree" reset -q --hard "$base"
 pending="$(commit 'backend work production is owed' backend/internal/a.go)"
 tip="$(commit 'docs on top' docs/guide.md)"
 run --before "$pending" --sha "$tip" --serving "$base"
 check '17 a production that is behind ships on a docs-only push' "$(ship_of)" 'true'
-has '17 and says it is closing a gap, not reacting to Go' 'prod-behind' "$OUT"
+has '17 and names the stale artifact, not the push' 'backend-stale' "$OUT"
 
 # Deleting a migration is the migration-guard lane's problem, not a reason to stop
 # a deploy: the schema is what it is either way, and refusing here would block a
@@ -258,14 +278,52 @@ check '18 a deleted migration does not refuse the deploy' "$RC" '0'
 has '18 and the decision is the ordinary one' 'already-serving' "$OUT"
 
 # A caller that reads nothing from the build endpoint must not accidentally assert
-# "production is behind". `--serving ''` is a failed read, not a fact about the
-# world, and the difference is a false rebuild in front of live traffic.
+# "the deployed image is stale". `--serving ''` is a failed read, not a fact about
+# the world, and the difference is a false rebuild in front of live traffic.
 run --before "$base" --sha "$head_docs" --serving ''
-check '19 an empty --serving is not read as prod-behind' "$(ship_of)" 'false'
+check '19 an empty --serving is not read as a stale image' "$(ship_of)" 'false'
+
+# ── 20-23. what the image comparison can and cannot see ───────────────────────
+# A sha production reports that this checkout does not contain: a force-push, a
+# history rewrite, or a build uploaded from the other lineage. The image cannot be
+# compared, and "cannot tell" must not become "leave production running whatever it
+# is running" — fail open, announced.
+run --before "$base" --sha "$head_docs" --serving 1111111111111111111111111111111111111111
+check '20 an uncomparable production sha ships rather than guesses' "$(ship_of)" 'true'
+has '20 and calls it a gap' 'prod-uncomparable' "$OUT"
+
+# The whole point of comparing the image instead of the sha: a console-only push
+# must not restart the API.
+git -C "$tree" reset -q --hard "$base"
+console="$(commit 'admin console only' frontend-web/page.tsx)"
+run --before "$base" --sha "$console" --serving "$base"
+check '21 a frontend-only push does not roll the backend' "$(ship_of)" 'false'
+has '21 and says the artifact is current' 'image-current' "$OUT"
+
+# `backend-extra/` is deliberately outside `backend/`: the image consumes exactly
+# backend/** (THE UPLOAD RULE in the script header), so a change there is not a
+# stale artifact — the same predicate has to govern BOTH comparisons or the
+# reconciliation would undo the scope decision.
+git -C "$tree" reset -q --hard "$base"
+outside="$(commit 'outside the image' backend-extra/readme.txt)"
+run --before "$base" --sha "$outside" --serving "$base"
+check '22 a change outside backend/ is not a stale image' "$(ship_of)" 'false'
+
+# Production can also be serving something that is NOT an ancestor — an upload from
+# the other lineage. `git diff` compares trees, not history, so it still answers the
+# only question that matters: would the rebuild differ from what is live? If yes,
+# ship, and say so with the same reason: what is running is not what prod builds.
+git -C "$tree" reset -q --hard "$base"
+diverged="$(commit 'a backend change production never got' backend/internal/b.go)"
+git -C "$tree" reset -q --hard "$base"
+other="$(commit 'an unrelated tip' docs/other.md)"
+run --before "$base" --sha "$other" --serving "$diverged"
+check '23 a divergent production build is replaced, not excused' "$(ship_of)" 'true'
+has '23 and names the stale artifact' 'backend-stale' "$OUT"
 
 echo
 if [ "$failn" -gt 0 ]; then
   echo "FAILED: $failn of $((pass + failn)) assertions"
   exit 1
 fi
-echo "ok — $pass assertions: ships on backend/**, skips otherwise, refuses migrations, fails open on an unknown range"
+echo "ok — $pass assertions: ships when the image changes or production's is stale, skips identical bytes, refuses migrations, fails open on an unknown range"

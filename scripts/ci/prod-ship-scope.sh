@@ -23,24 +23,31 @@
 #              classification alone. An empty value means the same as 'unknown'.
 #
 # THE INVARIANT, which is not "ship when Go changed"
-# Production should be SERVING the tip of `prod`. A diff-only rule cannot express
-# that, and would have failed the very change that introduces it: the PR that
-# installs this gate touches no backend/** file, so it would merge, report "nothing
-# to ship", and leave production running the build from before the referral-code fix
-# — the hole this file exists to close. So the answer is `did the image change` OR
-# `is production behind`, and the reasons are kept separate in the output because
-# they are different facts about the world.
+# Production should be serving the IMAGE that prod's tip would build. A diff-only
+# rule cannot express that, and would have failed the very change that introduces
+# it: the PR that installs this gate touches no backend/** file, so it would merge,
+# report "nothing to ship", and leave production running the build from before the
+# referral-code fix — the hole this file exists to close. So the answer is `did the
+# image change in this push` OR `is the deployed image stale`, both measured against
+# `backend/**`, and the reasons stay separate in the output because they are
+# different facts about the world.
+#
+# It is deliberately NOT "ship when the served sha differs from this push's sha".
+# A new commit is always a new sha, so that rule redeploys on every push this
+# workflow sees and rolls the live API for a workflow-only change.
 #
 # Decisions, in precedence order (each ordering is a decision — see the test):
 #   exit 1      supabase/migrations/** is in the push — see THE MIGRATION RULE.
 #               Outranks every other answer, including already-serving: live code
 #               with an unapplied schema is a red a human must see, not a no-op.
-#   ship=false  --serving == --sha — production already serves this commit, so a
-#               rebuild would be a restart for identical bytes. reason=already-serving
+#   ship=false  --serving == --sha. reason=already-serving
 #   ship=true   unresolvable --range and not already serving. reason=range-unresolvable
-#   ship=true   backend/** changed. reason=backend-changed
-#   ship=true   production serves something else. reason=prod-behind
-#   ship=false  nothing the image contains changed and production is not behind
+#   ship=true   backend/** changed in the push. reason=backend-changed
+#   ship=true   backend/** differs between --serving and --sha. reason=backend-stale
+#   ship=false  backend/** is identical between --serving and --sha, so a rebuild
+#               would be identical bytes and a restart. reason=image-current
+#   ship=true   --serving names a commit this checkout cannot see. reason=prod-uncomparable
+#   ship=false  --serving unknown (endpoint unreadable) and the push changed no image
 #
 # WHY `backend/` AND ONLY `backend/`
 # The production Railway backend is written by `railway up backend --path-as-root`
@@ -177,21 +184,45 @@ if printf '%s\n' "$FILES" | grep -qE '^backend/'; then
   exit 0
 fi
 
-# ── 4. the image is unchanged but production is behind ───────────────────────
-# This is the repair branch, and the one that makes the gate a reconciliation
-# rather than an event handler: a manual upload someone forgot, a deploy that
-# failed and was never re-run, or (as above) the merge that installs this file all
-# land here. An empty range arrives too — prod moved without a CI run of its own.
+# ── 4. is the artifact production runs older than the one it would build? ─────
+# The reconciliation, and the reason it compares backend/ rather than shas. A
+# sha-based rule ("ship when the served sha differs from this push") fires on every
+# push that reaches this workflow, because a new commit is by definition a new sha:
+# it would restart the live API for a workflow-only change and quietly void the
+# whole reason `backend/**` is the predicate. `git diff` compares trees, not
+# history, so this also answers the case a merge-base cannot: production may be
+# serving a build from the other lineage, and what matters is whether the bytes
+# differ, not whether one descends from the other.
 if [ "$serving" != 'unknown' ]; then
-  echo "prod-ship-scope: no backend/** file changed, but production serves $serving and prod's tip is $sha — shipping what production is owed."
+  if git rev-parse --verify "${serving}^{commit}" >/dev/null 2>&1; then
+    STALE="$(git diff --name-only "$serving" "$sha" -- backend/)"
+    if [ -n "$STALE" ]; then
+      echo "prod-ship-scope: production serves $serving and $(printf '%s\n' "$STALE" | grep -c .) backend path(s) differ between it and $sha — the deployed image is stale."
+      printf '%s\n' "$STALE" | sed 's/^/    /'
+      emit ship true
+      emit reason 'backend-stale'
+      exit 0
+    fi
+    # The shas differ and that is fine: nothing the image consumes does. Rebuilding
+    # here would be a container roll for identical bytes.
+    echo "prod-ship-scope: production serves $serving and backend/ is byte-identical in $sha, so a rebuild would restart identical bytes. Nothing to ship."
+    emit ship false
+    emit reason 'image-current'
+    exit 0
+  fi
+  # Production reports a commit this checkout cannot see — a rewritten history, or
+  # an upload from the other lineage that has since been rebased away. The image
+  # cannot be compared, and "cannot tell" must not become "keep running whatever is
+  # running": fail open, loudly.
+  echo "::warning::prod-ship-scope: production reports $serving, which is not a commit in this checkout, so the image cannot be compared. Shipping what prod's CI greened."
   emit ship true
-  emit reason 'prod-behind'
+  emit reason 'prod-uncomparable'
   exit 0
 fi
 
 # ── 5. nothing to do ──────────────────────────────────────────────────────────
 if [ -z "$FILES" ]; then
-  echo "prod-ship-scope: $before..$sha changes no files, and production's build endpoint is unreadable so 'behind' cannot be established. Shipping nothing."
+  echo "prod-ship-scope: $before..$sha changes no files, and production's build endpoint is unreadable, so the deployed image cannot be compared. Shipping nothing."
 else
   echo "prod-ship-scope: no backend/** file changed in $before..$sha, so the image production would rebuild is identical, and production is not known to be behind. Skipping the deploy."
   printf '%s\n' "$FILES" | sed 's/^/    /'

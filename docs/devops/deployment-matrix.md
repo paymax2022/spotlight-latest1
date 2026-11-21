@@ -60,10 +60,28 @@ production Railway backend, alongside the manual path it replaces.
 |---|---|
 | Host | `https://backend-production-1b33d.up.railway.app` (project `spotlight-platform`) |
 | Writer | `ci.yml` → `deploy-production-backend`, on a **green push to `prod`** |
-| Decider | `scripts/ci/prod-ship-scope.sh` — ships when the push changed `backend/**` **or** when `/api/v1/public/build` reports a commit other than prod's tip |
+| Decider | `scripts/ci/prod-ship-scope.sh` — ships when the push changed `backend/**` **or** when the commit reported by `/api/v1/public/build` builds a **different `backend/` tree** than the push. Same tree ⇒ no rebuild, whatever the sha. |
 | Refuses | a push carrying `supabase/migrations/**` (production's schema is still a manual `ops-db-push.yml` apply, so rule 4 is unchanged) |
 | Kill switch | `gh variable set PROD_BACKEND_AUTO_DEPLOY_ENABLED --body false` |
 | Read-back | `scripts/ci/railway-smoke.sh` fails the job unless production echoes the deployed SHA |
+
+The decider prints a `reason=` line, and reading it is how you tell a correct
+`ship=false` from a wrong one. Every value is pinned by
+`scripts/ci/test-prod-ship-scope.sh`:
+
+| `reason=` | `ship` | what it means |
+|---|---|---|
+| `backend-changed` | true | this push touched `backend/**` |
+| `backend-stale` | true | the push did not, but the commit production serves builds different `backend/` bytes — a forgotten manual upload, a failed deploy, or the merge that installed this gate |
+| `range-unresolvable` | true | `github.event.before` is absent or unknown in this checkout (first push, force-push) — **fails open** |
+| `prod-uncomparable` | true | production reports a sha this checkout cannot see (rewritten history, or a build from the other lineage) so the image cannot be compared — **fails open** |
+| `already-serving` | false | production already reports this exact commit; a rebuild would restart identical bytes |
+| `image-current` | false | a different sha, but `backend/` is byte-identical — a console-only or workflow-only push |
+| `no-backend-change` | false | nothing the image consumes changed and the deployed image cannot be established as stale |
+
+`image-current` is the row that makes the `backend/**` predicate mean something:
+comparing shas instead of trees calls every push stale, because a new commit is by
+definition a new sha, and production would restart for a comment edit.
 
 Two things to know before reading a green check as "released":
 
@@ -80,3 +98,31 @@ Measured on 2026-11-21, before this gate existed: production served `d3401f574`
 while `prod`'s tip carried three merges it had never been given — `6f58f0b0a`,
 `bb59c7129` (the referral-code uniqueness rule, which touches `backend/**`) and
 `36ba52226`. That gap is what the decider's second condition closes.
+
+## The first automatic deploy (2026-11-21, run `44918367765`)
+
+Merging PR #1122 pushed `prod` to `b9c21b534`. Nobody ran anything after the merge.
+
+| Time (UTC) | Event |
+|---|---|
+| 15:17:17 | squash lands on `prod`, push event starts the run |
+| 15:17:32 | `ship-scope` reads `d3401f574…` from `/api/v1/public/build`, prints `ship=true` / `reason=prod-behind` |
+| 15:31:14 | the last required lane closes and `deploy Production backend (automatic)` starts |
+| 15:31:25 | `stamped backend/BUILD_COMMIT`, upload accepted on attempt 1 |
+| 15:34:12 | new container up (`uptime_seconds` at read-back: 116) |
+| 15:34:18 | `smoke PASS: backend/production` — job success, run success (12 success / 18 skipped / 0 failure) |
+
+`/api/v1/public/build` reports `b9c21b534becfdfb3e0d5cceeeeac2790df16083`, and the
+route that fix added answers on production: unauthenticated
+`PUT /v1/admin/referrals/<id>/code` returns **401 `missing bearer token`**, while a
+sibling path that does not exist returns **404 `No API route matches`** — the pair
+that distinguishes "mounted, needs auth" from "not deployed". Note the method: there
+is no `GET` on that path, so probing it with `GET` reads as a 404 and proves nothing.
+
+The 14-minute gap between the merge and the deploy is the `needs:` bar (the slowest
+lane was `live-DB suites`), not the upload: stamp to serving container was 166 s and
+the whole deploy job closed in 184 s.
+
+That run's `reason` was `prod-behind` because the decider compared shas. It now
+compares the `backend/` tree and would print `backend-stale`; see the reason table
+above for why the difference matters to anyone reading a green checkmark.
