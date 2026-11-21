@@ -14,8 +14,9 @@ name: CI — CLAUDE.md gates
 #
 # Gates enforced (see CLAUDE.md "Commands you should know"):
 #   - frontend-web: golden-path regression (test:regression), money invariants
-#     (test:money), contest guards (tests/unit/contests + the /voting prize
-#     wiring spec), contract:check, tsc --noEmit, ESLint
+#     (test:money), contest + voting guards (tests/unit/contests and the whole
+#     tests/unit/voting directory, bridge included), contract:check,
+#     tsc --noEmit, ESLint
 #   - frontend-admin: type-check (tsc --noEmit, strict)
 #   - backend (Go 1.25): go build ./... && go vet ./...
 #   - OpenAPI: YAML validity for every contract in contracts/

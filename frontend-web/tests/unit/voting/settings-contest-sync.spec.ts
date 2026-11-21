@@ -36,6 +36,19 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
+// Static import, placed after the vi.mock calls (vitest hoists the mocks, so the
+// route still sees the stubs) — the same shape as
+// tests/unit/voting/contest-prizes-admin-api.test.ts. This file used to
+// `await import()` the route inside every `it()`, which charged the route
+// graph's cold load to the FIRST test's default 5000 ms budget. Measured with a
+// throwaway probe: `src/lib/api/responses` 5032 ms (it imports
+// `@sentry/nextjs` for one captureException call), `src/server/admin/auth`
+// 1439 ms — 6.5 s of module work, then 0 ms for every later import because
+// Vite caches the transform. That is the whole reason this file was red on main
+// while every sibling that imports a route at the top is green: the cost is the
+// same, it just is not inside a timed test any more.
+import { POST } from '@/app/api/admin/voting/settings/route';
+
 const CONTEST = 'ed8103b7-418f-467e-a0ed-717ce167f615';
 
 function save(body: Record<string, unknown>) {
@@ -53,7 +66,6 @@ describe('voting settings -> contest sync', () => {
   });
 
   it('writes the per-vote price to the field the mobile app reads', async () => {
-    const { POST } = await import('@/app/api/admin/voting/settings/route');
     const res = await POST(save({ paidVotingEnabled: true, pricePerVoteNgn: 150, votingEnabled: true }));
 
     expect(res.status).toBe(200);
@@ -65,14 +77,12 @@ describe('voting settings -> contest sync', () => {
   });
 
   it('zeroes the price when paid voting is turned off, so the two cannot disagree', async () => {
-    const { POST } = await import('@/app/api/admin/voting/settings/route');
     await POST(save({ paidVotingEnabled: false, pricePerVoteNgn: 150 }));
 
     expect(contestUpdate.mock.calls[0][0]).toMatchObject({ vote_price_ngn: 0, vote_price: 0 });
   });
 
   it('ignores a price that is not a positive number rather than writing NaN', async () => {
-    const { POST } = await import('@/app/api/admin/voting/settings/route');
     await POST(save({ paidVotingEnabled: true, pricePerVoteNgn: '' }));
 
     expect(contestUpdate.mock.calls[0][0]).toMatchObject({ vote_price_ngn: 0 });
@@ -80,7 +90,6 @@ describe('voting settings -> contest sync', () => {
 
   it('reports a failed contest update instead of claiming the save succeeded', async () => {
     contestUpdate.mockResolvedValue({ error: { message: 'permission denied' } });
-    const { POST } = await import('@/app/api/admin/voting/settings/route');
     const res = await POST(save({ paidVotingEnabled: true, pricePerVoteNgn: 150 }));
 
     expect(res.status).toBe(500);
@@ -91,7 +100,6 @@ describe('voting settings -> contest sync', () => {
   });
 
   it('still accepts a blank voting window (the empty-string timestamp trap)', async () => {
-    const { POST } = await import('@/app/api/admin/voting/settings/route');
     const res = await POST(save({ votingStartsAt: '', votingEndsAt: '', leaderboardFreezeAt: '' }));
 
     expect(res.status).toBe(200);
