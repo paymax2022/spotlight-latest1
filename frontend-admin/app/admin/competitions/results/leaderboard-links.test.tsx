@@ -92,4 +92,19 @@ describe('Results & Leaderboard → contestant profile', () => {
     expect(rows[0]).toHaveAttribute('href', `/admin/voting/contestant/${roster[0].contestant_id}`);
     expect(rows[1]).toHaveAttribute('href', `/admin/voting/contestant/${roster[1].contestant_id}`);
   });
+
+  it('labels the vote destination on the row, so the admin knows voting lives there', async () => {
+    render(<CompetitionsResultsPage />);
+
+    const votes = await screen.findAllByRole('link', { name: 'Vote' });
+    expect(votes).toHaveLength(2);
+    expect(votes[0]).toHaveAttribute('href', `/admin/voting/contestant/${roster[0].contestant_id}`);
+  });
+
+  it('routes back to the contest list, so the leaderboard is a stop and not a dead end', async () => {
+    render(<CompetitionsResultsPage />);
+
+    const back = await screen.findByRole('link', { name: /All contests/i });
+    expect(back).toHaveAttribute('href', '/admin/competitions/list');
+  });
 });

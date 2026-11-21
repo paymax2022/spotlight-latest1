@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { Page, PageHeader, Card, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+import { Page, PageHeader, Card, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import { listVotingContests, getContestRoster } from '@/services/competitionsService';
 import type { VotingContest, ContestRosterEntry } from '@/types/competitions';
 
@@ -69,7 +69,14 @@ function CompetitionsResultsContent() {
     <Page>
       <PageHeader
         title="Results & Leaderboard"
-        subtitle="Live vote tallies per contestant, ranked by total votes. Served from the Go backend's voting engine."
+        subtitle={selectedContest
+          ? `Live vote tallies for “${selectedContest.title}”, ranked by total votes. Open a contestant to see their profile and add admin votes.`
+          : 'Live vote tallies per contestant, ranked by total votes. Open a contestant to see their profile and add admin votes.'}
+        actions={
+          <Link href="/admin/competitions/list">
+            <Button variant="outline" sm>All contests</Button>
+          </Link>
+        }
       />
 
       {error && <p style={{ color: colors.danger }}>{error}</p>}
@@ -116,13 +123,14 @@ function CompetitionsResultsContent() {
               <th style={thCell}>Paid Votes</th>
               <th style={thCell}>Total Votes</th>
               <th style={thCell}>Status</th>
+              <th style={thCell}>Vote</th>
             </tr>
           </thead>
           <tbody>
             {loadingRoster ? (
-              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={6}>Loading…</td></tr>
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={7}>Loading…</td></tr>
             ) : roster.length === 0 ? (
-              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={6}>No contestants yet.</td></tr>
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={7}>No contestants yet.</td></tr>
             ) : (
               roster.map((entry) => (
                 <tr key={entry.contestant_id} style={{ background: entry.rank === 1 ? tint(colors.warning, 0.06) : 'transparent' }}>
@@ -140,6 +148,13 @@ function CompetitionsResultsContent() {
                   <td style={tdCell}>{entry.paid_votes.toLocaleString()}</td>
                   <td style={tdCell}><strong>{entry.total_votes.toLocaleString()}</strong></td>
                   <td style={tdCell}>{entry.is_active ? entry.status : `${entry.status} (inactive)`}</td>
+                  <td style={tdCell}>
+                    {/* Same destination as the name: the profile page is where the
+                        admin-vote form lives, so the row says so out loud. */}
+                    <Link href={`/admin/voting/contestant/${entry.contestant_id}`}>
+                      <Button variant="outline" sm>Vote</Button>
+                    </Link>
+                  </td>
                 </tr>
               ))
             )}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Card, Button, Badge, Input, colors } from '@/components/ui/vuexy';
 import { getContestant, castAdminVote } from '@/services/competitionsService';
@@ -81,6 +82,19 @@ export default function ContestantProfilePage() {
       )}
 
       <div style={{ marginBottom: 24 }}>
+        {/* The way back into the contest this record belongs to. contest_id comes
+            from this page's own GET /api/v1/connect/contestants/:id — the roster
+            payload the leaderboard renders does not carry it — so a contestant
+            with no linked contest has no leaderboard to return to and the link
+            offers the contest list instead. */}
+        <Link
+          href={contestant.contest_id
+            ? `/admin/competitions/results?contestId=${contestant.contest_id}`
+            : '/admin/competitions/list'}
+          style={{ fontSize: 13, color: colors.primary, textDecoration: 'none' }}
+        >
+          &larr; {contestant.contest_id ? 'Back to leaderboard' : 'All contests'}
+        </Link>
         <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800 }}>{contestant.name}</h1>
         {contestant.stage_name ? (
           <p style={{ margin: '4px 0 0', color: colors.muted, fontSize: 14 }}>&ldquo;{contestant.stage_name}&rdquo;</p>
