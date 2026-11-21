@@ -202,7 +202,7 @@ jobs:
 
       - name: Keep the before-snapshot for the restart job
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: prod-served-keys-before
           path: before-keys.txt
