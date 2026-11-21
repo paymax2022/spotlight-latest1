@@ -50,3 +50,33 @@ expecting a deploy effect, and do not delete them without checking this list:
 3. The canary/probe contract is `/healthz` + `/readyz` (AUD-INFRA-007).
 4. Migrations are applied BEFORE traffic via the additive-only chain
    (AUD-INFRA-005 tracks automating this).
+
+## Production backend on the `prod` lineage (2026-11-21)
+
+Rule 1 above, applied: `ci.yml` now has a second, **automatic** writer of the
+production Railway backend, alongside the manual path it replaces.
+
+| What | Value |
+|---|---|
+| Host | `https://backend-production-1b33d.up.railway.app` (project `spotlight-platform`) |
+| Writer | `ci.yml` → `deploy-production-backend`, on a **green push to `prod`** |
+| Decider | `scripts/ci/prod-ship-scope.sh` — ships when the push changed `backend/**` **or** when `/api/v1/public/build` reports a commit other than prod's tip |
+| Refuses | a push carrying `supabase/migrations/**` (production's schema is still a manual `ops-db-push.yml` apply, so rule 4 is unchanged) |
+| Kill switch | `gh variable set PROD_BACKEND_AUTO_DEPLOY_ENABLED --body false` |
+| Read-back | `scripts/ci/railway-smoke.sh` fails the job unless production echoes the deployed SHA |
+
+Two things to know before reading a green check as "released":
+
+- Every Railway service here reports `source: null`, so no branch push deploys
+  anything by itself; the table's GCP/Cloud-Run row for `backend` describes
+  `deploy.yml`, which triggers on `main` only. The production host that answers
+  today is the Railway one, and `/api/v1/public/build` is the authority on which
+  commit it is serving — not this document's history.
+- `main` (via `release.yml`) and `prod` (via `ci.yml`) both write the SAME
+  production environment, exactly as operators' hand-run `railway up` used to.
+  Last successful deploy wins, and the read-back says which sha that was.
+
+Measured on 2026-11-21, before this gate existed: production served `d3401f574`
+while `prod`'s tip carried three merges it had never been given — `6f58f0b0a`,
+`bb59c7129` (the referral-code uniqueness rule, which touches `backend/**`) and
+`36ba52226`. That gap is what the decider's second condition closes.

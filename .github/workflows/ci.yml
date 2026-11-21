@@ -20,8 +20,11 @@ name: CI — CLAUDE.md gates
 #   - OpenAPI: YAML validity for every contract in contracts/
 #   - migrations: additive-only guard (no DROP / RENAME / type-narrowing)
 #
-# Pushes run CI checks only. Railway deployment is an explicit manual release
-# action, and is locked to the matching promotion branch/environment pair.
+# Pushes run CI checks. Railway deployment is a manual, typed release action —
+# EXCEPT the production backend on `prod`, which ships automatically on a green
+# push when scripts/ci/prod-ship-scope.sh says the image changed or production is
+# behind the branch it came from. See the two jobs at the foot of this file, and
+# docs/devops/deployment-matrix.md for which writer owns which environment.
 
 on:
   # CI runs only on the deployable promotion branches. Railway performs native
@@ -74,7 +77,16 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # `prod` queues instead of cancelling, because on this lineage the deploy legs
+  # live INSIDE this workflow (main moved its own to release.yml and made that one
+  # non-cancelling for the same reason). With a blanket `true`, the second push to
+  # prod kills the run that is mid-`railway up`, which is how a production deploy
+  # gets stranded half-uploaded by a job that is no longer there to report it:
+  # "a release that the next push can cancel leaves a service half-updated"
+  # (release.yml). Every other ref keeps cancelling — that is the point of the
+  # flag on a busy branch. deploy-production-backend adds its own non-cancelling
+  # group on top of this so two prod deploys can never overlap either.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/prod' }}
 
 jobs:
   # The three whole-app gates below run ONCE, here, unconditionally. Module lanes
@@ -166,6 +178,15 @@ jobs:
       # rejection of brace patterns. Sub-second, so it shares this runner.
       - name: Test the module router
         run: python3 scripts/ci/test-changed-modules.py
+      # The two gates below are the production deploy machinery's own tests, and
+      # they belong on the same bar as the deploy they control: `ship-scope` decides
+      # whether prod gets a new image, and the retry ladder is what stops Railway's
+      # transient upload refusal from reading as a broken release chain. Both are
+      # ~3 s (measured), so they share this runner rather than costing a runner each.
+      - name: Test the production ship-scope gate
+        run: bash scripts/ci/test-prod-ship-scope.sh
+      - name: Test the Railway upload retry ladder
+        run: bash scripts/ci/test-railway-deploy-retry.sh
 
   # Which module lanes does this change need? One shared filter file
   # (.github/module-filters.json) drives the gating below, so a module's paths
@@ -444,9 +465,9 @@ jobs:
       - name: Lint workflows
         run: actionlint -no-color -oneline -shellcheck= -pyflakes=
 
-  # Railway deployment is deliberately manual. The repository variable remains
-  # an emergency kill switch, while the inputs and branch tests prevent an
-  # environment from being deployed from the wrong promotion branch.
+  # These three legs stay deliberately manual: a typed DEPLOY, the matching
+  # promotion branch, and the repository variable as an emergency kill switch.
+  # The one automatic writer is the production backend at the foot of this file.
   deploy-development:
     name: deploy Development (${{ matrix.service }})
     # The module lanes are CONDITIONAL (`if: needs.changes.outputs.X == 'true'`),
@@ -761,3 +782,183 @@ jobs:
           done
           echo "Timed out waiting for Railway deployment"
           exit 1
+
+  # ── automatic production backend ─────────────────────────────────────────────
+  # Everything above this line is CI unless a human dispatches it with a typed
+  # DEPLOY. The two jobs below are the exception: a green push to `prod` that
+  # changes the backend — or finds production behind the branch it came from — puts
+  # that backend in front of production with nobody at the keyboard. It exists
+  # because the alternative was a hand-run `railway up backend`, which is not a
+  # release process: it is an unlogged build from whatever the operator's working
+  # tree happened to contain, it is invisible to the next person, and in practice it
+  # gets forgotten. Measured 2026-11-21: production served d3401f574 while `prod`
+  # carried three merges it had never been given, `bb59c7129` among them (the
+  # referral-code uniqueness fix, `backend/**` and all).
+  #
+  # WHAT MOVES FROM HUMAN TO MACHINE: not the decision, the choreography. A person
+  # still merges the PR, and the PR page is where integration-verify (the -race
+  # suite, which does not run on a prod push — see its own triggers) is visible.
+  # This file automates "and then the code actually gets to production".
+  #
+  # THE DECISION HAS TWO INPUTS, because one of them is not enough:
+  #   1. did this push change `backend/**`?  — the image's own dependency set.
+  #   2. is production serving prod's tip?   — read live from /api/v1/public/build.
+  # (2) is what turns this from an event handler into a reconciliation. Diff-only
+  # would have failed the change that introduces it: the PR installing these two jobs
+  # touches no `backend/**` file, so it would merge, announce "nothing to ship", and
+  # leave production on the build from before the referral fix. With (2), the merge
+  # that installs the gate also ships what the gate exists to stop losing.
+  #
+  # WHERE THE RECONCILIATION DOES NOT REACH: this workflow ignores docs-only pushes
+  # (`paths-ignore` above), so a gap is closed by the next push that touches
+  # something CI watches — not by the clock. A scheduled reconciler would close
+  # that last case too, but putting an unattended timer on production is a bigger
+  # decision than fixing the release path, so it is not made here.
+  #
+  # KNOWN GAPS, on purpose, so nobody has to rediscover them:
+  #   * security.yml's five lanes are red on `prod` independently of any commit
+  #     (stale .github/npm-audit-baseline/*.json and a Go toolchain pin; proved on a
+  #     control dispatch against the prod ref). Not being in `needs:` is what keeps
+  #     this from being dead on arrival. Fix the baselines, THEN add
+  #     `security` here — a govulncheck red should stop a production deploy.
+  #   * integration-verify is a different workflow, so `needs:` cannot reach it. It
+  #     gates the merge, not this push.
+  #   * the production DATABASE is not migrated by anything here. That is why
+  #     scripts/ci/prod-ship-scope.sh refuses a push carrying supabase/migrations/**
+  #     instead of shipping code that expects an unapplied schema.
+  #
+  # KILL SWITCH: gh variable set PROD_BACKEND_AUTO_DEPLOY_ENABLED --body false
+  # (or the shared vars.RAILWAY_DEPLOY_ENABLED, which also stops main's chain).
+  # A FAILED deploy leaves the previous Railway deployment serving traffic, so a bad
+  # build cannot take production down; it only leaves this job red. ROLLBACK: re-run
+  # this job on an older prod push, or dispatch the manual deploy-production leg.
+  ship-scope:
+    name: production ship scope
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/prod' &&
+      vars.PROD_BACKEND_AUTO_DEPLOY_ENABLED == 'true' &&
+      vars.RAILWAY_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      ship: ${{ steps.scope.outputs.ship }}
+      reason: ${{ steps.scope.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The decision is a diff against the tip this push replaced, and a
+          # shallow clone would not contain it — the same reason the `changes` job
+          # above says fetch-depth: 0. Without it every push would take the
+          # fail-open branch and the scope gate would silently do nothing.
+          fetch-depth: 0
+      - name: Read what production serves today
+        id: served
+        # Never fails this job, and that is the point: the read only makes the
+        # decision smarter. With it, a docs-only push still ships a backend
+        # production was never handed (the merge that installs this gate, and every
+        # forgotten manual upload since). Without it the gate falls back to
+        # classifying the push — cases 14/15/19 of scripts/ci/test-prod-ship-scope.sh.
+        # A 20-second blip on a public endpoint must not turn into a red release;
+        # that is how a gate earns being switched off.
+        run: |
+          . scripts/ci/railway-urls.sh
+          base="$(railway_url production backend)"
+          served=''
+          if [ -n "$base" ]; then
+            served="$(curl -s -m 20 "$base/api/v1/public/build" | jq -r '.commit // empty' 2>/dev/null || true)"
+          fi
+          echo "served=${served:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "production backend reports ${served:-<unreadable>} from ${base:-no url in railway-urls.sh}"
+      - name: Decide whether this push ships the backend
+        id: scope
+        env:
+          BEFORE: ${{ github.event.before }}
+          SERVED: ${{ steps.served.outputs.served }}
+        run: bash scripts/ci/prod-ship-scope.sh --before "$BEFORE" --sha "$GITHUB_SHA" --serving "$SERVED"
+
+  deploy-production-backend:
+    name: deploy Production backend (automatic)
+    # The bar is: nothing in this workflow may be red, and the scope gate must say
+    # ship. `!cancelled()` is here because most lanes are conditional and GitHub
+    # skips a job whose dependency was skipped (see deploy-development). The two
+    # `contains` tests re-impose the part actually wanted — no red dependency — and
+    # they also cover a FAILED ship-scope, which is the migration refusal: a
+    # refused release must not deploy.
+    #
+    # `commerce` is in this list and in no other deploy leg, on purpose: it is a
+    # backend lane, and an unattended writer should not ship over a red one.
+    needs:
+      - frontend-web
+      - frontend-admin
+      - mobile-typecheck
+      - backend
+      - openapi
+      - migration-guard
+      - secret-hygiene
+      - live-db
+      - workflow-lint
+      - changes
+      - ship-scope
+      - association
+      - commerce
+      - connect
+      - crowdfunding
+      - crypto-backend
+      - doctor
+      - fx
+      - health
+      - insurance
+      - maps
+      - realtor
+      - referral
+      - stays
+      - top5
+      - visitor-election
+    if: >-
+      !cancelled() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') &&
+      needs.ship-scope.outputs.ship == 'true'
+    runs-on: ubuntu-latest
+    # Nine upload attempts with the measured backoff, plus a Railway build (~150 s
+    # for this image) and the read-back poll (up to 5 min). Comfortably inside this.
+    timeout-minutes: 45
+    # The `Production` environment: no required reviewers, branch policy already
+    # allows `prod`, and it is what scopes RAILWAY_TOKEN_PRODUCTION to this job.
+    environment: production
+    concurrency:
+      group: deploy-production-backend
+      cancel-in-progress: false
+    env:
+      RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      # The CLI's default HTTP timeout is 90 s; backend/ is 25.6 MB across 2594
+      # files and does not upload inside that (scripts/ci/railway-deploy.sh).
+      RAILWAY_HTTP_TIMEOUT: '600'
+      SERVICE: backend
+      RAILWAY_ENV: production
+      SHA: ${{ github.sha }}
+      # production/backend has rootDirectory unset, so the archive root must BE
+      # backend/ — THE UPLOAD RULE in scripts/ci/railway-deploy.sh, and the reason
+      # a repo-root upload here would build the monorepo and 404 everything.
+      UPLOAD_PATH: backend
+      ROOT_FLAG: --path-as-root
+      # Writes SHA into backend/BUILD_COMMIT so the image can say what it is
+      # running; the read-back step is what proves production is answering with it.
+      BUILD_DIR: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+      - name: Deploy backend to production
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+        run: bash scripts/ci/railway-deploy.sh
+      # A green job is not evidence. Poll /api/v1/public/build until production
+      # echoes THIS commit, then check /healthz and /readyz — the failure this
+      # catches is the deployment that reports SUCCESS while the old process keeps
+      # serving the traffic.
+      - name: Read back what production is serving
+        run: bash scripts/ci/railway-smoke.sh
