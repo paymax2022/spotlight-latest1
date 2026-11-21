@@ -824,16 +824,34 @@ jobs:
   #
   # WHERE THE RECONCILIATION DOES NOT REACH: this workflow ignores docs-only pushes
   # (`paths-ignore` above), so a gap is closed by the next push that touches
-  # something CI watches — not by the clock. A scheduled reconciler would close
-  # that last case too, but putting an unattended timer on production is a bigger
-  # decision than fixing the release path, so it is not made here.
+  # something CI watches — not by the clock. A `schedule:` cannot close it on this
+  # branch alone: GitHub only runs scheduled workflows from the repository's DEFAULT
+  # branch (measured 2026-11-21: `main`), so the cron would have to live there and
+  # dispatch this one, or `paths-ignore` would have to widen. Both are bigger
+  # decisions than fixing the release path, so neither is made here.
   #
   # KNOWN GAPS, on purpose, so nobody has to rediscover them:
-  #   * security.yml's five lanes are red on `prod` independently of any commit
-  #     (stale .github/npm-audit-baseline/*.json and a Go toolchain pin; proved on a
-  #     control dispatch against the prod ref). Not being in `needs:` is what keeps
-  #     this from being dead on arrival. Fix the baselines, THEN add
-  #     `security` here — a govulncheck red should stop a production deploy.
+  #   * `security` cannot be added to `needs:` — it is a DIFFERENT WORKFLOW, and
+  #     `needs:` only reaches jobs in this file (same reason as `integration-verify`
+  #     below). Gating an unattended deploy on the audits means either running them
+  #     as jobs here or having ship-scope query the check rollup for $GITHUB_SHA and
+  #     refuse on a red. Until one of those exists, this leg's bar is only the lanes
+  #     THIS file runs for the pushed paths — measured on the #1126 push: 30 jobs are
+  #     defined, 11 ran and 19 were skipped by their own `paths:` filters.
+  #   * security.yml's lanes as of the next@16.4.6 + go@1.27.4 port, measured on run
+  #     44936697456: `npm audit (frontend-web)`, `(frontend-admin)`, `gitleaks` and
+  #     BOTH `govulncheck` matrices (backend, mobile-app/reactnative/backend) are
+  #     green on prod content. `npm audit (mobile-app/reactnative)` and `trivy-fs` are
+  #     red, and the mobile red is pre-existing, not caused by this port: it reports
+  #     the same 30 advisories as prod's own earlier run 44710869964. It is NOT a
+  #     baseline problem either — prod's mobile tree predates main's expo/RN arc, so its
+  #     transitive node-forge, undici, follow-redirects and decode-uri-component sit
+  #     behind, and clearing `zod` means the 3 → 4 major main already took. Do not
+  #     baseline those 30 entries for a green badge — main proves they clear by
+  #     upgrading, and npm's own suggested fixes here are wrong twice over (it offers
+  #     `axios@0.7.0`, a 2015 downgrade, and `expo-router@58`, an SDK major). `trivy-fs`
+  #     carries `continue-on-error: true # advisory during launch`, so its row cannot
+  #     block anything even while it is red.
   #   * integration-verify is a different workflow, so `needs:` cannot reach it. It
   #     gates the merge, not this push.
   #   * the production DATABASE is not migrated by anything here. That is why
