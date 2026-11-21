@@ -7,6 +7,18 @@
 // convention and nothing else.
 
 import type { Contest, Contestant, ContestStatus, LeaderboardEntry } from '../types/voting.types';
+import { formatAmount } from '../utils/voteFormatters';
+
+/**
+ * One row of the contest's prize ladder — public.voting_contest_prizes, written by
+ * the console's prize editor and read back by Go's detail endpoint.
+ */
+export interface BackendContestPrize {
+  position: number;
+  description: string;
+  /** Null when the organizer described the prize without pricing it. */
+  value_kobo?: number | null;
+}
 
 /** One row of GET /api/v1/connect/contests/:id/contestants. */
 export interface BackendRosterEntry {
@@ -47,6 +59,47 @@ export interface BackendContest {
   rules_text?: string;
   banner_image_url?: string;
   logo_url?: string;
+  /**
+   * The two prize rails, both served by GET /contests/:id: the free-text headline
+   * from public.contests.prize_pool (the console's "Price to be won" field) and the
+   * structured per-position ladder from public.voting_contest_prizes (the console's
+   * prize editor). A contest can have either, both or neither, and the screen has one
+   * list — so prizeLines picks between them instead of printing the same promise twice.
+   */
+  prize_text?: string;
+  prizes?: BackendContestPrize[];
+}
+
+/**
+ * Turns either prize rail into the bullet lines contest-details.tsx renders.
+ *
+ * The ladder wins when it exists: it is the same promise the organizer filled in
+ * more precisely, and printing both rails would show "₦500,000" twice. Otherwise the
+ * headline is the single line — and it stays first, which is where the screen paints
+ * the gold dot.
+ *
+ * A row with neither description nor amount is dropped rather than rendered empty,
+ * and a description without an amount shows text alone — never "— ₦0", which reads as
+ * a prize worth nothing. When neither rail carries anything, the field is undefined so
+ * the section hides instead of opening on an empty card.
+ */
+function prizeLines(raw: BackendContest): string[] | undefined {
+  const ladder = (raw.prizes ?? [])
+    // Sorted here as well as in Go because the gold dot is index 0: a wire that
+    // arrives out of order would crown the runner-up and every layer below it
+    // reports success. Cheap guarantee, not a workaround.
+    .slice()
+    .sort((a, b) => (a?.position ?? 0) - (b?.position ?? 0))
+    .map((p) => {
+      const text = (p?.description ?? '').trim();
+      const kobo = typeof p?.value_kobo === 'number' && p.value_kobo > 0 ? p.value_kobo : null;
+      const amount = kobo === null ? '' : formatAmount(kobo);
+      return text && amount ? `${text} — ${amount}` : text || amount;
+    })
+    .filter(Boolean);
+  if (ladder.length) return ladder;
+  const headline = (raw.prize_text ?? '').trim();
+  return headline ? [headline] : undefined;
 }
 
 /**
@@ -90,6 +143,7 @@ export function mapContest(
     rulesText: raw.rules_text || undefined,
     bannerImage: raw.banner_image_url || undefined,
     logoImage: raw.logo_url || undefined,
+    prizes: prizeLines(raw),
   };
 }
 
