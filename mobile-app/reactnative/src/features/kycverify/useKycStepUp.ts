@@ -37,11 +37,20 @@ export interface KycStepUp {
   open: (resume?: ResumeTarget) => void;
 }
 
-export function useKycStepUp(requiredTier: Exclude<KycTier, 0>): KycStepUp {
+export function useKycStepUp(
+  requiredTier: Exclude<KycTier, 0>,
+  opts: { lazy?: boolean } = {},
+): KycStepUp {
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['kyc', 'me'],
     queryFn: getKycProfile,
     staleTime: 30_000,
+    // A caller that only ever uses `open()` — a call-to-action that walks into
+    // verification whatever the tier says — must not pay for the tier read on
+    // mount: it is a network round trip whose answer nobody on that screen reads,
+    // and a mid-transfer member should not be waiting on it. `ensure()`/`check()`
+    // still fetch on demand regardless of this flag.
+    enabled: !opts.lazy,
   });
   const pathname = usePathname();
   const globalParams = useGlobalSearchParams();

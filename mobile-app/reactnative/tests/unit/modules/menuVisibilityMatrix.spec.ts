@@ -23,6 +23,9 @@ const VISIBLE_IN_STAGING = [
   'crypto', 'education', 'naija-driver', 'film-academy',
   'connect', 'marketplace',
   'contest', 'property',
+  // The landing row's contest sections ride `voteBridge` (serviceModuleKeys.ts),
+  // which staging publishes, so the shelf is live with the voting engine.
+  'open-mic', 'talent-hunt', 'rising-star',
 ] as const;
 
 // Reconciled with #996: these two are coming-soon placeholders, not published

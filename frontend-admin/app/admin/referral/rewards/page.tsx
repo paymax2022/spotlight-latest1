@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { listRewardLedger, manualGrant, formatNaira } from '@/services/referralAdminService';
 import type { RewardLedgerEntry, RewardKind } from '@/types/referralAdmin';
-import { ReferralTabs, timeAgo } from '../_ui';
+import { ReferralTabs, errorMessage, timeAgo, textOrDash } from '../_ui';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATES = ['all', 'earned', 'pending', 'vesting', 'eligible', 'paid', 'clawed_back'];
@@ -37,7 +37,7 @@ export default function RewardLedgerPage() {
   async function load() {
     setLoading(true); setError(null);
     try { setRows(await listRewardLedger(filters)); }
-    catch (e) { setError(String(e)); }
+    catch (e) { setError(errorMessage(e)); }
     finally { setLoading(false); }
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filters]);
@@ -84,7 +84,7 @@ export default function RewardLedgerPage() {
                     {rows.map((r) => (
                       <tr key={r.id}>
                         <td style={tdCell}><code style={{ fontSize: 12 }}>{r.id}</code></td>
-                        <td style={tdCell}><code style={{ fontSize: 13 }}>{r.beneficiary_id}</code>{r.is_house && <> <Badge text="house" color={badgeColor('house')} /></>}</td>
+                        <td style={tdCell}><code style={{ fontSize: 13 }}>{textOrDash(r.beneficiary_id)}</code>{r.is_house && <> <Badge text="house" color={badgeColor('house')} /></>}</td>
                         <td style={tdCell}><Badge text={r.kind} color={badgeColor('normal')} /></td>
                         <td style={tdCell}>{formatNaira(r.amount_kobo)}</td>
                         <td style={tdCell}><Badge text={r.state.replace(/_/g, ' ')} color={badgeColor(r.state)} /></td>
@@ -121,7 +121,7 @@ function ManualGrantForm({ onDone }: { onDone: () => void }) {
     try {
       await manualGrant({ beneficiary_id: beneficiary.trim(), amount_kobo: Math.round(Number(naira) * 100), kind, reason: reason.trim() });
       onDone();
-    } catch (err) { setError(String(err)); setBusy(false); }
+    } catch (err) { setError(errorMessage(err)); setBusy(false); }
   }
 
   return (
@@ -138,7 +138,7 @@ function ManualGrantForm({ onDone }: { onDone: () => void }) {
           <div style={{ gridColumn: '1 / -1' }}><label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Reason (required, audited)</label><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Goodwill — disputed claim resolved in user's favour" /></div>
         </div>
         {error && <p style={{ color: colors.danger }}>{error}</p>}
-        <p style={{ fontSize: 12, color: colors.muted }}>A manual grant posts a balanced double-entry ledger record with an Idempotency-Key and emits an audit event (money iron rules).</p>
+        <p style={{ fontSize: 12, color: colors.muted }}>A manual grant must post a balanced double-entry ledger record with an Idempotency-Key and emit an audit event (money iron rules). No route in backend/internal/referral lets an admin create a reward row yet, so this form refuses rather than writing one to the database directly — use it while the console runs on fixtures, and see docs/ops/admin-pages-to-backend-flags.md for the endpoint that needs to exist.</p>
         <Button variant="primary" type="submit" disabled={busy}>{busy ? 'Granting…' : 'Post grant'}</Button>
       </form>
     </Card>

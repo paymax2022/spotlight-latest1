@@ -49,8 +49,6 @@ const guardianConsentFields: RegistrationField[] = [
 ];
 
 const identityFields: RegistrationField[] = [
-  { key: 'identity.idType', label: 'ID type', type: 'select', options: ['National ID', 'School ID', 'International passport', 'Birth certificate', 'Other approved ID'], required: true },
-  { key: 'identity.idUpload', label: 'ID upload', type: 'file', required: true, accept: '.jpg,.jpeg,.png,.pdf' },
   { key: 'identity.schoolId', label: 'School ID (student category)', type: 'file', accept: '.jpg,.jpeg,.png,.pdf' },
 ];
 

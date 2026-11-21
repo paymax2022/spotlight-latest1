@@ -23,8 +23,14 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 // Modules that legitimately have NO backend yet and may run on mock in production.
 // BURN THIS DOWN: when a backend lands, set the flag to 'false' (live) and delete
 // the entry here. { FLAG: reason }
+//
+// NEXT_PUBLIC_FX_ADMIN_USE_MOCK was here until 2026-11-20 and is gone on purpose:
+// the FX console's pricing rail (GET/PUT /api/finance/admin/fx/markup) is the
+// table the quote engine prices from, so FX must resolve live, and the tabs that
+// still have no Go route now say so on screen. Allowlisting the flag instead kept
+// shipping hardcoded exposure, float and margin figures to operators unlabelled.
+// Re-adding it is a decision to fabricate money data in production, not a fix.
 const MOCK_ALLOWLIST = {
-  NEXT_PUBLIC_FX_ADMIN_USE_MOCK: 'FX admin endpoints not built yet (mock-only).',
   NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK: 'Groups (savings pools) has NO admin route group in Go — only 5 member endpoints exist under /api/finance/groups. The pages render a SampleDataBanner while this is allowlisted.',
 };
 

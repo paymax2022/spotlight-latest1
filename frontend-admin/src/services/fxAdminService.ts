@@ -1,13 +1,38 @@
-// Mock-backed EXCEPT for the overview. The overview has a real backend
-// (GET /api/finance/admin/fx/overview, RBAC finance.admin.fx_ops) and is
-// deliberately NOT mock-gated: fabricated GMV/margin on a money screen is
-// indistinguishable from real figures, so that page fails loud instead of
-// inventing numbers. Every other surface below still has no Go backend
-// (/api/fx/admin/... is not registered anywhere; the closest real mount is
-// /api/finance/admin/fx). Shaped after crowdfundingAdminService / fintechService
-// so that once the rest of the admin surface exists, only the fetch needs
-// changing — but until then every mutation below refuses honestly rather than
-// reporting a success it did not perform. All money is integer minor units.
+// Which FX surfaces are REAL on the Go backend, and which are not — probed
+// unauthenticated against both deployed planes (401 = route registered, 404 =
+// not mounted), 2026-11-20:
+//
+//   REAL ON PROD AND DEV  /api/finance/admin/fx/markup (GET/PUT) and
+//                         /markup/audit — fx.MarkupHandler over
+//                         public.fx_markup_rates. This is the LIVE pricing
+//                         rail: the orchestrator resolves a quote's spread
+//                         from that table on every request, so an edit here
+//                         changes what the next customer is charged with no
+//                         restart and no cache. getSpreadRules /
+//                         updateSpreadRule are deliberately NOT mock-gated:
+//                         a fabricated bps on a pricing screen is
+//                         indistinguishable from the real one.
+//   IN MAIN, NOT DEPLOYED /api/finance/admin/fx/overview, /verifications and
+//                         /verifications/:customerId/decision (RBAC
+//                         finance.admin.fx_ops). They 404 on prod AND dev
+//                         because they sit inside the orchestration block of a
+//                         build neither plane runs yet. getOverview and the KYC
+//                         queue stay pointed at them and fail loud.
+//   CUSTOMER-SCOPED       /api/v1/fx/* (rates, balances, transactions, cards,
+//                         settings…). Mounted on prod, not on dev. Every read is
+//                         filtered by the CALLER's user id, so these are the
+//                         customer's own rails — they cannot answer "what is the
+//                         platform book", which is what this console asks.
+//   NO BACKEND AT ALL     routing, providers, treasury, recon, customers,
+//                         compliance, webhook endpoints/deliveries/api-keys,
+//                         analytics, collections, cards, settings catalogue.
+//                         No Go route exists for any of them; the admin surface
+//                         has to be built. Live, each one answers 404, and
+//                         readLive() rejects with the backend's own "No API route
+//                         matches GET …" rather than handing that body to the page
+//                         as if it were the data the page asked for.
+//
+// All money is integer minor units.
 import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import { resolveUseMock } from '@/config/useMock';
@@ -25,7 +50,12 @@ import type {
   FxSettingsCatalogue,
 } from '@/types/fxAdmin';
 
-// control-plane endpoints are live on the Go backend.
+// Samples are a DEVELOPMENT affordance and nothing else. Unset resolves live in
+// production and mock in development (src/config/useMock.ts), and the shipped
+// image builds with the flag false (frontend-admin/Dockerfile), so an operator's
+// screen is always the live branch. What a developer sees locally is the
+// fixture below each `if (USE_MOCK)`. Pricing is the exception — see
+// getSpreadRules, which ignores this flag entirely.
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_FX_ADMIN_USE_MOCK);
 
 function adminBase(): string {
@@ -37,14 +67,15 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
-// Unlike association/restaurant, there is NO backend for any FX admin write —
-// this console's surface (routing/providers/treasury/spread/recon/customers/
-// compliance/webhooks/cards/settings) does not exist anywhere in the Go
-// /api/finance/admin/fx/markup, a different, narrower surface — see adminBase()
-// real endpoint" escape hatch here — flipping that flag was ALSO dishonest:
-// every "live" branch below called fetch(...) and then returned// `{ ok: true }` unconditionally, discarding the response and its status code,
-// so a 404 (the only possible outcome today) was reported as success too.
-// Both paths now fail honestly instead of fabricating a result. See
+// There is still no backend for any FX admin WRITE outside the markup rail:
+// routing, providers, treasury, recon, customers, compliance, webhooks, cards
+// and settings are not registered on the Go service at all.
+//
+// NO_BACKEND_YET is what the MOCK branch says, and it replaced something worse:
+// every mutation used to answer `{ ok: true }` without looking at the response,
+// so a 404 was reported to the operator as a successful write. Both branches now
+// fail honestly — this string in development, the backend's own refusal in
+// production, where writeLive() throws on any non-2xx. See
 // docs/audit/ADMIN_SIMULATED_WRITES.md.
 const NO_BACKEND_YET =
   'has no backend yet: this surface does not exist on the Go service (only ' +
@@ -53,12 +84,46 @@ const NO_BACKEND_YET =
 async function reqLive<T>(url: string, init: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
+  if (!res.ok) throw new Error(serverMessage(body) || `Request failed (${res.status})`);
   return (body?.data ?? body) as T;
 }
 async function writeLive(url: string, init: RequestInit): Promise<{ ok: boolean }> {
   await reqLive(url, init);
   return { ok: true };
+}
+
+/**
+ * serverMessage pulls the operator-facing sentence out of either error envelope
+ * this backend can answer with: the orchestration rail's
+ * {error:{type,code,message}} object, or the {error:"..."} string the finance
+ * handlers post through httperr.Msg. Never return the raw body: on a 404 the
+ * proxy hands back Go's route-not-matched object, and a caller that renders or
+ * maps that is what turns a missing endpoint into "This page couldn't load".
+ */
+function serverMessage(body: unknown): string | null {
+  const err = (body as { error?: unknown } | null)?.error;
+  if (typeof err === 'string' && err.trim()) return err;
+  const message = (err as { message?: unknown } | null)?.message;
+  if (typeof message === 'string' && message.trim()) return message;
+  return null;
+}
+
+/**
+ * readLive is the ONLY way this file may read the backend in live mode.
+ *
+ * The calls it replaces did `const res = await fetch(...); return res.json()` —
+ * no status check. Every one of those surfaces answers 404 today, so the promise
+ * resolved with an error object (or with the proxy's HTML, which json() rejects
+ * outright) and the page dereferenced it as if it were data. A guard that throws
+ * is what makes the console print a real sentence instead of crashing.
+ */
+async function readLive<T>(url: string): Promise<T> {
+  return reqLive<T>(url, { headers: authHeaders() });
+}
+
+/** Live-mode refusal for a surface the Go service does not serve at all. */
+function noBackend(action: string): never {
+  throw new Error(`${action} ${NO_BACKEND_YET}`);
 }
 
 const TXNS: FxTxDetail[] = [
@@ -160,13 +225,6 @@ const REBALANCES: RebalanceEvent[] = [
   { id: 'rb2', from: 'vertofx', to: 'eversend', currency: 'NGN', amountMinor: 80_000_000_00, path: 'fiat', status: 'pending', createdAt: '2026-06-19T09:30:00Z' },
 ];
 
-const SPREADS: SpreadRule[] = [
-  { id: 'sp1', corridor: 'USD-NGN', tier: 'Retail', bps: 120, fixedMinor: 0, minBps: 80, maxBps: 200, version: 4, updatedAt: '2026-06-15T12:00:00Z', active: true },
-  { id: 'sp2', corridor: 'USD-NGN', tier: 'Business', bps: 75, fixedMinor: 0, minBps: 50, maxBps: 150, version: 2, updatedAt: '2026-06-12T12:00:00Z', active: true },
-  { id: 'sp3', corridor: 'USD-XAF', tier: 'Retail', bps: 150, fixedMinor: 50, minBps: 100, maxBps: 250, version: 1, updatedAt: '2026-06-10T12:00:00Z', active: true },
-  { id: 'sp4', corridor: 'EUR-NGN', tier: 'Retail', bps: 110, fixedMinor: 0, minBps: 80, maxBps: 180, version: 3, updatedAt: '2026-06-14T12:00:00Z', active: false },
-];
-
 const RECON_RUNS: ReconRun[] = [
   { id: 'run1', provider: 'eversend', date: '2026-06-18', matched: 642, breaks: 1, status: 'breaks' },
   { id: 'run2', provider: 'vertofx', date: '2026-06-18', matched: 511, breaks: 2, status: 'breaks' },
@@ -179,16 +237,18 @@ const RECON_BREAKS: ReconBreak[] = [
   { id: 'bk3', runId: 'run2', provider: 'vertofx', reference: 'PMX-CV-90044', type: 'timing', expectedMinor: 0, actualMinor: 0, currency: 'USD', status: 'open', createdAt: '2026-06-18T23:20:00Z' },
 ];
 
-// Live, always — see the file header. The backend answers with the standard
-// {data} envelope and an {error:{message}} envelope on failure.
+/**
+ * The platform FX book: GMV, margin, success/failure rates, float health,
+ * reconciliation breaks, breaker state. GET /api/finance/admin/fx/overview.
+ *
+ * Live and never mocked — a fabricated 0 on a money screen reads as "all clear".
+ * The route exists in main (orch.AdminOverview, RBAC finance.admin.fx_ops) but in
+ * neither deployed binary, so today this rejects with Go's own
+ * "No API route matches GET …overview", which is the true statement and the
+ * operator's clue; it starts working the moment the backend carries main.
+ */
 export async function getOverview(): Promise<FxOverview> {
-  const res = await fetch(`${adminBase()}/overview`, { headers: authHeaders() });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    const message = (body as { error?: { message?: string } } | null)?.error?.message;
-    throw new Error(message || `Overview request failed (${res.status})`);
-  }
-  return ((body as { data?: FxOverview } | null)?.data ?? body) as FxOverview;
+  return readLive<FxOverview>(`${adminBase()}/overview`);
 }
 
 /**
@@ -199,27 +259,17 @@ export async function getOverview(): Promise<FxOverview> {
  */
 export async function getKycQueue(status?: FxKycSubmission['status']): Promise<FxKycSubmission[]> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : '';
-  const res = await fetch(`${adminBase()}/verifications${qs}`, { headers: authHeaders() });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    const message = (body as { error?: { message?: string } } | null)?.error?.message;
-    throw new Error(message || `KYC queue request failed (${res.status})`);
-  }
-  return ((body as { data?: FxKycSubmission[] } | null)?.data ?? []) as FxKycSubmission[];
+  const rows = await readLive<FxKycSubmission[]>(`${adminBase()}/verifications${qs}`);
+  return Array.isArray(rows) ? rows : [];
 }
 
 /** Approve or reject one submission. A rejection must carry the reason the customer will see. */
 export async function decideKyc(customerId: string, decision: FxKycDecision, reason?: string): Promise<void> {
-  const res = await fetch(`${adminBase()}/verifications/${encodeURIComponent(customerId)}/decision`, {
+  await writeLive(`${adminBase()}/verifications/${encodeURIComponent(customerId)}/decision`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({ status: decision, reason: reason ?? '' }),
   });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    const message = (body as { error?: { message?: string } } | null)?.error?.message;
-    throw new Error(message || `KYC decision failed (${res.status})`);
-  }
 }
 
 export async function getTransactions(filter?: FxTxFilter): Promise<FxTxSummary[]> {
@@ -236,8 +286,7 @@ export async function getTransactions(filter?: FxTxFilter): Promise<FxTxSummary[
     }
     return list.map(({ rail, quotedRate, executedRate, fees, providerRef, customerEmail, narration, statusHistory, scoring, failureReason, ...s }) => s);
   }
-  const res = await fetch(`${adminBase()}/transactions`, { headers: authHeaders() });
-  return res.json();
+  return readLive<FxTxSummary[]>(`${adminBase()}/transactions`);
 }
 
 export async function getTransaction(id: string): Promise<FxTxDetail> {
@@ -247,94 +296,174 @@ export async function getTransaction(id: string): Promise<FxTxDetail> {
     if (!found) throw new Error('Transaction not found');
     return found;
   }
-  const res = await fetch(`${adminBase()}/transactions/${id}`, { headers: authHeaders() });
-  return res.json();
+  return readLive<FxTxDetail>(`${adminBase()}/transactions/${id}`);
 }
 
 export async function retryTransaction(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Retrying a transaction ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Retrying a transaction');
   return writeLive(`${adminBase()}/transactions/${id}/retry`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:transaction-retry', id) } });
 }
 
 export async function forceReverseTransaction(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Reversing a transaction ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Reversing a transaction');
   return writeLive(`${adminBase()}/transactions/${id}/reverse`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:transaction-reverse', id) } });
 }
 
 export async function getRoutingWeights(): Promise<RoutingWeights[]> {
   if (USE_MOCK) { await delay(); return WEIGHTS; }
-  const res = await fetch(`${adminBase()}/routing`, { headers: authHeaders() });
-  return res.json();
+  return readLive<RoutingWeights[]>(`${adminBase()}/routing`);
 }
 
 export async function saveRoutingWeights(rows: RoutingWeights[]): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Saving routing weights ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Saving routing weights');
   return writeLive(`${adminBase()}/routing`, { method: 'PUT', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:routing-save') }, body: JSON.stringify(rows) });
 }
 
 export async function simulateRoute(corridor: string, amountUsdCents: number): Promise<RouteSimResult> {
-  if (USE_MOCK) throw new Error(`Simulating a route ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Simulating a route');
   return reqLive<RouteSimResult>(`${adminBase()}/routing/simulate`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:route-simulate', corridor) }, body: JSON.stringify({ corridor, amountUsdCents }) });
 }
 
 export async function getProviders(): Promise<ProviderConfig[]> {
   if (USE_MOCK) { await delay(); return PROVIDERS; }
-  const res = await fetch(`${adminBase()}/providers`, { headers: authHeaders() });
-  return res.json();
+  return readLive<ProviderConfig[]>(`${adminBase()}/providers`);
 }
 
 export async function toggleProvider(provider: Provider, enabled: boolean): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Toggling a provider ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Toggling a provider');
   return writeLive(`${adminBase()}/providers/${provider}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:provider-toggle', provider) }, body: JSON.stringify({ enabled }) });
 }
 
 export async function setBreaker(provider: Provider, state: ProviderConfig['breaker']): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Setting a provider breaker ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Setting a provider breaker');
   return writeLive(`${adminBase()}/providers/${provider}/breaker`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:provider-breaker', provider) }, body: JSON.stringify({ state }) });
 }
 
 export async function getFloats(): Promise<FloatBucket[]> {
   if (USE_MOCK) { await delay(); return FLOATS; }
-  const res = await fetch(`${adminBase()}/treasury/floats`, { headers: authHeaders() });
-  return res.json();
+  return readLive<FloatBucket[]>(`${adminBase()}/treasury/floats`);
 }
 
 export async function getRebalances(): Promise<RebalanceEvent[]> {
   if (USE_MOCK) { await delay(); return REBALANCES; }
-  const res = await fetch(`${adminBase()}/treasury/rebalances`, { headers: authHeaders() });
-  return res.json();
+  return readLive<RebalanceEvent[]>(`${adminBase()}/treasury/rebalances`);
 }
 
 export async function rebalanceNow(bucket: FloatBucket, path: 'fiat' | 'stablecoin'): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Rebalancing treasury ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Rebalancing treasury');
   return writeLive(`${adminBase()}/treasury/rebalance`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:treasury-rebalance', bucket.provider, bucket.currency) }, body: JSON.stringify({ provider: bucket.provider, currency: bucket.currency, path }) });
 }
 
-export async function getSpreadRules(): Promise<SpreadRule[]> {
-  if (USE_MOCK) { await delay(); return SPREADS; }
-  const res = await fetch(`${adminBase()}/spread`, { headers: authHeaders() });
-  return res.json();
+/**
+ * One row of public.fx_markup_rates as GET /api/finance/admin/fx/markup returns
+ * it ({data: [...]}). Operators work in PERCENT, the store keeps integer BPS, and
+ * ratePercent is the exact string form of that conversion — so the number on the
+ * screen is the number that prices the next quote.
+ */
+interface MarkupRateRow {
+  id: string;
+  corridor: string;
+  tier: string;
+  rateBps: number;
+  ratePercent: string;
+  active: boolean;
+  notes?: string;
+  updatedAt: string;
+  createdAt: string;
 }
 
-export async function updateSpreadRule(id: string, patch: Partial<SpreadRule>): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Updating a spread rule ${NO_BACKEND_YET}`);
-  return writeLive(`${adminBase()}/spread/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:spread-update', id) }, body: JSON.stringify(patch) });
+/**
+ * fx.MaxMarkupBPS — the 10% fat-finger ceiling the table itself CHECKs. The list
+ * projection has no per-row band, so the console guards against that ceiling
+ * rather than inventing min/max numbers it cannot show are real.
+ */
+const MAX_MARKUP_BPS = 1000;
+
+/**
+ * LIVE, ALWAYS: the markup registry the orchestrator prices from.
+ *
+ * Not mock-gated on purpose. public.fx_markup_rates is the production
+ * MarkupResolver — FeeMinor reads the corridor's row on every quote (ADR-032),
+ * so this is the realtime provider-pricing surface, and a fixture here would put
+ * a made-up spread next to the one customers are actually charged.
+ */
+export async function getSpreadRules(): Promise<SpreadRule[]> {
+  const rows = await readLive<MarkupRateRow[] | null>(`${adminBase()}/markup`);
+  return (rows ?? []).map((r) => ({
+    id: r.id,
+    corridor: r.corridor,
+    tier: r.tier || 'any',
+    bps: r.rateBps,
+    // This rail prices a percentage only — there is no fixed-fee column to show.
+    fixedMinor: 0,
+    minBps: 0,
+    maxBps: MAX_MARKUP_BPS,
+    updatedAt: r.updatedAt,
+    active: r.active,
+  }));
+}
+
+/**
+ * PUT /api/finance/admin/fx/markup upserts by (corridor, tier), so the write
+ * needs those two keys rather than the row id the GET happens to return.
+ * bps travels back as the exact percent string the store parses (PercentToBPS
+ * keeps "1.15" as 115 bps; a float would land on 114.999…).
+ */
+export async function updateSpreadRule(
+  target: { corridor: string; tier?: string },
+  patch: { bps?: number; active?: boolean },
+): Promise<{ ok: boolean }> {
+  const body: Record<string, unknown> = {
+    corridor: target.corridor,
+    tier: target.tier && target.tier !== 'any' ? target.tier : '',
+  };
+  if (patch.bps !== undefined) body.ratePercent = (patch.bps / 100).toFixed(2);
+  if (patch.active !== undefined) body.active = patch.active;
+  return writeLive(`${adminBase()}/markup`, {
+    method: 'PUT',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:spread-update', target.corridor, body.tier as string) },
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * GET /api/finance/admin/fx/markup/audit?corridor=&limit= — the immutable
+ * before/after record of every rate change (fx.MarkupAudit). This is the surface
+ * that makes "each change is audit-logged" a checkable claim rather than copy.
+ */
+export async function getSpreadAudit(corridor?: string): Promise<MarkupAuditRow[]> {
+  const qs = corridor ? `?corridor=${encodeURIComponent(corridor)}` : '';
+  const rows = await readLive<MarkupAuditRow[] | null>(`${adminBase()}/markup/audit${qs}`);
+  return rows ?? [];
+}
+
+export interface MarkupAuditRow {
+  id: string;
+  corridor: string;
+  tier: string;
+  beforeBps?: number | null;
+  beforePercent?: string;
+  afterBps: number;
+  afterPercent: string;
+  beforeActive?: boolean | null;
+  afterActive: boolean;
+  changedBy?: string;
+  note?: string;
+  changedAt: string;
 }
 
 export async function getReconRuns(): Promise<ReconRun[]> {
   if (USE_MOCK) { await delay(); return RECON_RUNS; }
-  const res = await fetch(`${adminBase()}/recon/runs`, { headers: authHeaders() });
-  return res.json();
+  return readLive<ReconRun[]>(`${adminBase()}/recon/runs`);
 }
 
 export async function getReconBreaks(): Promise<ReconBreak[]> {
   if (USE_MOCK) { await delay(); return RECON_BREAKS; }
-  const res = await fetch(`${adminBase()}/recon/breaks`, { headers: authHeaders() });
-  return res.json();
+  return readLive<ReconBreak[]>(`${adminBase()}/recon/breaks`);
 }
 
 export async function resolveReconBreak(id: string, status: ReconBreak['status']): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Resolving a reconciliation break ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Resolving a reconciliation break');
   return writeLive(`${adminBase()}/recon/breaks/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:recon-break-resolve', id) }, body: JSON.stringify({ status }) });
 }
 
@@ -369,8 +498,7 @@ export async function getCustomers(): Promise<AdminCustomer[]> {
     await delay();
     return CUSTOMERS.map(({ documents, directors, rcNumber, riskScore, notes, ...c }) => c);
   }
-  const res = await fetch(`${adminBase()}/customers`, { headers: authHeaders() });
-  return res.json();
+  return readLive<AdminCustomer[]>(`${adminBase()}/customers`);
 }
 
 export async function getCustomer(id: string): Promise<CustomerDetail> {
@@ -380,12 +508,11 @@ export async function getCustomer(id: string): Promise<CustomerDetail> {
     if (!c) throw new Error('Customer not found');
     return c;
   }
-  const res = await fetch(`${adminBase()}/customers/${id}`, { headers: authHeaders() });
-  return res.json();
+  return readLive<CustomerDetail>(`${adminBase()}/customers/${id}`);
 }
 
 export async function setCustomerVerification(id: string, verification: CustomerVerification): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Setting customer verification ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Setting customer verification');
   return writeLive(`${adminBase()}/customers/${id}/verification`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:customer-verification', id) }, body: JSON.stringify({ verification }) });
 }
 
@@ -398,12 +525,11 @@ const ALERTS: ScreeningAlert[] = [
 
 export async function getScreeningAlerts(): Promise<ScreeningAlert[]> {
   if (USE_MOCK) { await delay(); return ALERTS; }
-  const res = await fetch(`${adminBase()}/compliance/alerts`, { headers: authHeaders() });
-  return res.json();
+  return readLive<ScreeningAlert[]>(`${adminBase()}/compliance/alerts`);
 }
 
 export async function setAlertStatus(id: string, status: CaseStatus, reason?: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Setting an alert status ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Setting an alert status');
   return writeLive(`${adminBase()}/compliance/alerts/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:alert-status', id) }, body: JSON.stringify({ status, reason }) });
 }
 
@@ -427,30 +553,27 @@ const API_KEYS: ApiKey[] = [
 
 export async function getWebhookEndpoints(): Promise<WebhookEndpoint[]> {
   if (USE_MOCK) { await delay(); return ENDPOINTS; }
-  const res = await fetch(`${adminBase()}/webhooks/endpoints`, { headers: authHeaders() });
-  return res.json();
+  return readLive<WebhookEndpoint[]>(`${adminBase()}/webhooks/endpoints`);
 }
 
 export async function getWebhookDeliveries(): Promise<WebhookDelivery[]> {
   if (USE_MOCK) { await delay(); return DELIVERIES; }
-  const res = await fetch(`${adminBase()}/webhooks/deliveries`, { headers: authHeaders() });
-  return res.json();
+  return readLive<WebhookDelivery[]>(`${adminBase()}/webhooks/deliveries`);
 }
 
 export async function replayDelivery(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Replaying a webhook delivery ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Replaying a webhook delivery');
   return writeLive(`${adminBase()}/webhooks/deliveries/${id}/replay`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:webhook-replay', id) } });
 }
 
 export async function toggleEndpoint(id: string, enabled: boolean): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Toggling a webhook endpoint ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Toggling a webhook endpoint');
   return writeLive(`${adminBase()}/webhooks/endpoints/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:webhook-endpoint-toggle', id) }, body: JSON.stringify({ enabled }) });
 }
 
 export async function getApiKeys(): Promise<ApiKey[]> {
   if (USE_MOCK) { await delay(); return API_KEYS; }
-  const res = await fetch(`${adminBase()}/webhooks/api-keys`, { headers: authHeaders() });
-  return res.json();
+  return readLive<ApiKey[]>(`${adminBase()}/webhooks/api-keys`);
 }
 
 export async function getAnalytics(): Promise<FxAnalytics> {
@@ -479,8 +602,7 @@ export async function getAnalytics(): Promise<FxAnalytics> {
       ],
     };
   }
-  const res = await fetch(`${adminBase()}/analytics`, { headers: authHeaders() });
-  return res.json();
+  return readLive<FxAnalytics>(`${adminBase()}/analytics`);
 }
 
 const VA_REGISTRY: VirtualAccountReg[] = [
@@ -503,18 +625,15 @@ const BEN_ISSUES: BeneficiaryValidationIssue[] = [
 
 export async function getVaRegistry(): Promise<VirtualAccountReg[]> {
   if (USE_MOCK) { await delay(); return VA_REGISTRY; }
-  const res = await fetch(`${adminBase()}/collections/registry`, { headers: authHeaders() });
-  return res.json();
+  return readLive<VirtualAccountReg[]>(`${adminBase()}/collections/registry`);
 }
 export async function getCollectionEvents(): Promise<AdminCollectionEvent[]> {
   if (USE_MOCK) { await delay(); return COLLECTION_EVENTS; }
-  const res = await fetch(`${adminBase()}/collections/events`, { headers: authHeaders() });
-  return res.json();
+  return readLive<AdminCollectionEvent[]>(`${adminBase()}/collections/events`);
 }
 export async function getBeneficiaryIssues(): Promise<BeneficiaryValidationIssue[]> {
   if (USE_MOCK) { await delay(); return BEN_ISSUES; }
-  const res = await fetch(`${adminBase()}/collections/beneficiary-issues`, { headers: authHeaders() });
-  return res.json();
+  return readLive<BeneficiaryValidationIssue[]>(`${adminBase()}/collections/beneficiary-issues`);
 }
 
 const ISSUED_CARDS: IssuedCard[] = [
@@ -530,17 +649,15 @@ const SUSPICIOUS: SuspiciousCardActivity[] = [
 
 export async function getIssuedCards(): Promise<IssuedCard[]> {
   if (USE_MOCK) { await delay(); return ISSUED_CARDS; }
-  const res = await fetch(`${adminBase()}/cards`, { headers: authHeaders() });
-  return res.json();
+  return readLive<IssuedCard[]>(`${adminBase()}/cards`);
 }
 export async function setIssuedCardStatus(id: string, status: IssuedCardStatus): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Setting an issued card status ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Setting an issued card status');
   return writeLive(`${adminBase()}/cards/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:card-status', id) }, body: JSON.stringify({ status }) });
 }
 export async function getSuspiciousCardActivity(): Promise<SuspiciousCardActivity[]> {
   if (USE_MOCK) { await delay(); return SUSPICIOUS; }
-  const res = await fetch(`${adminBase()}/cards/suspicious`, { headers: authHeaders() });
-  return res.json();
+  return readLive<SuspiciousCardActivity[]>(`${adminBase()}/cards/suspicious`);
 }
 
 const CATALOGUE: FxSettingsCatalogue = {
@@ -582,21 +699,20 @@ const CATALOGUE: FxSettingsCatalogue = {
 
 export async function getCatalogue(): Promise<FxSettingsCatalogue> {
   if (USE_MOCK) { await delay(); return CATALOGUE; }
-  const res = await fetch(`${adminBase()}/settings/catalogue`, { headers: authHeaders() });
-  return res.json();
+  return readLive<FxSettingsCatalogue>(`${adminBase()}/settings/catalogue`);
 }
 
 export async function toggleFlag(key: string, enabled: boolean): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Toggling a feature flag ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Toggling a feature flag');
   return writeLive(`${adminBase()}/settings/flags/${key}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:flag-toggle', key) }, body: JSON.stringify({ enabled }) });
 }
 
 export async function toggleCorridor(corridor: string, enabled: boolean): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Toggling a corridor ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Toggling a corridor');
   return writeLive(`${adminBase()}/settings/corridors/${corridor}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:corridor-toggle', corridor) }, body: JSON.stringify({ enabled }) });
 }
 
 export async function toggleCurrency(code: string, enabled: boolean): Promise<{ ok: boolean }> {
-  if (USE_MOCK) throw new Error(`Toggling a currency ${NO_BACKEND_YET}`);
+  if (USE_MOCK) noBackend('Toggling a currency');
   return writeLive(`${adminBase()}/settings/currencies/${code}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:currency-toggle', code) }, body: JSON.stringify({ enabled }) });
 }

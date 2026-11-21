@@ -14,6 +14,11 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { resolveCategoryLabel } from '@/src/server/contests/categories';
+import {
+  contestScheduleColumns,
+  readContestSchedule,
+  type ContestSchedule,
+} from '@/src/server/contests/schedule';
 import type { ContestRegistrationDefinition } from '@/src/features/registration/types';
 
 // Lazy + memoized for the same reason as supabase-store: a module-level
@@ -62,6 +67,18 @@ export function categoryLabel(slug: string): string {
 export async function resolveContestCategoryLabel(slug: string): Promise<string> {
   const managed = await resolveCategoryLabel(slug);
   return managed ?? categoryLabel(slug);
+}
+
+/**
+ * The schedule a definition states, defaulting to "no bounds, no prize".
+ *
+ * An INSERT has no prior row to preserve, so a definition that omits the fields
+ * means the same as one that submits them empty. UPDATE takes the other path and
+ * omits the columns entirely — see updateContestDefinition.
+ */
+function scheduleOrDefault(def: ContestRegistrationDefinition): ContestSchedule {
+  return readContestSchedule(def as unknown as Record<string, unknown>)
+    ?? { startDate: null, endDate: null, prizePool: '' };
 }
 
 /**
@@ -124,6 +141,13 @@ export async function persistContestDefinition(
       rules_text: def.rulesText?.trim() || '',
       banner_image_url: def.bannerImageUrl?.trim() || '',
       logo_url: def.logoUrl?.trim() || '',
+      // The schedule and the prize go on the ROW, not only into contest_config.
+      // start_date/end_date are what 20261223000000 mirrors into
+      // connect_contests.opens_at/closes_at (mobile's voting window) and
+      // prize_pool is what /api/v1/contests/:id returns — neither reads the JSON
+      // snapshot, so writing only the snapshot would show a deadline in the
+      // console while every app kept treating the contest as open-ended.
+      ...contestScheduleColumns(scheduleOrDefault(def)),
       contest_config: def as unknown as Record<string, unknown>,
     })
     .select('id')
@@ -147,6 +171,10 @@ export async function updateContestDefinition(
   currentSlug: string,
   def: ContestRegistrationDefinition,
 ): Promise<void> {
+  // Absent schedule keys mean "this caller does not manage the schedule", and an
+  // UPDATE that wrote null over them would close a deadline nobody touched. An
+  // empty field, by contrast, is a real submission: the form sends '' to clear.
+  const schedule = readContestSchedule(def as unknown as Record<string, unknown>);
   const { error, count } = await getSupabase()
     .from('contests')
     .update({
@@ -162,6 +190,7 @@ export async function updateContestDefinition(
       rules_text: def.rulesText?.trim() || '',
       banner_image_url: def.bannerImageUrl?.trim() || '',
       logo_url: def.logoUrl?.trim() || '',
+      ...(schedule ? contestScheduleColumns(schedule) : {}),
       contest_config: def as unknown as Record<string, unknown>,
     }, { count: 'exact' })
     .eq('slug', currentSlug);
@@ -234,7 +263,7 @@ export function isContestStatus(value: unknown): value is ContestStatus {
 export async function listPersistedContests(): Promise<PersistedContest[]> {
   const { data, error } = await getSupabase()
     .from('contests')
-    .select('id, slug, name, status, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, rules_text, banner_image_url, logo_url, contest_config, created_at')
+    .select('id, slug, name, status, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, rules_text, banner_image_url, logo_url, start_date, end_date, prize_pool, contest_config, created_at')
     .order('created_at', { ascending: false });
   if (error) throw new Error(`Failed to list contests: ${error.message}`);
 
@@ -247,7 +276,18 @@ export async function listPersistedContests(): Promise<PersistedContest[]> {
     // A snapshot written before the logo existed has no logoUrl; the column is
     // the source of truth for it, so fall back to that rather than show none.
     if (cfg && typeof cfg === 'object' && cfg.slug) {
-      return { ...cfg, id, status, logoUrl: cfg.logoUrl || String(row.logo_url ?? '') };
+      return {
+        ...cfg,
+        id,
+        status,
+        logoUrl: cfg.logoUrl || String(row.logo_url ?? ''),
+        // The columns beat the snapshot when the snapshot is silent, which is the
+        // state of every contest created before the form had these fields — and
+        // of any row whose deadline an operator set directly in Postgres.
+        startDate: cfg.startDate || strOrEmpty(row.start_date),
+        endDate: cfg.endDate || strOrEmpty(row.end_date),
+        prizePool: cfg.prizePool ?? strOrEmpty(row.prize_pool),
+      };
     }
     return {
       id,
@@ -272,6 +312,14 @@ export async function listPersistedContests(): Promise<PersistedContest[]> {
       rulesText: String(row.rules_text ?? ''),
       bannerImageUrl: String(row.banner_image_url ?? ''),
       logoUrl: String(row.logo_url ?? ''),
+      startDate: strOrEmpty(row.start_date),
+      endDate: strOrEmpty(row.end_date),
+      prizePool: String(row.prize_pool ?? ''),
     } as PersistedContest;
   }).filter((c) => c.slug);
+}
+
+/** A nullable timestamp column, rendered as '' when the row carries no bound. */
+function strOrEmpty(value: unknown): string {
+  return value ? String(value) : '';
 }

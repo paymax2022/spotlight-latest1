@@ -29,10 +29,21 @@ ARG SUPABASE_SERVICE_ROLE_KEY
 #
 # BURN THESE DOWN. When the backend lands: delete the ARG/ENV pair here, remove
 # the module from MOCK_ALLOWLIST, and let it default live.
-#   FX     — service calls /api/fx/admin/*; backend has only /api/finance/admin/fx/markup.
 #   GROUPS — backend has member routes under /api/finance/groups and no admin group.
-ARG NEXT_PUBLIC_FX_ADMIN_USE_MOCK=true
 ARG NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK=true
+
+# FX is LIVE in the shipped image and is NOT a mock default any more.
+# GET/PUT /api/finance/admin/fx/markup is the orchestrator's own pricing table,
+# so the Spread page has to read it live — a fabricated bps on a pricing screen
+# is indistinguishable from the one that prices the next customer quote. The rest
+# of the console (transactions, routing, providers, treasury, recon, customers,
+# compliance, webhooks, analytics, collections, cards, settings) still has no Go
+# admin route, and it now says so on screen instead of shipping hardcoded
+# exposure, float and margin figures to an operator with nothing labelling them
+# as samples. Setting this back to true re-creates that: it is also a hard
+# failure in `npm run check:mock-flags --strict`, since FX is out of
+# MOCK_ALLOWLIST above.
+ARG NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false
 ARG NEXT_PUBLIC_WEB_APP_BASE_URL
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}

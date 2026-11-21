@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { getCustomers } from '@/services/fxAdminService';
 import type { AdminCustomer, CustomerVerification } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge, money } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, money, ErrorNote, errorMessage } from '../_ui';
 import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const FILTERS: (CustomerVerification | 'all')[] = ['all', 'pending', 'review', 'approved', 'rejected', 'suspended'];
@@ -12,9 +12,10 @@ const FILTERS: (CustomerVerification | 'all')[] = ['all', 'pending', 'review', '
 export default function FxCustomersPage() {
   const [rows, setRows] = useState<AdminCustomer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<CustomerVerification | 'all'>('all');
 
-  async function load() { setLoading(true); try { setRows(await getCustomers()); } finally { setLoading(false); } }
+  async function load() { setLoading(true); setError(null); try { setRows(await getCustomers()); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); } }
   useEffect(() => { load(); }, []);
 
   const shown = useMemo(() => (filter === 'all' ? rows : rows.filter((r) => r.verification === filter)), [rows, filter]);
@@ -28,6 +29,7 @@ export default function FxCustomersPage() {
         action={<div style={{ display: 'flex', gap: '0.4rem' }}><Link href="/admin/fx/kyc"><Button variant="primary">Open KYC queue →</Button></Link><Button variant="outline" onClick={load}>Refresh</Button></div>}
       />
       <FxTabs active="customers" />
+      <ErrorNote message={error} />
 
       <Card>
         <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>

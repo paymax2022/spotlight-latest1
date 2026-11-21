@@ -60,6 +60,30 @@ export function Card({ title, children, right }: PropsWithChildren<{ title?: str
   );
 }
 
+/**
+ * A load or a write that failed, in words the operator can act on.
+ *
+ * role="alert" is what separates "the console said why" from "the console went
+ * quiet". A page that swallows the rejection renders an empty table, and an empty
+ * FX screen reads as nothing-outstanding rather than endpoint-missing — on a money
+ * console those two look identical and only one of them is safe to act on. The
+ * text is the service's own, which is the backend's sentence; the page adds no
+ * interpretation of it.
+ */
+export function ErrorNote({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <p role="alert" style={{ color: colors.danger, fontSize: '0.85rem', margin: '0 0 1rem', padding: '0.6rem 0.75rem', border: `1px solid ${colors.danger}`, borderRadius: '0.5rem', background: tint(colors.danger, 0.08) }}>
+      {message}
+    </p>
+  );
+}
+
+/** The sentence for a thrown error — the message, never "[object Object]". */
+export function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 export function FxTabs({ active }: { active: string }) {
   const tabs = [
     { href: '/admin/fx', label: 'Overview', key: 'overview' },

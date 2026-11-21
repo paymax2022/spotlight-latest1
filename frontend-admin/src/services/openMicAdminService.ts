@@ -10,20 +10,22 @@
  * assertAdminPermission used everywhere else) — nothing changed there, only a
  * client + service on this side reaching it through the proxy.
  *
- * SCOPE CUT, documented rather than silent: this ports every READ surface the
- * original 12 frontend-web pages had (applications, submissions, finalists,
- * winners, payments, fraud alerts, beat downloads, votes/leaderboard,
- * notifications, finale playlist, reports) plus the contest list. On the WRITE
- * side it now ports the four actions an operator needs to run an edition
- * end to end from this console: creating the contest, uploading its beat,
- * editing its metadata and submission window, and reviewing a handed-in song
+ * WRITES WIRED SO FAR — an operator can run an edition end to end from this
+ * console: creating the contest, uploading its beat, editing its metadata and
+ * submission window (createOpenMicContest / uploadOpenMicBeat /
+ * updateOpenMicContest), every applicant decision plus the applicant contact
+ * edit (applyOpenMicApplicantAction / updateOpenMicApplicantContact — the last
+ * two are why the Applications tab can be worked here instead of
+ * /admin/registration), and reviewing a handed-in song
  * (`reviewOpenMicSubmission`, which is what approves or rejects the track the
- * voters play). The rest of the original pages' write actions — resolving a
- * fraud alert, marking a notification sent, reconciling a payment event,
- * triggering finalist generation, announcing a winner, building/locking the
- * finale playlist — are still not ported. Each of those API routes already
- * exists and is Path-A-ready (see the GET counterparts wired above); wiring the
- * write side is follow-up work, not done here.
+ * voters play, with previewOpenMicSubmissionSong serving the audio the review
+ * decision gates).
+ *
+ * STILL NOT PORTED, documented rather than silent: resolving a fraud alert,
+ * marking a notification sent, reconciling a payment event, triggering
+ * finalist generation, announcing a winner, and building/locking the finale
+ * playlist. Each of those API routes already exists and is Path-A-ready (see
+ * the GET counterparts wired above); wiring the write side is follow-up work.
  */
 import { webProxyBase } from '@/config/env';
 import { playableSongSrc } from '@/features/openmic/song-src';
@@ -107,6 +109,23 @@ export type OpenMicApplicationRow = {
   paymentStatus: string;
   beatDownloadStatus: string;
   appliedAt: string;
+  /**
+   * Which data plane the applicant came from: 'registration' is the live apply
+   * form (registrations + the promoted contestants roster row), 'enrollment' is
+   * the older competition_enrollments plane. The server merges and de-duplicates
+   * them, so one person is one row; the field is here because a mixed list is
+   * not one table and the tab should not pretend otherwise.
+   */
+  source?: 'registration' | 'enrollment';
+  /**
+   * The applicant's exact `registrations.status` ('shortlisted',
+   * 'more_information_requested', …), sent by the server for registration-plane
+   * rows only. `applicationStatus` above collapses nineteen registration states
+   * into the console's three — right for the Reports tile, wrong for the tab
+   * that makes those decisions, where a reload would show a just-shortlisted
+   * applicant as Pending. The Applications column prefers this field.
+   */
+  registrationStatus?: string;
 };
 
 export type OpenMicSubmissionRow = {
@@ -244,10 +263,110 @@ export async function updateOpenMicContest(
   return json.contest;
 }
 
+/**
+ * The contest's applicants — merged across both planes by
+ * GET /api/admin/open-mic/contests/:id/applicants.
+ *
+ * This used to call /contests/:id/applications, which reads
+ * `competition_enrollments` only. The public apply form writes `registrations`
+ * (keyed by contest slug) instead, so an Open Mic applicant who applied today
+ * was invisible here and the Reports tile counted 0 — while the same person
+ * showed normally under /admin/registration. The /applications route is left
+ * untouched for its enrollment-plane semantics; the merge lives server-side in
+ * src/server/registration-v2/open-mic-applicants.ts.
+ */
 export async function listOpenMicApplications(contestId: string): Promise<OpenMicApplicationRow[]> {
   const json = await getJson<{ applications: OpenMicApplicationRow[] }>(
-    `/api/admin/open-mic/contests/${contestId}/applications`, 'Applications');
+    `/api/admin/open-mic/contests/${contestId}/applicants`, 'Applications');
   return json.applications ?? [];
+}
+
+/**
+ * Applicant decisions, ported from the /admin/registration console so an Open
+ * Mic edition can be worked end to end without leaving its page. The list and
+ * the labels live here because the tab renders one control per action and the
+ * server route validates the same seven values — drift between the two would
+ * mean a button that 400s.
+ */
+export const OPEN_MIC_APPLICANT_ACTIONS = [
+  'approve', 'shortlist', 'waitlist', 'reject', 'disqualify', 'request_information', 'withdraw',
+] as const;
+export type OpenMicApplicantAction = (typeof OPEN_MIC_APPLICANT_ACTIONS)[number];
+
+export const OPEN_MIC_APPLICANT_ACTION_LABELS: Record<OpenMicApplicantAction, string> = {
+  approve: 'Approve',
+  shortlist: 'Shortlist',
+  waitlist: 'Waitlist',
+  reject: 'Reject',
+  disqualify: 'Disqualify',
+  request_information: 'Request information',
+  withdraw: 'Withdraw',
+};
+
+/** Actions that end the applicant's run; the console colours them as destructive. */
+const DESTRUCTIVE_ACTIONS: readonly OpenMicApplicantAction[] = ['reject', 'disqualify', 'withdraw'];
+
+export function isOpenMicApplicantActionDestructive(action: OpenMicApplicantAction): boolean {
+  return DESTRUCTIVE_ACTIONS.includes(action);
+}
+
+async function postJson<T extends Record<string, unknown>>(
+  path: string,
+  method: 'POST' | 'PATCH',
+  label: string,
+  body: Record<string, unknown>,
+): Promise<T> {
+  const res = await fetch(`${webBase()}${path}`, {
+    method,
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (res.status === 401) throw new Error(`${label} failed: 401 — sign in again.`);
+  if (res.status === 403) throw new Error(`${label} failed: 403 — this account cannot manage Open Mic applicants.`);
+  if (!res.ok) throw new Error(`${label} failed: ${String(json.error || res.status)}`);
+  return json as T;
+}
+
+export type OpenMicApplicantActionResult = { status: string; emailDelivered: boolean };
+
+/**
+ * POST /api/admin/open-mic/contests/:id/applicants/:applicationId
+ * (assertOpenMicAdmin). 'request_information' additionally needs a note — the
+ * route refuses it blank and emails the applicant when it is not.
+ */
+export async function applyOpenMicApplicantAction(
+  contestId: string,
+  applicationId: string,
+  action: OpenMicApplicantAction,
+  note?: string,
+): Promise<OpenMicApplicantActionResult> {
+  const json = await postJson<{ success?: boolean; status?: string; emailDelivered?: boolean }>(
+    `/api/admin/open-mic/contests/${contestId}/applicants/${applicationId}`,
+    'POST',
+    OPEN_MIC_APPLICANT_ACTION_LABELS[action],
+    note ? { action, note } : { action },
+  );
+  return { status: String(json.status || ''), emailDelivered: Boolean(json.emailDelivered) };
+}
+
+/**
+ * PATCH the same route — corrects a mistyped email/phone/stage name, which is
+ * what breaks a request-for-information before the applicant ever sees it.
+ * Only the fields passed are written; both email columns stay in sync
+ * server-side so the list and the mailer agree.
+ */
+export async function updateOpenMicApplicantContact(
+  contestId: string,
+  applicationId: string,
+  patch: Partial<{ stageName: string; email: string; phone: string }>,
+): Promise<void> {
+  await postJson<{ success?: boolean }>(
+    `/api/admin/open-mic/contests/${contestId}/applicants/${applicationId}`,
+    'PATCH',
+    'Applicant contact',
+    patch,
+  );
 }
 
 export async function listOpenMicSubmissions(contestId: string): Promise<OpenMicSubmissionRow[]> {

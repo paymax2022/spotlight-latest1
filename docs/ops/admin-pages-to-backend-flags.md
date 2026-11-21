@@ -1,6 +1,9 @@
 # Admin console pages -> Go backend routes -> feature flags
 
-Generated from a read-only audit of `frontend-admin/src/components/layouts/AdminSidebar.tsx` (426 sidebar entries), `frontend-admin/src/services/*.ts`, `backend/internal/app/*_routes.go` and `backend/internal/config/config.go`. Audit date 2026-10-07.
+Generated from a read-only audit of `frontend-admin/src/components/layouts/AdminSidebar.tsx` (426 sidebar entries), `frontend-admin/src/services/*.ts`, `backend/internal/app/*_routes.go` and `backend/internal/config/config.go`. Audit date 2026-10-07. The **FX Orchestration** rows were re-probed and rewritten 2026-11-20 against
+both deployed planes — see `docs/ops/admin-console-production-errors-2026-11-20.md` for the
+before/after curls and the owner's config commands; the rest of the table still carries the
+2026-10-07 audit date.
 
 ## How a page reaches the backend
 
@@ -352,23 +355,32 @@ Class legend: GATED = needs the flag(s) in the Gate column; UNGATED = always reg
 
 ### FX Orchestration
 
+Probed unauthenticated on both planes 2026-11-20 (`401` = mounted, `404 No API route matches` = not
+mounted). Cause-by-cause detail and the owner's config commands are in
+`docs/ops/admin-console-production-errors-2026-11-20.md`.
+
+`NEXT_PUBLIC_FX_ADMIN_USE_MOCK` no longer exists as a production default: it is `false` in
+`frontend-admin/Dockerfile` and `.env.production.example`, and its allowlist entry was deleted from
+`scripts/check-mock-flags.mjs`, so `check:mock-flags --strict` fails if anything pins it back. Rows
+below therefore describe what the live branch of each page does.
+
 | Admin page | Backend route(s) | Gate flag | Default | Startup prerequisites when enabled | Notes |
 |---|---|---|---|---|---|
-| `/admin/fx` | GET /api/finance/admin/fx/overview (live); /api/finance/admin/fx/{transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} (mock) | FEATURE_FX_ORCHESTRATION_ENABLED | false | DB pool (reads orch_conversions/orch_transfers/orch_collection_events) | [PARTIAL] Overview is LIVE: aggregated from the orchestration ledger + live treasury snapshot, RBAC `finance.admin.fx_ops` (seeded to super-admin/system-admin by 20271402000000_fx_ops_overview.sql). reconBreaks/openIncidents/breakers return null/empty — no reconciled-runs table, incident register or breaker state exists yet, and the page renders them as "—". The other 13 pages still have NO backend and stay behind NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/transactions` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/routing` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/providers` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/treasury` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/spread` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/reconciliation` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/customers` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/compliance` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/webhooks` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/analytics` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/collections` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/cards` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-| `/admin/fx/settings` | /api/finance/admin/fx/{overview,transactions,routing,providers,treasury,spread,recon,customers,compliance,webhooks,analytics,...} | n/a - no Go admin routes | - | - | [NOBACKEND] Only GET/PUT/GET-audit /api/finance/admin/fx/markup exist (registered whenever pool exists; no flag). The 14-page FX console has NO backend: no flag makes these work. Next mock flag NEXT_PUBLIC_FX_ADMIN_USE_MOCK. |
-
+| `/admin/fx` | GET /api/finance/admin/fx/overview | FEATURE_FX_ORCHESTRATION_ENABLED | false | DB pool + `EVERSEND_CLIENT_ID`/`EVERSEND_CLIENT_SECRET` (`buildFXProviders` returns `ErrEversendCredentialsMissing` in prod, which the caller turns into `log.Fatalf` = process exit) | [NOT-DEPLOYED] Registered in `main` (added `184113663`), 404 on prod **and** dev today because neither binary carries it yet. Aggregates the orchestration ledger + live treasury snapshot; RBAC `finance.admin.fx_ops` (seeded by 20271402000000_fx_ops_overview.sql). reconBreaks/openIncidents/breakers return null/empty — no reconciled-runs table, incident register or breaker state exists, and the page renders them as "—". `getOverview` stays pointed here and fails loud; no fixtures. Publishing it is the main→prod release project. |
+| `/admin/fx/spread` | GET/PUT /api/finance/admin/fx/markup, GET /api/finance/admin/fx/markup/audit | none (registered whenever the pool exists) | live | DB pool over `public.fx_markup_rates` | [LIVE] `fx.MarkupHandler`. The orchestrator resolves every quote's spread from that table at request time, so this write changes what the next customer is charged with no restart and no cache. `getSpreadRules`/`updateSpreadRule` ignore the mock flag deliberately — a fabricated bps on a pricing screen is indistinguishable from the real one. PUT upserts by (corridor, tier); `/markup/audit` is the immutable change trail. |
+| `/admin/fx/kyc` | GET /api/finance/admin/fx/verifications, POST /api/finance/admin/fx/verifications/:customerId/decision | FEATURE_FX_ORCHESTRATION_ENABLED | false | as `/admin/fx` | [NOT-DEPLOYED] In `main`, 404 on both planes today for the same binary reason. |
+| `/admin/fx/transactions` | none | n/a | - | - | [NOBACKEND] Live answer is the backend's own `No API route matches GET …`, which `readLive()` now throws instead of returning as data. Formerly rendered fixtures. |
+| `/admin/fx/routing` | none | n/a | - | - | [NOBACKEND] Same as transactions. Smart-order weights have no admin read or write route. |
+| `/admin/fx/providers` | none | n/a | - | - | [NOBACKEND] Provider config is code + env (`buildFXProviders`), not a console-editable table. |
+| `/admin/fx/treasury` | none | n/a | - | - | [NOBACKEND] No platform-book float/exposure route exists; the customer-scoped `/api/v1/fx/balances` is filtered by caller user id and cannot answer this page. |
+| `/admin/fx/reconciliation` | none | n/a | - | - | [NOBACKEND] No recon-runs or breaks table and no route. |
+| `/admin/fx/customers` | none | n/a | - | - | [NOBACKEND] Admin customer directory has no Go route. |
+| `/admin/fx/compliance` | none | n/a | - | - | [NOBACKEND] No screening-alert or case route. |
+| `/admin/fx/webhooks` | none | n/a | - | - | [NOBACKEND] No endpoint/delivery/api-key admin routes (provider webhooks are inbound-only today). |
+| `/admin/fx/analytics` | none | n/a | - | - | [NOBACKEND] No aggregate analytics route; `/api/v1/fx/activity` is per-customer. |
+| `/admin/fx/collections` | none | n/a | - | - | [NOBACKEND] `/api/v1/fx/collections` exists for the caller's own collections only, not as an admin surface. |
+| `/admin/fx/cards` | none | n/a | - | - | [NOBACKEND] `/api/v1/fx/cards` is customer-scoped; no admin issued-card or suspicious-activity route. |
+| `/admin/fx/settings` | none | n/a | - | - | [NOBACKEND] No settings-catalogue route. |
 ### Invest (Stocks)
 
 | Admin page | Backend route(s) | Gate flag | Default | Startup prerequisites when enabled | Notes |

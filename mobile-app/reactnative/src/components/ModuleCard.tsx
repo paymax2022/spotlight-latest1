@@ -14,9 +14,15 @@ interface Props {
   badge?:      string;
   comingSoon?: boolean;
   onPress:     () => void;
+  /**
+   * Home's essentials row: a smaller tile so four columns of long service names
+   * ("Telemedicine") fit without breaking mid-word. Off by default, so All
+   * Services and every other grid keeps the full-size tile.
+   */
+  compact?:    boolean;
 }
 
-export default function ModuleCard({ label, icon, iconColor, bgColor, badge, comingSoon, onPress }: Props) {
+export default function ModuleCard({ label, icon, iconColor, bgColor, badge, comingSoon, onPress, compact }: Props) {
   const IconComponent = (Icons as unknown as Record<string, Icons.LucideIcon>)[icon] ?? Icons.LayoutGrid;
 
   return (
@@ -31,9 +37,9 @@ export default function ModuleCard({ label, icon, iconColor, bgColor, badge, com
       accessibilityState={{ disabled: comingSoon }}
       accessibilityLabel={comingSoon ? `${label} — coming soon` : label}
     >
-      <View style={[styles.iconBox, { backgroundColor: comingSoon ? Colors.surfaceContainerHigh : bgColor }]}>
+      <View style={[styles.iconBox, compact && styles.iconBoxCompact, { backgroundColor: comingSoon ? Colors.surfaceContainerHigh : bgColor }]}>
         <IconComponent
-          size={24}
+          size={compact ? 21 : 24}
           color={comingSoon ? Colors.outline : iconColor}
           strokeWidth={1.8}
         />
@@ -53,7 +59,12 @@ export default function ModuleCard({ label, icon, iconColor, bgColor, badge, com
         )}
       </View>
 
-      <Text style={[styles.label, comingSoon && styles.labelMuted]} numberOfLines={2}>{label}</Text>
+      <Text
+        style={[styles.label, compact && styles.labelCompact, comingSoon && styles.labelMuted]}
+        numberOfLines={2}
+      >
+        {label}
+      </Text>
 
       {comingSoon && (
         <Text style={styles.soonTag}>Soon</Text>
@@ -114,6 +125,22 @@ const styles = StyleSheet.create({
     color:    Colors.onSurface,
     textAlign: 'center',
     maxWidth:  72,
+  },
+  // Prototype tile: 47px square. Radius.lg is the nearest token (15 vs 16 is not
+  // visible at this size, and the codebase keeps corners on the scale).
+  iconBoxCompact: {
+    width:        47,
+    height:       47,
+    borderRadius: Radius.lg,
+  },
+  // 10px is what lets "Telemedicine" sit on one line inside a 390px-wide column;
+  // at labelSm's 12px the word is wider than the cell and breaks mid-word.
+  // labelSm carries no letterSpacing, so overriding fontSize needs no re-statement.
+  labelCompact: {
+    ...Typography.labelSm,
+    fontSize:   10,
+    lineHeight: 13,
+    maxWidth:   86,
   },
   labelMuted: {
     color: Colors.outline,

@@ -74,12 +74,21 @@ a **positive control** rather than an episode: `serviceInstanceDeploy` put
 `main`'s tip `a30a8fd5b…` on all three staging services — three rows, three
 snapshots, three `SUCCESS` inside two minutes — while the upload path was still
 refusing, which confines the fault to upload-initiate and not to staging. See
-"Positive control". Updated a final time at 22:20Z with episode 13 — the fault
-surviving a brand-new `RAILWAY_TOKEN_STAGING` — and with the differential probe
+"Positive control". Updated a last time for that day at 22:20Z with episode 13 — the
+fault surviving a brand-new `RAILWAY_TOKEN_STAGING` — and with the differential probe
 that produced the transport change, both recorded in the
 [Resolution](#resolution--2026-11-18-2154z-the-fault-is-time-windowed-and-staging-no-longer-depends-on-it).
 No token value
-appears here.
+appears here. The chain continued on 2026-11-19 with episodes 14, 15 and 16, each
+summarised in its own block below; episode 15 established the narrowed ask and episode 16
+re-produced it on a commit with no application code in it at all. The chain continued on
+2026-11-20 with episode 17: run `44774228871` refused 27 of 27 staging calls at
+17:13-17:32Z and, after `gh run rerun --failed` re-executed exactly those three legs,
+another 27 of 27 at 20:19-20:39Z — **54 refused requests from one commit**, `9cedaad87…`,
+with identical argument strings, identical CLI, identical token and no deployment row in
+either wave. Its same-basis pairing is timed from Railway's own deployment rows
+(27.5-30.0 s), and it records why the two arms interleave at all: `deploy-staging` needs
+`gates` and `migrate-staging`, never the development deploys.
 
 > **Episode 14 (2026-11-19 08:31Z) changes how to read the two arms of every
 > table above.** Today's two real release attempts failed **six** legs, not three.
@@ -95,7 +104,54 @@ appears here.
 > evidence this leaves *The ask* unchanged and narrows it: nothing has been
 > uploaded to **any** environment of this project since 2026-11-18T21:54:16Z.
 > The billing gate is ours to settle, not yours; the record of both signatures
-> side by side is the last section.
+> side by side is Episode 14, below.
+>
+> **Episode 15 (2026-11-19 15:19-15:49Z) settles that gate, and supersedes two
+> sentences of the block above.** The owner added a plan — no agent touched
+> billing; `Project.subscriptionType` reads `"hobby"` from 15:45Z — and
+> development uploads resumed from the same runner class: run `44547867538` shows
+> all three dev legs printing `Indexing...` → `Uploading...` → a byte count
+> (`1930791`, `103327180`, `7516645`) in the same minutes as the three staging
+> legs of the *same commit* refused 9/9 with **zero** `Indexing...`. So "nothing
+> has been uploaded to any environment" held only for the 08:31-14:45Z plan-gate
+> window, and "the development uploads are no longer a positive control" is now
+> reversed: they are a positive control again, and F2 is demonstrably not the
+> plan gate on a different transport. **The live ask is the narrowed one in
+> Episode 15** — the status and body of the request that *obtains the upload
+> destination* for environment `6b5f27a3-a290-4574-a977-363eb21d43ad` at
+> 2026-11-19 15:20:10-15:20:13Z — not the archive PUT that follows it, and not
+> the version of *The ask* below, which predates that measurement.
+>
+> **Episode 16 (2026-11-19 23:09-23:30Z) is the freshest window and the cleanest
+> control.** Run `44629671567`, head `d446dfd9e`, a commit whose only file is
+> `docker-compose.yml` — no application code changed anywhere in it, so nothing
+> in our tree can explain the split that followed: three development legs landed
+> (`Indexing...` → `Uploading...` → `1930743` / `103321303` / `7516251` bytes,
+> rows created 23:09:56-23:10:04Z) while the three staging legs of the same
+> commit refused 9 times each with **zero** `Indexing...`, **zero** `Uploading...`
+> and **zero** deployment rows, the staging backend's first refusal arriving
+> **0.689 s** after its `stamped backend/BUILD_COMMIT` line. Billing is now
+> excluded outright: `Project.subscriptionType` reads `hobby`, the staging
+> instances' own deployment metas say `"plan": "hobby"`, and the trial sentence
+> appears zero times in those logs. **The pull list at the end of Episode 16 is
+> what to ask for now** — environment `6b5f27a3-a290-4574-a977-363eb21d43ad`,
+> ref `d446dfd9e`, 23:11:03.627Z / 23:11:08.421Z / 23:11:22.142Z first refusals.
+>
+> **Episode 17 (2026-11-20 17:13-20:39Z) is the freshest window and it refuses the
+> same commit twice.** Run `44774228871`, head `9cedaad87…` — a `frontend-admin` +
+> `docs/ops` release with no `backend/` file in it — refused 27 of 27 staging calls in
+> its first attempt (17:13:37-17:32:23Z) and, after `gh run rerun --failed` re-executed
+> only those three legs three hours later, another 27 of 27 (20:19:05-20:39:13Z). Fifty-four
+> requests, zero `Indexing...`, zero `Uploading...`, zero `bytes:`, zero deployment rows,
+> and not one trial sentence. Meanwhile that attempt's own development legs printed
+> `Indexing...` → `Uploading...` → `1979720` / `103327021` / `7523897` bytes and Railway
+> created their rows at 17:13:09-17:13:11Z — **27.5, 28.7 and 30.0 s** before the staging
+> refusal of the same service, measured this time from Railway's own deployment rows. The
+> two lanes overlap because they are designed to: `deploy-staging` needs `gates` and
+> `migrate-staging`, not `deploy-development`. **Pull list now:
+> environment `6b5f27a3-a290-4574-a977-363eb21d43ad`, ref `9cedaad87…`, both attempts** —
+> first refusals 17:13:37.826Z / 17:13:38.041Z / 17:13:41.642Z and 20:19:05.552Z /
+> 20:19:06.092Z / 20:19:15.085Z.
 
 ## The ask
 
@@ -139,6 +195,23 @@ know they are different questions:
    serialised: 14:56:37-14:57:59Z) — and whether anything on the staging
    environment's upload path is rate-limited, circuit-broken or routed
    differently from `development`'s.
+
+> **Everything above is the 2026-11-18 form of the ask; the dates in it are that
+> day's.** Episode 15 (final section) moves two points: the development arm is a
+> positive control again — the plan gate came off before run `44547867538`, whose
+> dev legs landed from 15:19Z, and `Project.subscriptionType` read `"hobby"` at
+> the 15:45Z probe — and
+> the failing request has been narrowed from "the staging upload-initiate" to the
+> call that *obtains the upload destination* — the one that dies before
+> `railway up --verbose` can print a URL, a byte count or a status code, which is
+> why no flag on our side can ever surface the number. The timestamps above are
+> still the ones to pull from your edge logs; the freshest datum is Episode 17 —
+> run `44774228871` (attempt 1) and the same run's attempt 2 from `gh run rerun
+> --failed`, ref `9cedaad87…`, three services, nine refusals each in each attempt,
+> fifty-four staging requests, zero deployment rows, first refusals at
+> 17:13:37.826Z / 17:13:38.041Z / 17:13:41.642Z and 20:19:05.552Z / 20:19:06.092Z /
+> 20:19:15.085Z on 2026-11-20 — a commit whose only changed code is
+> `frontend-admin/**` and `docs/ops/**`.
 
 ## Identifiers
 
@@ -1303,3 +1376,278 @@ reason: a window that closes on its own must be ridden out, so staging keeps its
 900 s ladder on purpose. The guard cannot fire on staging legs anyway — they are never
 told why they failed.
 
+## Episode 16 — 2026-11-19 23:09-23:30Z: the pairing re-produced on a commit that changes no application code, and the window reopened
+
+Episode 15 proved the same-basis pairing on `773fe0285`, a commit whose payload was a CI
+probe removal. Run `44629671567` proves it again on `d446dfd9e`, whose entire diff is
+`docker-compose.yml` (+11 / −3, one file) — local orchestration that Railway never builds.
+There is no application delta available to explain a difference in outcome, and the
+outcome still differs.
+
+**The run.** Head `d446dfd9e`. `integration-verify` (`44629671413`) went green and the gate
+rendered `### Release gate: **proceed**` at 23:09:32.392Z. The run concluded `failure`;
+the only failures are the three staging legs, whose last job ended at 23:30:14Z.
+
+| leg | job | started | ended | outcome | `Indexing...` | `Uploading...` | `bytes:` | decode refusals | retry notices | plan sentence |
+|---|---|---|---|---|---|---|---|---|---|---|
+| dev frontend-admin | `135951837272` | 23:09:42 | 23:10:30 | success | 1 | 1 | `1930743` | 0 | 0 | 0 |
+| dev frontend-web | `135951837723` | 23:09:43 | 23:11:17 | success | 1 | 1 | `103321303` | 0 | 0 | 0 |
+| dev backend | `135951837290` | 23:09:44 | 23:13:12 | success | 1 | 1 | `7516251` | 0 | 0 | 0 |
+| staging backend | `135952256616` | 23:10:50 | 23:29:13 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+| staging frontend-web | `135952256565` | 23:11:08 | 23:29:38 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+| staging frontend-admin | `135952256542` | 23:10:54 | 23:30:13 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+
+Nine refusals against eight retry notices per staging leg: the notice prints only before a
+retry, so 9 is the ladder's full budget — the same count episode 15 settled, and the same
+27 staging requests in the run.
+
+**Sub-second refusal, re-measured on episode 15's own rule.** The staging backend stamps
+`backend/BUILD_COMMIT` at 23:11:02.9384113Z and its first refusal lands at
+23:11:03.6274782Z — **0.689 s**, against 0.71 s in episode 15 and inside the 0.120-0.940 s
+band. What is *not* repeated: episode 15's three first refusals fell in a 2.03 s burst,
+while here they are 23:11:03.627Z, 23:11:08.421Z and 23:11:22.142Z — an 18.5 s spread,
+because the legs started minutes apart. The invariant is the sub-second refusal after a leg
+starts, not a burst between legs, and this paragraph exists so nobody reads "burst" into
+this window.
+
+**Same archives as episode 15, to the byte class.** `1930743` vs `1930791`, `7516251` vs
+`7516645`, `103321303` vs `103327180`. Size stays irrelevant on the CI arm.
+
+**Zero staging rows, three dev rows — read live, all six instances.** Census taken across
+23:56Z on 2026-11-19 and 00:00Z on 2026-11-20 with
+`serviceInstance(serviceId, environmentId) { isUpdatable latestDeployment { createdAt status meta } }`:
+dev's three instances report rows created 23:09:56 (frontend-admin), 23:10:02
+(frontend-web) and 23:10:04 (backend), all `SUCCESS`; staging's three still report
+`773fe0285` created 15:45:59.288Z (backend), 15:46:22.677Z (frontend-web) and
+15:46:52.238Z (frontend-admin) — episode 15's manual refresh, eight hours old, not this
+CI run. `isUpdatable` is `false` on all six.
+
+**Billing is no longer even a candidate.** `Project.subscriptionType` reads `hobby` live,
+and each staging instance's own deployment meta carries `"plan": "hobby"`, while the
+staging legs printed the trial sentence zero times. Episode 14's second fault is closed;
+what remains is F2, and F2 behaves as a window: refused 23:10-23:30Z here, accepted at
+15:45Z the same afternoon through the pull path.
+
+**Requests to pull from your edge logs, to the millisecond.** Environment
+`6b5f27a3-a290-4574-a977-363eb21d43ad`, ref `d446dfd9e`, the request that obtains the
+upload destination:
+
+| service | id | first refusal | last refusal |
+|---|---|---|---|
+| backend | `70de07d8-c058-4221-b645-61c4f1ac7aa5` | 2026-11-19T23:11:03.627Z | 2026-11-19T23:29:12.074Z |
+| frontend-web | `dda6372c-0bb7-4014-a2b1-aa646c11a281` | 2026-11-19T23:11:22.142Z | 2026-11-19T23:29:36.185Z |
+| frontend-admin | `c4f1086e-0a2d-4367-b503-209c14a2ce6f` | 2026-11-19T23:11:08.421Z | 2026-11-19T23:30:11.890Z |
+
+**The cost chain is identical to episode 15's, and one step of it is easy to miss.**
+`migrate staging database / supabase db push (staging)` **succeeded** at 23:10:28 — so
+staging's schema is current with `main` while its code is not, which is the worst of the
+two states for anyone testing there. `smoke Staging` then came back `skipped` at 23:30:14Z,
+and that skip is what left `migrate production database`, `smoke Production` and
+`deploy Production` skipped in the same second. `smoke Development` passed on all three
+services at 23:13:15-23:13:37.
+
+
+## Episode 17 — 2026-11-20 17:13-20:39Z: one commit refused twice in one run, 54 staging requests, and what a deployment row actually marks
+
+Episode 12 re-ran a release with `--failed` to test `ServiceSource`. This lap applies the
+same technique to the clock: run `44774228871` refused 27 of 27 staging calls in its first
+attempt and, after `gh run rerun 44774228871 --failed` re-executed exactly those three
+legs three hours later, another 27 of 27 — **54 refused requests from one commit**, the
+same total episode 5 reached with two separate dispatches, but here with nothing rebuilt,
+nothing re-decided, no credential changed and no argument changed between the two waves.
+Its same-basis pairing is also timed from Railway's own deployment rows instead of the leg
+logs.
+
+**The run.** Head `9cedaad870791374d02f891c750f4956a1f3bf09` — the PR #1107 squash, 52
+files, `frontend-admin/**` plus `docs/ops/**` only, **no `backend/` file in it**. The
+checkout in each leg prints `HEAD is now at 9cedaad` and
+`/usr/bin/git log -1 --format=%H` returns that sha. `release gate (CI green for this
+commit)` (`136419609995`) ended `success` at 17:12:52Z with
+`### Release gate: **proceed**`. Both attempts conclude `failure`, and in both the only
+failures are the three staging upload legs.
+
+**Attempt 1 — 27 refused, 27.5-30.0 s after the same service's development row.**
+
+| leg | job | started | ended | outcome | `Indexing...` | `Uploading...` | `bytes:` | decode refusals | retry notices | plan sentence |
+|---|---|---|---|---|---|---|---|---|---|---|
+| dev frontend-admin | `136443674247` | 17:12:55 | 17:14:47 | success | 1 | 1 | `1979720` | 0 | 0 | 0 |
+| dev frontend-web | `136443674367` | 17:12:56 | 17:16:00 | success | 1 | 1 | `103327021` | 0 | 0 | 0 |
+| dev backend | `136443674034` | 17:12:55 | 17:16:20 | success | 1 | 1 | `7523897` | 0 | 0 | 0 |
+| staging backend | `136443975834` | 17:13:27 | 17:31:40 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+| staging frontend-web | `136443975819` | 17:13:27 | 17:31:44 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+| staging frontend-admin | `136443975848` | 17:13:27 | 17:32:25 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+
+`serviceInstance(...){ latestDeployment{ createdAt } }` gives the development rows as
+17:13:09.146Z (backend), 17:13:10.560Z (frontend-admin) and 17:13:11.662Z (frontend-web).
+The same service's first staging refusal follows at 17:13:37.826Z, 17:13:38.042Z and
+17:13:41.643Z — **28.68 s, 27.48 s and 29.98 s**, all three inside episode 9's
+25.8-33.3 s band and below episode 7's minimum pair (29.3 s). Episode 9's 25.8 s stays the
+tightest figure in this pack; what differs here is the instrument — these three come from
+`latestDeployment.createdAt` read off the API, while episodes 7 and 9 timed from the
+deployment-ID line the CLI prints — so the numbers are comparable but not interchangeable.
+
+**Why the two arms overlap, and what a row actually marks.** `deploy-staging` declares
+`needs: [gates, migrate-staging]` — **not** `deploy-development` — so the development and
+staging lanes of one release run concurrently by design. Their legs started 17:13:27Z while
+two of the three development jobs were still running (`frontend-admin` ended 17:14:47Z,
+`frontend-web` 17:16:00Z, `backend` 17:16:20Z) and all three `smoke Development` legs
+still lay ahead at 17:16:35-17:16:39Z, even though every development archive had already
+been accepted by then (`Uploading...` printed 17:13:10.918Z, 17:13:11.806Z and
+17:13:21.539Z). Episodes 15 and 16 interleave for the same reason; this paragraph exists
+so nobody reads a deliberate A/B into it.
+
+**The instrument, measured.** On those three accepted legs the row's
+`latestDeployment.createdAt` (17:13:09.146Z, 17:13:10.560Z, 17:13:11.662Z) lands
+**1.25-9.88 s before the CLI prints `Indexing...`** — the deployment row is created at the
+initiation, not when the bytes arrive. So "no deployment row" and "no `Indexing...` line"
+are the same event read from the two ends of the call, and staging's 54 refusals are absent
+from your logs in both senses at once. That is also why the pairing above is quoted to the
+initiation: it compares initiation with initiation.
+
+**Sub-second on both attempts, six legs, two runner images.** Measured from the leg's own
+`##[group]Run bash scripts/ci/railway-deploy.sh` line to its first refusal:
+
+| leg attempt | service | step group starts | first refusal | latency |
+|---|---|---|---|---|
+| 1 | backend | 17:13:37.1247892Z | 17:13:37.8262446Z | **0.701 s** |
+| 1 | frontend-admin | 17:13:37.4961192Z | 17:13:38.0416578Z | **0.545 s** |
+| 1 | frontend-web | 17:13:41.1358438Z | 17:13:41.6425303Z | **0.507 s** |
+| 2 | frontend-web | 20:19:04.7794177Z | 20:19:05.5521565Z | **0.773 s** |
+| 2 | frontend-admin | 20:19:05.4176398Z | 20:19:06.0916359Z | **0.674 s** |
+| 2 | backend | 20:19:14.5868172Z | 20:19:15.0847968Z | **0.498 s** |
+
+All six are inside the 0.120-0.940 s band episode 15 set as the discriminator, and all
+six are far under the ~5 s a 7.5 MB archive takes to move. Attempt 1 placed the three
+staging legs on runner image `20261111.635`; attempt 2 placed backend and frontend-admin
+there and frontend-web on `20261103.629` — six refused legs over two images with one
+signature, so the refusal is not an image artifact.
+
+**Attempt 2 — `gh run rerun 44774228871 --failed`, launched 20:18:52Z.** GitHub
+re-executed *only* the three failed legs (new job ids) and re-evaluated the downstream as
+`skipped` at 20:39:16-17Z; every job that had succeeded kept its attempt-1 row and its
+17:1x timing, including `migrate staging database / supabase db push (staging)`
+(`136443674430`, success, 17:12:55-17:13:23Z). That is why attempt 2 has **no fresh
+development upload in its window** — its positive control is attempt 1's, three hours
+earlier in the same run on the same commit — and it is the honest limit of this lap.
+
+| leg | job | started | ended | outcome | `Indexing...` | `Uploading...` | `bytes:` | decode refusals | retry notices | plan sentence |
+|---|---|---|---|---|---|---|---|---|---|---|
+| staging frontend-web | `136544501180` | 20:18:52 | 20:37:45 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+| staging frontend-admin | `136544501171` | 20:18:52 | 20:37:44 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+| staging backend | `136544501170` | 20:18:53 | 20:39:16 | failure | **0** | **0** | **0** | 9 | 8 | 0 |
+
+The `railway up` argument strings are **identical, character for character, between the
+attempts** — `--no-gitignore --service {backend|frontend-web|frontend-admin} --environment
+staging --project e7dca861-… --detach --verbose --message 9cedaad870791374d02f891c750f4956a1f3bf09`
+(with `backend --path-as-root` leading the backend leg) — as is the CLI they came from
+(`npm install --global @railway/cli@5.40.1` in both), the credential
+(`RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}` on the `Deploy …` step,
+`release.yml`), and the ladder's own conclusion:
+each leg ends `with-retry: '…' still failing after 9 attempts (last exit 1)`. The refusal
+block is the one this report was written about, printed inside 280 µs:
+
+```
+2026-11-20T20:19:15.0847968Z Failed to fetch: error decoding response body
+2026-11-20T20:19:15.0848506Z Caused by:
+2026-11-20T20:19:15.0848841Z     0: error decoding response body
+2026-11-20T20:19:15.0849292Z     1: expected value at line 1 column 1
+```
+
+**Fifty-four staging requests, zero rows — and the row count is the cleanest datum.**
+Read live after the second attempt ended, `serviceInstance(serviceId, environmentId)`
+across all six instances: development reports rows created 2026-11-20T17:13:09.146Z,
+17:13:10.560Z and 17:13:11.662Z, all `SUCCESS`, all this commit; staging still reports
+2026-11-19T15:45:59.288Z (backend), 15:46:22.677Z (frontend-web) and 15:46:52.238Z
+(frontend-admin), all `SUCCESS` — **episode 15's manual `serviceInstanceDeploy` refresh,
+still the newest thing that environment has**. Between that refresh and 20:39:13Z today
+the staging upload path created no row from any of 54 CI requests, while the pull path had
+created the rows it still shows.
+
+**Size stays irrelevant, and this lap says so with a real delta.** The `frontend-admin`
+archive is `1979720` bytes against episode 16's `1930743` and episode 15's `1930791` —
+48,977 bytes heavier than episode 16's, on a release that changes 50 files under
+`frontend-admin/`. Development accepted those bytes; the staging leg for the same service
+died before it ever printed a size, which is the point — nothing about the archive enters
+the failure. `backend` moved 7,646 bytes (from `7,516,251`) although no `backend/` file is
+in the commit, consistent with `backend/BUILD_COMMIT`, which each leg stamps with the sha
+before uploading. `frontend-web` is `103327021`, the same 103 MB class as always.
+
+**Two things we changed on our side, so the record is complete.** Before the rerun we
+temporarily added a required-reviewers gate to the GitHub `Production` environment,
+because a green staging lane would have released `main` into production as a side effect
+of a diagnostic. It never had to act: `migrate production database`,
+`deploy Production (${{ matrix.service }})` and `smoke Production` came back `skipped` in
+both attempts, and the environment is now restored to its prior policy (one
+`branch_policy` rule, no reviewers, `can_admins_bypass: true`). The consequence is the
+one this episode exists to explain: PR #1107's operator-visible fixes are live on
+development and on `main`, and reach staging or production only through the pull path or
+a manual upload — `docs/ops/admin-console-production-errors-2026-11-20.md` records that
+as Command 5.
+
+**Requests to pull from your edge logs, to the millisecond.** Environment
+`6b5f27a3-a290-4574-a977-363eb21d43ad`, ref `9cedaad870791374d02f891c750f4956a1f3bf09`,
+the request that obtains the upload destination, **both attempts**:
+
+| service | id | attempt 1 first / last refusal | attempt 2 first / last refusal |
+|---|---|---|---|
+| backend | `70de07d8-c058-4221-b645-61c4f1ac7aa5` | 2026-11-20T17:13:37.826Z / 17:31:38.575Z | 2026-11-20T20:19:15.085Z / 20:39:13.398Z |
+| frontend-web | `dda6372c-0bb7-4014-a2b1-aa646c11a281` | 2026-11-20T17:13:41.643Z / 17:31:42.926Z | 2026-11-20T20:19:05.552Z / 20:37:43.444Z |
+| frontend-admin | `c4f1086e-0a2d-4367-b503-209c14a2ce6f` | 2026-11-20T17:13:38.042Z / 17:32:23.507Z | 2026-11-20T20:19:06.092Z / 20:37:42.770Z |
+
+**How this updates the "time-windowed" reading.** Episodes 13 and 16 made the fault look
+like a window that opens and shuts; the phrase is still true of *when* it refuses, but
+this lap sharpens what distinguishes accepted from refused. From 17:13:37.826Z to
+20:39:13.398Z — **3 h 25 m 36 s**, across two attempts and three services — the CI upload
+path to this environment refused 54 of 54. The development lane of the same attempt was
+accepted 27.5-30.0 s before the first refusal and its jobs and smokes ran on *inside* that
+span (to 17:14:47, 17:16:00, 17:16:20 and 17:16:39Z), so the two outcomes are not even
+separated in time. The rows still on `staging` right now were created by
+`serviceInstanceDeploy` on 2026-11-19, while episode 9's laptop `railway up` to that very
+staging backend was accepted at 15:18:18Z on 2026-11-18. The accepted staging calls in
+this pack are the API/pull call and a laptop call; the refused ones are, without a single
+exception in 54 tries, `railway up` from a GitHub runner holding
+`RAILWAY_TOKEN_STAGING`. That is episode 12's last surviving suspect, and these 54 are the
+largest sample of it the pipeline can produce without your logs.
+
+**What it costs us.** 18.2-20.4 minutes of runner time per attempt (attempt 1's legs ran
+18 m 13 s, 18 m 17 s and 18 m 58 s; attempt 2's 18 m 52 s, 18 m 53 s and 20 m 23 s), a
+`failure` conclusion on a run whose code passed its own development smoke, staging's
+schema current with `main` since 17:13:23Z while its three apps are still the
+2026-11-19T15:46Z refresh, and a production console that cannot receive the fix this
+commit contains without a human upload.
+
+**The retry ladder, leg by leg, so the twenty minutes is auditable.** The waits are not
+ours to invent — `scripts/ci/railway-deploy.sh` exports `RETRY_ATTEMPTS=9` and
+`RETRY_BASE_DELAY_S=60`, and `scripts/ci/with-retry.sh` doubles the step, caps it at 120 s
+and adds a uniform 0–½·delay jitter. That makes the sleep floor 60 + 7 × 120 = **900 s** and
+the ceiling 90 + 7 × 180 = **1,350 s**, both numbers already written in that script's own
+comments. Below are the eight `retrying in Ns` values each of the six staging legs actually
+printed, and every sum lands inside that band:
+
+| attempt | staging leg job | service | the eight sleeps, in order (s) | Σ sleep | leg wall clock | not sleep |
+|---|---|---|---|---|---|---|
+| 1 | `136443975834` | backend | 89, 156, 123, 128, 141, 145, 141, 153 | 1,076 s | 1,093 s (18 m 13 s) | 17 s |
+| 1 | `136443975848` | frontend-admin | 64, 180, 137, 157, 164, 131, 133, 156 | 1,122 s | 1,138 s (18 m 58 s) | 16 s |
+| 1 | `136443975819` | frontend-web | 67, 160, 129, 156, 123, 136, 176, 130 | 1,077 s | 1,097 s (18 m 17 s) | 20 s |
+| 2 | `136544501170` | backend | 73, 180, 145, 173, 166, 132, 156, 171 | 1,196 s | 1,223 s (20 m 23 s) | 27 s |
+| 2 | `136544501171` | frontend-admin | 64, 178, 153, 133, 161, 129, 171, 123 | 1,112 s | 1,132 s (18 m 52 s) | 20 s |
+| 2 | `136544501180` | frontend-web | 86, 123, 156, 173, 137, 146, 152, 141 | 1,114 s | 1,133 s (18 m 53 s) | 19 s |
+
+The shape is the designed one: the first wait in every leg is 64–89 s (the 60 s step plus
+jitter) and the remaining seven are 123–180 s (the capped 120 s step plus jitter). The last
+column is the one that matters for reading these logs — **16 to 27 seconds**, and it is the
+whole of a leg that is not sleep, spread over the five steps GitHub lists for the job
+(`Set up job`, `actions/checkout@v4`, `actions/setup-node@v7`, `Install Railway CLI`, and the
+failing `Deploy <service>` step, which contains the archive build and all nine refused CLI
+calls). Nine refusals inside ~20 s of the 1,076–1,196 s a leg spends is the arithmetic form
+of the sub-second signature above, and it means the twenty minutes proves nothing about the
+payload — it is a timer, not work.
+
+Two consequences for anyone sampling these legs. A status check taken before ~20 minutes is
+blind, because the ladder has not reached attempt 9 yet, so only the *first* refusal
+timestamp is informative — which is why the pull list above is expressed to the
+millisecond. And anyone re-counting attempts from a raw log should grep
+`failed (exit 1); retrying in` (**exactly 8 lines in each of these six logs**), because the
+notice prints only *before* a retry and the ninth attempt ends instead with
+`still failing after 9 attempts (last exit 1)`; a bare `grep -c retry` returns 9 and
+double-counts that terminal line.

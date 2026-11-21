@@ -14,6 +14,7 @@ import {
 } from '@/src/server/registration-v2/contest-store';
 import type { ContestCategory, ContestRegistrationDefinition, ContestType } from '@/src/features/registration/types';
 import { sanitizeContestFormSchema } from '@/src/features/registration/field-catalog';
+import { contestScheduleError, readContestSchedule } from '@/src/server/contests/schedule';
 
 const allowedTypes: ContestType[] = [
   'online_contest',
@@ -99,6 +100,21 @@ function normalizeContestPayload(
     normalized.formSchema = sanitizeContestFormSchema(body.formSchema);
   }
 
+  // Same present-vs-absent rule as formSchema, for the same reason: an edit that
+  // never mentions the schedule must not null out a deadline an admin set. An
+  // empty field IS a mention, and clears it. The dates land here as instants —
+  // src/server/contests/schedule.ts expands a bare day to the day's last
+  // instant, and contest-store.ts writes them onto start_date/end_date, which
+  // 20261223000000 mirrors into the mobile voting window.
+  const schedule = readContestSchedule(body);
+  if (schedule) {
+    const scheduleProblem = contestScheduleError(schedule);
+    if (scheduleProblem) throw new Error(scheduleProblem);
+    normalized.startDate = schedule.startDate ?? '';
+    normalized.endDate = schedule.endDate ?? '';
+    normalized.prizePool = schedule.prizePool;
+  }
+
   return normalized;
 }
 
@@ -176,7 +192,10 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ slug: str
       message === 'Invalid contest category.' ||
       message === 'Invalid contest type.' ||
       message === 'Season / edition is required.' ||
-      message === 'Registration fee must be a valid number for paid contests.'
+      message === 'Registration fee must be a valid number for paid contests.' ||
+      message === 'Contest start date is not a valid date.' ||
+      message === 'Contest end date is not a valid date.' ||
+      message === 'The contest end date must be on or after the start date.'
     ) {
       return errorResponse(message, 400);
     }

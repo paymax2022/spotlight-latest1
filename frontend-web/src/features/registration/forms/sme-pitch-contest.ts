@@ -25,8 +25,6 @@ const founderFields: RegistrationField[] = [
 ];
 
 const identityFields: RegistrationField[] = [
-  { key: 'identity.idType', label: 'Government-issued ID type', type: 'select', options: ['National ID', 'International passport', 'Voter card', 'Driver’s license', 'Other approved ID'], required: true },
-  { key: 'identity.idUpload', label: 'ID upload', type: 'file', required: true, accept: '.jpg,.jpeg,.png,.pdf' },
   { key: 'identity.cacDocument', label: 'CAC / business registration document', type: 'file', accept: '.jpg,.jpeg,.png,.pdf' },
 ];
 

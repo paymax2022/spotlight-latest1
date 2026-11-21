@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { colors, tint } from '@/components/ui/vuexy';
+import { formatNaira } from '@/services/referralAdminOpsService';
 
 // Shared presentational helpers for the Referral console — matches the Connect /
 // Realtor admin light-card inline-style convention. RA2 imports from this file
@@ -16,6 +17,33 @@ export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 
 export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: colors.text, fontSize: '0.85rem', borderTop: `1px solid ${colors.border}` });
 export const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box', background: colors.card, color: colors.text });
 export const label = (): CSSProperties => ({ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' });
+
+/**
+ * What the console prints where the API gave no value.
+ *
+ * Each referral admin route answers a specific struct, and several table columns
+ * and KPIs are wider than that struct (see the field comments in
+ * src/types/referralAdminOps.ts). A blank cell reads as "none / zero / clean" and
+ * a ₦0.00 on a payout, risk or funding screen is a positive claim the backend
+ * never made; an em-dash is the only honest rendering of "this endpoint does not
+ * report it".
+ */
+export const NOT_REPORTED = '—';
+
+/** Kobo that the API did not send renders as an em-dash, never as ₦0.00. */
+export function money(kobo: number | null | undefined): string {
+  return kobo == null ? NOT_REPORTED : formatNaira(kobo);
+}
+
+/** A string column the route does not answer. */
+export function textOrDash(value: string | null | undefined): string {
+  return value == null || value === '' ? NOT_REPORTED : value;
+}
+
+/** A rate the route does not compute: `0.041` prints 4.1%, absent prints a dash. */
+export function pctOrDash(ratio: number | null | undefined, digits = 1): string {
+  return ratio == null ? NOT_REPORTED : `${(ratio * 100).toFixed(digits)}%`;
+}
 
 const STATUS_COLORS: Record<string, string> = {
   // generic
@@ -105,12 +133,43 @@ export function StateBlock({ loading, error, empty, emptyText = 'No records foun
   return <>{children}</>;
 }
 
-export function timeAgo(isoStr: string): string {
-  const diff = Date.now() - new Date(isoStr).getTime();
+export function timeAgo(isoStr: string | null | undefined): string {
+  // Several referral routes answer no timestamp at all (ledger.Entry carries the
+  // state-change columns only when the row was written by the reward engine).
+  // Unparsed, `Date.now() - new Date(undefined)` is NaN and the cell prints
+  // "in NaNd" — a number the backend never sent.
+  if (isoStr == null || isoStr === '') return NOT_REPORTED;
+  const at = new Date(isoStr).getTime();
+  if (Number.isNaN(at)) return NOT_REPORTED;
+  const diff = Date.now() - at;
   const past = diff >= 0;
   const h = Math.floor(Math.abs(diff) / 3_600_000);
   if (h < 1) return 'just now';
   if (h < 24) return past ? `${h}h ago` : `in ${h}h`;
   const d = Math.floor(h / 24);
   return past ? `${d}d ago` : `in ${d}d`;
+}
+
+/**
+ * Loader failures are shown to an operator, not to a console.
+ *
+ * `String(error)` prefixes a sentence the page already explains with
+ * "Error: " and a UUID-ish reward id in the middle of it, which reads as a
+ * stack trace. The message alone is the honest, complete sentence the service
+ * wrote (see NO_BACKEND_YET in src/services/referralAdminService.ts).
+ */
+export function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * A count or ratio the route does not return.
+ *
+ * `0` on a growth or leaderboard screen is a measurement ("nobody completed
+ * this"), so an absent value must not collapse into it; `undefined` is printed
+ * as "undefined" and NaN as "NaN", which an operator reads as a live figure.
+ */
+export function numOrDash(value: number | null | undefined, digits?: number): string {
+  if (value == null || Number.isNaN(value)) return NOT_REPORTED;
+  return digits == null ? value.toLocaleString('en-NG') : value.toFixed(digits);
 }

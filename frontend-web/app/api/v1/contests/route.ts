@@ -12,7 +12,7 @@ export async function GET(request: Request) {
 
     let query = supabase
       .from('contests')
-      .select('id, name, category, status, start_date, end_date')
+      .select('id, name, category, status, start_date, end_date, prize_pool')
       .in('status', ['active', 'upcoming'])
       .order('created_at', { ascending: false });
 
@@ -77,6 +77,11 @@ export async function GET(request: Request) {
         endsAt: endsAt ?? new Date(Date.now() + 86_400_000).toISOString(),
         isLive,
         isTrending: totalVotes > 10_000,
+        // contests.prize_pool is free text ("₦500,000 + a management deal"), and
+        // until the console had a field for it every row was ''. /contests/[id]
+        // already returns the same column as prizePool; the list uses the short
+        // `prize` name so a card does not have to know the column.
+        prize: c.prize_pool || '',
       };
     });
 

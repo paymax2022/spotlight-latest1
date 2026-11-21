@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getVaRegistry, getCollectionEvents, getBeneficiaryIssues } from '@/services/fxAdminService';
 import type { VirtualAccountReg, AdminCollectionEvent, BeneficiaryValidationIssue } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge, moneyFull } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, moneyFull, ErrorNote, errorMessage } from '../_ui';
 import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function FxCollectionsPage() {
@@ -11,11 +11,12 @@ export default function FxCollectionsPage() {
   const [events, setEvents] = useState<AdminCollectionEvent[]>([]);
   const [issues, setIssues] = useState<BeneficiaryValidationIssue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
-    try { const [a, b, c] = await Promise.all([getVaRegistry(), getCollectionEvents(), getBeneficiaryIssues()]); setVas(a); setEvents(b); setIssues(c); }
-    finally { setLoading(false); }
+    setError(null);
+    try { const [a, b, c] = await Promise.all([getVaRegistry(), getCollectionEvents(), getBeneficiaryIssues()]); setVas(a); setEvents(b); setIssues(c); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
 
@@ -23,6 +24,7 @@ export default function FxCollectionsPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Beneficiaries & Collections" subtitle="Virtual account / IBAN registry, collection events and validation issues." action={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <FxTabs active="collections" />
+      <ErrorNote message={error} />
 
       <Card title="Virtual account / IBAN registry">
         {loading ? <p style={{ color: colors.muted }}>Loading…</p> : (

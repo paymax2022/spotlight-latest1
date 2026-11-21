@@ -11,6 +11,7 @@ import {
 import { publishContestToVotingPlane } from '@/src/server/registration-v2/publish-to-voting';
 import { createAdminClient } from '@/lib/supabase/server';
 import { allowedCategorySlugs } from '@/src/server/contests/categories';
+import { contestScheduleError, readContestSchedule } from '@/src/server/contests/schedule';
 
 const allowedTypes: ContestType[] = [
   'online_contest',
@@ -96,6 +97,14 @@ export async function POST(request: Request) {
       return errorResponse('Registration fee must be a valid number for paid contests.', 400);
     }
 
+    // The schedule and the prize ("start and end and price to be won"). Checked
+    // before the slug lookup so a malformed window refuses without touching
+    // Postgres. Omitted keys are not an error: they mean an unbounded contest,
+    // which is what every contest the console ever created was.
+    const schedule = readContestSchedule(body ?? {});
+    const scheduleProblem = schedule ? contestScheduleError(schedule) : null;
+    if (scheduleProblem) return errorResponse(scheduleProblem, 400);
+
     if (await contestSlugExists(slug)) {
       return errorResponse('A contest with that slug already exists.', 409);
     }
@@ -127,6 +136,12 @@ export async function POST(request: Request) {
       rulesText: String(body?.rulesText || '').trim(),
       bannerImageUrl: String(body?.bannerImageUrl || '').trim(),
       logoUrl: String(body?.logoUrl || '').trim(),
+      // '' means unbounded, and contest-store.ts turns '' into a NULL column so
+      // the connect_contests mirror keeps falling through to its open-ended
+      // behaviour instead of closing a contest on epoch day zero.
+      startDate: schedule?.startDate ?? '',
+      endDate: schedule?.endDate ?? '',
+      prizePool: schedule?.prizePool ?? '',
     });
 
     // Write through to Postgres so the contest exists outside this process: the

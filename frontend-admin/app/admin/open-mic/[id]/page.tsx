@@ -33,6 +33,13 @@ import {
   listOpenMicNotifications,
   getOpenMicFinalePlaylist,
   getOpenMicReportMetrics,
+  applyOpenMicApplicantAction,
+  updateOpenMicApplicantContact,
+  isOpenMicApplicantActionDestructive,
+  OPEN_MIC_APPLICANT_ACTIONS,
+  OPEN_MIC_APPLICANT_ACTION_LABELS,
+  type OpenMicApplicantAction,
+  type OpenMicApplicationRow,
   type OpenMicContest,
   type OpenMicContestEditInput,
   type OpenMicSubmissionRow,
@@ -138,6 +145,183 @@ function Table({ columns, rows }: { columns: string[]; rows: Array<Array<React.R
       </table>
     </div>
   );
+}
+
+/**
+ * One applicant's decisions, in their row.
+ *
+ * The actions a reviewer needs, wired to the same store path
+ * /admin/registration uses, so approving here and approving there cannot drift
+ * into two different records. Two rules the UI has to respect, both enforced
+ * again server-side:
+ *   - 'Request information' needs a note. Without one the applicant sees a
+ *     status they cannot act on, and the email has nothing to ask for.
+ *   - Only registration-plane rows are actionable. A legacy
+ *     competition_enrollments row has no registrations record to write, and
+ *     guessing which one it maps to would be worse than saying so.
+ */
+function ApplicantRowActions({ contestId, row, onRow }: {
+  contestId: string;
+  row: OpenMicApplicationRow;
+  onRow: (patch: Partial<OpenMicApplicationRow>) => void;
+}) {
+  const [action, setAction] = useState<OpenMicApplicantAction | ''>('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [contact, setContact] = useState({
+    stageName: row.stageName || '', email: row.email || '', phone: row.phone || '',
+  });
+
+  if (row.source !== 'registration') {
+    return (
+      <span style={{ fontSize: 12, color: colors.muted }}>
+        Legacy enrollment — no apply-form record to manage
+      </span>
+    );
+  }
+
+  const needsNote = action === 'request_information';
+
+  async function runAction() {
+    if (!action) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await applyOpenMicApplicantAction(contestId, row.id, action, note.trim() || undefined);
+      // The row updates in place rather than reloading the tab: a reload would
+      // drop the message that just told the reviewer what happened. The precise
+      // field is patched, not the three-state one — writing 'shortlisted' into
+      // applicationStatus would put a value the coarse column cannot hold, and
+      // the next reload would appear to undo the decision.
+      onRow({ registrationStatus: result.status });
+      setMessage({
+        ok: true,
+        text: action === 'request_information'
+          ? (
+              result.emailDelivered
+                ? 'Marked and emailed the applicant.'
+                // Two different reasons land here — no address on file, or no
+                // mail provider configured — and neither one is a message the
+                // applicant received, so the wording must not claim one.
+                : 'Marked — no email went out (no address on file, or no mail provider configured).'
+            )
+          : `${OPEN_MIC_APPLICANT_ACTION_LABELS[action]} — saved.`,
+      });
+      setAction('');
+      setNote('');
+    } catch (e) {
+      setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveContact() {
+    const patch: Record<string, string> = {};
+    if (contact.stageName.trim() !== (row.stageName || '')) patch.stageName = contact.stageName.trim();
+    if (contact.email.trim() !== (row.email || '')) patch.email = contact.email.trim();
+    if (contact.phone.trim() !== (row.phone || '')) patch.phone = contact.phone.trim();
+    if (!Object.keys(patch).length) {
+      setMessage({ ok: false, text: 'Nothing changed.' });
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      await updateOpenMicApplicantContact(contestId, row.id, patch);
+      onRow(patch);
+      setMessage({ ok: true, text: 'Contact updated.' });
+      setEditing(false);
+    } catch (e) {
+      setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 260 }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <select
+          aria-label="Applicant action"
+          value={action}
+          onChange={(e) => setAction(e.target.value as OpenMicApplicantAction)}
+          disabled={busy}
+          style={{ ...selectStyle, width: 'auto', minWidth: 150 }}
+        >
+          <option value="">Choose action…</option>
+          {OPEN_MIC_APPLICANT_ACTIONS.map((a) => (
+            <option key={a} value={a}>{OPEN_MIC_APPLICANT_ACTION_LABELS[a]}</option>
+          ))}
+        </select>
+        <Button
+          variant={action && isOpenMicApplicantActionDestructive(action) ? 'danger' : 'primary'}
+          onClick={runAction}
+          disabled={busy || !action || (needsNote && !note.trim())}
+        >
+          {busy ? 'Working…' : 'Apply'}
+        </Button>
+        <Button variant="outline" onClick={() => setEditing((v) => !v)} disabled={busy}>
+          {editing ? 'Cancel' : 'Edit contact'}
+        </Button>
+      </div>
+      {needsNote && (
+        <input
+          aria-label="Information request note"
+          placeholder="What do you need from the applicant? (required)"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          disabled={busy}
+          style={selectStyle}
+        />
+      )}
+      {editing && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <input
+            aria-label="Stage name"
+            placeholder="Stage name"
+            value={contact.stageName}
+            onChange={(e) => setContact((c) => ({ ...c, stageName: e.target.value }))}
+            disabled={busy}
+            style={selectStyle}
+          />
+          <input
+            aria-label="Email"
+            placeholder="Email"
+            value={contact.email}
+            onChange={(e) => setContact((c) => ({ ...c, email: e.target.value }))}
+            disabled={busy}
+            style={selectStyle}
+          />
+          <input
+            aria-label="Phone"
+            placeholder="Phone"
+            value={contact.phone}
+            onChange={(e) => setContact((c) => ({ ...c, phone: e.target.value }))}
+            disabled={busy}
+            style={selectStyle}
+          />
+          <Button onClick={saveContact} disabled={busy}>{busy ? 'Saving…' : 'Save contact'}</Button>
+        </div>
+      )}
+      {message && (
+        <p style={{ margin: 0, fontSize: 12, color: message.ok ? colors.success : colors.danger }}>{message.text}</p>
+      )}
+    </div>
+  );
+}
+
+/** What a decision looks like to a reviewer scanning the list. */
+function applicantStatusBadge(status: string) {
+  const value = String(status || '').replace(/_/g, ' ');
+  if (value === 'approved') return <Badge text={value} color={colors.success} />;
+  if (value === 'rejected' || value === 'disqualified' || value === 'withdrawn' || value === 'eliminated') {
+    return <Badge text={value} color={colors.danger} />;
+  }
+  if (value === 'more information requested' || value === 'waitlisted') return <Badge text={value} color={colors.warning} />;
+  return <Badge text={value} color={colors.muted} />;
 }
 
 export default function OpenMicContestAdminPage() {
@@ -303,7 +487,19 @@ export default function OpenMicContestAdminPage() {
         case 'Votes': setRows(await getOpenMicVotingAnalytics(contestId)); break;
         case 'Notifications': setRows(await listOpenMicNotifications(contestId)); break;
         case 'Finale': setRows(await getOpenMicFinalePlaylist(contestId)); break;
-        case 'Reports': setRows(await getOpenMicReportMetrics(contestId)); break;
+        case 'Reports': {
+          // metrics.totalApplicants is an enrollment-plane count, so it reads 0
+          // for every contest whose applicants arrived through the public apply
+          // form (registrations). The merged applicants list is the real
+          // head-count and is what the Applications tab shows — the two tiles
+          // must never disagree.
+          const [metrics, applicants] = await Promise.all([
+            getOpenMicReportMetrics(contestId),
+            listOpenMicApplications(contestId),
+          ]);
+          setRows({ ...metrics, totalApplicants: applicants.length });
+          break;
+        }
       }
       setLoadedTab(tab);
     } catch (e) {
@@ -314,6 +510,20 @@ export default function OpenMicContestAdminPage() {
   }, [tab, contestId]);
 
   useEffect(() => { loadTab(); }, [loadTab]);
+
+  /**
+   * Writes one Applications row after a server change. The route has already
+   * committed by the time this runs, so refetching the whole tab would only
+   * cost the reviewer the confirmation message they just earned — the row is
+   * patched in place instead.
+   */
+  function updateApplicationRow(id: string, patch: Partial<OpenMicApplicationRow>) {
+    // `rows` is deliberately unknown-typed (one state for twelve tabs of
+    // different shapes), so the updater parameter has to be spelled out.
+    setRows((prev: unknown) => (Array.isArray(prev)
+      ? (prev as OpenMicApplicationRow[]).map((row) => (row.id === id ? { ...row, ...patch } : row))
+      : prev));
+  }
 
   return (
     <Page>
@@ -535,10 +745,18 @@ export default function OpenMicContestAdminPage() {
 
         {!loading && !error && loadedTab === 'Applications' && (
           <Table
-            columns={['Artist', 'Email', 'Phone', 'Application', 'Payment', 'Beat Download']}
+            columns={['Artist', 'Email', 'Phone', 'Application', 'Payment', 'Beat Download', 'Actions']}
             rows={(rows as Awaited<ReturnType<typeof listOpenMicApplications>>).map((a) => [
               a.stageName || a.artistName, a.email || '—', a.phone || '—',
-              a.applicationStatus?.replace(/_/g, ' '), a.paymentStatus?.replace(/_/g, ' '), a.beatDownloadStatus?.replace(/_/g, ' '),
+              // The exact status when the server knows it (apply-form rows),
+              // the console's three-state value otherwise (legacy rows).
+              applicantStatusBadge(a.registrationStatus || a.applicationStatus), a.paymentStatus?.replace(/_/g, ' '), a.beatDownloadStatus?.replace(/_/g, ' '),
+              <ApplicantRowActions
+                key={a.id}
+                contestId={contestId}
+                row={a}
+                onRow={(patch) => updateApplicationRow(a.id, patch)}
+              />,
             ])}
           />
         )}
