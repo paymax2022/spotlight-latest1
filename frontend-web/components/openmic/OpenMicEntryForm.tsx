@@ -4,12 +4,22 @@ import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
 import { getOpenMicLgaOptions, OPEN_MIC_COUNTRIES, OPEN_MIC_STATES } from '@/src/features/openmic/location-options';
+import { handinFieldsOnRecord, type HandinInheritance } from '@/src/features/openmic/handin-record';
 
 type Props = {
   contestSlug: string;
   contestTitle: string;
   beatAvailable: boolean;
   beatRequiresPaidEntry: boolean;
+  /**
+   * What this artist's own Open Mic application already answered. Computed on the
+   * server (`src/server/openmic/handin-record.ts`) and optional by contract: when
+   * it is absent — signed out, no application, or a failed read — every question
+   * stays on screen exactly as it did before.
+   */
+  inheritance?: HandinInheritance;
+  /** The sign-up email, which the registration form never asks for. */
+  accountEmail?: string;
 };
 
 export default function OpenMicEntryForm({
@@ -17,6 +27,8 @@ export default function OpenMicEntryForm({
   contestTitle,
   beatAvailable,
   beatRequiresPaidEntry,
+  inheritance,
+  accountEmail,
 }: Props) {
   const supabase = createClient();
   const [busy, setBusy] = useState(false);
@@ -25,27 +37,39 @@ export default function OpenMicEntryForm({
   const [downloadMessage, setDownloadMessage] = useState('');
   const [uploadingSong, setUploadingSong] = useState(false);
   const [songUploadMessage, setSongUploadMessage] = useState('');
+  // Tapping "Change" puts the question back on screen for the rest of the visit:
+  // an artist who spots a typo in the email their entry will be matched on should
+  // fix it before submitting, not after.
+  const [correcting, setCorrecting] = useState({ email: false, location: false });
 
-  const [form, setForm] = useState({
-    artistName: '',
-    email: '',
-    country: 'Nigeria',
-    state: '',
-    lga: '',
-    instagramHandle: '',
-    tiktokHandle: '',
-    youtubeHandle: '',
-    facebookHandle: '',
-    xHandle: '',
-    songUrl: '',
-    submissionId: '',
-    songObjectKey: '',
-    songFileName: '',
-    officialBeatConfirmed: false,
-    ownershipConfirmed: false,
-    noUnauthorizedSamplesConfirmed: false,
-    termsAccepted: false,
-    paidAccessConfirmed: !beatRequiresPaidEntry,
+  // The record decides what the form opens with, so the confirmed rows can never
+  // disagree with the body `submitSong` sends.
+  const onRecord = handinFieldsOnRecord(inheritance, accountEmail);
+  const recordEmail = (inheritance?.email || accountEmail || '').trim();
+
+  const [form, setForm] = useState(() => {
+    const record = handinFieldsOnRecord(inheritance, accountEmail);
+    return {
+      artistName: '',
+      email: (inheritance?.email || accountEmail || '').trim(),
+      country: 'Nigeria',
+      state: record.location ? String(inheritance?.state ?? '').trim() : '',
+      lga: record.location ? String(inheritance?.lga ?? '').trim() : '',
+      instagramHandle: '',
+      tiktokHandle: '',
+      youtubeHandle: '',
+      facebookHandle: '',
+      xHandle: '',
+      songUrl: '',
+      submissionId: '',
+      songObjectKey: '',
+      songFileName: '',
+      officialBeatConfirmed: false,
+      ownershipConfirmed: false,
+      noUnauthorizedSamplesConfirmed: false,
+      termsAccepted: false,
+      paidAccessConfirmed: !beatRequiresPaidEntry,
+    };
   });
 
   function setField<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
@@ -311,8 +335,22 @@ export default function OpenMicEntryForm({
               <input className="form-input h-[44px]" value={form.artistName} onChange={(e) => setField('artistName', e.target.value)} />
             </div>
             <div>
-              <label className="form-label">Email Address*</label>
-              <input className="form-input h-[44px]" type="email" value={form.email} onChange={(e) => setField('email', e.target.value)} />
+              {onRecord.email && !correcting.email ? (
+                <ConfirmedRow
+                  label="Email Address"
+                  value={recordEmail}
+                  note={inheritance?.email
+                    ? 'From your entry. Change it if anything has moved.'
+                    : 'From your account. Update it in your profile if it has changed.'}
+                  onChange={() => setCorrecting((previous) => ({ ...previous, email: true }))}
+                  disabled={busy || uploadingSong}
+                />
+              ) : (
+                <>
+                  <label className="form-label">Email Address*</label>
+                  <input className="form-input h-[44px]" type="email" value={form.email} onChange={(e) => setField('email', e.target.value)} />
+                </>
+              )}
             </div>
             <div>
               <label className="form-label">Country*</label>
@@ -325,28 +363,42 @@ export default function OpenMicEntryForm({
                 ))}
               </select>
             </div>
-            <div>
-              <label className="form-label">State*</label>
-              <select className="form-input h-[44px]" value={form.state} onChange={(e) => setField('state', e.target.value)}>
-                <option value="">Select state</option>
-                {OPEN_MIC_STATES.map((state) => (
-                  <option key={state} value={state}>
-                    {state}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="form-label">LGA*</label>
-              <select className="form-input h-[44px]" value={form.lga} onChange={(e) => setField('lga', e.target.value)} disabled={!form.state}>
-                <option value="">{form.state ? 'Select LGA' : 'Select state first'}</option>
-                {lgaOptions.map((lga) => (
-                  <option key={lga} value={lga}>
-                    {lga}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {onRecord.location && !correcting.location ? (
+              <div className="md:col-span-2">
+                <ConfirmedRow
+                  label="State and LGA"
+                  value={`${String(inheritance?.state ?? '').trim()} · ${String(inheritance?.lga ?? '').trim()}`}
+                  note="From your entry. Change it if you have moved."
+                  onChange={() => setCorrecting((previous) => ({ ...previous, location: true }))}
+                  disabled={busy || uploadingSong}
+                />
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="form-label">State*</label>
+                  <select className="form-input h-[44px]" value={form.state} onChange={(e) => setField('state', e.target.value)}>
+                    <option value="">Select state</option>
+                    {OPEN_MIC_STATES.map((state) => (
+                      <option key={state} value={state}>
+                        {state}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">LGA*</label>
+                  <select className="form-input h-[44px]" value={form.lga} onChange={(e) => setField('lga', e.target.value)} disabled={!form.state}>
+                    <option value="">{form.state ? 'Select LGA' : 'Select state first'}</option>
+                    {lgaOptions.map((lga) => (
+                      <option key={lga} value={lga}>
+                        {lga}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
             <div>
               <label className="form-label">Instagram</label>
               <input className="form-input h-[44px]" value={form.instagramHandle} onChange={(e) => setField('instagramHandle', e.target.value)} />
@@ -421,6 +473,41 @@ export default function OpenMicEntryForm({
       {downloadMessage ? <p className="text-sm text-blue-400">{downloadMessage}</p> : null}
       {songUploadMessage ? <p className="text-sm text-emerald-400">{songUploadMessage}</p> : null}
       {message ? <p className="text-sm text-emerald-400">{message}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * A fact the artist already gave, shown as an answer instead of as a required
+ * question, with the escape hatch that puts the question back on screen.
+ *
+ * The note names where the value came from — the account or the approved entry —
+ * because those are corrected in different places, and "Change" is never hidden.
+ */
+function ConfirmedRow({ label, value, note, onChange, disabled }: {
+  label: string;
+  value: string;
+  note: string;
+  onChange: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="form-shell border border-accent-gold/40 bg-accent-gold/10">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="form-label">{label}</p>
+          <p className="text-sm font-medium break-words" style={{ color: '#111827' }}>{value}</p>
+          <p className="form-help">{note}</p>
+        </div>
+        <button
+          type="button"
+          className="btn-outline py-2 px-3 text-xs shrink-0"
+          onClick={onChange}
+          disabled={disabled}
+        >
+          Change
+        </button>
+      </div>
     </div>
   );
 }

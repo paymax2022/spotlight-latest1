@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import OpenMicEntryForm from '@/components/openmic/OpenMicEntryForm';
 import { getContestBySlug } from '@/src/server/openmic/persistence';
+import { readHandinRecord } from '@/src/server/openmic/handin-record';
 import OpenMicProgressTracker from '@/components/openmic/OpenMicProgressTracker';
 import OpenMicAuthGate from '@/components/openmic/OpenMicAuthGate';
 
@@ -10,6 +11,9 @@ export default async function OpenMicContestEntryPage({ params }: { params: Prom
   const { slug } = await params;
   const contest = await getContestBySlug(slug);
   if (!contest) notFound();
+  // What this artist already answered, so the form confirms it instead of asking
+  // again. Never required: an empty record leaves every question on screen.
+  const handinRecord = await readHandinRecord(contest.slug);
 
   return (
     <section className="about-section section-padding fix bg-cover" style={{ backgroundImage: 'url("/assets/img/service/service-bg-2.jpg")' }}>
@@ -31,6 +35,8 @@ export default async function OpenMicContestEntryPage({ params }: { params: Prom
               contestTitle={contest.title}
               beatAvailable={Boolean(contest.beat)}
               beatRequiresPaidEntry={contest.beat?.requiresPaidEntryForDownload === true}
+              inheritance={handinRecord.inheritance}
+              accountEmail={handinRecord.accountEmail}
             />
           </OpenMicAuthGate>
         </section>
