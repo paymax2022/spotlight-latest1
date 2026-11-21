@@ -126,3 +126,54 @@ the whole deploy job closed in 184 s.
 That run's `reason` was `prod-behind` because the decider compared shas. It now
 compares the `backend/` tree and would print `backend-stale`; see the reason table
 above for why the difference matters to anyone reading a green checkmark.
+
+## Two limits of the automatic writer (measured, not assumed)
+
+- **A docs-only push does not reconcile anything**, and a cron is not available on
+  `prod` to fix that: GitHub only runs `on.schedule` from the repository's default
+  branch (`main`, measured 2026-11-21), and `ci.yml`'s push trigger ignores
+  `**.md` / `docs/**`. Closing the last window means a timer workflow on `main` that
+  dispatches `prod`, or widening `paths-ignore` — both owner decisions.
+- **`security` can never be a `needs:` entry** of `deploy-production-backend`,
+  because `needs:` only reaches jobs in the same file. If production deploys should
+  wait on the audits, the audits have to become jobs in `ci.yml` or `ship-scope` has
+  to read the check rollup for the pushed sha.
+
+## `prod` was two patch releases behind on the frameworks that face users
+
+Measured 2026-11-21 against `prod`'s own lockfiles with the CI command
+(`node .github/scripts/npm-audit-gate.mjs <workspace> <baseline>`, which is
+`npm audit --omit=dev --json` filtered against `.github/npm-audit-baseline/`):
+
+| Workspace | `prod` resolved | `main` resolved | what that meant |
+|---|---|---|---|
+| `frontend-web` | `next@16.4.0` | `next@16.4.6` | 10 unbaselined advisories, 2 of them **critical unauthenticated RCE** (image-optimisation SVG path, `use cache` typed arrays) |
+| `frontend-admin` | `next@16.4.0` | `next@16.4.6` | the same 10 |
+| `backend` + crypto module | `go 1.27.2` | `go 1.27.4` | `govulncheck` red on `GO-2026-6859` (stdlib `net/http`, fixed in 1.27.4) and `GO-2026-6809` (`crypto/x509`, fixed in 1.27.3) |
+
+So the `security` reds on this lineage were never a stale-baseline problem to be
+papered over: `main` had already taken the patch versions that clear them, and `prod`
+forked before those bumps. The port is the four version lines above — `next`/`react`/
+`react-dom`/`eslint-config-next` in the two web manifests plus the `go` directive in
+both modules — and it moves no other package: the regenerated locks add zero entries,
+remove zero, and change only the `next`, `@next/*`, `react`, `react-dom` and
+`eslint-config-next` subtrees.
+
+Still red on `prod` after it: `npm audit (mobile-app/reactnative)`, because clearing
+those 30 entries needs main's expo/React-Native arc (a `zod` 3 → 4 major plus newer
+transitive `node-forge`, `undici`, `follow-redirects`, `decode-uri-component`). Do not
+baseline them to buy a green badge. Note that `npm audit`'s own advice is wrong here —
+it offers `axios@0.7.0` (a 2015 downgrade) and `expo-router@58` (an SDK major) — which
+is why this repo's gate is differential against a reviewed baseline rather than
+`npm audit fix`-driven.
+
+**The Go directive and `backend/Dockerfile`.** That file's header says a bump to the
+`go` directive must come with a bump to the base image, because official `golang`
+images set `GOTOOLCHAIN=local` and an older base cannot download a newer toolchain.
+`FROM golang:1.27-alpine` needed no edit for `go 1.27.4` because the floating tag
+resolves to exactly that patch today: `1.27-alpine` and `1.27.4-alpine` share the
+manifest digest `sha256:70bd7ddea8b6…` (checked on Docker Hub 2026-11-21), while
+`1.27.3-alpine` is a different digest. Re-run that comparison whenever the directive
+moves — and pin the patch (`golang:1.27.4-alpine`) if the floating tag ever lags it,
+because a `go build` in CI with `GOTOOLCHAIN: auto` will NOT catch the mismatch that
+breaks the image build.
