@@ -475,9 +475,9 @@ running build never changed. This is the laptop arm of `docs/devops/railway-uplo
 size-boundary row reads "7,511,269 B accepted / 133,527,512 B refused" and reasons it to Cloudflare's ~100 s
 proxy window at 11.217 Mbps. My archive was 116 MB and the refusals landed at **46 s and 20 s**, so the
 window is not the whole story and the practical rule is blunter: **this machine cannot upload
-`frontend-web` at all** — the 7.7 MB that succeeded for §6 is near the ceiling, not the middle. Trimming is
-not an option: `du` puts 102 MB of that 116 MB in `frontend-web/public/` (single PNGs of 2–5 MB), which the
-site serves, so any exclusion ships a different tree than CI would.
+`frontend-web` at all** — the upload §6 got through is near the ceiling, not the middle (measuring the tree the way the script tars it: `frontend-admin` is ~10 MB uncompressed, `frontend-web` ~116 MB, and the laptop accepted the first and refused the second inside a minute). Trimming is
+not an option: `du` puts 102 MB of that 116 MB in `frontend-web/public/` — 92 MB of it in 351 image files,
+some of them 2–5 MB PNGs — which the site serves, so any exclusion ships a different tree than CI would.
 
 **What is not the answer.** `deploy-railway-action.yml` is the only other runner-shaped lane and it is dark
 by design: `gh variable list` shows `RAILWAY_DEPLOY_ENABLED true` and no `RAILWAY_ACTION_DEPLOY_ENABLED`,
