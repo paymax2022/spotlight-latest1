@@ -131,10 +131,14 @@ therefore be simulated, which is a fact to know before trusting a dev routing de
 ## What no environment variable can fix
 
 - **`/api/finance/admin/fx/overview` and `/verifications`** exist in `main` (added in `184113663`)
-  and are inside the orchestration block, but `git merge-base` proves that commit is not in the
-  deployed prod binary (`d3401f574`). Publishing them is the owner-signed main→prod release
-  project, recorded in `docs/superpowers/plans/2026-11-20-main-to-prod-backend-release.md` (PR #1105)
-  — not a sweep step.
+  and are inside the orchestration block, but `git merge-base --is-ancestor` proves that commit is in
+  no commit of the `prod` lineage — measured against both `origin/prod` and the two production Go
+  binaries that have since been read back (`b9c21b534`, then `e43c64557` at 19:50Z) — and
+  `git grep -l 'admin/fx/overview' origin/prod -- backend` finds no handler there at all. Do not
+  re-cite a single deployed sha as the proof: that number now moves on its own (see §4), so the
+  ancestor test against `origin/prod` is the durable form of this claim. Publishing them is the
+  owner-signed main→prod backend release project, recorded in
+  `docs/superpowers/plans/2026-11-20-main-to-prod-backend-release.md` (PR #1105) — not a sweep step.
   This branch keeps `getOverview` pointed at that route and **fails loud** rather than substituting
   fixtures, per "Ensure all FX are front provider endpoint — realtime".
 - **FX admin surface without any Go route**: routing, providers, treasury, reconciliation,
@@ -226,18 +230,24 @@ binary. Production's Go service has a **second writer**: PR #1122 merged to the 
 and installed a `deploy Production backend (automatic)` job that shipped that merge commit 17 minutes later,
 so a green push to `prod` now redeploys production's backend with nobody at the keyboard. #1126
 (`e0be2ef25`, merged 16:20:54Z) narrowed the predicate from the sha to the **artifact** — a push that changes
-no `backend/**` file prints `ship=false reason=image-current` and leaves the binary alone. Read this number
-again before quoting it: at 19:31Z `e43c64557` (#1132, merged 19:29:34Z) was already mid-CI having printed
-`ship=true reason=backend-changed` on its single `backend/go.mod`, so it will replace `b9c21b534` without
-anyone touching a main-lineage train. The read-back works straight off the Go host too —
-`https://backend-production-1b33d.up.railway.app/api/v1/public/build`, which is what that job itself uses —
-and when this line was checked a second time at 19:39Z it had still not moved.
+no `backend/**` file prints `ship=false reason=image-current` and leaves the binary alone. The prediction
+in this line was then tested rather than restated: `e43c64557` (#1132, merged 19:29:34Z) printed
+`ship=true reason=backend-changed` from its `production ship scope` step at **19:29:49Z** on its single
+`backend/` file (`go.mod`), the read-back at 19:39Z still answered `b9c21b534`, and at
+`started_at: 2026-11-21T19:50:14Z` production's Go service became `e43c64557bdaffc38c8ea81671f9e6c48ff24841`
+— nobody shipped it; a merge to `prod` twenty minutes earlier did.
 
 Read §8's "Fixing F2 is no longer the cheap version" paragraph before drawing any conclusion from either
 number, because **what did not move is the thing this document is about**: production `frontend-web`, still
 the 2026-11-16 hand upload `ea71b561`.
-Measured 2026-11-21 19:28Z, the same four requests sent to the two production web hosts disagree exactly
-where the fix lives:
+The Go host's own address — `https://backend-production-1b33d.up.railway.app/api/v1/public/build`, which is
+what that ship job queries — and the forwarded form of the same path through the web host, as shown above,
+now agree: read off `frontend-web-production-9259` at 19:50:56Z the answer was `e43c64557` with
+`started_at` 19:50:14Z. The four requests below, re-measured 36 seconds later, returned their identical
+codes — **a production backend ship does not move these routes; the web host's own artifact is a separate
+object from the binary behind it.**
+Measured 2026-11-21 19:28Z, re-measured 19:51Z after the Go flip, the same four requests sent to the two
+production web hosts disagree exactly where the fix lives:
 
 | request | `frontend-web-production-9259` — the BFF the console proxies to | `www.spotlightng.com` — cPanel |
 | --- | --- | --- |
@@ -600,7 +610,10 @@ over what the `prod` lineage just shipped — the two trees differ by 866 files 
 carries 19 commits `main` has never seen (its merge-base with `main` is `94ad08c05`, and it sits 834 commits
 behind). That is a production release of a different lineage plus `migrate production database`, not a fix for
 the applicant buttons. Uploading `frontend-web` alone — the literal Command 6 above, `SERVICE=frontend-web` —
-carries none of that risk, which is why it is the recommended step and the whole train is not.
+carries none of that risk, which is why it is the recommended step and the whole train is not. The competing
+writer is not hypothetical: production's Go service moved to `e43c64557` at 19:50:14Z on its own, twenty
+minutes after #1132 reached `prod`, with no train and nobody at the keyboard — that is the plane a
+main-lineage `deploy Production (backend)` would now be overwriting.
 
 Two further facts from the same reading, both useful and both currently unused:
 
