@@ -471,12 +471,11 @@ export default function OpenMicContestAdminPage() {
         case 'Edit Contest': break;
         case 'Applications': setRows(await listOpenMicApplications(contestId)); break;
         case 'Submissions': {
-          // One request feeds both the table and the review panel:
-          // /api/admin/open-mic/submissions returns whole submission objects,
-          // so songUrl/songObjectKey/reviewNote are already in the payload.
-          const list = await listOpenMicSubmissions(contestId);
-          setRows(list);
-          setSubmissionRows(list);
+          // /api/admin/open-mic/submissions returns whole submission objects, so
+          // songUrl/songObjectKey/reviewNote are already in the payload and the
+          // queue needs no second request. It feeds `submissionRows` alone: this
+          // tab no longer renders a table off `rows`.
+          setSubmissionRows(await listOpenMicSubmissions(contestId));
           break;
         }
         case 'Finalists': setRows(await listOpenMicFinalists(contestId)); break;
@@ -762,43 +761,21 @@ export default function OpenMicContestAdminPage() {
         )}
 
         {!error && loadedTab === 'Submissions' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {loading ? (
-              <p style={{ color: colors.muted, margin: 0 }}>Loading submissions…</p>
-            ) : (
-              <Table
-                columns={['Artist', 'Song', 'Status', 'Handed In', 'Votes', 'Finalist', 'Winner']}
-                rows={(rows as OpenMicSubmissionRow[]).map((s) => [
-                  s.stageName, s.songTitle, s.status?.replace(/_/g, ' '),
-                  s.submittedAt ? new Date(s.submittedAt).toLocaleString() : '—',
-                  s.voteCount,
-                  s.isFinalist ? <Badge key="f" text="Finalist" color={colors.primary} /> : '—',
-                  s.isWinner ? <Badge key="w" text="Winner" color={colors.success} /> : '—',
-                ])}
-              />
-            )}
-
-            {/* The decision panel is rendered apart from `loading` on purpose:
-                it refetches itself after every decision (refreshSubmissions),
-                and unmounting it there would wipe the row the operator is
-                working through along with the confirmation they need to read. */}
-            <section style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <h3 style={{ fontSize: 13, fontWeight: 700, margin: 0 }}>Song review</h3>
-              <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>
-                Listen, then decide. Only ‘Publish for voting’ puts a track on the artist profile, the leaderboard and
-                the mobile app; ‘Approve the hand-in’ alone accepts the file and shows it to nobody.
-              </p>
-              {submissionRows === null ? (
-                <p style={{ color: colors.muted, margin: 0 }}>Loading submissions…</p>
-              ) : (
-                <OpenMicSubmissionReviewPanel
-                  submissions={submissionRows}
-                  onRefresh={refreshSubmissions}
-                  refreshing={refreshingSubmissions}
-                />
-              )}
-            </section>
-          </div>
+          // The queue IS the tab: it carries every fact the separate table used
+          // to (timestamp, votes, finalist, winner) plus the player and the
+          // decision, so a song is read in one place. Rendered apart from
+          // `loading` on purpose — it refetches itself after every decision
+          // (refreshSubmissions), and unmounting it there would wipe the row the
+          // operator is working through along with the confirmation they earned.
+          submissionRows === null ? (
+            <p style={{ color: colors.muted, margin: 0 }}>Loading submissions…</p>
+          ) : (
+            <OpenMicSubmissionReviewPanel
+              submissions={submissionRows}
+              onRefresh={refreshSubmissions}
+              refreshing={refreshingSubmissions}
+            />
+          )
         )}
 
         {!loading && !error && loadedTab === 'Finalists' && (
