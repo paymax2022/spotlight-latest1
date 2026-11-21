@@ -79,9 +79,32 @@ export type PaystackTransactionConfig = {
   onError?: (error: { message: string }) => void;
 };
 
+type PaystackPopCallbacks = {
+  onSuccess: (transaction: { reference: string; id?: number; message?: string }) => void;
+  onCancel: () => void;
+  onError: (error: { message: string }) => void;
+};
+
 type PaystackConstructor = new () => {
   newTransaction(config: PaystackTransactionConfig): void;
+  /** Continue a transaction the server already created via the Initialize API. */
+  resumeTransaction(accessCode: string, callbacks: PaystackPopCallbacks): void;
 };
+
+/**
+ * The access code is the last path segment of an Initialize response's
+ * `authorization_url` (`https://checkout.paystack.com/<code>`). Returns null for
+ * a missing, malformed or non-Paystack URL so callers can fail loudly instead of
+ * opening an empty popup.
+ */
+export function extractPaystackAccessCode(authorizationUrl: unknown): string | null {
+  if (typeof authorizationUrl !== 'string' || !authorizationUrl) return null;
+  const [pathPart] = authorizationUrl.replace(/^[a-z]+:\/\//i, '').split(/[?#]/);
+  const segments = pathPart.split('/').filter(Boolean);
+  if (segments.length < 2 || !segments[0].toLowerCase().includes('paystack.')) return null;
+  const code = segments[segments.length - 1].trim();
+  return code.length > 0 ? code : null;
+}
 
 declare global {
   interface Window {

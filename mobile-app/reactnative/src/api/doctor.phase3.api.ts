@@ -47,6 +47,7 @@ import type {
 // Re-export the shared money formatter so Phase 3 screens can import it here too.
 export { formatKobo } from '@/api/doctor.api';
 import { DOCTOR_USE_MOCK, doctorGet, doctorPost, doctorPatch } from '@/api/doctor.client';
+import { mapPetProfileWire, mapVetDashboardWire, type PetWire, type VetDashboardWire } from '@/features/doctor/vetWire';
 
 // Simulate network latency so loading states are exercised in the UI.
 const wait = <T>(value: T, ms = 350): Promise<T> =>
@@ -290,12 +291,12 @@ export const DEMO_CLINIC_PORTFOLIO: ClinicPortfolio = {
 
 export async function getVetDashboard(): Promise<VetDashboard> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_VET_DASHBOARD);
-  return doctorGet<VetDashboard>('/vet/dashboard');
+  return mapVetDashboardWire(await doctorGet<VetDashboardWire>('/vet/dashboard'));
 }
 
 export async function getPetProfile(petId: string): Promise<PetProfile> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_PET_PROFILE);
-  return doctorGet<PetProfile>(`/vet/pets/${petId}`);
+  return mapPetProfileWire(await doctorGet<PetWire>(`/vet/pets/${petId}`));
 }
 
 export async function getPetPrescription(petId: string): Promise<PetPrescription> {

@@ -35,11 +35,12 @@ import (
 
 type tierStatusBody struct {
 	Data struct {
-		Tier           int    `json:"tier"`
-		DailyLimitKobo *int64 `json:"dailyLimitKobo"`
-		DailyUsedKobo  *int64 `json:"dailyUsedKobo"`
-		RemainingKobo  *int64 `json:"remainingKobo"`
-		WalletDisabled *bool  `json:"walletDisabled"`
+		Tier                    int    `json:"tier"`
+		DailyLimitKobo          *int64 `json:"dailyLimitKobo"`
+		DailyUsedKobo           *int64 `json:"dailyUsedKobo"`
+		RemainingKobo           *int64 `json:"remainingKobo"`
+		WalletDisabled          *bool  `json:"walletDisabled"`
+		MerchantOrderLimitKobo  *int64 `json:"merchantOrderLimitKobo"`
 	} `json:"data"`
 }
 
@@ -98,12 +99,20 @@ func TestLiveDB_TierStatusReportsSpendAllowance(t *testing.T) {
 		if assert.NotNil(t, body.Data.RemainingKobo) {
 			assert.Equal(t, int64(0), *body.Data.RemainingKobo, "a disabled wallet has no allowance")
 		}
+		// The RECEIPT side of the same account: an unverified owner may take orders up
+		// to the unverified rung, and the screen that tells them so must not invent it.
+		if assert.NotNil(t, body.Data.MerchantOrderLimitKobo, "merchantOrderLimitKobo must be emitted") {
+			assert.Equal(t, tiers.SmallTransactionMaxKobo, *body.Data.MerchantOrderLimitKobo)
+		}
 	})
 
 	t.Run("tier 3 reports unlimited, not disabled", func(t *testing.T) {
 		body := getTierStatusFor(t, pool, seed(3))
 		if assert.NotNil(t, body.Data.WalletDisabled) {
 			assert.False(t, *body.Data.WalletDisabled)
+		}
+		if assert.NotNil(t, body.Data.MerchantOrderLimitKobo) {
+			assert.Equal(t, int64(0), *body.Data.MerchantOrderLimitKobo, "0 is the unlimited sentinel on both sides")
 		}
 		if assert.NotNil(t, body.Data.RemainingKobo) {
 			// -1 is the unlimited sentinel. Reporting 0 here would make the client
@@ -120,6 +129,12 @@ func TestLiveDB_TierStatusReportsSpendAllowance(t *testing.T) {
 		if assert.NotNil(t, body.Data.DailyLimitKobo) {
 			assert.Equal(t, cfg.DailyDebitLimitKobo, *body.Data.DailyLimitKobo,
 				"the advertised limit must be the one the debit gate enforces")
+		}
+		if assert.NotNil(t, body.Data.MerchantOrderLimitKobo) {
+			// The receipt ceiling on a capped tier IS that tier's daily number, so the
+			// two fields must agree — a merchant reading both should not have to work
+			// out which one the restaurant gate actually uses.
+			assert.Equal(t, *body.Data.DailyLimitKobo, *body.Data.MerchantOrderLimitKobo)
 		}
 		if assert.NotNil(t, body.Data.DailyUsedKobo) {
 			assert.Equal(t, int64(0), *body.Data.DailyUsedKobo)

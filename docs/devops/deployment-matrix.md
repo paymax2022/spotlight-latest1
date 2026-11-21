@@ -11,7 +11,7 @@ file a docs PR to correct it rather than silently re-pointing a config.
 
 | Service | Production | Staging | Mechanism | Evidence |
 |---|---|---|---|---|
-| `frontend-web` (Next.js) | cPanel Passenger (`spotlightng.com`) | Railway (`frontend-web-staging-new`) | `.github/workflows/deploy-cpanel.yml` on push to `main` (prod) — currently inert, gated on `vars.CPANEL_DEPLOY_ENABLED`, see Promotion model; Railway native git deploy from `staging` branch (staging) | `deploy-cpanel.yml`, `frontend-web/server.js`, `frontend-web/railway.json`, `eas.json` staging API URL |
+| `frontend-web` (Next.js) | cPanel Passenger (`spotlightng.com`) | Railway (`frontend-web-staging-new`) | **Prod:** push to `main` here → `sync-frontend-web.yml` ("Spotlight Frontend Web Safe Merge", gated on `vars.SPOTLIGHT_FRONTEND_SYNC_ENABLED`) copies `frontend-web/` into `paymax2022/spotlight-latest` `main` → **that repo's** ungated `Deploy to Namecheap cPanel (SSH)` lane builds, rsyncs, purges `.next/server/route-cache` and restarts Passenger — so a `main` push IS a production release. This repo's own `deploy-cpanel.yml` stays inert (`vars.CPANEL_DEPLOY_ENABLED` unset, secrets absent) and is not the writer. **Staging:** Railway native git deploy from the `staging` branch | `sync-frontend-web.yml:48` (destination repo), `spotlight-latest` Deploy-to-cPanel runs green on every sync (latest 2026-11-11), `deploy-cpanel.yml` header, `frontend-web/server.js`, `frontend-web/railway.json`, `eas.json` staging API URL |
 | `backend` (Go API) | Railway `production` service `backend` (`backend-production-1b33d.up.railway.app`) | Railway `staging` service `backend` (`backend-staging-new.up.railway.app`) | `ci.yml`'s dispatch-only `deploy-{development,staging,production}` jobs `railway up` the folder — no push deploys it. GCP Cloud Run is the **intended** target of `.github/workflows/deploy.yml` (sha-tagged image → staging → 10% canary → human-gated promotion), but every one of its jobs is skipped while `vars.GCP_PROJECT_ID` is unset | live `GET /api/v1/public/health` 200 on both Railway hosts and `NXDOMAIN` for `api.spotlightng.com`; `deploy.yml:34` gate, 100/100 `skipped` runs in its history; `infra/terraform/cloud-run.tf` |
 | Backend workers (asynq) | Render `spotlight-notification-worker` | Render | `render.yaml` worker service (AUD-INFRA-006) | `render.yaml` |
 | `frontend-admin` (Next.js) | `admin.spotlightng.com` (cPanel) | Railway (`frontend-admin-staging-new`) | cPanel Passenger host; `frontend-admin/railway.json` for staging | `backend/internal/config/config.go` `ADMIN_APP_BASE_URL` default, `frontend-admin/railway.json` |
@@ -47,18 +47,27 @@ expecting a deploy effect, and do not delete them without checking this list:
   `meta.branch: "main"` — staging runs `main`, not the `staging` branch. The
   branch test above says which branch a dispatch must be run *from*, not what
   the hosts track, so staging drifts behind `main` until someone re-deploys.
-- Production is **not** deployed by any lane today.
-  `deploy-cpanel.yml` runs on every push to `main` but is inert by design: its
-  job is gated on `vars.CPANEL_DEPLOY_ENABLED == 'true'`, which is unset, so the
-  run reports `skipped`. That gate is what the lane is supposed to do — it had
+- frontend-web **production is deployed automatically**, just not by a lane in
+  this repo: `sync-frontend-web.yml` copies `frontend-web/` into
+  `paymax2022/spotlight-latest` `main` on every qualifying push here, and that
+  repo's `Deploy to Namecheap cPanel (SSH)` job — ungated, and it does hold
+  `CPANEL_SSH_HOST/USER/KEY/PORT` + `DEPLOY_PATH` — builds, uploads, purges
+  `.next/server/route-cache` and restarts Passenger there. So treat a push to
+  `main` as a production release, and verify serving by the chunk-href test
+  (a green Safe Merge alone proves only delivery to `spotlight-latest/main`).
+- This repo's `deploy-cpanel.yml` is the dead copy of that lane. It runs on every
+  push to `main` but is inert by design: its job is gated on
+  `vars.CPANEL_DEPLOY_ENABLED == 'true'`, which is unset, so the run reports
+  `skipped`. That gate is what the lane is supposed to do — it had
   been removed on 2026-10-28 (`1e1e44f45`), which is why every push since then
   carried a red deploy check: the job dies at the scp step with "can't connect
   without a private SSH key or password", because the five secrets it reads
   (`CPANEL_SSH_HOST/USER/KEY/PORT`, `DEPLOY_PATH`) exist at no level the job can
   see (it declares no `environment:`). It has never completed a successful run —
-  0 successes in 843 runs — so `spotlightng.com` is updated by hand; read the
-  workflow's own header before turning the lane on, since its build also has no
-  production env to bake. The backend's `deploy.yml` canary → promote gate never
+  0 successes in 843 runs. Turning it on would not "restore" production deploys;
+  it would add a second writer to the same host whose build has no production env
+  to bake. Read the workflow's own header first.
+- The backend's `deploy.yml` canary → promote gate never
   runs either (`vars.GCP_PROJECT_ID` unset skips every job); the Railway
   `production` env was last written by a `prod` dispatch on 2026-10-17.
 - Full CI gates run on `develop`, `staging`, `prod`, and `main`

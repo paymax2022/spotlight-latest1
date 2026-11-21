@@ -129,6 +129,12 @@ func escrowErrStatus(err error) (int, bool) {
 		// cap is spent). 403, not 400 — the request is well-formed, the caller isn't
 		// permitted to spend this much today.
 		return http.StatusForbidden, true
+	case errors.Is(err, tiers.ErrMerchantOrderLimitExceeded):
+		// Same 403 for the SELLER's tier: the order is worth more than the outlet's
+		// verification level may receive. It is not the customer's mistake and not a
+		// server fault, so neither 400 nor 500 — and the message names the seller,
+		// because the fix is theirs (complete KYC), not the payer's.
+		return http.StatusForbidden, true
 	case errors.Is(err, ledger.ErrInsufficientFunds):
 		return http.StatusPaymentRequired, true // 402 — wallet is short of the total
 	case errors.Is(err, ErrTierGateUnwired):

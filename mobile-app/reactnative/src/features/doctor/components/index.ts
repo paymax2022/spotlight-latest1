@@ -74,6 +74,7 @@ export { default as RankingGauge } from './RankingGauge';
 
 export { default as OnboardingSlidePager } from './OnboardingSlidePager';
 export type { PagerSlide } from './OnboardingSlidePager';
+export { default as OnboardingPosterViewer } from './OnboardingPosterViewer';
 export { default as CarouselDots } from './CarouselDots';
 export { default as ProviderTypeCard } from './ProviderTypeCard';
 export { default as ConsentDocView } from './ConsentDocView';

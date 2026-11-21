@@ -19,6 +19,7 @@ import (
 	"spotlight/backend/internal/aicare"
 	"spotlight/backend/internal/association"
 	"spotlight/backend/internal/business"
+	"spotlight/backend/internal/cashtag"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/crowdfunding"
 	cfadminext "spotlight/backend/internal/crowdfunding/adminext"
@@ -281,6 +282,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	)
 
 	xferSvc := transfers.NewService(pool, ledgerSvc, tiersSvc, paymentProvider, disbRegistry)
+	// Cashtag addressing for wallet recipients (@bisi / $bisi): hand the
+	// transfers rail the same cashtag directory Social Pay, Events and creator
+	// tips already address with, so one source of truth decides who a handle
+	// belongs to. Unwired means handle recipients fail closed as not-found.
+	xferSvc.SetCashtagDirectory(cashtag.NewService(pool))
 	// Wire the shared audit sink so every transfer action lands in audit_logs
 	// (E2E-X-029). Best-effort: the sink swallows its own errors and can never
 	// fail a transfer.

@@ -1097,6 +1097,12 @@ components:
         masked_phone:
           type: string
           description: Phone number with middle digits masked (e.g. 0801****678)
+        # Present only when the caller addressed the recipient by cashtag, so the
+        # confirmation screen can echo the handle the sender typed instead of a
+        # phone number they never used.
+        handle:
+          type: string
+          description: Recipient's cashtag, normalised and `@`-prefixed (e.g. `@bisi`)
         avatar_url:
           type: string
           nullable: true
@@ -8691,14 +8697,20 @@ paths:
   /transfers/paymax/resolve:
     get:
       operationId: resolvePaymaxRecipient
-      summary: Resolve a Paymax user by phone, email, or username for transfer
+      summary: Resolve a Paymax user by phone, email, or cashtag for transfer
       tags: [Transfers]
       parameters:
         - name: identifier
           in: query
           required: true
           schema: { type: string }
-          description: Phone number, email address, or Paymax username
+          description: |
+            Phone number, email address, or Paymax cashtag. A cashtag MUST carry a leading
+            `@` or `$` sigil (`@bisi`, `$BISI`); it is matched on the normalised handle —
+            lower-cased, sigil stripped — against the cashtag directory, which guarantees one
+            account per handle. A bare `bisi` with no sigil is never guessed at: it is read as a
+            phone/email identifier like any other input, so an address that matches nothing
+            answers 404 rather than silently resolving to whoever holds those characters.
       responses:
         '200':
           description: Recipient preview (safe — no PII exposed)
@@ -8718,7 +8730,9 @@ paths:
             No Paymax user found for this identifier. Phone identifiers are matched on the
             10-digit national significant number, so "08159491618", "8159491618" and
             "+2348159491618" all resolve to the same account; a 404 means no account carries
-            that number, not that the caller used the wrong format.
+            that number, not that the caller used the wrong format. For a `@`/`$` cashtag a
+            404 means no account has claimed that handle — handles are never reserved,
+            claimed, or renamed by this endpoint.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -8728,6 +8742,17 @@ paths:
             (code `ambiguous_recipient`). The transfer is refused rather than resolved to an
             arbitrary account — a wallet credit cannot be clawed back. Requires operator
             intervention to de-duplicate the accounts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        # A cashtag is addressed through the shared directory. When the directory or
+        # the profile read itself fails, the answer is 500 — NOT the 404 above, which
+        # would tell the sender nobody holds a handle that somebody does. Both rails
+        # answer this way (backend/…/transfers cashtagLookupFailure, and the BFF's
+        # resolveByCashtag), so a handle cannot be "unclaimed" for one client and an
+        # outage for the other.
+        '500':
+          description: Recipient lookup failed (directory or profile read); the identifier was never judged
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -8758,7 +8783,12 @@ paths:
               properties:
                 recipient_identifier:
                   type: string
-                  description: Recipient's phone, email, or Paymax username
+                  description: >
+                    Recipient's phone, email, or Paymax cashtag — the same identifier the
+                    resolve endpoint took, resolved by the same rules. A `@`/`$` sigil means
+                    the cashtag directory; anything else means phone or email. Either way the
+                    transfer is the same wallet-to-wallet mutation: PIN second factor, tier
+                    daily limit, fee schedule, one `wallet_transfers` row.
                 amount_kobo:
                   type: integer
                   format: int64
@@ -8802,6 +8832,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        # Recipient resolution happens before the transaction opens, so a directory
+        # or profile failure here moves nothing — the key is untouched and the same
+        # request can be replayed. Retry-safe, unlike the 4xx answers above.
+        '500':
+          description: Recipient lookup failed before any debit; safe to retry with the same Idempotency-Key
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         # MONEY-PATH AGENT 1 — go-live gate: FEATURE_WALLET_TRANSFERS_ENABLED=false → 503

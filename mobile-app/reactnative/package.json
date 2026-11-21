@@ -62,6 +62,7 @@
     "test:wallet": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/wallet/*.spec.ts\"",
     "test:events": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/events/*.spec.ts\"",
     "test:services": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/services/*.spec.ts\"",
+    "test:transfers": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/transfers/*.spec.ts\"",
     "test:stays": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/stays/*.spec.ts\"",
     "check:env-mocks": "node scripts/check-env-mocks.mjs",
     "check:env-mocks:staging": "node scripts/check-env-mocks.mjs .env.staging",
@@ -71,7 +72,9 @@
     "test:lib": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/lib/*.spec.ts\"",
     "test:academy-live": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/academy/live/__tests__/*.test.ts\"",
     "test:film-academy": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/filmAcademy/*.spec.ts\"",
-    "test:crypto": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/crypto/utils/__tests__/*.test.ts\""
+    "test:crypto": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/crypto/utils/__tests__/*.test.ts\"",
+    "test:social-send": "node --experimental-strip-types --test \"src/features/social/__tests__/*.test.ts\"",
+    "test:social-requests": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/social/*.spec.ts\""
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^13.0.0",

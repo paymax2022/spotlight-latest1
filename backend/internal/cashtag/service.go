@@ -51,10 +51,22 @@ func Normalize(h string) string {
 	return strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(h), "@")))
 }
 
+// IsValidShape reports whether an ALREADY-NORMALISED handle is well-formed:
+// 3-30 characters, starting alphanumeric, [a-z0-9_] thereafter. It is the
+// pattern alone — no reserved-word or impersonation guard — because callers that
+// ADDRESS a handle must not learn which names are fenced off. A reserved handle
+// cannot exist in the directory (Claim rejects it), so an addressing caller gets
+// "no such handle" from the lookup, never a 403 that leaks the block list.
+// Claim-path validation keeps the full guards via Validate, and both read this
+// one pattern so the two can never disagree about what a handle looks like.
+func IsValidShape(normalized string) bool {
+	return handlePattern.MatchString(normalized)
+}
+
 // Validate enforces format + reserved/impersonation guards.
 func Validate(h string) error {
 	n := Normalize(h)
-	if !handlePattern.MatchString(n) {
+	if !IsValidShape(n) {
 		return errors.New("cashtag: handle must be 3-30 chars, start alphanumeric, [a-z0-9_] only")
 	}
 	if _, bad := reserved[n]; bad {

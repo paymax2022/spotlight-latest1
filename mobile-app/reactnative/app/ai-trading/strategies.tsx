@@ -7,13 +7,13 @@ import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Refre
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowLeft, ShieldCheck, Info, Lock } from 'lucide-react-native';
+import { ArrowLeft, ShieldCheck, Info, Lock, AlertTriangle } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { useStrategies } from '@/features/aitrading/hooks';
-import type { StrategyStage, StrategyMaturity } from '@/features/aitrading/api';
+import { TRADING_USE_MOCK, type StrategyStage, type StrategyMaturity } from '@/features/aitrading/api';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 const STAGE_META: Record<StrategyStage, { label: string; blurb: string; fg: string; bg: string }> = {
@@ -56,6 +56,15 @@ export default function StrategyMaturityScreen() {
               paper with no money at stake, and only advances after independent checks — never automatically.
             </Text>
           </View>
+
+          {TRADING_USE_MOCK && (
+            <View style={styles.demo} accessibilityRole="alert">
+              <AlertTriangle size={14} color="#991B1B" />
+              <Text style={styles.demoText}>
+                Demo data — illustrative strategies only. This is not real fund status.
+              </Text>
+            </View>
+          )}
 
           <View style={styles.note}>
             <Info size={14} color={Colors.onWarning ?? '#8A6D00'} />
@@ -109,6 +118,8 @@ const styles = StyleSheet.create({
   body: { padding: Spacing.lg, gap: Spacing.md, paddingBottom: Spacing.xl },
   intro: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'flex-start', backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.outlineVariant },
   introText: { ...Typography.bodySm, color: Colors.onSurface, flex: 1, lineHeight: 20 },
+  demo: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'center', backgroundColor: '#FEF2F2', borderRadius: Radius.md, padding: Spacing.md, borderWidth: 1, borderColor: '#FCA5A5' },
+  demoText: { ...Typography.bodySm, color: '#991B1B', fontWeight: '700', flex: 1, lineHeight: 19 },
   note: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'flex-start', backgroundColor: '#FFFBEB', borderRadius: Radius.md, padding: Spacing.md, borderWidth: 1, borderColor: '#FDE68A' },
   noteText: { ...Typography.bodySm, color: '#8A6D00', flex: 1, lineHeight: 19 },
   group: { gap: Spacing.xs },

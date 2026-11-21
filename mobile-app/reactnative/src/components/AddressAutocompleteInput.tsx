@@ -70,6 +70,14 @@ interface Props {
   placeholder?: string;
   /** True once a place has been picked (drives the ✓ confirmation hint). */
   resolved?: boolean;
+  /**
+   * The Plus Code of a pin the SERVER already holds, for screens that open
+   * something with a saved location (a restaurant's own outlet). Without it the
+   * pin summary reads "Pin set" only after the owner re-picks something, so
+   * reopening a store looks like its location was never saved. Ignored once a
+   * selection has been made here — what was just picked beats what was loaded.
+   */
+  savedPlusCode?: string | null;
   /** Consumer surface drives proxy provider routing. */
   surface?: 'checkout' | 'delivery';
   /** Show the inline confirm-on-map pin (default true). */
@@ -129,6 +137,7 @@ export default function AddressAutocompleteInput({
   enableRecents = true,
   inlineDropdown = false,
   requireVerifiedPin = false,
+  savedPlusCode = null,
 }: Props) {
   const [suggestions, setSuggestions] = useState<AddressHit[]>([]);
   const [recents, setRecents] = useState<RecentAddress[]>([]);
@@ -321,6 +330,10 @@ export default function AddressAutocompleteInput({
     dropdownVisible,
   });
   const mapCenter = pin ?? near ?? { lat: 6.4541, lng: 3.3947 }; // Lagos default
+  // The pin row reports what was picked HERE; before any pick it reports the code
+  // the server already holds, so reopening a saved location shows a location.
+  const pinSummaryCode = pin ? plusCode : savedPlusCode;
+  const hasPin = pin != null || Boolean(savedPlusCode);
 
   return (
     <View style={styles.wrap}>
@@ -442,11 +455,11 @@ export default function AddressAutocompleteInput({
       )}
 
       {/* Pin summary + "confirm on map" affordance once a place is chosen. */}
-      {pin && enableMapConfirm && !dropdownVisible && (
+      {hasPin && enableMapConfirm && !dropdownVisible && (
         <Pressable style={styles.pinSummary} onPress={() => MapLibreGL && setMapOpen((o) => !o)} accessibilityRole="button">
           <Check size={14} color={Colors.tertiaryContainer} strokeWidth={2.5} />
           <Text style={styles.pinSummaryText} numberOfLines={1}>
-            Pin set{plusCode ? ` · ${plusCode}` : ''}
+            Pin set{pinSummaryCode ? ` · ${pinSummaryCode}` : ''}
           </Text>
           {MapLibreGL ? (
             <View style={styles.adjust}>

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { expectOnReceipt } from '../helpers/assertions';
 import { loginAs } from '../helpers/auth';
-import { completeElectricityPayment, mockBillsCatalog, validateElectricityMeter } from '../helpers/bills';
+import { completeElectricityPayment, mockBillsCatalog, selectProviderTile, validateElectricityMeter } from '../helpers/bills';
 import { mockWallet } from '../helpers/wallet';
 
 test.describe('Bills E2E - Electricity prepaid', () => {
@@ -38,7 +38,7 @@ test.describe('Bills E2E - Electricity prepaid', () => {
 
   test('requires successful meter validation before customer details are shown', async ({ page }) => {
     await page.goto('/services/electricity');
-    await page.getByText('IKEDC').first().click();
+    await selectProviderTile(page, 'IKEDC');
     await page.getByText('Prepaid', { exact: true }).click();
     await page.getByPlaceholder('1234 5678 9012').fill('123456789012');
     await expect(page.getByText('Confirm Payment')).toHaveCount(0);
