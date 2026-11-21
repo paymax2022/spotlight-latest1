@@ -467,6 +467,24 @@ has expired`: 0 lines). `smoke Staging` → `migrate production database` → `d
 `smoke Production` all reported `skipped`, so production `frontend-web` is still `ea71b561` and still
 answers 404. **A train that could have fixed this did run, and F2 is the only reason it did not.**
 
+**It refused again fifty minutes later, at the commit that carries both hand-in fixes.** Release run
+`44927881957` (17:02:56Z → 17:52:47Z, head `1aeca126a` — #1130's squash, sitting directly on `3baa3571b`,
+#1128's web hand-in) came back `proceed`, put all three dev legs and all three dev smokes plus
+`migrate staging database` in the green, and then lost all three staging legs with byte-for-byte the same
+arithmetic: job `136926264735` (backend), `136926264760` (frontend-admin), `136926264791` (frontend-web),
+each logging 9 `Failed to fetch` lines and 18 lines carrying `error decoding response body` — last refusal
+17:50:43Z, 17:51:08Z, 17:52:42Z — with `GnuTLS recv error` and `Your trial has expired` both at 0 lines.
+`smoke Staging`, `migrate production database`, `deploy Production` and `smoke Production` were all
+`skipped`, so the plane that needed `3baa3571b` never received it either. Two other trains in the same hour
+say the same thing from the other side: `44927141577` (head `3baa3571b`) rendered
+`### Release gate: **superseded**` and skipped every leg — its content was not lost, because supersession
+only fires when a *later commit that runs CI itself* lands, and that successor's train deploys main tip,
+which contains the earlier commit; and `44932501713` (head `ce07c30ea`, this file's own merge) rendered
+`**noop_docs_only**` and skipped all eight legs, since a docs-only push produces no `ci.yml` run at all.
+**Operationally: two full-length trains inside one hour, both refused, so nobody should wait for the
+pipeline tonight.** Command 6's target is any commit at or after `1aeca126a` — today's tip `ce07c30ea` is
+the obvious choice, and it is `frontend-admin`-identical to the console already serving `f5bfe8848`.
+
 **What Command 6 actually buys, checked statically.** So that the owner is not uploading on a hope: at
 `ea908fabe` the two admin trees the console reaches expose **69 route files**
 (`git ls-tree -r --name-only ea908fabe frontend-web/app/api/admin/open-mic frontend-web/app/api/admin/academy`),
