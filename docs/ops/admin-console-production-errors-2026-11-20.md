@@ -219,13 +219,19 @@ skipped, not silently applied. `frontend-admin` has no such route (the same path
 `deployments(input:{…environmentId:"f84c4558-…"})` query above: if its newest row is not your sha, the
 console is not serving your code.
 
-**Superseded the same week, and this is the one number in this file that moved on its own.** The identical
-curl now answers `{"commit":"b9c21b534becfdfb3e0d5cceeeeac2790df16083","source":"ldflags",
-"started_at":"2026-11-21T15:34:12Z","uptime_seconds":14011}`. Production's Go service is no longer the
-2026-11-18 binary because a **second writer** went live that afternoon: PR #1122 merged to the `prod` branch
-at 15:17:17Z and its new `deploy Production backend (automatic)` job shipped that merge commit 17 minutes
-later; #1126 (`e0be2ef25`, merged 16:20:54Z) refined that gate but has not moved the binary — the same curl
-still answers `b9c21b534` / 15:34:12Z.
+**Superseded the same week, and this is the number in this file that now moves by itself.** The identical
+curl answers `{"commit":"b9c21b534becfdfb3e0d5cceeeeac2790df16083","source":"ldflags",
+"started_at":"2026-11-21T15:34:12Z","uptime_seconds":14011}` (measured 19:28Z) — no longer the 2026-11-18
+binary. Production's Go service has a **second writer**: PR #1122 merged to the `prod` branch at 15:17:17Z
+and installed a `deploy Production backend (automatic)` job that shipped that merge commit 17 minutes later,
+so a green push to `prod` now redeploys production's backend with nobody at the keyboard. #1126
+(`e0be2ef25`, merged 16:20:54Z) narrowed the predicate from the sha to the **artifact** — a push that changes
+no `backend/**` file prints `ship=false reason=image-current` and leaves the binary alone. Read this number
+again before quoting it: at 19:31Z `e43c64557` (#1132, merged 19:29:34Z) was already mid-CI having printed
+`ship=true reason=backend-changed` on its single `backend/go.mod`, so it will replace `b9c21b534` without
+anyone touching a main-lineage train. The read-back works straight off the Go host too —
+`https://backend-production-1b33d.up.railway.app/api/v1/public/build`, which is what that job itself uses —
+and when this line was checked a second time at 19:39Z it had still not moved.
 
 Read §8's "Fixing F2 is no longer the cheap version" paragraph before drawing any conclusion from either
 number, because **what did not move is the thing this document is about**: production `frontend-web`, still
