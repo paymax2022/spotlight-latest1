@@ -196,9 +196,11 @@ Two things to check before assuming the fix is live:
   someone puts this commit on the service.** `Service.deployments` is not environment-scoped by
   default; the `environmentId` above is what makes this the production list.
 
-  **Superseded on 2026-11-21:** the newest production row is no longer `cb02a3ca…` — Command 5 below was
-  executed and the console now serves `6082f2d80`. See §6 for the pin, the proof and the rollback. The
-  rest of this section is kept as the diagnosis it was the day it was written.
+  **Superseded on 2026-11-21:** there is a newer production row than `cb02a3ca…` — `54701c98…`, `SUCCESS` at
+  2026-11-21T14:18:54Z, `cliMessage` = `6082f2d8041bdf4385c3b3e1cf7a193b9389fe61`. Command 5 below was
+  executed, so the console serves that commit, which is a **pin deliberately below `main`'s head**, not
+  main's tip. See §6 for the pin, the proof and the rollback. The rest of this section is kept as the
+  diagnosis it was the day it was written.
 
 Read the served commit rather than the run colour. The build read-back is the **Go** service's route
 (`backend/Dockerfile:14`), and the BFF's catch-all handler (`frontend-web/app/api/v1/[...path]/route.ts`)
@@ -360,9 +362,16 @@ authenticated click-through of the applicant actions (logging in must be done by
 page-level chunk itself cannot be fetched unauthenticated because a Next production build publishes no
 manifest entry for a dynamic route.
 
-To roll this back: redeploy the previous snapshot from the Railway dashboard (`deploymentRollback(id)`),
-or re-run Command 5 from a clean worktree at whichever `main` commit the console had before. Do not
-"fix" a staging refusal by re-running the Release run — that also re-runs `migrate production database`.
+To roll this back there is exactly one route: `deploymentRollback(id)` the snapshot that was live before
+this one — the row prefixed `cb02a3ca` in the §4 `deployments(input:{… environmentId: production})` query,
+whose full id that query returns. Re-running Command 5 at "the commit the console had before" is **not**
+available as a rollback, because that commit was never recorded — the row's `cliMessage` is `null`, and
+`cb02a3ca…` is a deployment id, not a sha. That gap is the whole argument for passing
+`--message <merged-main-sha>` on every upload: it is the only field that makes a hand-uploaded build
+attributable to a commit, and it is what makes the *next* deploy revertible to a known tree.
+
+Do not "fix" a staging refusal by re-running the Release run — that also re-runs
+`migrate production database`.
 
 ## Companion file
 
