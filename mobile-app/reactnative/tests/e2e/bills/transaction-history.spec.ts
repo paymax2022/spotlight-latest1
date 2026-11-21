@@ -80,7 +80,7 @@ test.describe('Bills E2E - Transaction history and details', () => {
 
     await expect(page.getByText('Payment Successful')).toBeVisible();
     await page.getByText('Go to Home').click();
-    // home route shows Explore Services section
-    await expect(page.getByText('Explore Services')).toBeVisible();
+    // home is up: the landing search field is the home-only anchor
+    await expect(page.getByPlaceholder('Find a service')).toBeVisible();
   });
 });

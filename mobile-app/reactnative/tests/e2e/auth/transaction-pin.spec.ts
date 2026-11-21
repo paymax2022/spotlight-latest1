@@ -29,7 +29,7 @@ test.describe('Auth E2E - Transaction PIN gate', () => {
     await expect(page.getByText('Create your transaction PIN')).toBeVisible();
     await expect(page.getByText('Setting a transaction PIN is required to continue.')).toBeVisible();
     // The gate is blocking: home must not have rendered behind it.
-    await expect(page.getByText('Explore Services')).toBeHidden();
+    await expect(page.getByPlaceholder('Find a service')).toBeHidden();
   });
 
   test('the gate is blocking — navigating away returns to set-PIN', async ({ page }) => {
@@ -81,7 +81,7 @@ test.describe('Auth E2E - Transaction PIN gate', () => {
     await expect(page.getByText('PINs do not match. Start again.')).toBeVisible();
     // Back to the first step, still gated — no PIN was set.
     await expect(page.getByText('Create your transaction PIN')).toBeVisible();
-    await expect(page.getByText('Explore Services')).toBeHidden();
+    await expect(page.getByPlaceholder('Find a service')).toBeHidden();
   });
 
   test('a user who already has a PIN is never shown the gate', async ({ page }) => {
@@ -90,7 +90,7 @@ test.describe('Auth E2E - Transaction PIN gate', () => {
     await mockPinStatus(page, true);
     await loginAs(page);
 
-    await expect(page.getByText('Explore Services')).toBeVisible();
+    await expect(page.getByPlaceholder('Find a service')).toBeVisible();
     await expect(page.getByText('Create your transaction PIN')).toBeHidden();
   });
 

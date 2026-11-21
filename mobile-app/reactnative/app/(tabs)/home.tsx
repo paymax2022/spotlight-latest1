@@ -1,35 +1,30 @@
 import React from 'react';
-import { ScrollView, View, Text, StyleSheet, Platform, RefreshControl, ActivityIndicator } from 'react-native';
+import { ScrollView, View, Text, Pressable, StyleSheet, Platform, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus, Send, ArrowDown, RefreshCw } from 'lucide-react-native';
+import { Plus, Send, ArrowDown, RefreshCw, ArrowUpRight, Gift } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import AppHeader from '@/components/AppHeader';
 import SearchBar from '@/components/SearchBar';
 import BalanceCard from '@/components/BalanceCard';
-import SectionHeader from '@/components/SectionHeader';
+import BannerCarousel from '@/components/BannerCarousel';
 import ModuleGrid from '@/components/ModuleGrid';
-import FeaturedServiceCard from '@/components/FeaturedServiceCard';
-import PromoBanner from '@/components/PromoBanner';
-import { RemoteBanner } from '@/features/media/banners';
-import RecentActivityCard, { Activity } from '@/components/RecentActivityCard';
-import { FeaturedHomeSection } from '@/features/featured/components';
-import { useMyTickets, useEvents } from '@/features/events/hooks';
 import { Colors } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
-import { SERVICE_MODULES, FEATURED_SERVICES, QUICK_ACTIONS } from '@/constants/modules';
+import { SERVICE_MODULES, QUICK_ACTIONS, LANDING_BANNERS, HOME_CONTEST_SERVICE_IDS } from '@/constants/modules';
+import type { ServiceModule } from '@/constants/modules';
 import { useModuleVisibility } from '@/features/modules/visibility';
 import {
   registryKeyFor,
   quickActionRegistryKeyFor,
-  featuredRegistryKeyFor,
 } from '@/features/modules/serviceModuleKeys';
-import { shadow1 } from '@/constants/tokens';
 import { getDashboard } from '@/api/dashboard.api';
-import { Transaction } from '@/types/transaction';
+import { useBalances } from '@/features/fx/hooks/useFx';
 
+// 20px glyphs on 44pt tiles — the hero card's own scale, and what the wallet
+// tab's card already uses, so the two cards cannot look like different controls.
 const QUICK_ACTION_ICONS: Record<string, React.ReactNode> = {
   add:      <Plus      size={20} color={Colors.onPrimary} strokeWidth={2} />,
   send:     <Send      size={20} color={Colors.onPrimary} strokeWidth={2} />,
@@ -37,62 +32,94 @@ const QUICK_ACTION_ICONS: Record<string, React.ReactNode> = {
   exchange: <RefreshCw size={20} color={Colors.onPrimary} strokeWidth={2} />,
 };
 
-const SERVICE_ICON_MAP: Record<string, string> = {
-  AIRTIME:     'Smartphone',
-  DATA:        'Wifi',
-  ELECTRICITY: 'Zap',
-  CABLE_TV:    'Tv',
-};
+// The hero card's currency switch. NGN is the spendable naira wallet the
+// dashboard read already returns; USD is a real held pot, fetched from the same
+// endpoint the FX hub drives (GET /api/v1/fx/balances → orch_balances), never a
+// client-side conversion of the naira figure. Both codes are always offered:
+// tapping USD with no pot yet shows a true $0.00 rather than hiding the option.
+const HERO_CURRENCIES = ['NGN', 'USD'] as const;
+type HeroCurrency = (typeof HERO_CURRENCIES)[number];
 
-const SERVICE_COLOR_MAP: Record<string, { iconColor: string; bgColor: string }> = {
-  AIRTIME:     { iconColor: Colors.primary, bgColor: Colors.iconBgPurple },
-  DATA:        { iconColor: Colors.secondary, bgColor: Colors.iconBgBlue },
-  ELECTRICITY: { iconColor: '#EAB308', bgColor: 'rgba(234,179,8,0.10)' },
-  CABLE_TV:    { iconColor: Colors.teal, bgColor: Colors.iconBgTeal },
-};
+// The landing screen's first row is a short list of repeat tasks, lifted from the
+// prototype's "Everyday" concept. These are real SERVICE_MODULES ids, so every
+// tile keeps its own route, tint and registry gate — unpublishing a module in
+// /admin/modules removes it from this row too. 'data' is deliberately not here
+// (the prototype pairs it with airtime); it stays on the Services tab, which the
+// "All services" action below links to.
+const ESSENTIAL_SERVICE_IDS = [
+  'transfer', 'airtime', 'electricity', 'cable-tv',
+  'telemedicine', 'ride', 'food', 'events',
+] as const;
 
-function txToActivity(tx: Transaction): Activity {
-  const svc  = tx.serviceType ?? 'AIRTIME';
-  const clr  = SERVICE_COLOR_MAP[svc] ?? { iconColor: Colors.primary, bgColor: Colors.iconBgPurple };
-  const isCredit = tx.status === 'REFUNDED' || tx.status === 'REVERSED';
-  return {
-    id:        tx.id,
-    title:     tx.productName ?? tx.providerName ?? svc,
-    subtitle:  tx.customerIdentifier,
-    amount:    isCredit ? tx.totalAmount : -tx.totalAmount,
-    type:      isCredit ? 'credit' : 'debit',
-    icon:      SERVICE_ICON_MAP[svc] ?? 'Circle',
-    iconColor: clr.iconColor,
-    bgColor:   clr.bgColor,
-    date:      new Date(tx.createdAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' }),
-  };
+// The entertainment shelf, rendered directly after the essentials row above (so
+// it is the row immediately under Event Tickets). Its ids live in
+// constants/modules.ts as HOME_CONTEST_SERVICE_IDS, next to the tiles they name,
+// so a test can assert the row against the same array this screen renders.
+// Film Academy is the existing hub — it already lists every training area; the
+// other three are the named contest sections, which resolve against whatever
+// contests the admin has published instead of hardcoded ids, so the shelf is
+// correct the day a Rising Star contest is created without the app changing.
+
+const MODULE_BY_ID = new Map<string, ServiceModule>(SERVICE_MODULES.map((m) => [m.id, m]));
+
+// --- Landing-only block shapes ----------------------------------------------
+// Eyebrow + headline section lead and the referral strip. They live in this
+// screen because nothing else renders this composition. The promotional feature
+// panel that used to sit here is now one slide of BannerCarousel, so the landing
+// has no editorial card of its own any more.
+// The landing no longer uses the shared SectionHeader at all — SectionLead's own
+// action carries the only link out, "All services".
+
+function SectionLead({ eyebrow, title, actionLabel, onAction }: {
+  eyebrow:      string;
+  title:        string;
+  actionLabel?: string;
+  onAction?:    () => void;
+}) {
+  return (
+    <View style={styles.leadRow}>
+      <View style={styles.leadText}>
+        <Text style={styles.leadEyebrow}>{eyebrow}</Text>
+        <Text style={styles.leadTitle}>{title}</Text>
+      </View>
+      {actionLabel ? (
+        <Pressable onPress={onAction} hitSlop={10} style={styles.leadAction}>
+          <Text style={styles.leadActionText}>{actionLabel}</Text>
+          <ArrowUpRight size={14} color={Colors.primary} strokeWidth={2.2} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
 }
 
-// Category groupings for the Explore card. Gating is applied per render (below),
-// not here, because visibility comes from a hook.
-const SERVICE_GROUPS: { label: string; modules: typeof SERVICE_MODULES }[] = [
-  { label: 'Financial', modules: SERVICE_MODULES.filter((m) => m.category === 'financial') },
-  { label: 'Utility',   modules: SERVICE_MODULES.filter((m) => m.category === 'utility') },
-  { label: 'Lifestyle', modules: SERVICE_MODULES.filter((m) => m.category === 'lifestyle') },
-  // StudyHub — the EdTech learning module (distinct from the Education utility bill).
-  { label: 'Learn',     modules: SERVICE_MODULES.filter((m) => m.id === 'academy') },
-];
-
-function SubCategoryLabel({ label }: { label: string }) {
+function ReferralStrip({ label, route }: { label: string; route: string }) {
   return (
-    <View style={styles.subCatRow}>
-      <View style={styles.subCatBar} />
-      <Text style={styles.subCatText}>{label}</Text>
-    </View>
+    <Pressable
+      onPress={() => router.push(route as never)}
+      style={({ pressed }) => [styles.refRow, pressed && { opacity: 0.9 }]}
+    >
+      <View style={styles.refIconChip}>
+        <Gift size={18} color={Colors.onWarning} strokeWidth={2} />
+      </View>
+      <View style={styles.refText}>
+        <Text style={styles.refTitle}>Bring your people along</Text>
+        <Text style={styles.refSubtitle}>Explore {label}</Text>
+      </View>
+      <ArrowUpRight size={16} color={Colors.onWarning} strokeWidth={2.2} />
+    </Pressable>
   );
 }
 
 export default function HomeScreen() {
   const [search, setSearch] = React.useState('');
+  // Which wallet the hero card is showing. Defaults to naira, the currency the
+  // rest of the app spends from.
+  const [currency, setCurrency] = React.useState<HeroCurrency>('NGN');
 
-  // Registry gate for all three home surfaces. Each has its OWN id-space, so each
-  // resolves through its own map — 'withdraw'/'exchange' are quick-action ids that
-  // do not exist as service tiles, and 'food-ride' is a featured card only.
+  // Registry gate for every home surface. Each has its OWN id-space, so each
+  // resolves through its own map — 'withdraw'/'exchange' are quick-action ids
+  // that do not exist as service tiles, so QUICK_ACTIONS cannot be gated with
+  // registryKeyFor.
   const { isVisible } = useModuleVisibility();
   const gate = React.useCallback(
     (key: string | null) => key === null || isVisible(key),
@@ -103,30 +130,54 @@ export default function HomeScreen() {
     () => QUICK_ACTIONS.filter((qa) => gate(quickActionRegistryKeyFor(qa.id))),
     [gate],
   );
-  const featured = React.useMemo(
-    () => FEATURED_SERVICES.filter((s) => gate(featuredRegistryKeyFor(s.id))),
+
+  // The landing blocks, on the same gate as the tiles. Each strip that has no
+  // visible module renders nothing at all, so a hidden referral or academy
+  // programme leaves no dead tap target.
+  const essentials = React.useMemo(
+    () =>
+      ESSENTIAL_SERVICE_IDS
+        .map((id) => MODULE_BY_ID.get(id))
+        .filter((m): m is ServiceModule => Boolean(m))
+        .filter((m) => gate(registryKeyFor(m.id))),
     [gate],
   );
-  // Drop groups that gate to empty, so the Explore card never shows a category
-  // label above an empty grid.
-  const serviceGroups = React.useMemo(
+  const referral     = MODULE_BY_ID.get('referral');
+  const showReferral = referral ? gate(registryKeyFor(referral.id)) : false;
+
+  const contestRow = React.useMemo(
     () =>
-      SERVICE_GROUPS.map((g) => ({ ...g, modules: g.modules.filter((m) => gate(registryKeyFor(m.id))) }))
-        .filter((g) => g.modules.length > 0),
+      HOME_CONTEST_SERVICE_IDS
+        .map((id) => MODULE_BY_ID.get(id))
+        .filter((m): m is ServiceModule => Boolean(m))
+        .filter((m) => gate(registryKeyFor(m.id))),
     [gate],
   );
 
-  // Events promo banner: surfaces only when relevant (an unused ticket in
-  // hand, or something LIVE right now) rather than as permanent chrome — the
-  // Services grid tile stays the primary, always-available entry point.
-  // Fetches regardless of the module gate (cheap, cached, same pattern
-  // FeaturedHomeSection already uses — "renders nothing when empty" is
-  // decided at render, not at fetch time).
-  const { data: myTickets } = useMyTickets();
-  const { data: liveEvents } = useEvents({ state: 'LIVE' });
-  const hasUsableTicket = (myTickets ?? []).some((t) => t.state === 'ISSUED' || t.state === 'TRANSFERRED');
-  const hasLiveEvent = (liveEvents ?? []).length > 0;
-  const showEventsBanner = gate(registryKeyFor('events')) && (hasUsableTicket || hasLiveEvent);
+  // The banner carousel under the referral strip. A banner is only ever as
+  // publishable as the service it advertises: each slide rides that module's
+  // registry key and taps into that module's own route (or, where the artwork
+  // names a more specific screen, the route it declares), so /admin/modules
+  // retires the artwork and the destination together. A banner whose module has
+  // no tile, or whose route is gone, is dropped rather than left as a tap that
+  // goes nowhere.
+  const banners = React.useMemo(
+    () =>
+      LANDING_BANNERS
+        .filter((b) => gate(registryKeyFor(b.moduleId)))
+        .map((b) => {
+          const route = b.routeOverride ?? MODULE_BY_ID.get(b.moduleId)?.route;
+          if (!route) return null;
+          return {
+            id:       b.id,
+            publicId: b.publicId,
+            alt:      b.alt,
+            onPress:  () => { try { router.push(route as never); } catch {} },
+          };
+        })
+        .filter((s): s is NonNullable<typeof s> => s !== null),
+    [gate],
+  );
 
   const runSearch = (text: string) => {
     const q = text.trim();
@@ -144,6 +195,12 @@ export default function HomeScreen() {
     },
   });
 
+  // The USD side of the hero card's currency switch, from the same read the FX
+  // hub drives. NGN deliberately does NOT come from here: the dashboard read is
+  // the KYC-gated primary with the Supabase fallback behind it, and that is the
+  // figure the rest of the wallet screens agree on.
+  const usdBalances = useBalances();
+
   // Redirect to login on auth failure (session expired / not logged in).
   React.useEffect(() => {
     if (error instanceof Error && error.message === 'Not authenticated') {
@@ -151,9 +208,25 @@ export default function HomeScreen() {
     }
   }, [error]);
 
-  const balance  = data?.wallet.balance ?? 0;
   const userName = data?.user.fullName?.split(' ')[0] ?? 'there';
-  const recent   = (data?.recentTransactions ?? []).slice(0, 5).map(txToActivity);
+
+  // The selected pot, in the major units BalanceCard renders. A USD wallet the
+  // user simply does not hold comes back as a true 0 — the FX hub's own card
+  // does the same, so the two screens cannot disagree.
+  const usdPot = (usdBalances.data ?? []).find((b) => b.currency === 'USD');
+  const balance = currency === 'NGN' ? (data?.wallet.balance ?? 0) : (usdPot?.available ?? 0) / 100;
+  // Neither figure is known until its own read comes back, and a pending or
+  // failed read is not an empty wallet: rendering ₦0.00 there would hide money
+  // the user has, which is the exact failure the card's unavailable state
+  // exists to avoid. NGN keeps the dashboard read's own balanceUnavailable too,
+  // because that call can succeed while reporting that the wallet behind it
+  // could not be read.
+  const balanceUnavailable = currency === 'NGN'
+    ? isLoading || isError || Boolean(data?.wallet.balanceUnavailable)
+    : usdBalances.isLoading || usdBalances.isError;
+  const unavailableHint = currency === 'NGN'
+    ? 'Couldn’t load your balance — pull down to refresh'
+    : 'Couldn’t load your USD wallet — pull down to refresh';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -161,10 +234,10 @@ export default function HomeScreen() {
         style={styles.scroll}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
+        refreshControl={<RefreshControl refreshing={isRefetching || usdBalances.isRefetching} onRefresh={() => { refetch(); usdBalances.refetch(); }} tintColor={Colors.primary} />}
       >
         <AppHeader name={userName} notifCount={0} />
-        <SearchBar value={search} onChangeText={setSearch} onSubmit={runSearch} />
+        <SearchBar placeholder="Find a service" value={search} onChangeText={setSearch} onSubmit={runSearch} />
 
         {isLoading ? (
           <View style={styles.loader}>
@@ -176,11 +249,20 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
+        {/* The hero card: gradient balance panel with the hide/show eye, the
+            NGN|USD switch, the receive control and the four action tiles. It is
+            the full card, not the compact strip, so every control on it is a
+            control that goes somewhere — the pill switches wallets, the QR
+            opens the collection accounts, and pull-to-refresh re-reads both
+            balances. */}
         <BalanceCard
           balance={balance}
-          currency="NGN"
-          balanceUnavailable={data?.wallet.balanceUnavailable}
-          unavailableHint="Couldn’t load your balance — pull down to refresh"
+          currency={currency}
+          balanceUnavailable={balanceUnavailable}
+          unavailableHint={unavailableHint}
+          currencies={[...HERO_CURRENCIES]}
+          onSelectCurrency={(code) => setCurrency(code as HeroCurrency)}
+          onPressQr={() => { try { router.push('/fx/receive' as never); } catch {} }}
           quickActions={quickActions.map((qa) => ({
             id:      qa.id,
             label:   qa.label,
@@ -189,91 +271,48 @@ export default function HomeScreen() {
           }))}
         />
 
-        {serviceGroups.length > 0 ? (
+        {essentials.length > 0 ? (
           <>
-            <SectionHeader title="Explore Services" actionLabel="View All" onAction={() => router.push('/(tabs)/services')} />
-
-            <View style={[styles.servicesCard, shadow1]}>
-              {serviceGroups.map((g, i) => (
-                <React.Fragment key={g.label}>
-                  {/* Divider BETWEEN groups, never after the last — a trailing rule
-                      under an empty space is what a naive filter leaves behind. */}
-                  {i > 0 ? <View style={styles.divider} /> : null}
-                  <SubCategoryLabel label={g.label} />
-                  <ModuleGrid modules={g.modules} />
-                </React.Fragment>
-              ))}
-            </View>
-          </>
-        ) : null}
-
-        {featured.length > 0 ? (
-          <>
-            <RemoteBanner slug="home-featured-services" style={styles.featuredBanner} />
-            <SectionHeader title="Featured Services" style={{ marginTop: Spacing.lg }} />
-          </>
-        ) : null}
-        {featured.map((s) => (
-          <FeaturedServiceCard
-            key={s.id}
-            title={s.title}
-            subtitle={s.subtitle}
-            icon={s.icon}
-            iconColor={s.iconColor}
-            bgColor={s.bgColor}
-            onPress={() => { try { router.push(s.route as never); } catch {} }}
-          />
-        ))}
-
-        <PromoBanner
-          title="Win with Spotlight Contest"
-          subtitle="Showcase your talent and win prizes"
-          cta="Apply Now"
-          badge="NEW"
-          onPress={() => { try { router.push('/voting' as never); } catch {} }}
-        />
-
-        {showEventsBanner ? (
-          <PromoBanner
-            title={hasUsableTicket ? 'You have a ticket waiting' : "There's a live event right now"}
-            subtitle={hasUsableTicket ? 'Open your pass and get ready to go' : 'See what other Spotlight users are into'}
-            cta={hasUsableTicket ? 'View my ticket' : 'See what\'s live'}
-            badge="EVENTS"
-            onPress={() => { try { router.push((hasUsableTicket ? '/events/my-tickets' : '/events') as never); } catch {} }}
-          />
-        ) : null}
-
-        {/* Featured Placement — dynamic sponsored content fed by the landing
-            resolver (hero + carousel + grid). Renders nothing when empty, so
-            existing home content is unaffected. */}
-        <FeaturedHomeSection />
-
-        {/* Merchant entry point into the Featured Placement booking wizard. */}
-        <PromoBanner
-          title="Promote your business"
-          subtitle="Feature your listing on the home screen"
-          cta="Get started"
-          badge="ADS"
-          onPress={() => { try { router.push('/featured/promotions' as never); } catch {} }}
-        />
-
-        {recent.length > 0 ? (
-          <>
-            <SectionHeader
-              title="Recent Activity"
-              actionLabel="See all"
-              onAction={() => router.push('/services/transactions' as never)}
+            <SectionLead
+              eyebrow="Your daily essentials"
+              title="What’s on today?"
+              actionLabel="All services"
+              onAction={() => router.push('/(tabs)/services')}
             />
-            <View style={[styles.activityCard, shadow1]}>
-              {recent.map((a, i) => (
-                <View key={a.id}>
-                  <RecentActivityCard activity={a} />
-                  {i < recent.length - 1 && <View style={styles.divider} />}
-                </View>
-              ))}
-            </View>
+            <ModuleGrid modules={essentials} compact />
           </>
         ) : null}
+
+        {/* Contests, on the row immediately after Event Tickets. Four tiles, one
+            grid row. A section tile is only as live as the contest behind it, so
+            the copy here never promises one is running. */}
+        {contestRow.length > 0 ? (
+          <>
+            <SectionLead
+              eyebrow="Entertainment"
+              title="Contests"
+              actionLabel="All contests"
+              onAction={() => router.push('/voting')}
+            />
+            <ModuleGrid modules={contestRow} compact />
+          </>
+        ) : null}
+
+        {showReferral && referral ? (
+          <ReferralStrip label={referral.label} route={referral.route} />
+        ) : null}
+
+        {/* The promotional carousel, straight after Refer & Earn: five finished
+            campaign banners, one per screen, each tapping through to the service
+            it shows. It replaces the single Film Academy panel that used to sit
+            here — that route is now one of the slides, so the landing does not
+            offer it twice. */}
+        <BannerCarousel banners={banners} />
+
+        {/* The landing page ends here. What used to sit below — the grouped
+            catalogue, featured services, the contest/event/ad banners and recent
+            activity — stays reachable from the Services and Wallet tabs, and the
+            essentials row above links straight into it via "All services". */}
 
         <View style={{ height: Platform.OS === 'ios' ? 100 : 80 }} />
       </ScrollView>
@@ -285,31 +324,69 @@ const styles = StyleSheet.create({
   safe:    { flex: 1, backgroundColor: Colors.background },
   scroll:  { flex: 1 },
   content: { paddingBottom: Spacing.xl },
-  featuredBanner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md, marginTop: Spacing.lg },
   loader:  { paddingVertical: Spacing.xl, alignItems: 'center' },
   errorBox:{ marginHorizontal: Spacing.containerMargin, padding: Spacing.md, backgroundColor: 'rgba(220,38,38,0.06)', borderRadius: Radius.lg, marginBottom: Spacing.md },
   errorText:{ ...Typography.labelSm, color: Colors.error, textAlign: 'center' },
-  servicesCard: {
-    backgroundColor: Colors.surfaceContainerLowest,
-    borderRadius:    Radius.xl,
-    marginHorizontal: Spacing.containerMargin,
-    marginBottom:    Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderWidth:     1,
-    borderColor:     Colors.surfaceContainerHigh,
+
+  // --- Landing-only composition (prototype 01 "Everyday") ---
+  // Eyebrow + headline, action pinned to the headline's baseline like the
+  // prototype's `.section-head{align-items:end}`.
+  leadRow: {
+    flexDirection:     'row',
+    alignItems:        'flex-end',
+    justifyContent:    'space-between',
+    paddingHorizontal: Spacing.containerMargin,
+    marginTop:         Spacing.lg,
+    marginBottom:      Spacing.md,
   },
-  subCatRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.md, marginBottom: Spacing.sm, marginTop: Spacing.xs },
-  subCatBar: { width: 3, height: 16, borderRadius: Radius.full, backgroundColor: Colors.primary },
-  subCatText:{ ...Typography.labelMd, color: Colors.onSurface },
-  divider:   { height: 1, backgroundColor: Colors.surfaceContainerHigh, marginVertical: Spacing.md, marginHorizontal: Spacing.md },
-  activityCard: {
-    backgroundColor:  Colors.surfaceContainerLowest,
-    borderRadius:     Radius.xl,
-    marginHorizontal: Spacing.containerMargin,
+  leadText:   { flexShrink: 1, gap: 2 },
+  leadEyebrow: {
+    ...Typography.caption,
+    fontSize:      10,
+    lineHeight:    14,
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+    fontWeight:    '700',
+    color:         Colors.onSurfaceVariant,
+  },
+  leadTitle: {
+    ...Typography.titleMd,
+    letterSpacing: -0.7,
+    color:         Colors.onSurface,
+  },
+  leadAction: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           2,
+    paddingLeft:   Spacing.sm,
+    paddingBottom: 3,
+  },
+  leadActionText: { ...Typography.labelSm, color: Colors.primary },
+
+  // Refer & Earn — one-line strip in the brand's gold accent tint (the prototype
+  // uses a warm cream card here; onWarning is the token for text on gold).
+  refRow: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               Spacing.sm,
+    marginHorizontal:  Spacing.containerMargin,
+    marginTop:         Spacing.lg,
+    paddingVertical:   12,
     paddingHorizontal: Spacing.md,
-    paddingVertical:  Spacing.sm,
-    borderWidth:      1,
-    borderColor:      Colors.surfaceContainerHigh,
-    marginBottom:     Spacing.lg,
+    borderWidth:       1,
+    borderColor:       'rgba(234,179,8,0.32)',
+    backgroundColor:   Colors.iconBgGold,
+    borderRadius:      Radius.md,
   },
+  refIconChip: {
+    width:             38,
+    height:            38,
+    borderRadius:      Radius.DEFAULT,
+    backgroundColor:   'rgba(234,179,8,0.22)',
+    alignItems:        'center',
+    justifyContent:    'center',
+  },
+  refText:      { flex: 1, gap: 1 },
+  refTitle:     { ...Typography.labelSm, fontWeight: '700', color: Colors.onSurface },
+  refSubtitle:  { ...Typography.caption, color: Colors.onSurfaceVariant },
 });

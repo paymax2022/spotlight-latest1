@@ -33,7 +33,6 @@ import { CATEGORIES, countByLine } from '@/features/insurance/live/catalog';
 import { useCoverSummary, useLiveProducts } from '@/features/insurance/live/hooks';
 import { nairaCompact } from '@/features/insurance/live/money';
 import { HomeMenuButton } from '@/components/HomeMenu';
-import { RemoteBanner } from '@/features/media/banners';
 
 export default function ProtectionHub() {
   const products = useLiveProducts();
@@ -95,8 +94,6 @@ export default function ProtectionHub() {
           />
         }
       >
-        <RemoteBanner slug="insurance" priority />
-
         <CoverCard
           loading={cover.isLoading}
           errored={cover.isError}

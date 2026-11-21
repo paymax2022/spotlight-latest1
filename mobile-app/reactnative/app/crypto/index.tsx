@@ -15,7 +15,6 @@ import { shadow1, shadow3 } from '@/constants/tokens';
 import ScreenHeader from '@/components/ScreenHeader';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
-import { RemoteBanner } from '@/features/media/banners';
 import { AssetRow } from '@/features/crypto/components';
 import { HoldingRow } from '@/features/crypto/components';
 import { CryptoTransactionRow } from '@/features/crypto/components';
@@ -87,8 +86,6 @@ export default function CryptoHomeScreen() {
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
       >
-        <RemoteBanner slug="crypto-trading" priority style={styles.banner} />
-
         {portfolio.isLoading || eligibility.isLoading ? (
           <StateView kind="loading" message="Loading your crypto…" />
         ) : portfolio.isError || eligibility.isError ? (
@@ -235,7 +232,6 @@ export default function CryptoHomeScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { paddingBottom: Spacing.xxl },
-  banner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
   flex: { flex: 1 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
   section: { marginTop: Spacing.lg },

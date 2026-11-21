@@ -120,6 +120,25 @@ export interface FullContest {
    * the web. Set by uploadContestLogo().
    */
   logoUrl?: string;
+  /**
+   * Contest window, as UTC instants ('2026-12-01T00:00:00.000Z'). These are
+   * public.contests.start_date/end_date, which 20261223000000 mirrors into
+   * connect_contests.opens_at/closes_at — mobile's getVotingWindow refuses votes
+   * outside them, so a contest with no end date is votable forever regardless of
+   * how its deadline reads on the poster. '' means unbounded.
+   *
+   * The form displays the UTC day; sending a bare 'YYYY-MM-DD' is what makes the
+   * end bound land on that day's LAST instant rather than its midnight, so
+   * "ends 24 December" keeps Christmas Eve open.
+   */
+  startDate?: string;
+  endDate?: string;
+  /**
+   * "Price to be won". Free text — contests.prize_pool is TEXT, so a prize can
+   * read "₦500,000 + a management deal". Shaped by /api/v1/contests/:id as
+   * `prizePool` for the web contest page.
+   */
+  prizePool?: string;
 }
 
 async function readJsonOrThrow(res: Response, label: string): Promise<Record<string, unknown>> {
