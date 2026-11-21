@@ -581,6 +581,23 @@ console itself does **not** need a third pass, provided you re-check it: `main` 
 already head-current. Re-run that one-line diff at upload time — the moment it is non-zero, the console needs
 its own pin again, and §6's `SERVICE=frontend-admin` recipe is the one to use.
 
+**A 403 after the upload is not a failed upload — it is the account.** Once the two routes flip to 401, the
+authenticated click can still refuse, and the reason lives in `frontend-web/src/server/openmic/auth.ts`,
+which asks for two different permissions: the applicants **list** needs `applications:review`, while every
+**action** (the seven `OPEN_MIC_APPLICANT_ACTIONS` plus the contact edit) needs `contests:manage`. Neither is
+read from `user_profiles.role` or `user_metadata` any more — `assertAdminPermission` resolves roles only from
+the authoritative store (`public.user_roles` → `public.roles.slug`, via `getUserRbacRoleSlugs`) and then maps
+that slug through `rbacSlugToAdminRole`, failing closed to `no_access` when nothing matches. So the slug that
+must be attached to the admin user in **production** is `contest-manager`, `super-admin` or `system-admin` —
+the same three that already hold `connect.contests.view` there — because `contest_manager` is the narrow role
+carrying both permissions (line-for-line it is `contests:manage` + `applications:review`), and the two
+super-admin slugs plus bare `admin` subsume it. `program-manager`, `reviewer` and `support-agent` hold
+`applications:review` but **not** `contests:manage`, so those accounts see the list and get 403 on the
+buttons; that is correct behaviour, not the deploy. Read it as a three-code ladder: **404 = the web BFF
+is still stale, 401 = the route is live and you are anonymous, 403 = the route is live and the signed-in
+account lacks the slug.** The same ladder is how you tell Command 6's success from an unrelated gap without
+touching Supabase.
+
 ## Companion file
 
 `docs/ops/admin-pages-to-backend-flags.md` maps all 426 sidebar entries to routes and flags. Its
