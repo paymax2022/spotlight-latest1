@@ -131,10 +131,14 @@ therefore be simulated, which is a fact to know before trusting a dev routing de
 ## What no environment variable can fix
 
 - **`/api/finance/admin/fx/overview` and `/verifications`** exist in `main` (added in `184113663`)
-  and are inside the orchestration block, but `git merge-base` proves that commit is not in the
-  deployed prod binary (`d3401f574`). Publishing them is the owner-signed main→prod release
-  project, recorded in `docs/superpowers/plans/2026-11-20-main-to-prod-backend-release.md` (PR #1105)
-  — not a sweep step.
+  and are inside the orchestration block, but `git merge-base --is-ancestor` proves that commit is in
+  no commit of the `prod` lineage — measured against both `origin/prod` and the two production Go
+  binaries that have since been read back (`b9c21b534`, then `e43c64557` at 19:50Z) — and
+  `git grep -l 'admin/fx/overview' origin/prod -- backend` finds no handler there at all. Do not
+  re-cite a single deployed sha as the proof: that number now moves on its own (see §4), so the
+  ancestor test against `origin/prod` is the durable form of this claim. Publishing them is the
+  owner-signed main→prod backend release project, recorded in
+  `docs/superpowers/plans/2026-11-20-main-to-prod-backend-release.md` (PR #1105) — not a sweep step.
   This branch keeps `getOverview` pointed at that route and **fails loud** rather than substituting
   fixtures, per "Ensure all FX are front provider endpoint — realtime".
 - **FX admin surface without any Go route**: routing, providers, treasury, reconciliation,
@@ -218,6 +222,44 @@ skipped, not silently applied. `frontend-admin` has no such route (the same path
 `frontend-admin-production-5b0c` returns Next `404` HTML), so for the console the proof is the
 `deployments(input:{…environmentId:"f84c4558-…"})` query above: if its newest row is not your sha, the
 console is not serving your code.
+
+**Superseded the same week, and this is the number in this file that now moves by itself.** The identical
+curl answers `{"commit":"b9c21b534becfdfb3e0d5cceeeeac2790df16083","source":"ldflags",
+"started_at":"2026-11-21T15:34:12Z","uptime_seconds":14011}` (measured 19:28Z) — no longer the 2026-11-18
+binary. Production's Go service has a **second writer**: PR #1122 merged to the `prod` branch at 15:17:17Z
+and installed a `deploy Production backend (automatic)` job that shipped that merge commit 17 minutes later,
+so a green push to `prod` now redeploys production's backend with nobody at the keyboard. #1126
+(`e0be2ef25`, merged 16:20:54Z) narrowed the predicate from the sha to the **artifact** — a push that changes
+no `backend/**` file prints `ship=false reason=image-current` and leaves the binary alone. The prediction
+in this line was then tested rather than restated: `e43c64557` (#1132, merged 19:29:34Z) printed
+`ship=true reason=backend-changed` from its `production ship scope` step at **19:29:49Z** on its single
+`backend/` file (`go.mod`), the read-back at 19:39Z still answered `b9c21b534`, and at
+`started_at: 2026-11-21T19:50:14Z` production's Go service became `e43c64557bdaffc38c8ea81671f9e6c48ff24841`
+— nobody shipped it; a merge to `prod` twenty minutes earlier did.
+
+Read §8's "Fixing F2 is no longer the cheap version" paragraph before drawing any conclusion from either
+number, because **what did not move is the thing this document is about**: production `frontend-web`, still
+the 2026-11-16 hand upload `ea71b561`.
+The Go host's own address — `https://backend-production-1b33d.up.railway.app/api/v1/public/build`, which is
+what that ship job queries — and the forwarded form of the same path through the web host, as shown above,
+now agree: read off `frontend-web-production-9259` at 19:50:56Z the answer was `e43c64557` with
+`started_at` 19:50:14Z. The four requests below, re-measured 36 seconds later, returned their identical
+codes — **a production backend ship does not move these routes; the web host's own artifact is a separate
+object from the binary behind it.**
+Measured 2026-11-21 19:28Z, re-measured 19:51Z after the Go flip, the same four requests sent to the two
+production web hosts disagree exactly where the fix lives:
+
+| request | `frontend-web-production-9259` — the BFF the console proxies to | `www.spotlightng.com` — cPanel |
+| --- | --- | --- |
+| `/api/admin/open-mic/contests` | `401` | `401` |
+| `/api/admin/definitely-not-a-route` (invented control) | `404` | `404` |
+| `/api/admin/open-mic/contests/00000000-0000-0000-0000-000000000000/applicants` | **`404`** | `401` |
+| `/api/admin/academy/pricing-formats` | **`404`** | `401` |
+
+`www` answers 401 on both new routes — mounted, waiting for a bearer — while the Railway host answers 404,
+the identical code its invented control path returns, so those routes are not in the build the console
+forwards to. That pair is the root cause isolated to one service, and it is why Command 6 is scoped to
+`frontend-web` rather than to a train.
 
 ### 5. Deploying this branch onto the production console (owner-run; executed 2026-11-21, see §6)
 
@@ -556,7 +598,40 @@ bash scripts/ci/railway-deploy.sh
 
 Run it from a runner or any machine with the uplink this one lacks; the flags are the ones `release.yml`'s
 own production matrix passes, and `railway-deploy.sh` polls by `meta.cliMessage` so the row it waits for is
-attributable. The cheaper version of the same thing is fixing F2, which unblocks every leg at once.
+attributable.
+
+**Fixing F2 is no longer the cheap version of the same thing — it is a decision, and now scope Command 6 to
+one service.** Earlier drafts of this file said clearing F2 "unblocks every leg at once", which was true while
+`main`'s Release chain was the only writer production had ever had. It is not any more: PR #1122 merged to the
+`prod` branch at 15:17:17Z on 2026-11-21 and installed a `deploy Production backend (automatic)` job that
+shipped `b9c21b534` to production's Go service at 15:34:12Z, and #1126 (`e0be2ef25`) refined that gate an hour
+later. So if a `main` train ever clears staging, `deploy Production (backend)` uploads **main's** `backend/**`
+over what the `prod` lineage just shipped — the two trees differ by 866 files under `backend/`, and `prod`
+carries 19 commits `main` has never seen (its merge-base with `main` is `94ad08c05`, and it sits 834 commits
+behind). That is a production release of a different lineage plus `migrate production database`, not a fix for
+the applicant buttons. Uploading `frontend-web` alone — the literal Command 6 above, `SERVICE=frontend-web` —
+carries none of that risk, which is why it is the recommended step and the whole train is not. The competing
+writer is not hypothetical: production's Go service moved to `e43c64557` at 19:50:14Z on its own, twenty
+minutes after #1132 reached `prod`, with no train and nobody at the keyboard — that is the plane a
+main-lineage `deploy Production (backend)` would now be overwriting.
+
+Two further facts from the same reading, both useful and both currently unused:
+
+- The `prod` branch's `deploy-production` job proves `secrets.RAILWAY_TOKEN_PRODUCTION` **exists and works
+  from a GitHub runner**, and its matrix already covers `frontend-web` with exactly the flags §8 uses
+  (`--path-as-root --no-gitignore`, `--environment production`, `--message ${{ github.sha }}`, then a
+  `meta.cliMessage` poll). So the "needs a bigger pipe" half of Command 6 is solvable inside CI. It is not
+  solvable *for this feature* through that lane, though: `github.ref == 'refs/heads/prod'` is in its `if:`,
+  and prod's tree has no `frontend-web/app/api/admin/open-mic/contests/[id]/applicants/` directory at all.
+  `git ls-tree -r --name-only origin/prod` shows prod carrying the sibling `[id]/…` routes — `applications/`,
+  `beats/`, `finale/`, `finalists/`, `playlist/`, `votes/`, `winner/` and the rest — but neither
+  `applicants/route.ts` nor `applicants/[applicationId]/route.ts`, and zero `academy/pricing-formats` files.
+  Dispatching there would upload a build that cannot serve the buttons any better than the stale one does.
+- The honest in-repo alternative is therefore a narrow, dispatch-gated production **web-only** lane on the
+  `main` lineage — deliberately not staging-gated, since staging is what is broken. That contradicts
+  `release.yml`'s own design rule ("nothing reaches production until staging has been probed"), so it is an
+  architecture choice for the owner, not something to slip in beside a docs fix. This file documents the
+  trade-off instead of choosing it.
 
 Verify after it lands — and verify it **against the web host itself**, not through the console: on
 `frontend-admin-production-*` the proxy guard answers 401 for *invented* paths too (the four-plane table in
@@ -573,13 +648,42 @@ done
 
 Four expected 401/404/401/401: the two real routes flip from 404 to 401, the invented control path stays
 404, and that is what makes the host request-for-request equal to `www.spotlightng.com`.
-`/api/v1/public/build` must keep reporting the same Go sha — the proof that only the Next layer moved. Roll
+`/api/v1/public/build` is only a before/after pair here, not an expected value: production's Go plane moves
+by itself now (§4), so read it immediately before and immediately after the upload and require that *your*
+upload did not change it. Roll
 back with `deploymentRollback("ea71b561-badf-4dc7-ad4c-052fd65745b3")`, the row that is serving now. And the
-console itself does **not** need a third pass, provided you re-check it: `main` moved twice after
-`f5bfe8848` (`bd1b2aa3e` #1124 touched workflows, `ea908fabe` #1125 touched mobile) and
-`git diff --name-only f5bfe8848..origin/main -- frontend-admin` was 0 files, so the deployed console build is
-already head-current. Re-run that one-line diff at upload time — the moment it is non-zero, the console needs
+console itself does **not** need a third pass, provided you re-check it: `main` has moved eight times after
+`f5bfe8848` as of 19:56Z, and exactly one of those commits touches served web code — `3baa3571b` (#1128),
+whose 5 served files are `app/open-mic/[slug]/apply/page.tsx`, `app/open-mic/[slug]/enter/page.tsx`,
+`components/openmic/OpenMicEntryForm.tsx`, `src/features/openmic/handin-record.ts` and
+`src/server/openmic/handin-record.ts` (plus 3 `tests/unit/openmic/` specs). So this one upload also carries
+#1128's hand-in fix to the BFF, which the cPanel host received and the Railway host did not.
+The other seven are workflows, docs, mobile, and two `frontend-web/tests/unit/voting/` specs
+(`083bd11f9` #1127) that are not served code. Scope the drift check on the **whole** app, not on the two
+directories that happen to be named in this paragraph: `frontend-web/components`, `lib`, `hooks` and `config`
+are all root source dirs, and a `-- frontend-web/app frontend-web/src` filter reads 4 files where the honest
+answer is 5.
+`git diff --name-only f5bfe8848..origin/main -- frontend-admin` measured 0 files again at 19:56Z, so the
+deployed console build is already head-current. Re-run that one-line diff at upload time — the moment it is
+non-zero, the console needs
 its own pin again, and §6's `SERVICE=frontend-admin` recipe is the one to use.
+
+**A 403 after the upload is not a failed upload — it is the account.** Once the two routes flip to 401, the
+authenticated click can still refuse, and the reason lives in `frontend-web/src/server/openmic/auth.ts`,
+which asks for two different permissions: the applicants **list** needs `applications:review`, while every
+**action** (the seven `OPEN_MIC_APPLICANT_ACTIONS` plus the contact edit) needs `contests:manage`. Neither is
+read from `user_profiles.role` or `user_metadata` any more — `assertAdminPermission` resolves roles only from
+the authoritative store (`public.user_roles` → `public.roles.slug`, via `getUserRbacRoleSlugs`) and then maps
+that slug through `rbacSlugToAdminRole`, failing closed to `no_access` when nothing matches. So the slug that
+must be attached to the admin user in **production** is `contest-manager`, `super-admin` or `system-admin` —
+the same three that already hold `connect.contests.view` there — because `contest_manager` is the narrow role
+carrying both permissions (line-for-line it is `contests:manage` + `applications:review`), and the two
+super-admin slugs plus bare `admin` subsume it. `program-manager`, `reviewer` and `support-agent` hold
+`applications:review` but **not** `contests:manage`, so those accounts see the list and get 403 on the
+buttons; that is correct behaviour, not the deploy. Read it as a three-code ladder: **404 = the web BFF
+is still stale, 401 = the route is live and you are anonymous, 403 = the route is live and the signed-in
+account lacks the slug.** The same ladder is how you tell Command 6's success from an unrelated gap without
+touching Supabase.
 
 ## Companion file
 
