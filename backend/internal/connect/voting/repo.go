@@ -29,6 +29,20 @@ const contestColumns = `id, title, description, status, paid_vote_kobo,
 	free_votes_per_user, velocity_per_minute, opens_at, closes_at, created_at, rules_text, banner_image_url, logo_url,
 	COALESCE(slug, '') AS slug`
 
+// prizeTextColumn reads the contest's headline "price to be won". The column lives
+// on the LEGACY row (contests.prize_pool, written by the console's contest form),
+// and 20261223000000_connect_contests_bridge.sql preserves `id` across the two
+// planes, so the mirror row's own id names it. No new column, no migration.
+//
+// A scalar subquery rather than a JOIN: a contest created straight into
+// connect_contests has no legacy row at all, and must read as "no prize" instead
+// of disappearing (INNER) or duplicating if contests ever gained two rows on id.
+//
+// Detail read only — GetContest adds it to its own SELECT. The list keeps
+// contestColumns exactly as it had it.
+const prizeTextColumn = `COALESCE((SELECT c.prize_pool FROM contests c
+	WHERE c.id = connect_contests.id), '') AS prize_text`
+
 // ListContests returns open/closed contests, newest first.
 func (r *Repository) ListContests(ctx context.Context, limit int) ([]Contest, error) {
 	return r.ListContestsByStatus(ctx, limit, []string{"open", "closed"})
@@ -82,10 +96,40 @@ func (r *Repository) ListContestsByStatus(ctx context.Context, limit int, status
 	return out, rows.Err()
 }
 
-// GetContest fetches a single contest by id.
+// GetContest fetches a single contest by id, plus its prize headline. See
+// prizeTextColumn for why that one value is read off the legacy row.
 func (r *Repository) GetContest(ctx context.Context, id string) (*Contest, error) {
-	const q = `SELECT ` + contestColumns + ` FROM connect_contests WHERE id = $1`
-	return scanContest(r.db.QueryRow(ctx, q, id))
+	const q = `SELECT ` + contestColumns + `, ` + prizeTextColumn + ` FROM connect_contests WHERE id = $1`
+	return scanContestDetail(r.db.QueryRow(ctx, q, id))
+}
+
+// ListContestPrizes returns a contest's prize ladder, lowest position first.
+//
+// The ORDER BY is load-bearing, not cosmetic: mobile's contest-details.tsx gives
+// the FIRST row it receives the gold dot and the winner's framing, so an unordered
+// read hands the runner-up the top spot and every layer below reports success.
+//
+// Detail read only (see Service.GetContest) — the list endpoint would need one
+// query per card to fill this, and a card does not show the ladder.
+func (r *Repository) ListContestPrizes(ctx context.Context, contestID string) ([]ContestPrize, error) {
+	const q = `SELECT position, prize_description, prize_value_kobo
+		FROM voting_contest_prizes
+		WHERE connect_contest_id = $1
+		ORDER BY position ASC`
+	rows, err := r.db.Query(ctx, q, contestID)
+	if err != nil {
+		return nil, fmt.Errorf("voting: list contest prizes: %w", err)
+	}
+	defer rows.Close()
+	out := []ContestPrize{}
+	for rows.Next() {
+		var p ContestPrize
+		if err := rows.Scan(&p.Position, &p.Description, &p.ValueKobo); err != nil {
+			return nil, fmt.Errorf("voting: scan contest prize: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // rowScanner abstracts pgx.Row / pgx.Rows for the shared contest scan.
@@ -93,12 +137,15 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanContest(s rowScanner) (*Contest, error) {
+// scanContestDetail scans the detail row: contestColumns plus prize_text. The
+// house keeps one scanner per column shape because pgx needs a destination for
+// every selected column.
+func scanContestDetail(s rowScanner) (*Contest, error) {
 	c := &Contest{}
 	if err := s.Scan(
 		&c.ID, &c.Title, &c.Description, &c.Status, &c.PaidVoteKobo,
 		&c.FreeVotesPerUser, &c.VelocityPerMinute, &c.OpensAt, &c.ClosesAt, &c.CreatedAt,
-		&c.RulesText, &c.BannerImageURL, &c.LogoURL, &c.Slug,
+		&c.RulesText, &c.BannerImageURL, &c.LogoURL, &c.Slug, &c.PrizeText,
 	); err != nil {
 		return nil, err
 	}
@@ -106,7 +153,8 @@ func scanContest(s rowScanner) (*Contest, error) {
 }
 
 // scanContestWithCounts scans a contest row that carries the roster/tally
-// summary columns appended by ListContests.
+// summary columns appended by ListContests. No prize_text: the list reads
+// contestColumns alone, so the two stay in step column for column.
 func scanContestWithCounts(s rowScanner) (*Contest, error) {
 	c := &Contest{}
 	if err := s.Scan(
