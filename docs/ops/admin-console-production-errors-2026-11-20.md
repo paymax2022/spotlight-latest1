@@ -244,9 +244,11 @@ itself.
 
 Release run `44896430859` (push `2e4829e89`) printed `### Release gate: proceed` at 11:23:09Z, deployed
 and smoke-tested all three development legs, applied `migrate staging database`, and then refused on
-every staging upload — `deploy Staging (backend)`, `(frontend-web)` and `(frontend-admin)` each burned
-its full ladder with 9 × `Failed to fetch: error decoding response body` (jobs `136830404022`,
-`136830404029`, `136830404096`; `grep -ac` on the exact phrase, nine retry-notices alongside each). So
+every staging upload — `deploy Staging (frontend-admin)` job `136830404022`, `(backend)` job
+`136830404029`, `(frontend-web)` job `136830404096`, each burned with 9 × `Failed to fetch: error
+decoding response body` (`grep -ac` on the exact phrase, nine retry-notices alongside each). The ids are
+listed per-service on purpose: the numeric order does NOT follow the service order, and pairing them by
+position is how an earlier draft of this file attributed the web leg to the wrong job. So
 `smoke Staging`, `migrate production database`, `deploy Production (…)` and `smoke Production` were
 cascade-skipped and the console stayed on the 2026-11-18 build. **A `proceed` verdict is necessary, not
 sufficient: it only lets the train leave the station; the staging legs decide whether anything reaches
@@ -421,11 +423,15 @@ place this is observable. Measured 2026-11-21, unauthenticated:
 
 Development serves both routes and staging does not, which localises the fault precisely: the route code
 is fine, and what is missing is a deploy. The two Railway web planes that lack them are the two whose
-uploads F2 refuses — staging sits at backend `773fe0285` and production's Next layer at the Nov-16 pin —
-while `www.spotlightng.com`, fed by the independent `sync-frontend-web.yml` lane, is current. Production's
-Railway web and www report the same backend at `/api/v1/public/build` (`b9c21b534…`), so they front one Go
-service and differ only in the Next layer; the dev and staging planes proxy other backends (`b7e6e89ba`,
-`773fe0285`), which is why the comparison that matters is column three against column four.
+uploads F2 refuses — §6's own run `44896430859` burned the full nine-attempt ladder on
+`deploy Staging (frontend-web)`, job `136830404096`, before skipping production — while
+`www.spotlightng.com`, fed by the independent `sync-frontend-web.yml` lane, is current. Only the backend
+publishes a version marker (`/api/v1/public/build`, stamped from `BUILD_COMMIT` by
+`scripts/ci/railway-deploy.sh`), and the three Railway web planes proxy three different backends
+(`b7e6e89ba` dev, `773fe0285` staging, `b9c21b534` production), so no HTTP read can date a Next build here —
+the 401-vs-404 diff is the only version probe this layer offers. Production's Railway web and www do report
+the same backend sha, which is why column three against column four is the comparison that actually isolates
+the Next layer.
 
 The two 404s are therefore not a backend difference — production's Railway web and www front the same Go
 service. `applicants/route.ts` was authored on `7c54898f4` (2026-11-19) but only *entered* `main` with #1109
