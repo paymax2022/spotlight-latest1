@@ -326,11 +326,24 @@ lane is distinguishable in the same fields: `reason = "deploy"` and `cliMessage`
 
 What was checked afterwards, and what was not. The deployment row is the proof: `reason = "deploy"`,
 `cliMessage = 6082f2d8041bdf4385c3b3e1cf7a193b9389fe61`, `SUCCESS`, a new `imageDigest`. Corroboration came
-from the served root-chunk graph, which is now identical, asset name for asset name, to the development
-console and differs from the graph production served five minutes earlier; route status codes also match
-development exactly — `/` 200, `/login` 404, `/admin` 307, `/admin/open-mic/<id>` 307. The root-chunk
-comparison is deliberately only corroboration: per-screen code lives in route-level chunks, so an identical
-root graph cannot by itself distinguish `6082f2d80` from any nearby commit. Not verified from here: an
+from the unauthenticated routing, which now agrees with the development console request for request:
+
+```
+                     prod                                                  dev
+/                    200                                                   200
+/login               404 (no Location) ← console login is /admin/login    404 (no Location)
+/admin               307 → /admin/login?next=%2Fadmin                      307 → same
+/admin/open-mic/<id> 307 → /admin/login?next=%2Fadmin%2Fopen-mic%2F…       307 → same
+```
+
+The `Location` value matching byte-for-byte, including the URL-encoded `next` parameter, is the stronger
+datum: it shows the same middleware and the same route tree, not merely the same status class. The chunk
+sets referenced by `/` are also identical — the same 8 `/_next/static/chunks/*.js` names on both planes,
+`diff`-clean — but that is stated only as parity with development, **not** as a before/after: the
+pre-upload fetch was made against `/login`, which is a 404 page on both planes, so the set production
+served before the deploy was never actually captured at `/`. Taken together these observations are weak in
+exactly the way the deployment row is not: an identical top-level chunk set cannot distinguish `6082f2d80`
+from a nearby commit, because per-screen code lives in route-level chunks. Not verified from here: an
 authenticated click-through of the applicant actions (logging in must be done by a human), and the
 page-level chunk itself cannot be fetched unauthenticated because a Next production build publishes no
 manifest entry for a dynamic route.
