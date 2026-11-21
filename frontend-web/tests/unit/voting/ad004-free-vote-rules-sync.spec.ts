@@ -44,6 +44,15 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
+// Same cold-import fix as settings-contest-sync.spec.ts (read that comment for
+// the measured 5032 ms / 1439 ms breakdown): importing the route inside the
+// first `it()` put ~6.4 s of module work — most of it `@sentry/nextjs`, reached
+// through `src/lib/api/responses` — on a clock that stops at 5000 ms, so this
+// file failed on main with `Test timed out in 5000ms` while the other five
+// tests in it ran in 6–67 ms each. vi.mock is hoisted, so the static import
+// below still sees the stubs.
+import { POST } from '@/app/api/admin/voting/settings/route';
+
 const CONTEST = '7c9b6b2e-2f39-4a4f-9a7a-2c9b3b6f1a11';
 
 function save(body: Record<string, unknown>) {
@@ -61,7 +70,6 @@ describe('AD-004: free-vote-per-day rule syncs to contests.max_votes_per_user', 
   });
 
   it('writes the daily free-vote allowance to the column the mobile mirror reads', async () => {
-    const { POST } = await import('@/app/api/admin/voting/settings/route');
     const res = await POST(save({ freeVotingEnabled: true, freeVotesPerDay: 3, votingEnabled: true }));
 
     expect(res.status).toBe(200);
@@ -76,22 +84,18 @@ describe('AD-004: free-vote-per-day rule syncs to contests.max_votes_per_user', 
     // paid-voting price, but the save must still carry the CURRENT free
     // allowance through, not silently zero it because it wasn't "the field
     // being edited" in the admin's mental model.
-    const { POST } = await import('@/app/api/admin/voting/settings/route');
     await POST(save({ paidVotingEnabled: true, pricePerVoteNgn: 150, freeVotingEnabled: true, freeVotesPerDay: 1 }));
 
     expect(contestUpdate.mock.calls[0][0]).toMatchObject({ max_votes_per_user: 1, vote_price_ngn: 150 });
   });
 
   it('zeroes the allowance when free voting is turned off', async () => {
-    const { POST } = await import('@/app/api/admin/voting/settings/route');
     await POST(save({ freeVotingEnabled: false, freeVotesPerDay: 3 }));
 
     expect(contestUpdate.mock.calls[0][0]).toMatchObject({ max_votes_per_user: 0 });
   });
 
   it('treats a non-positive or non-numeric freeVotesPerDay as 0 rather than writing NaN/negative', async () => {
-    const { POST } = await import('@/app/api/admin/voting/settings/route');
-
     await POST(save({ freeVotingEnabled: true, freeVotesPerDay: 0 }));
     expect(contestUpdate.mock.calls[0][0]).toMatchObject({ max_votes_per_user: 0 });
 
@@ -105,13 +109,11 @@ describe('AD-004: free-vote-per-day rule syncs to contests.max_votes_per_user', 
   });
 
   it('truncates a fractional freeVotesPerDay to an integer allowance', async () => {
-    const { POST } = await import('@/app/api/admin/voting/settings/route');
     await POST(save({ freeVotingEnabled: true, freeVotesPerDay: 4.9 }));
     expect(contestUpdate.mock.calls[0][0]).toMatchObject({ max_votes_per_user: 4 });
   });
 
   it('defaults freeVotingEnabled to true when omitted, matching the settings-row default', async () => {
-    const { POST } = await import('@/app/api/admin/voting/settings/route');
     await POST(save({ freeVotesPerDay: 2 }));
     expect(contestUpdate.mock.calls[0][0]).toMatchObject({ max_votes_per_user: 2 });
   });

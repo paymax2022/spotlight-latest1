@@ -74,18 +74,28 @@ jobs:
       # nothing, and tsc cannot see it because the page's own interface declares
       # the field optional.
       #
-      # Scoped on purpose, and measured rather than assumed. tests/unit/voting
-      # holds 54 spec files and exactly one is contest wiring; the directory as a
-      # whole is RED on main today, so it cannot be a required step at all:
-      #   default parallelism    2 failed / 495 passed in 102 s
-      #   --no-file-parallelism  1 failed / 496 passed in 421 s
-      #   the two files solo     both fail, `Test timed out in 5000ms`, every time
-      # (ad004-free-vote-rules-sync and settings-contest-sync, last edited 2026-09-23
-      # and 2026-10-06 — pre-existing, not this feature.) Adding them here would make
-      # every main-bound PR unmergeable. The six files this step runs are 37 tests,
-      # green, and cost about six seconds.
-      - name: Contest guards (prize projection + /voting wiring)
-        run: npx vitest run tests/unit/contests tests/unit/voting/voting-page-prize.spec.ts
+      # Scoped to six files when this step was written, because tests/unit/voting
+      # looked permanently red: 2 failed / 495 passed, and --no-file-parallelism
+      # still left 1 red. That was never product rot and never contention — the two
+      # failures were ad004-free-vote-rules-sync and settings-contest-sync calling
+      # `await import()` on the admin settings route INSIDE the first `it()`, which
+      # put the route graph's cold load on a clock that stops at vitest's default
+      # 5000 ms. Measured per module with a throwaway probe: src/lib/api/responses
+      # 5032 ms (it imports @sentry/nextjs for a single captureException call),
+      # src/server/admin/auth 1439 ms, the route itself 24 ms once warm, 0 ms for
+      # every re-import. Both specs now import statically at the top, as every green
+      # sibling route spec already did (contest-prizes-admin-api.test.ts and eleven
+      # others), so the same cost lands in file load, where it is not timed. That is
+      # the whole fix: no timeout was raised and no assertion was weakened.
+      #
+      # Re-measured on the fixed tree, twice: tests/unit/voting alone is 62 files /
+      # 498 tests green at default parallelism in 60-66 s (it was 102 s with two
+      # reds, so widening also made it faster — the Sentry load no longer repeats
+      # per worker). The command below runs contests + voting = 67 files / 532 tests
+      # in 107 s. Note the positional arg is a SUBSTRING filter, so this also
+      # selects tests/unit/voting-bridge; those are voting wiring too and wanted.
+      - name: Contest and voting guards (prize projection, settings sync, bridge)
+        run: npx vitest run tests/unit/contests tests/unit/voting
 
       - name: Contract check (implementation vs openapi.yaml)
         run: npm run contract:check
