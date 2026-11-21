@@ -189,6 +189,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check for secrets in client bundles
         run: bash scripts/check-client-secrets.sh
+      # The guard's own gate. Its tree-wide rules (live provider tokens anywhere in
+      # tracked content; no tracked .env snapshot) exist because two Railway project
+      # tokens sat in the tracked root template .env.dev.example and neither this lane
+      # nor .githooks/pre-commit said so. Each rule is asserted in both directions
+      # against a throwaway git repo, so a rule that stops biting reddens the PR.
+      - name: Gate the secret-hygiene guard itself (mutation-checked)
+        run: bash scripts/ci/test-check-client-secrets.sh
       # No Go test may read DATABASE_URL — it is the production pooler, and the
       # live-DB suites insert fixtures and move money.
       - name: Check live-DB tests gate on TEST_DATABASE_URL only

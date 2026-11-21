@@ -2,7 +2,9 @@
 
 **Severity:** High (real credentials were committed to git history).
 **Owner:** repo maintainer (must be run from a trusted local clone with push rights).
-**Status:** Step 1 (untrack) has been staged in-session. Steps 2–4 must be done by you.
+**Status:** Step 1 (untrack) has been staged in-session. Step 4 is now partly
+implemented (see the 2026-11-19 section). Steps 2–3 — history purge and credential
+rotation — remain the maintainer's, and Step 3 is the only step that remediates a leak.
 
 ---
 
@@ -88,11 +90,76 @@ after the history purge — do not wait.**
 ## Step 4 — Prevent recurrence
 
 - `.gitignore` already blocks `.history/`, `.agentwork/`, `.env`, `.env_*` (verified).
-- CI already runs `scripts/check-client-secrets.sh` — extend it to also fail if any
-  `.env`/`.env_*.local` becomes tracked (`git ls-files | grep -E '\.env(_.*)?$'`).
+- **DONE 2026-11-19:** `scripts/check-client-secrets.sh` now fails on this, in three
+  places rather than the one the bullet asked for:
+  1. any env file (template or not) holding a console-minted provider token
+     (`rlwy_proj_`, `rkt_`, `github_pat_`, `gh[pousr]_`);
+  2. **any tracked file at all** holding one, which is what catches a token pasted
+     into a doc, a script, or a workflow instead of an env file;
+  3. any tracked file that is a live env snapshot — `.env`, `.env.local`, the
+     timestamped `.env_YYYYMMDDHHMMSS[.local]` artifacts this runbook was written
+     about — while `*.example` / `*.sample` / `*.template` / `*.enc` stay exempt.
+  Both shapes are `****`-mask-tolerant, so `docs/devops/deployment-matrix.md`, which
+  publishes `rlwy_proj_****wtix` previews on purpose, stays green. Rules 2 and 3 use
+  git's tracked-file walk (`git grep -IE`, `git ls-files`), never a filesystem walk,
+  so `node_modules` and gitignored scratch dirs cannot slow or pollute the scan;
+  on this repo the whole guard runs in about 18 s. `scripts/ci/test-check-client-secrets.sh`
+  gates all seven behaviours against a throwaway git repo and is a step in the
+  `secret-hygiene` job; the rules were mutation-checked (feed them `/dev/null` and
+  four cases go red), because a guard that only ever prints ✓ is not a guard.
 - Add a pre-commit hook (e.g. `gitleaks`) to block secret commits locally.
+  `.githooks/pre-commit` already calls `scripts/check-client-secrets.sh`, so the
+  rules above apply locally **only if the hook is installed**:
+  `git config core.hooksPath .githooks`. It was not set on the machine where the
+  2026-11-19 incident below happened.
 - Configure the "Local History" extension to write outside the repo, or ensure the
   worktree/agent tooling never runs inside a tracked path.
+
+## 2026-11-19 — Railway project tokens in a tracked template
+
+Two live `rlwy_proj_…` values were pasted into the tracked root template
+`.env.dev.example` as `railway_toke_staging=` and `railway_toke_staging_old=` —
+lower-case keys no code reads, added as a note. They were **never committed**, so
+nothing shipped; the file was restored from `origin/main`. What the incident
+actually exposed is that no control would have noticed had they been committed:
+the CI hygiene lane and the pre-commit hook both passed them (fixed above).
+
+Verification performed, all read-only, no value printed:
+
+| Where a credential could sit | Result |
+|---|---|
+| `git log --all -G 'rlwy_proj_[A-Za-z0-9]{30,}'` (every local + remote ref) | 0 commits |
+| GitHub code search, this repo + `spotlight-latest` + `spotlight-new` | 1 file: the masked matrix doc |
+| Issue / PR / comment search for `rlwy_proj` | 0 |
+| Job logs of the three token-probe runs (`44345729380`, `44351036777`, `44406178859`) | 0 hits in 18 job logs |
+| Actions **variables** (plaintext) | 0 token-shaped values; the four values are `true`/`True` |
+| Actions **secrets** | `RAILWAY_TOKEN_DEVELOPMENT` / `_STAGING` / `_PRODUCTION` exist — the correct home |
+
+So no usable token value reached GitHub. What did reach GitHub is the *masked*
+preview of each bound token in `docs/devops/deployment-matrix.md` (prefix + last 4),
+which is what made the identification below possible.
+
+**Which token is which, without reading a secret:** compare last 4 characters.
+The matrix records that the 2026-11-16 re-mint bound `…wtix` to development,
+`…FCjl` to staging and `…zr4I` to production, and that `…xU87` was revoked. The two
+pasted values ended `…rK04` and `…Y8xn` — **none of the four**. Either they are
+post-2026-11-16 re-mints that the matrix does not list yet, or they are older
+credentials that Railway still considers live. Only the Railway dashboard answers
+that, so the maintainer action is unchanged:
+
+1. Railway dashboard → project → Deploy → Tokens (or `railway token list` with an
+   admin token): revoke any project token not accounted for by the matrix table.
+2. Re-mint per environment and update `RAILWAY_TOKEN_DEVELOPMENT`,
+   `RAILWAY_TOKEN_STAGING`, `RAILWAY_TOKEN_PRODUCTION` via
+   `gh secret set RAILWAY_TOKEN_STAGING --repo paymax2022/spotlight-latest1`.
+3. Add the new last-4 previews back to `docs/devops/deployment-matrix.md` so the
+   next paste can be identified the same way.
+4. Install the hook: `git config core.hooksPath .githooks`.
+
+Secret scanning is **disabled** on `paymax2022/spotlight-latest1` (the API answers
+404 "Secret scanning is disabled on this repository"), which is why no alert ever
+existed for the historical `.env` snapshots either. Enabling it — and then push
+protection — is the cheapest remaining prevention step and needs repo admin rights.
 
 ---
 
