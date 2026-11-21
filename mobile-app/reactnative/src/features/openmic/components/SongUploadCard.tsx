@@ -28,6 +28,14 @@
 //     back and press “submit” instead of re-uploading a 20 MB file.
 //   • The three declarations are the server's requirement, not a taste choice:
 //     `createSubmission` refuses without beat, ownership and sample confirmations.
+//   • An inert button never stands on its own. `handinOutstanding` returns what is
+//     still missing and the CTA is enabled exactly when that list is empty — the
+//     same list is printed above the button while it is not, so the artist who has
+//     chosen the MP3 and two of the three ticks is told the third is outstanding
+//     instead of being left to guess why "Upload and submit" will not respond.
+//     Keeping the button disabled rather than letting it fail on press is
+//     deliberate: a press here uploads and publishes, and a half-filled hand-in
+//     must never reach the endpoint.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -38,7 +46,7 @@ import TextInputField from '@/components/TextInputField';
 import { Colors, Radius, Spacing, Typography } from '@/constants/tokens';
 import { MAX_SONG_BYTES } from '../constants';
 import { OPEN_MIC_COUNTRY, STATE_OPTIONS, lgasForState } from '../location';
-import { handinFieldsOnRecord } from '../prefill';
+import { handinFieldsOnRecord, handinOutstanding, seedHandinFields } from '../prefill';
 import { useArtistIdentity, useSongHandin, useSongPrefill, type SongHandinForm } from '../hooks';
 import { resumableObjectKey, type OpenMicStage } from '../state';
 import ConsentRow from './ConsentRow';
@@ -61,7 +69,7 @@ type TextField = 'stageName' | 'email' | 'songTitle' | 'state' | 'lga' | 'genre'
 
 export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitted }: Props) {
   const identity = useArtistIdentity();
-  const { prefill } = useSongPrefill(contestSlug);
+  const { prefill, loaded } = useSongPrefill(contestSlug);
   const handin = useSongHandin({ contestSlug });
 
   const [fields, setFields] = useState<Record<TextField, string>>({
@@ -79,21 +87,21 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
   const [correcting, setCorrecting] = useState({ email: false, location: false, socials: false });
 
   // Only ever fills what is still empty: a prefill response that lands after the
-  // artist started typing must not overwrite their edits.
+  // artist started typing must not overwrite their edits. The rule lives in
+  // `seedHandinFields` because the inlined version of this effect updated a stale
+  // snapshot for every key, so only the last answer survived — and the last one is
+  // the genre, which the registration usually never stores. The account's own email
+  // and display name wait for the entry read (`loaded`) so that the approved answer
+  // is the one in the box, which is also what the confirmed rows below compare to.
   useEffect(() => {
-    setFields((previous) => {
-      const seed = (key: TextField, value: string) =>
-        previous[key] ? previous : { ...previous, [key]: value };
-      let next = seed('stageName', prefill.stageName || identity.displayName);
-      next = seed('email', prefill.email || identity.email);
-      next = seed('state', prefill.state);
-      next = seed('lga', prefill.lga);
-      next = seed('genre', prefill.genre);
-      return next;
-    });
+    setFields((previous) =>
+      seedHandinFields(previous, prefill, {
+        email: identity.email,
+        displayName: identity.displayName,
+      }, { accountFallback: loaded }));
     if (!instagram && prefill.instagramHandle) setInstagram(prefill.instagramHandle);
     if (!tiktok && prefill.tiktokHandle) setTiktok(prefill.tiktokHandle);
-  }, [identity.displayName, identity.email, instagram, prefill, tiktok]);
+  }, [identity.displayName, identity.email, instagram, loaded, prefill, tiktok]);
 
   const lgaOptions = useMemo(() => lgasForState(fields.state), [fields.state]);
   // A confirmed row may only appear while it still says exactly what the submit
@@ -125,25 +133,30 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
       key === 'state' ? { ...previous, state: value, lga: '' } : { ...previous, [key]: value });
   };
 
-  const missing: string[] = [];
-  if (!fields.stageName.trim()) missing.push('stage name');
-  if (!fields.email.trim()) missing.push('email');
-  if (!fields.state.trim()) missing.push('state');
-  if (!fields.lga.trim()) missing.push('LGA');
-  if (!fields.songTitle.trim()) missing.push('song title');
-  if (!instagram.trim() && !tiktok.trim()) missing.push('at least one social handle');
-  const needsFile = !handin.file && !resumeKey;
-  const canSubmit =
-    !missing.length && !needsFile && beatDeclared && owned && samples;
+  // One source for both halves of the CTA: the button is enabled exactly when this
+  // list is empty, and while it is not the same words are printed above it. The
+  // card used to build the flag and the sentence from two different expressions,
+  // and because the button was inert the sentence could never be reached — an
+  // artist with two declarations left unticked saw a dead control and no reason.
+  const outstanding = handinOutstanding({
+    stageName: fields.stageName,
+    email: fields.email,
+    state: fields.state,
+    lga: fields.lga,
+    songTitle: fields.songTitle,
+    instagram,
+    tiktok,
+    hasFile: !!handin.file || !!resumeKey,
+    beatDeclared,
+    owned,
+    samples,
+  });
+  const canSubmit = !outstanding.length;
 
   const submit = async () => {
     setProblem('');
     if (!canSubmit) {
-      setProblem(
-        missing.length || needsFile
-          ? `Add ${[...missing, needsFile ? 'the finished MP3' : ''].filter(Boolean).join(', ')}.`
-          : 'Tick the beat, ownership and sample declarations before submitting.',
-      );
+      setProblem(`Still needed: ${outstanding.join(', ')}.`);
       return;
     }
 
@@ -171,6 +184,13 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
     );
     if (result) onSubmitted?.(result.submissionId);
   };
+
+  // Printed above the CTA while the list is not empty, so an inert button is never
+  // the only thing on screen. It stays out of the way once the artist is busy
+  // sending or the song is live.
+  const stillNeeded = outstanding.length && !handin.busy && handin.phase !== 'done'
+    ? `Still needed: ${outstanding.join(', ')}.`
+    : '';
 
   const actionLabel =
     handin.phase === 'requesting' ? 'Checking you are cleared to hand in…'
@@ -337,12 +357,15 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
       </View>
 
       {allowed ? (
-        <PrimaryButton
-          label={actionLabel}
-          loading={handin.busy}
-          disabled={handin.busy || handin.phase === 'done' || !canSubmit}
-          onPress={() => { void submit(); }}
-        />
+        <>
+          {stillNeeded ? <Text style={styles.outstanding}>{stillNeeded}</Text> : null}
+          <PrimaryButton
+            label={actionLabel}
+            loading={handin.busy}
+            disabled={handin.busy || handin.phase === 'done' || !canSubmit}
+            onPress={() => { void submit(); }}
+          />
+        </>
       ) : (
         <Text style={styles.locked}>
           {stage.kind === 'needs_submit'
@@ -446,6 +469,7 @@ const styles = StyleSheet.create({
   fileName: { ...Typography.bodySm, color: Colors.onSurface },
   consents: { gap: Spacing.sm },
   locked: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  outstanding: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   progress: { ...Typography.caption, color: Colors.onSurfaceVariant },
   error: { ...Typography.bodySm, color: Colors.error },
   successRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
