@@ -278,6 +278,13 @@ that check too. Re-measured at the time this was written, with `main` already tw
 `20271800000000_academy_pricing_formats.sql`, because neither later commit touches `frontend-admin` or a
 migration. So #1103's migration is still the single thing standing between this pin and `main`'s tip.
 
+The absence is also readable directly rather than inferred from a skipped job. Run `44916982535`
+(`Ops DB Push (manual)`, `MODE: list`, whose job title is `supabase list (production)` — that workflow
+refuses outright if the staging project id equals the production ref, so the label is enforced, not
+decorative) printed the whole `Local | Remote | Time` table at 15:02:29Z, after this upload: **exactly one
+row has a blank `Remote` cell, and it is `20271800000000`**. Every other version sits on both sides, which
+makes the commit below it the schema-neutral choice on measured state, not on CI bookkeeping.
+
 The pin is also the safer side of an asymmetry, which is why re-pinning should follow the migration rather
 than precede it. `20271800000000` is not purely additive: it drops the closed five-literal
 `academy_area_pricing_options_key_check` and replaces it with a key-pattern check plus a foreign key to
