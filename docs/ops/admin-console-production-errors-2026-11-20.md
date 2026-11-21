@@ -654,11 +654,15 @@ upload did not change it. Roll
 back with `deploymentRollback("ea71b561-badf-4dc7-ad4c-052fd65745b3")`, the row that is serving now. And the
 console itself does **not** need a third pass, provided you re-check it: `main` has moved eight times after
 `f5bfe8848` as of 19:56Z, and exactly one of those commits touches served web code — `3baa3571b` (#1128),
-whose 4 files are `app/open-mic/[slug]/apply/page.tsx`, `app/open-mic/[slug]/enter/page.tsx`,
-`src/features/openmic/handin-record.ts` and `src/server/openmic/handin-record.ts`. So this one upload also
-carries #1128's hand-in fix to the BFF, which the cPanel host received and the Railway host did not.
-The rest of the eight are workflows, docs, mobile, and two `frontend-web/tests/unit/voting/` specs
-(`083bd11f9` #1127) that are not served code.
+whose 5 served files are `app/open-mic/[slug]/apply/page.tsx`, `app/open-mic/[slug]/enter/page.tsx`,
+`components/openmic/OpenMicEntryForm.tsx`, `src/features/openmic/handin-record.ts` and
+`src/server/openmic/handin-record.ts` (plus 3 `tests/unit/openmic/` specs). So this one upload also carries
+#1128's hand-in fix to the BFF, which the cPanel host received and the Railway host did not.
+The other seven are workflows, docs, mobile, and two `frontend-web/tests/unit/voting/` specs
+(`083bd11f9` #1127) that are not served code. Scope the drift check on the **whole** app, not on the two
+directories that happen to be named in this paragraph: `frontend-web/components`, `lib`, `hooks` and `config`
+are all root source dirs, and a `-- frontend-web/app frontend-web/src` filter reads 4 files where the honest
+answer is 5.
 `git diff --name-only f5bfe8848..origin/main -- frontend-admin` measured 0 files again at 19:56Z, so the
 deployed console build is already head-current. Re-run that one-line diff at upload time — the moment it is
 non-zero, the console needs
