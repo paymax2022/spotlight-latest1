@@ -102,10 +102,10 @@ export function withPrefillDefaults(prefill: Partial<SongFormPrefill> | null | u
  *
  * WHY THIS IS A RULE AND NOT A PREFILL DETAIL
  * Prefilling a field still leaves the question on the screen: an artist who
- * already signed up with an email and already picked their state and LGA while
- * applying sees three required inputs and has to work out whether they are
- * being asked again. This answers the earlier question — is there anything here
- * to ask at all? — and the card renders a confirmed value when the answer is yes.
+ * signed up with an email and picked their state, LGA and handles while applying
+ * sees five more inputs and has to work out whether they are being asked again.
+ * This answers the earlier question — is there anything here to ask at all? — and
+ * the card renders the recorded answer as a confirmed value when it is.
  *
  * The `location` pair is only inherited when it is a value THIS form could have
  * produced: the state must be one the LGA cascade knows, and the LGA must be in
@@ -113,7 +113,7 @@ export function withPrefillDefaults(prefill: Partial<SongFormPrefill> | null | u
  * another state would otherwise lock the artist out of an answer they are allowed
  * to correct — the registration's city question and the hand-in's LGA question
  * share a list but not a label, so a stale or foreign spelling is possible.
- * Anything that cannot be shown as confirmed stays an ordinary, answerable field.
+ * Anything that cannot be shown as recorded stays an ordinary, answerable field.
  * (The `knownStateName` read restates what `lgasForState` already does by failing
  * closed for an unlisted state; mutation-proving it on 2026-11-21 found no test
  * that separates the two, so it stays as documentation of the rule, not as a gate.)
@@ -121,6 +121,7 @@ export function withPrefillDefaults(prefill: Partial<SongFormPrefill> | null | u
 export interface HandinOnRecord {
   email: boolean;
   location: boolean;
+  socials: boolean;
 }
 
 export function handinFieldsOnRecord(
@@ -133,7 +134,15 @@ export function handinFieldsOnRecord(
   const lga = text(prefill?.lga);
   const location = !!state && !!lga && !!knownStateName(state) && lgasForState(state).includes(lga);
 
-  return { email: !!email, location };
+  // The hand-in endpoint refuses a submission with no social handle, so the pair
+  // can only be confirmed when the entry actually answered it. The registration
+  // asks for both handles but requires neither, so an entry can legitimately reach
+  // here empty — that case must stay a field, or the artist could not submit at all.
+  // One handle is all the server asks for, so one handle is all this needs to call
+  // it recorded.
+  const socials = !!(text(prefill?.instagramHandle) || text(prefill?.tiktokHandle));
+
+  return { email: !!email, location, socials };
 }
 
 /**

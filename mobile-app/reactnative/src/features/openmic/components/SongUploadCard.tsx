@@ -4,18 +4,23 @@
 // Why the form looks the way it does:
 //
 //   • What the artist already gave is not asked for twice. Their email came from
-//     the account they signed up with, and their state and LGA are the answers on
-//     their own approved entry, so those three show as confirmed values with a
-//     "Change" escape rather than as three more required fields. `handinFieldsOnRecord`
-//     decides, and it refuses to confirm anything this form could not have
-//     produced itself — see `prefill.ts`.
+//     the account they signed up with, and their state, LGA and social handles are
+//     the answers on their own approved entry, so those facts show as confirmed
+//     values with a "Change" escape rather than as five more required fields.
+//     `handinFieldsOnRecord` decides, and it refuses to confirm anything this form
+//     could not have produced itself — see `prefill.ts`.
+//   • A handle the entry never collected stays a field. `POST /api/open-mic/submissions`
+//     rejects a hand-in with no social handle at all, while the registration marks
+//     both of them optional, so hiding the pair on an entry that answered neither
+//     would block a song the artist has already recorded. Inheritance follows the
+//     record, never the guess.
 //   • `POST /api/open-mic/submissions` matches the artist by stage name and email
 //     — and a mistyped stage name is exactly what its duplicate check compares —
 //     so the answers come from the applicant's own registration. Prefill is never
 //     load-bearing: when the application read fails the fields open blank and the
 //     artist types, and nothing is ever hidden behind a value we do not have.
 //   • The LGA select cascades off the state, like the web entry form. The server
-//     stores these three strings without validating membership, so an out-of-date
+//     stores these location strings without validating membership, so an out-of-date
 //     option list here can only mislabel an entry, never reject one.
 //   • Upload and submit are separate steps the UI does not fuse. `complete` leaves
 //     a `draft` row that voters cannot hear; only `POST /submissions` publishes.
@@ -71,7 +76,7 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
   // Tapped "Change" puts the question back on screen for the rest of the visit:
   // the artist who corrects one of these facts should see the field, not a
   // read-only row that silently disagrees with what they are about to submit.
-  const [correcting, setCorrecting] = useState({ email: false, location: false });
+  const [correcting, setCorrecting] = useState({ email: false, location: false, socials: false });
 
   // Only ever fills what is still empty: a prefill response that lands after the
   // artist started typing must not overwrite their edits.
@@ -102,9 +107,14 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
     fields.state === prefill.state && fields.lga === prefill.lga;
   const emailConfirmed = onRecord.email && !correcting.email && emailStillMatchesRecord;
   const locationConfirmed = onRecord.location && !correcting.location && locationStillMatchesRecord;
+  const socialsStillMatchRecord =
+    instagram === (prefill.instagramHandle || '') && tiktok === (prefill.tiktokHandle || '');
+  const socialsConfirmed = onRecord.socials && !correcting.socials && socialsStillMatchRecord;
   const emailNote = prefill.email
     ? 'From your entry. Change it if anything has moved.'
     : 'From your account. Update it in your profile if it has changed.';
+  // One row for the pair, because the server asks for at least one handle, not both.
+  const socialValue = [instagram.trim(), tiktok.trim()].filter(Boolean).join(' · ');
   // Bytes the server already holds for this artist's draft row.
   const resumeKey = resumableObjectKey(stage);
   const resumeSubmissionId = stage.kind === 'needs_submit' ? stage.submission.id : '';
@@ -277,22 +287,33 @@ export default function SongUploadCard({ stage, contestSlug, allowed, onSubmitte
         placeholder="Select a genre"
       />
 
-      <TextInputField
-        label="Instagram handle"
-        value={instagram}
-        onChangeText={setInstagram}
-        placeholder="@yourhandle"
-        autoCapitalize="none"
-      />
-      <TextInputField
-        label="TikTok handle"
-        value={tiktok}
-        onChangeText={setTiktok}
-        placeholder="@yourhandle"
-        autoCapitalize="none"
-      />
+      {socialsConfirmed ? (
+        <ConfirmedRow
+          label="Social handles"
+          value={socialValue}
+          note="From your entry. Change it if either handle moved."
+          onChange={() => setCorrecting((previous) => ({ ...previous, socials: true }))}
+        />
+      ) : (
+        <>
+          <TextInputField
+            label="Instagram handle"
+            value={instagram}
+            onChangeText={setInstagram}
+            placeholder="@yourhandle"
+            autoCapitalize="none"
+          />
+          <TextInputField
+            label="TikTok handle"
+            value={tiktok}
+            onChangeText={setTiktok}
+            placeholder="@yourhandle"
+            autoCapitalize="none"
+          />
 
-      <Text style={styles.hint}>At least one of Instagram or TikTok is required.</Text>
+          <Text style={styles.hint}>At least one of Instagram or TikTok is required.</Text>
+        </>
+      )}
 
       <View style={styles.consents}>
         <ConsentRow

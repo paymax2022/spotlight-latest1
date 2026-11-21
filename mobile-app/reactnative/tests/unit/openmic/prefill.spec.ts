@@ -217,9 +217,9 @@ describe('identityFromUser', () => {
 });
 
 describe('handinFieldsOnRecord', () => {
-  // The hand-in used to ask these three facts as if the artist had never given
-  // them: the email comes from the account they signed up with, and the state
-  // and LGA are the answers on their own approved entry. Inheriting them is only
+  // The hand-in used to ask these facts as if the artist had never given them: the
+  // email comes from the account they signed up with, and the state, LGA and social
+  // handles are the answers on their own approved entry. Inheriting them is only
   // safe when the record holds a value this form could itself have produced —
   // anything else has to stay a question, because a locked field the artist
   // cannot correct is worse than an extra tap.
@@ -234,7 +234,9 @@ describe('handinFieldsOnRecord', () => {
         'personal.email': 'spec.ng+openmic@gmail.com',
       }),
     );
-    assert.deepEqual(out, { email: true, location: true });
+    // That entry left both handle questions blank, which is the shape this rule has
+    // to get right: the handles stay on screen or the artist cannot submit.
+    assert.deepEqual(out, { email: true, location: true, socials: false });
   });
 
   it('counts the account email as on record when the entry never collected one', () => {
@@ -282,8 +284,39 @@ describe('handinFieldsOnRecord', () => {
     assert.equal(valid.location, true);
   });
 
+  it('inherits the social handles the application collected', () => {
+    const out = handinFieldsOnRecord(
+      prefillFromRegistrationFormData({
+        'social.instagram': '@adaforce',
+        'social.tiktok': '@adaforce',
+      }),
+    );
+    assert.equal(out.socials, true);
+  });
+
+  it('inherits the handles when the entry carries only one of them', () => {
+    // The registration asks for both but requires neither, while the hand-in
+    // endpoint refuses anything with no handle at all — so one recorded handle is
+    // enough for the question to be genuinely answered.
+    const instagramOnly = handinFieldsOnRecord({ instagramHandle: '@adaforce', tiktokHandle: '' });
+    assert.equal(instagramOnly.socials, true);
+    const tiktokOnly = handinFieldsOnRecord({ instagramHandle: '', tiktokHandle: 'ada_tk' });
+    assert.equal(tiktokOnly.socials, true);
+  });
+
+  it('asks for a handle when the entry carries neither', () => {
+    assert.equal(handinFieldsOnRecord(EMPTY_PREFILL).socials, false);
+    assert.equal(handinFieldsOnRecord({ instagramHandle: '   ', tiktokHandle: '' }).socials, false);
+  });
+
   it('tolerates a missing or malformed prefill without throwing', () => {
-    assert.deepEqual(handinFieldsOnRecord(null, null as unknown as string), { email: false, location: false });
-    assert.deepEqual(handinFieldsOnRecord(undefined, undefined), { email: false, location: false });
+    assert.deepEqual(
+      handinFieldsOnRecord(null, null as unknown as string),
+      { email: false, location: false, socials: false },
+    );
+    assert.deepEqual(
+      handinFieldsOnRecord(undefined, undefined),
+      { email: false, location: false, socials: false },
+    );
   });
 });

@@ -14,7 +14,8 @@ name: CI — CLAUDE.md gates
 #
 # Gates enforced (see CLAUDE.md "Commands you should know"):
 #   - frontend-web: golden-path regression (test:regression), money invariants
-#     (test:money), contract:check, tsc --noEmit, ESLint
+#     (test:money), contest guards (tests/unit/contests + the /voting prize
+#     wiring spec), contract:check, tsc --noEmit, ESLint
 #   - frontend-admin: type-check (tsc --noEmit, strict)
 #   - backend (Go 1.25): go build ./... && go vet ./...
 #   - OpenAPI: YAML validity for every contract in contracts/
@@ -140,6 +141,25 @@ jobs:
       working-directory: mobile-app/reactnative
       node-version: '22'
       typecheck-command: npm run test:modules
+
+  # `test:voting` existed and was referenced by nothing, same as test:modules
+  # above: it is the suite that locks the contest prize ladder the phone shows
+  # (order, amount joining, blank handling, the headline fallback in
+  # connectVoting.mapper.ts). The backend half of that contract IS gated — the
+  # live-DB job runs `go test ./...` with TEST_DATABASE_URL — but the mapper half
+  # was laptop-only, which is the half that decides whether "₦500,000" prints
+  # twice or the winner's gold dot lands on the wrong row.
+  #
+  # Its own job for the same reason as the lane above: the required
+  # whole-app tsc lane must not have its Node raised for an extra suite. Measured
+  # 2026-11-21 on main: 8 files, 76 tests, exit 0.
+  mobile-voting-tests:
+    name: mobile (contest voting tests)
+    uses: ./.github/workflows/_reusable-node-typecheck.yml
+    with:
+      working-directory: mobile-app/reactnative
+      node-version: '22'
+      typecheck-command: npm run test:voting
 
   backend:
     name: backend (go build + vet)
