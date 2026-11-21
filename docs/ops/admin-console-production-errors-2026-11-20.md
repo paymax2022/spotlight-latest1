@@ -411,19 +411,27 @@ ones included, because its session gate runs before routing, and development's c
 `WEB_API_BASE_URL is not set …` for the same reason it is useless as a control. The web host is the only
 place this is observable. Measured 2026-11-21, unauthenticated:
 
-| request | `…web-production-9259` | `www.spotlightng.com` |
-| --- | --- | --- |
-| `/api/admin/open-mic/contests` | 401 | 401 |
-| `/api/admin/academy/interest-areas` | 401 | 401 |
-| `/api/admin/open-mic/contests/<uuid>/applicants` | **404** | 401 |
-| `/api/admin/academy/pricing-formats` | **404** | 401 |
-| `/api/v1/public/build` | 200 `b9c21b534…` | 200 `b9c21b534…` |
+| request | `…web-development` | `…web-staging-new` | `…web-production-9259` | `www.spotlightng.com` |
+| --- | --- | --- | --- | --- |
+| `/api/admin/open-mic/contests` | 401 | 401 | 401 | 401 |
+| `/api/admin/academy/interest-areas` | 401 | 401 | 401 | 401 |
+| `/api/admin/open-mic/contests/<uuid>/applicants` | 401 | **404** | **404** | 401 |
+| `/api/admin/academy/pricing-formats` | 401 | **404** | **404** | 401 |
+| `/api/admin/definitely-not-a-route` (control) | 404 | 404 | 404 | 404 |
 
-The last row matters twice: both web hosts sit in front of the *same* Go backend, so the two 404s are not
-a backend difference. They are the Next layer. `applicants` entered `main` with #1109 (`9b2ec67b7`) and
-`pricing-formats` with #1103 (`2e4829e89`), both on 2026-11-21; the customer domain has them because
-`sync-frontend-web.yml` ran for each (`44889155223` 09:20:56Z, `44896430848` 10:53:03Z, `44908742535`
-13:24:56Z). The Railway BFF does not, because nothing has deployed it.
+Development serves both routes and staging does not, which localises the fault precisely: the route code
+is fine, and what is missing is a deploy. The two Railway web planes that lack them are the two whose
+uploads F2 refuses — staging sits at backend `773fe0285` and production's Next layer at the Nov-16 pin —
+while `www.spotlightng.com`, fed by the independent `sync-frontend-web.yml` lane, is current. Production's
+Railway web and www report the same backend at `/api/v1/public/build` (`b9c21b534…`), so they front one Go
+service and differ only in the Next layer; the dev and staging planes proxy other backends (`b7e6e89ba`,
+`773fe0285`), which is why the comparison that matters is column three against column four.
+
+The two 404s are therefore not a backend difference — production's Railway web and www front the same Go
+service. `applicants/route.ts` was authored on `7c54898f4` (2026-11-19) but only *entered* `main` with #1109
+(`9b2ec67b7`) on 2026-11-21, and `pricing-formats` with #1103 (`2e4829e89`) the same day; the customer
+domain has them because `sync-frontend-web.yml` ran for each (`44889155223` 09:20:56Z, `44896430848`
+10:53:03Z, `44908742535` 13:24:56Z). The Railway BFF does not, because nothing has deployed it.
 
 **Why nothing has deployed it.** `docs/devops/deployment-matrix.md` records this service as fed by
 `release.yml` "on every push to `main`", and `release.yml`'s production legs do exist since `ef97ec64b`
