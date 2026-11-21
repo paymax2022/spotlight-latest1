@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Page, PageHeader, Card, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import { listVotingContests, getContestRoster } from '@/services/competitionsService';
@@ -13,6 +14,12 @@ import type { VotingContest, ContestRosterEntry } from '@/types/competitions';
 // claim-tracking feature anywhere in the real backend, so that part of the
 // old UI is gone rather than faked — this shows exactly what the backend
 // tracks: free/paid/total votes per contestant, ranked.
+//
+// Each row links to /admin/voting/contestant/<contestant_id>, which is where the
+// contestant's profile and the admin-vote form live. The link carries the
+// contestant id only on purpose: the roster payload has no contest_id (that comes
+// from GET /api/v1/connect/contestants/:id on the profile page), and that page is
+// what enables the vote form.
 
 function CompetitionsResultsContent() {
   const searchParams = useSearchParams();
@@ -121,7 +128,12 @@ function CompetitionsResultsContent() {
                 <tr key={entry.contestant_id} style={{ background: entry.rank === 1 ? tint(colors.warning, 0.06) : 'transparent' }}>
                   <td style={tdCell}><span style={{ fontSize: '1.1rem', fontWeight: 700, color: colors.primary }}>#{entry.rank}</span></td>
                   <td style={tdCell}>
-                    <strong>{entry.name}</strong>
+                    <Link
+                      href={`/admin/voting/contestant/${entry.contestant_id}`}
+                      style={{ fontWeight: 700, color: colors.primary, textDecoration: 'none' }}
+                    >
+                      {entry.name}
+                    </Link>
                     {entry.stage_name ? <div style={{ fontSize: 12, color: colors.muted }}>&ldquo;{entry.stage_name}&rdquo;</div> : null}
                   </td>
                   <td style={tdCell}>{entry.free_votes.toLocaleString()}</td>
