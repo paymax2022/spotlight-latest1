@@ -145,6 +145,113 @@ export function handinFieldsOnRecord(
   return { email: !!email, location, socials };
 }
 
+/** The hand-in's own text boxes, keyed exactly as the card keys them. */
+export interface HandinFieldValues {
+  stageName: string;
+  email: string;
+  songTitle: string;
+  state: string;
+  lga: string;
+  genre: string;
+}
+
+/**
+ * Fill the boxes the entry can already answer, and only the ones still empty.
+ *
+ * WHY THIS IS A FUNCTION AND NOT THE CARD'S EFFECT
+ * The effect inlined this as a `seed` helper that read `previous` for every key
+ * instead of the value the line above had just produced, so each assignment
+ * discarded the one before it and only the last survived — which, with a genre the
+ * registration rarely stores, meant no answer at all reached the form. A named
+ * rule with the accumulating object threaded through it is what the spec
+ * (`seedHandinFields` in tests/unit/openmic) pins, and the card cannot repeat the
+ * mistake because it has no loop of its own left to get wrong.
+ *
+ * Three rules the shape of this API encodes:
+ *   • `songTitle` is deliberately not offerable. It is the new work, and an entry
+ *     that did store a title for the audition question must not speak for it.
+ *   • the LGA only follows the record while the state box still agrees with the
+ *     record. The artist can change the state at any time (and doing so clears the
+ *     LGA underneath it), and this effect re-runs whenever the prefill arrives, so
+ *     seeding the pair blindly would paste the entry's Anambra LGA into a Lagos
+ *     answer the artist just made.
+ *   • the account fallback is withheld until the entry read settles. The session
+ *     email is known on first paint and the approval arrives a beat later; because
+ *     the rule above never overwrites a filled box, spending the account value in
+ *     that window would lock the hand-in to the account email instead of the one
+ *     the entry was approved under — which is what the server matches on, and what
+ *     the confirmed row has to agree with to appear at all.
+ */
+export function seedHandinFields(
+  current: HandinFieldValues,
+  prefill: Partial<SongFormPrefill> | null | undefined,
+  identity: { email?: string; displayName?: string },
+  options?: { accountFallback?: boolean },
+): HandinFieldValues {
+  const fallback = options?.accountFallback !== false;
+  const recordState = text(prefill?.state);
+  const offered: Array<[keyof HandinFieldValues, string]> = [
+    ['stageName', text(prefill?.stageName) || (fallback ? text(identity.displayName) : '')],
+    ['email', text(prefill?.email) || (fallback ? text(identity.email) : '')],
+    ['genre', text(prefill?.genre)],
+    ['state', recordState],
+    ['lga', text(prefill?.lga)],
+  ];
+
+  let next = current;
+  for (const [key, value] of offered) {
+    if (!value || next[key].trim()) continue;
+    if (key === 'lga' && (next.state || '') !== recordState) continue;
+    next = { ...next, [key]: value };
+  }
+  return next;
+}
+
+/** Everything the submit endpoint needs, as the screen currently holds it. */
+export interface HandinFacts {
+  stageName: string;
+  email: string;
+  state: string;
+  lga: string;
+  songTitle: string;
+  instagram: string;
+  tiktok: string;
+  /** True when the artist picked a file, or the server already holds their bytes. */
+  hasFile: boolean;
+  beatDeclared: boolean;
+  owned: boolean;
+  samples: boolean;
+}
+
+/**
+ * What still has to happen before this hand-in can be sent, in the order the
+ * artist meets it on screen.
+ *
+ * The card used to compute its `disabled` flag from one expression and its
+ * explain-what-is-missing sentence from a different one — and because the button
+ * was hard-disabled, the sentence could never be reached: `onPress` does not fire
+ * on a disabled control, so an artist with two unticked declarations saw an inert
+ * button and no reason. Returning the list is what lets both halves read from the
+ * same source: the CTA is enabled exactly when this is empty, and the same words
+ * are printed above it while it is not.
+ */
+export function handinOutstanding(facts: HandinFacts): string[] {
+  const out: string[] = [];
+  if (!text(facts.stageName)) out.push('stage name');
+  if (!text(facts.email)) out.push('email');
+  if (!text(facts.state)) out.push('state');
+  if (!text(facts.lga)) out.push('LGA');
+  if (!text(facts.songTitle)) out.push('song title');
+  // One handle is all `createSubmission` asks for; the registration asks for both
+  // and requires neither, so an entry can arrive with a single one filled.
+  if (!text(facts.instagram) && !text(facts.tiktok)) out.push('at least one social handle');
+  if (!facts.hasFile) out.push('the finished MP3');
+  if (!facts.beatDeclared) out.push('the beat declaration');
+  if (!facts.owned) out.push('the ownership declaration');
+  if (!facts.samples) out.push('the sample declaration');
+  return out;
+}
+
 /**
  * The application that describes this artist for Open Mic.
  *

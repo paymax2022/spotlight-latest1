@@ -9,9 +9,11 @@ import assert from 'node:assert/strict';
 import {
   EMPTY_PREFILL,
   handinFieldsOnRecord,
+  handinOutstanding,
   identityFromUser,
   pickOpenMicApplication,
   prefillFromRegistrationFormData,
+  seedHandinFields,
   withPrefillDefaults,
 } from '@/features/openmic/prefill';
 import { looksLikeOpenMicSlug } from '@/features/openmic/constants';
@@ -318,5 +320,151 @@ describe('handinFieldsOnRecord', () => {
       handinFieldsOnRecord(undefined, undefined),
       { email: false, location: false, socials: false },
     );
+  });
+});
+
+// The card used to seed its fields through a helper that closed over the
+// ORIGINAL state snapshot instead of the accumulating one, so every assignment
+// but the last threw its own work away and nothing reached the form. That is the
+// bug these cases exist for: an artist who already gave their email, state and
+// LGA should not have to type them again — and the confirmed rows in the card
+// only appear while the live field value still equals the record, so a form that
+// never got seeded could never show them.
+describe('seedHandinFields', () => {
+  const BLANK = { stageName: '', email: '', songTitle: '', state: '', lga: '', genre: '' };
+  const entry = withPrefillDefaults({
+    stageName: 'Laja',
+    realName: 'Ade Bello',
+    email: 'spec.ng+openmic@gmail.com',
+    state: 'Anambra',
+    lga: 'Awka North',
+    genre: 'Afrobeats',
+  });
+
+  it('offers every answer the entry has, not only the last one', () => {
+    const out = seedHandinFields(BLANK, entry, {});
+    assert.deepEqual(out, {
+      stageName: 'Laja',
+      email: 'spec.ng+openmic@gmail.com',
+      songTitle: '',
+      state: 'Anambra',
+      lga: 'Awka North',
+      genre: 'Afrobeats',
+    });
+  });
+
+  it('never overwrites an answer the artist already typed', () => {
+    const typed = { ...BLANK, email: 'other@example.com', genre: 'Gospel' };
+    const out = seedHandinFields(typed, entry, {});
+    assert.equal(out.email, 'other@example.com');
+    assert.equal(out.genre, 'Gospel');
+    // Boxes still empty get their answer.
+    assert.equal(out.lga, 'Awka North');
+  });
+
+  it('falls back to the account for the two facts an entry cannot carry', () => {
+    const out = seedHandinFields(BLANK, EMPTY_PREFILL, {
+      email: 'account@example.com',
+      displayName: 'Big Toe',
+    });
+    assert.equal(out.email, 'account@example.com');
+    assert.equal(out.stageName, 'Big Toe');
+    assert.equal(out.state, '');
+  });
+
+  it('leaves the song title alone — it is new work, not a record', () => {
+    const out = seedHandinFields(BLANK, entry, {});
+    assert.equal(out.songTitle, '');
+  });
+
+  it('does not drop a recorded LGA under a state the artist changed', () => {
+    // Choosing a state clears the LGA beneath it, and this effect re-runs when the
+    // prefill arrives; seeding the pair blindly would paste Anambra's Awka North
+    // into a Lagos answer the artist just made.
+    const moved = { ...BLANK, state: 'Lagos', lga: '' };
+    const out = seedHandinFields(moved, entry, {});
+    assert.equal(out.state, 'Lagos');
+    assert.equal(out.lga, '');
+  });
+
+  it('returns the very same object when it has nothing to add', () => {
+    const full = { ...BLANK, ...entry, songTitle: 'My Song' };
+    assert.equal(seedHandinFields(full, entry, {}), full);
+    assert.equal(seedHandinFields(BLANK, EMPTY_PREFILL, {}), BLANK);
+  });
+
+  it('withholds the account fallback while the entry read is still in flight', () => {
+    // The session email is known on first paint; the applicant's own approval
+    // arrives a beat later. Seeding the account value into the box in that window
+    // spends the one thing the blank-box rule protects — the box is no longer empty
+    // when the record shows up, so the hand-in carries the account email instead of
+    // the one the entry was approved under, and the confirmed row never appears.
+    const account = { email: 'funded.qa@paymax.test', displayName: 'Funded QA User' };
+    const provisional = seedHandinFields(BLANK, EMPTY_PREFILL, account, { accountFallback: false });
+    assert.deepEqual(provisional, BLANK);
+
+    // Once the read settles, the record answers first and the account fills only
+    // what the entry genuinely never collected.
+    const settled = seedHandinFields(provisional, entry, account, { accountFallback: true });
+    assert.equal(settled.email, 'spec.ng+openmic@gmail.com');
+    assert.equal(settled.stageName, 'Laja');
+
+    const noRecordEmail = seedHandinFields(BLANK, withPrefillDefaults({ state: 'Anambra', lga: 'Awka North' }), account, {
+      accountFallback: true,
+    });
+    assert.equal(noRecordEmail.email, 'funded.qa@paymax.test');
+    assert.equal(noRecordEmail.stageName, 'Funded QA User');
+
+    // An artist who typed during that window keeps their own answer either way.
+    const typed = { ...BLANK, email: 'mine@example.com' };
+    assert.equal(seedHandinFields(typed, entry, account, { accountFallback: true }).email, 'mine@example.com');
+  });
+});
+
+// The reported symptom: the submit control stayed inert and nothing on screen said
+// why. One rule now serves both halves — the button is enabled exactly when this
+// list is empty, and the same list is what the card shows the artist.
+describe('handinOutstanding', () => {
+  const ready = {
+    stageName: 'Laja',
+    email: 'laja@example.com',
+    state: 'Anambra',
+    lga: 'Awka North',
+    songTitle: 'My Song',
+    instagram: '@laja',
+    tiktok: '',
+    hasFile: true,
+    beatDeclared: true,
+    owned: true,
+    samples: true,
+  };
+
+  it('says nothing when the hand-in is ready to send', () => {
+    assert.deepEqual(handinOutstanding(ready), []);
+  });
+
+  it('names each declaration still unticked, by the name on its own row', () => {
+    const out = handinOutstanding({ ...ready, owned: false, samples: false });
+    assert.deepEqual(out, ['the ownership declaration', 'the sample declaration']);
+  });
+
+  it('names a blank answer, the missing file and a tick together', () => {
+    const out = handinOutstanding({
+      ...ready,
+      songTitle: '   ',
+      instagram: '',
+      hasFile: false,
+      beatDeclared: false,
+    });
+    assert.deepEqual(out, [
+      'song title',
+      'at least one social handle',
+      'the finished MP3',
+      'the beat declaration',
+    ]);
+  });
+
+  it('counts bytes the server already holds as the file', () => {
+    assert.deepEqual(handinOutstanding({ ...ready, hasFile: true, beatDeclared: true }), []);
   });
 });
