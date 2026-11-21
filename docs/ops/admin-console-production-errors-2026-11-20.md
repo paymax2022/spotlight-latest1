@@ -196,6 +196,12 @@ Two things to check before assuming the fix is live:
   someone puts this commit on the service.** `Service.deployments` is not environment-scoped by
   default; the `environmentId` above is what makes this the production list.
 
+  **Superseded on 2026-11-21:** there is a newer production row than `cb02a3ca…` — `54701c98…`, `SUCCESS` at
+  2026-11-21T14:18:54Z, `cliMessage` = `6082f2d8041bdf4385c3b3e1cf7a193b9389fe61`. Command 5 below was
+  executed, so the console serves that commit, which is a **pin deliberately below `main`'s head**, not
+  main's tip. See §6 for the pin, the proof and the rollback. The rest of this section is kept as the
+  diagnosis it was the day it was written.
+
 Read the served commit rather than the run colour. The build read-back is the **Go** service's route
 (`backend/Dockerfile:14`), and the BFF's catch-all handler (`frontend-web/app/api/v1/[...path]/route.ts`)
 forwards it, so this works from either host:
@@ -213,7 +219,7 @@ skipped, not silently applied. `frontend-admin` has no such route (the same path
 `deployments(input:{…environmentId:"f84c4558-…"})` query above: if its newest row is not your sha, the
 console is not serving your code.
 
-### 5. Deploying this branch onto the production console (owner-run)
+### 5. Deploying this branch onto the production console (owner-run; executed 2026-11-21, see §6)
 
 Landing on `main` is not enough while staging refuses. The production `frontend-admin` instance reports
 `rootDirectory: null` (see the "THE UPLOAD RULE" header of `scripts/ci/railway-deploy.sh`, measured with
@@ -233,6 +239,146 @@ sha, and confirm `/admin/fx/spread` shows the live `—`/value distinction rathe
 An alternative that fixes the class rather than this one release: get a green `deploy-staging` +
 `smoke-staging` (the Railway-side F2 ask), after which every subsequent `main` merge reaches production by
 itself.
+
+### 6. Command 5 was run on 2026-11-21, and it was NOT run at `main`'s head
+
+Release run `44896430859` (push `2e4829e89`) printed `### Release gate: proceed` at 11:23:09Z, deployed
+and smoke-tested all three development legs, applied `migrate staging database`, and then refused on
+every staging upload — `deploy Staging (backend)`, `(frontend-web)` and `(frontend-admin)` each burned
+its full ladder with 9 × `Failed to fetch: error decoding response body` (jobs `136830404022`,
+`136830404029`, `136830404096`; `grep -ac` on the exact phrase, nine retry-notices alongside each). So
+`smoke Staging`, `migrate production database`, `deploy Production (…)` and `smoke Production` were
+cascade-skipped and the console stayed on the 2026-11-18 build. **A `proceed` verdict is necessary, not
+sufficient: it only lets the train leave the station; the staging legs decide whether anything reaches
+production.**
+
+The console was therefore put on `6082f2d8041bdf4385c3b3e1cf7a193b9389fe61` — the last `main` commit
+*before* #1103 — deliberately, because shipping `main`'s head to production right now would put an admin
+screen over a schema production does not have:
+
+```
+$ git log --oneline --name-only 6082f2d80..2e4829e89 -- supabase/migrations
+2e4829e89 feat(academy): operator-managed tuition formats (#1103)
+supabase/migrations/20271800000000_academy_pricing_formats.sql     ← the only one, and it is NOT applied
+
+$ git grep -l academy_pricing_formats 6082f2d80 -- frontend-admin frontend-web   # 0 files
+$ git grep -l academy_pricing_formats 2e4829e89 -- frontend-admin                # 2 files:
+#   frontend-admin/app/admin/academy/film/page.tsx
+#   frontend-admin/src/services/filmAcademyAdminService.ts
+```
+
+`migrate production database` was skipped by the same run, so `academy_pricing_formats` exists on staging
+and not on production, and `2e4829e89`'s console is the only one that reads that table. Picking the commit
+below the migration is what makes this upload schema-neutral; it also means **the console sits at a pinned
+commit rather than `main`'s tip, and re-pinning it is a step that belongs to whoever applies
+`20271800000000` to the production database** — re-measure `git log --name-only <pin>..origin/main --
+supabase/migrations frontend-admin` before moving it, because every commit added since #1103 has to clear
+that check too. Re-measured at the time this was written, with `main` already two commits further on
+(`ea902ef2a` #1121, `b7e6e89ba` #1102): the check still returns only `2e4829e89`'s two admin files and
+`20271800000000_academy_pricing_formats.sql`, because neither later commit touches `frontend-admin` or a
+migration. So #1103's migration is still the single thing standing between this pin and `main`'s tip.
+
+The absence is also readable directly rather than inferred from a skipped job. Run `44916982535`
+(`Ops DB Push (manual)`, `MODE: list`, whose job title is `supabase list (production)` — that workflow
+refuses outright if the staging project id equals the production ref, so the label is enforced, not
+decorative) printed the whole `Local | Remote | Time` table at 15:02:29Z, after this upload: **exactly one
+row has a blank `Remote` cell, and it is `20271800000000`**. Every other version sits on both sides, which
+makes the commit below it the schema-neutral choice on measured state, not on CI bookkeeping.
+
+The pin is also the safer side of an asymmetry, which is why re-pinning should follow the migration rather
+than precede it. `20271800000000` is not purely additive: it drops the closed five-literal
+`academy_area_pricing_options_key_check` and replaces it with a key-pattern check plus a foreign key to
+`academy_pricing_formats`, and that table is seeded **from the `academy_area_pricing_options` rows that
+already exist** (`INSERT … SELECT DISTINCT ON (key) … FROM academy_area_pricing_options … ON CONFLICT DO
+NOTHING`). So the console at `6082f2d80` — whose key set is the same closed five in `AcademyPricingKey` in
+`filmAcademyAdminService.ts` and `ACADEMY_PRICING_STRUCTURE` in
+`frontend-web/src/server/services/academy/pricing.ts` — keeps working after the migration on any
+environment where those five keys already have rows. Where one of the five is absent from prod's pricing
+rows, the seeded catalogue lacks it too, and the pinned console's next insert of that key is refused by the
+foreign key instead of succeeding. This is not a hypothetical: saving tuition calls
+`updateInterestArea({ id, pricing })` with `{ key, price_ngn }` entries, and its `applyAll` branch then
+sends the same array to every other interest area — "The structure applies to every area, so the console
+offers setting it once" — so one repricing can try to create rows for keys an area never had, which is
+precisely where a missing catalogue row turns into a refusal. Check which keys the seed will cover before
+applying the migration (an ordinary read; run it against the production database):
+
+```sql
+-- every launch key, with a zero count where the table has no rows for it yet
+SELECT k.key, count(o.id) AS option_rows
+FROM (VALUES ('weekend_day'), ('weekend_boarding'), ('weekday_day'),
+             ('weekday_boarding'), ('full_time_boarding')) AS k(key)
+LEFT JOIN public.academy_area_pricing_options o ON o.key = k.key
+GROUP BY k.key ORDER BY k.key;
+```
+
+All five with a non-zero count means the swap is inert for this console. A key at zero means either insert
+that key into `academy_pricing_formats` first — with the `default_price_ngn` you want a new training to
+start at, since the column is `NOT NULL CHECK (> 0)` — or land the re-pin in the same window.
+
+The window this upload actually spans is not free of migrations, and it was checked rather than assumed.
+The 2026-11-18 build's commit is not recorded anywhere — that row's `cliMessage` is `null` and `cb02a3ca…`
+is a deployment id, not a sha — so `main`'s tip at that moment, `6057b0d3c`, is used as the proxy, and
+between it and `6082f2d80` exactly one migration was merged:
+
+```
+$ git log --oneline --name-only 6057b0d3c..6082f2d80 -- supabase/migrations
+5fec9f4a7 fix(connect): seed connect.contests.view for the admin contest list (#1072)
+supabase/migrations/20271700000000_connect_contests_view_rbac_seed.sql
+```
+
+That one is already live on the production database: applied by the scoped lane on 2026-11-18 (plan
+`44376009164` → apply `44376916739`, `✓ applied + history recorded`, `recorded: 20271700000000`) and
+independently re-read on 2026-11-19 by the read-only grant probe `44483640603`. So the pin holds: every
+schema object this build touches exists on production, and the one that does not belongs to the commit it
+deliberately stops below.
+
+One correction to the recipe above, measured the hard way. `serviceInstanceDeploy(serviceId,
+environmentId, commitSha)` — the refresh lane that does reach the staging services — does **not** honor
+`commitSha` for `frontend-admin` production, because that service has no git source: it rebuilds the last
+*uploaded snapshot*. Its row proves it: `meta.reason = "redeploy"`, `cliMessage = null`, a fresh
+`imageDigest`, `SUCCESS`, and a build log whose first relevant line is `unpacking archive`. The upload
+lane is distinguishable in the same fields: `reason = "deploy"` and `cliMessage` = the sha.
+
+```
+2026-11-21T14:02:37Z  SUCCESS  91478789  reason=redeploy  cliMessage=null        ← API refresh: same code, no-op
+2026-11-21T14:18:54Z  SUCCESS  54701c98  reason=deploy    cliMessage=6082f2d80…  ← Command 5: the real deploy
+2026-11-18T14:47:15Z  REMOVED  cb02a3ca  reason=deploy    cliMessage=null        ← pre-deploy build
+```
+
+What was checked afterwards, and what was not. The deployment row is the proof: `reason = "deploy"`,
+`cliMessage = 6082f2d8041bdf4385c3b3e1cf7a193b9389fe61`, `SUCCESS`, a new `imageDigest`. Corroboration came
+from the unauthenticated routing, which now agrees with the development console request for request:
+
+```
+                     prod                                                  dev
+/                    200                                                   200
+/login               404 (no Location) ← console login is /admin/login    404 (no Location)
+/admin               307 → /admin/login?next=%2Fadmin                      307 → same
+/admin/open-mic/<id> 307 → /admin/login?next=%2Fadmin%2Fopen-mic%2F…       307 → same
+```
+
+The `Location` value matching byte-for-byte, including the URL-encoded `next` parameter, is the stronger
+datum: it shows the same middleware and the same route tree, not merely the same status class. The chunk
+sets referenced by `/` are also identical — the same 8 `/_next/static/chunks/*.js` names on both planes,
+`diff`-clean — but that is stated only as parity with development, **not** as a before/after: the
+pre-upload fetch was made against `/login`, which is a 404 page on both planes, so the set production
+served before the deploy was never actually captured at `/`. Taken together these observations are weak in
+exactly the way the deployment row is not: an identical top-level chunk set cannot distinguish `6082f2d80`
+from a nearby commit, because per-screen code lives in route-level chunks. Not verified from here: an
+authenticated click-through of the applicant actions (logging in must be done by a human), and the
+page-level chunk itself cannot be fetched unauthenticated because a Next production build publishes no
+manifest entry for a dynamic route.
+
+To roll this back there is exactly one route: `deploymentRollback(id)` the snapshot that was live before
+this one — the row prefixed `cb02a3ca` in the §4 `deployments(input:{… environmentId: production})` query,
+whose full id that query returns. Re-running Command 5 at "the commit the console had before" is **not**
+available as a rollback, because that commit was never recorded — the row's `cliMessage` is `null`, and
+`cb02a3ca…` is a deployment id, not a sha. That gap is the whole argument for passing
+`--message <merged-main-sha>` on every upload: it is the only field that makes a hand-uploaded build
+attributable to a commit, and it is what makes the *next* deploy revertible to a known tree.
+
+Do not "fix" a staging refusal by re-running the Release run — that also re-runs
+`migrate production database`.
 
 ## Companion file
 
