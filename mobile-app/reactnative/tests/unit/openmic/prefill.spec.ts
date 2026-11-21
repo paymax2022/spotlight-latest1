@@ -8,6 +8,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   EMPTY_PREFILL,
+  handinFieldsOnRecord,
   identityFromUser,
   pickOpenMicApplication,
   prefillFromRegistrationFormData,
@@ -212,5 +213,77 @@ describe('identityFromUser', () => {
     const out = identityFromUser({ id: 'u9', email: 'x@y.z' });
     assert.equal(out.userId, 'u9');
     assert.equal(out.displayName, '');
+  });
+});
+
+describe('handinFieldsOnRecord', () => {
+  // The hand-in used to ask these three facts as if the artist had never given
+  // them: the email comes from the account they signed up with, and the state
+  // and LGA are the answers on their own approved entry. Inheriting them is only
+  // safe when the record holds a value this form could itself have produced —
+  // anything else has to stay a question, because a locked field the artist
+  // cannot correct is worse than an extra tap.
+
+  it('inherits the email and the state/LGA pair a real approved entry carries', () => {
+    // Anambra / Awka North is the live dev record behind
+    // registrations 8977dc4a-630c-4658-9967-120dfbad1e44.
+    const out = handinFieldsOnRecord(
+      prefillFromRegistrationFormData({
+        'personal.stateOfResidence': 'Anambra',
+        'personal.city': 'Awka North',
+        'personal.email': 'spec.ng+openmic@gmail.com',
+      }),
+    );
+    assert.deepEqual(out, { email: true, location: true });
+  });
+
+  it('counts the account email as on record when the entry never collected one', () => {
+    const out = handinFieldsOnRecord(EMPTY_PREFILL, 'ada@example.com');
+    assert.equal(out.email, true);
+  });
+
+  it('asks for the email when neither the entry nor the account has one', () => {
+    assert.equal(handinFieldsOnRecord(EMPTY_PREFILL, '').email, false);
+    assert.equal(handinFieldsOnRecord(EMPTY_PREFILL, '   ').email, false);
+    assert.equal(handinFieldsOnRecord(undefined, undefined).email, false);
+  });
+
+  it('asks again when the stored state is not one this form can offer', () => {
+    // The LGA select cascades off the dataset's own spelling, so 'Lagos State'
+    // would lock the pair to a state the artist can never re-select.
+    const out = handinFieldsOnRecord({ state: 'Lagos State', lga: 'Ikeja' });
+    assert.equal(out.location, false);
+  });
+
+  it('asks again when the stored LGA does not belong to the stored state', () => {
+    const out = handinFieldsOnRecord({ state: 'Abia', lga: 'Ikeja' });
+    assert.equal(out.location, false);
+  });
+
+  it('asks for the location when either half is missing', () => {
+    assert.equal(handinFieldsOnRecord({ state: 'Lagos', lga: '' }).location, false);
+    assert.equal(handinFieldsOnRecord({ state: '', lga: 'Ikeja' }).location, false);
+    assert.equal(handinFieldsOnRecord(EMPTY_PREFILL).location, false);
+  });
+
+  it('inherits the pair when an explicit LGA answer exists', () => {
+    const out = handinFieldsOnRecord(
+      prefillFromRegistrationFormData({
+        'personal.stateOfResidence': 'Lagos',
+        'personal.lga': 'Yaba',
+        'personal.city': 'Ikeja',
+      }),
+    );
+    // Yaba is not a Lagos LGA, so the explicit answer still cannot be inherited.
+    assert.equal(out.location, false);
+    const valid = handinFieldsOnRecord(
+      prefillFromRegistrationFormData({ 'personal.stateOfResidence': 'Lagos', 'personal.lga': 'Ikeja' }),
+    );
+    assert.equal(valid.location, true);
+  });
+
+  it('tolerates a missing or malformed prefill without throwing', () => {
+    assert.deepEqual(handinFieldsOnRecord(null, null as unknown as string), { email: false, location: false });
+    assert.deepEqual(handinFieldsOnRecord(undefined, undefined), { email: false, location: false });
   });
 });
