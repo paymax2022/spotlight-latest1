@@ -173,6 +173,23 @@ export interface ContestRegistrationDefinition {
   bannerImageUrl?: string;
   /** Contest logo, shown on the contest card and header (mobile + web). */
   logoUrl?: string;
+  /**
+   * When the contest runs, as an ISO instant (the admin form's date field is
+   * expanded by src/server/contests/schedule.ts: the end date becomes the last
+   * instant of the chosen day so the day itself stays open). public.contests
+   * .start_date/end_date, mirrored by 20261223000000 into
+   * connect_contests.opens_at/closes_at — the window mobile's getVotingWindow
+   * refuses votes outside. Absent means unbounded, which is what every contest
+   * created before the form had these fields was.
+   */
+  startDate?: string;
+  endDate?: string;
+  /**
+   * "Price to be won", free text (prize_pool is TEXT so a prize can read
+   * "₦500,000 + a management deal"). Served to the web detail screen by
+   * /api/v1/contests/:id as `prizePool`.
+   */
+  prizePool?: string;
   // Optional admin-defined form mapping. When present the contestant form is
   // code template (forms/<slug>.ts) or the capability-driven default.
   formSchema?: ContestFormSchema;

@@ -34,11 +34,6 @@ const talentProfileFields: RegistrationField[] = [
   { key: 'talent.careerGoal', label: 'Career goal', type: 'textarea', required: true },
 ];
 
-const identityFields: RegistrationField[] = [
-  { key: 'identity.idType', label: 'Government-issued ID type', type: 'select', options: ['National ID', 'International passport', 'Voter card', 'Driver’s license', 'School ID', 'Birth certificate', 'Other approved ID'], required: true },
-  { key: 'identity.idUpload', label: 'ID upload', type: 'file', required: true, accept: '.jpg,.jpeg,.png,.pdf' },
-];
-
 const mediaFields: RegistrationField[] = [
   { key: 'media.profilePhoto', label: 'Profile photo', type: 'file', required: true, accept: '.jpg,.jpeg,.png,.webp' },
   { key: 'media.rightsConfirmed', label: 'I confirm I have rights to uploaded materials', type: 'checkbox', required: true },
@@ -96,7 +91,6 @@ export function buildDefaultSteps(draft: RegistrationDraft): RegistrationStep[] 
   const supportsVoting = flag(draft, 'derived.supportsVoting');
 
   const contestRequirementFields = [
-    ...identityFields,
     ...mediaFields,
     ...socialFields,
     ...complianceFields,

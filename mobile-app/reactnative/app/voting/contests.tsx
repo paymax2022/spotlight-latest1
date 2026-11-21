@@ -3,7 +3,7 @@ import {
   View, Text, FlatList, StyleSheet, Pressable, TextInput, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Search, X } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
@@ -23,19 +23,48 @@ import {
   filterContestsByStatus,
   type ContestFilter,
 } from '@/features/voting/utils/contestFilter';
+import {
+  filterContestsBySection,
+  sectionFor,
+} from '@/features/voting/utils/contestSections';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ContestListScreen() {
   const [statusFilter, setStatusFilter] = useState<ContestFilter>(DEFAULT_CONTEST_FILTER);
   const [search, setSearch] = useState('');
 
+  // ?section=open-mic|talent-hunt|rising-star turns this list into one of the
+  // landing row's named contest sections. Absent or unknown tokens leave the
+  // general list exactly as it was, so /voting/contests keeps one entry point.
+  const { section: sectionParam } = useLocalSearchParams<{ section?: string }>();
+  const section = sectionFor(sectionParam);
+
   const { data, isLoading, isError, refetch, isRefetching } = useContests(
     { status: contestFilterApiStatus(statusFilter) },
   );
 
-  const filtered = filterContestsByStatus(data ?? [], statusFilter).filter((c) =>
-    search.trim() === '' || c.title.toLowerCase().includes(search.toLowerCase()) || c.category.toLowerCase().includes(search.toLowerCase()),
+  const filtered = filterContestsBySection(
+    filterContestsByStatus(data ?? [], statusFilter).filter((c) =>
+      search.trim() === '' || c.title.toLowerCase().includes(search.toLowerCase()) || c.category.toLowerCase().includes(search.toLowerCase()),
+    ),
+    section,
   );
+
+  // A section tile is meant to open THE contest, not a list that contains it.
+  // So when a section holds exactly one contest, step into it. The ref is keyed
+  // on the contest id: without it a refetch or a return from the detail screen
+  // re-runs the effect and stacks the same screen on itself forever. When a
+  // section grows a second edition the auto-open stops by itself and the list
+  // earns its keep.
+  const autoOpenedId = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!section || isLoading || isError) return;
+    if (filtered.length !== 1) return;
+    const only = filtered[0].id;
+    if (autoOpenedId.current === only) return;
+    autoOpenedId.current = only;
+    router.push(`/voting/contest-details?contestId=${only}`);
+  }, [section, isLoading, isError, filtered]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -44,7 +73,7 @@ export default function ContestListScreen() {
         <Pressable onPress={() => goBack('/voting')} style={styles.backBtn}>
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
-        <Text style={styles.title}>Contests</Text>
+        <Text style={styles.title}>{section ? section.title : 'Contests'}</Text>
         <HomeMenuButton />
       </View>
 
@@ -104,7 +133,15 @@ export default function ContestListScreen() {
           onRefresh={refetch}
           refreshing={isRefetching}
           ListEmptyComponent={
-            search.trim() ? (
+            section && !search.trim() ? (
+              // The section's own words, because "no contests exist" would be a
+              // lie — others are running, just not in this section.
+              <NoContestsState
+                compact
+                title={section.emptyTitle}
+                message={section.emptyMessage}
+              />
+            ) : search.trim() ? (
               <View style={styles.empty}>
                 <Text style={styles.emptyTitle}>No matches</Text>
                 <Text style={styles.emptySub}>Try a different search.</Text>

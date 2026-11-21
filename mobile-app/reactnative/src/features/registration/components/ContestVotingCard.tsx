@@ -37,7 +37,7 @@ function shareOrigin(): string | null {
 const REASON_COPY: Record<RegistrationVotingReason, { title: string; body: string }> = {
   not_approved: {
     title: 'Voting opens once you are approved',
-    body: 'When the review team approves your entry you will appear on the contest roster, and this is where you will vote and share your link.',
+    body: 'Once the review team approves your entry, this is where voting and your share link appear. On open mic editions, approval first unlocks the beat — record and submit your song before your roster entry follows.',
   },
   not_promoted: {
     title: 'You are approved — your roster entry is being set up',

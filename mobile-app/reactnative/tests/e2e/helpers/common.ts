@@ -42,13 +42,18 @@ export async function mockAmbientRequests(page: Page) {
   // user out, which kills the screen under test mid-flow (observed as the
   // home grid rendering, then the test timing out when a trailing 401 bounces
   // the SPA to /login). Mock them to empty-but-200 to stay inert.
+  // Two shapes, not one: the /api routes above are read as `body.data`, while a
+  // Supabase list read expects the JSON ARRAY itself. utility_transactions is
+  // fetched by src/api/dashboard.api.ts, which maps over the rows it gets back —
+  // fulfilled with this object body the dashboard query rejected, so every
+  // loginAs() landing rendered "Could not load dashboard" and a hero card
+  // showing ₦0.00 for a user whose fixture balance is ₦150,000.00.
   for (const url of [
     '**/api/finance/events/my/tickets**',
     '**/api/finance/events**',
     '**/api/v1/landing/placements**',
     '**/api/media/banners/**',
     '**/api/v1/wallet/balance**',
-    '**/rest/v1/utility_transactions**',
   ]) {
     await page.route(url, async (route) => {
       if (route.request().method() !== 'GET') return route.fallback();
@@ -59,6 +64,11 @@ export async function mockAmbientRequests(page: Page) {
       });
     });
   }
+
+  await page.route('**/rest/v1/utility_transactions**', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
 }
 
 /**

@@ -122,6 +122,17 @@ export const SERVICE_MODULES: ServiceModule[] = [
   // Arena spectator/contestant home (app/arena).
   { id: 'naija-driver',    label: 'Naija Driver',    icon: 'CarFront',        iconColor: '#F97316',         bgColor: 'rgba(249,115,22,0.08)', route: '/arena',            category: 'contest', badge: 'New' },
 
+  // The named contest sections. These are NOT new screens: each one is the
+  // contests list asked for one section (?section=…, see
+  // src/features/voting/utils/contestSections.ts), which opens the contest
+  // itself when exactly one is running and says so plainly when none is — the
+  // case for Rising Star until an admin creates it. They carry no badge because
+  // whether a section is live is server data, and a static 'Live' on a tile
+  // would be a promise the app cannot keep.
+  { id: 'open-mic',        label: 'Open Mic',        icon: 'Mic',             iconColor: '#E11D74',         bgColor: 'rgba(225,29,116,0.08)',   route: '/voting/contests?section=open-mic',    category: 'contest' },
+  { id: 'talent-hunt',     label: 'Talent Hunt',     icon: 'Search',          iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,        route: '/voting/contests?section=talent-hunt', category: 'contest' },
+  { id: 'rising-star',     label: 'Rising Star',     icon: 'Star',            iconColor: Colors.gold,       bgColor: Colors.iconBgGold,        route: '/voting/contests?section=rising-star', category: 'contest' },
+
   // Film Academy used to sit under Contest, which described how it is RUN (an
   // application + selection cycle) rather than what it IS. Learning now has its
   // own band, shared with StudyHub, which moved here out of Investment.
@@ -162,3 +173,71 @@ export const QUICK_ACTIONS = [
   { id: 'withdraw', label: 'Withdraw',  icon: 'ArrowDown',    route: '/wallet/withdraw' },
   { id: 'exchange', label: 'Exchange',  icon: 'RefreshCw',    route: '/fx' },
 ] as const;
+
+// The landing screen's contest shelf, in the order it renders (app/(tabs)/home.tsx
+// reads it straight after the essentials row that ends on Event Tickets). These
+// are SERVICE_MODULES ids, so each tile keeps its own route, tint and registry
+// gate. The list lives here rather than in the screen so a test can assert the
+// row's composition against the same array the grid renders — a copy inside the
+// screen would only ever prove the test agrees with itself.
+export const HOME_CONTEST_SERVICE_IDS = [
+  'open-mic', 'film-academy', 'talent-hunt', 'rising-star',
+] as const;
+
+// The landing page's promotional banner carousel, which pages under the
+// Refer & Earn strip. Each entry is a finished piece of artwork (every campaign
+// in this family is 1774x887, headline and CTA baked into the picture) stored in
+// the paymax Cloudinary account and delivered through SpotlightBanner, so a
+// phone asks for the 480px bucket and a desktop for the 1280px one instead of
+// everyone paying for the original.
+//
+// `moduleId` is a SERVICE_MODULES id and does two jobs at once: the tap lands on
+// that module's own route, and that module's registry key decides whether the
+// banner shows — unpublishing it in /admin/modules retires the artwork with it,
+// the same rule the essentials row and the hero tiles follow. `alt` is the
+// artwork's own promise in one line: it is what a screen reader hears, the
+// accessible name the tap is found by, and the sentence the test suite asserts,
+// so the picture, the label and the destination cannot drift apart.
+export interface LandingBanner {
+  id:       string;
+  moduleId: string;
+  publicId: string;
+  alt:      string;
+  /**
+   * Only where the artwork points somewhere more specific than its module's
+   * hub route.
+   */
+  routeOverride?: string;
+}
+
+export const LANDING_BANNERS: LandingBanner[] = [
+  {
+    id: 'transfer', moduleId: 'transfer',
+    publicId: 'Effortless_money_transfers_in_modern_Lagos_fa37uu',
+    alt: 'Send money to bank accounts and wallets',
+  },
+  {
+    // "SELL ON MARKETPLACE — List Your Products. Grow Your Sales. / Start
+    // Selling": the seller artwork, already the hero of the sell screen, so the
+    // tap goes straight to listing a product rather than to the browse hub.
+    id: 'marketplace-sell', moduleId: 'marketplace',
+    publicId: 'Nigerian_marketplace_seller_hero_banner_1_fwem0k',
+    alt: 'Sell on the Marketplace — list your products',
+    routeOverride: '/marketplace/sell',
+  },
+  {
+    id: 'bills', moduleId: 'bills',
+    publicId: 'Utility_payments_made_easy_omlar0',
+    alt: 'Pay airtime, data, electricity and cable TV bills',
+  },
+  {
+    id: 'film-academy', moduleId: 'film-academy',
+    publicId: 'Royal_Purple_Film_Academy_Hero_Banner_eahntm',
+    alt: 'Film Academy — hands-on training, mentorship and careers',
+  },
+  {
+    id: 'cable-tv', moduleId: 'cable-tv',
+    publicId: 'Premium_purple_cable_TV_payment_banner_evvwx8',
+    alt: 'Renew your DStv, StarTimes or GOtv subscription',
+  },
+];

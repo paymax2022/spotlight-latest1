@@ -34,7 +34,6 @@ const SKILL_LEVEL_OPTIONS = realityTvFieldOptions('talent.skillLevel');
 const GENDER_OPTIONS = realityTvFieldOptions('personal.gender');
 const EMERGENCY_RELATIONSHIPS = realityTvFieldOptions('emergency.relationship');
 const BOOTCAMP_AVAILABILITY = realityTvFieldOptions('bootcamp.availableFullPeriod');
-const ID_TYPE_OPTIONS = realityTvFieldOptions('identity.idType');
 const AUDITION_FORMATS = realityTvFieldOptions('audition.format');
 const HEALTH_STATUS_OPTIONS = realityTvFieldOptions('medical.generalHealthStatus');
 const MEDICAL_CONDITION_OPTIONS = realityTvFieldOptions('medical.knownConditions');
@@ -1023,25 +1022,10 @@ export default function RealityTvShowApplicationWizard() {
             {!isMinor && (
               <div style={section}>
                 <p style={sectionTitle}>Identity Verification</p>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
-                  <Field label="Government-issued ID type" required error={errors.identity_idType}>
-                    <Select value={form.identity_idType} error={errors.identity_idType}
-                      onChange={(e) => set('identity_idType', e.target.value)}>
-                      <option value="">Select…</option>
-                      {ID_TYPE_OPTIONS.map((t) => <option key={t}>{t}</option>)}
-                    </Select>
-                  </Field>
-                  <Field label="ID Number">
-                    <Input value={form.identity_idNumber}
-                      onChange={(e) => set('identity_idNumber', e.target.value)} placeholder="e.g. NIN / passport no." />
-                  </Field>
-                </div>
-                <div style={{ marginTop: 14 }}>
-                  <Field label="ID Upload" required error={errors.identity_idUploadUrl}
-                    help="JPG, PNG or PDF — a clear photo or scan of the document">
-                    {filePicker('identity.idUpload', 'identity_idUploadUrl', 'identity_idUploadName', '.jpg,.jpeg,.png,.pdf')}
-                  </Field>
-                </div>
+                <Field label="ID Number">
+                  <Input value={form.identity_idNumber}
+                    onChange={(e) => set('identity_idNumber', e.target.value)} placeholder="e.g. NIN / passport no." />
+                </Field>
               </div>
             )}
 

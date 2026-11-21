@@ -49,6 +49,14 @@ export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
   'naija-driver': 'arena',
   connect: 'connect',
 
+  // The landing row's three contest sections (app/voting/contests.tsx) are views
+  // over the voting engine, so they ride `voteBridge` rather than the `contest`
+  // tile's `competitions` key: unpublishing the bridge retires the sections with
+  // it instead of leaving dead tiles on the home screen.
+  'open-mic': 'voteBridge',
+  'talent-hunt': 'voteBridge',
+  'rising-star': 'voteBridge',
+
   // SPIKE variant D: the tiles #996 left ungated that have a real engine behind
   // them. Keys seeded by migration 20271600000000 and mirrored into
   // visibility.spec.ts REGISTRY_KEYS below. 'shopping' and 'parcel' are NOT here:

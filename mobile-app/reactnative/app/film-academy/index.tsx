@@ -22,7 +22,6 @@ import { getOverview } from '@/features/filmAcademy/api';
 import { ACADEMY_PAYMENTS } from '@/features/filmAcademy/payments';
 import type { FilmAcademyBatch, FilmAcademyInterestArea, FilmAcademyOverview } from '@/features/filmAcademy/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
-import { RemoteBanner } from '@/features/media/banners';
 
 export const FILM_ACADEMY_KEY = ['film-academy', 'overview'];
 
@@ -290,8 +289,6 @@ export default function FilmAcademyScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>
-        <RemoteBanner slug="film-academy" priority />
-
         <View style={styles.heroBanner}>
           <Image
             source={{ uri: 'https://res.cloudinary.com/paymax/image/upload/v1792924527/Royal_Purple_Film_Academy_Hero_Banner_eahntm.png' }}
