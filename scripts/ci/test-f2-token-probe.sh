@@ -241,6 +241,53 @@ else
   echo "ok   a faulting read-only run does not report 'read-only-ran'"
 fi
 
+# 6. The dispatch form must actually reach the script. A job env key the script
+#    never reads is silently ignored, so `service=frontend-web` would probe
+#    backend and print a confident answer to a question nobody asked. This was
+#    a real bug in the first version: the workflow exported SERVICE_NAME while
+#    the script reads PROBE_SERVICE_NAME.
+#    Regex, not PyYAML: this job's python3 has no third-party packages.
+maps=$(sed -nE 's/^[[:space:]]+([A-Z_]+):[[:space:]]*\$\{\{ github\.event\.inputs\.([a-z-]+) \}\}[[:space:]]*$/\1 \2/p' "$wf")
+checks=$((checks + 1))
+if [[ -z "$maps" ]]; then
+  echo "FAIL no input->env mappings found in $wf (parser or file changed)"; fails=$((fails + 1))
+else
+  wiring_ok=1
+  while read -r key input; do
+    [[ -z "$key" ]] && continue
+    if ! grep -q "\${$key" "$probe"; then
+      echo "FAIL env $key is exported but $probe never reads it"; wiring_ok=0
+    fi
+    if ! grep -qE "^[[:space:]]+$input:" "$wf"; then
+      echo "FAIL maps to input '$input', which the workflow does not declare"; wiring_ok=0
+    fi
+  done <<< "$maps"
+  [[ $wiring_ok == 1 ]] && echo "ok   every dispatch input lands on a key the script reads ($(printf '%s\n' "$maps" | grep -c .) mappings)"
+  [[ $wiring_ok == 1 ]] || fails=$((fails + 1))
+fi
+
+# 6b. The "Verdict" step cats a hardcoded path; the script writes
+#     ${PROBE_VERDICT_FILE:-/tmp/f2-probe-verdict}. If those two literals ever
+#     drift, the summary prints "No verdict written" after a run that actually
+#     produced one — a silent loss of the only deliverable.
+verdict_default=$(sed -nE 's/^VERDICT_FILE="\$\{PROBE_VERDICT_FILE:-([^}]+)\}"$/\1/p' "$probe")
+checks=$((checks + 1))
+if [[ -n "$verdict_default" ]] && grep -qF "$verdict_default" "$wf"; then
+  echo "ok   the summary step reads the file the script writes ($verdict_default)"
+else
+  echo "FAIL verdict path drift: script writes '${verdict_default:-<unparsed>}', workflow cats another file"; fails=$((fails + 1))
+fi
+
+# 6c. CI must use the curl transport. `cli` shells out to the Railway CLI with an
+#     owner session, which no runner has — and it reports http=cli-transport, so
+#     the edge status that distinguishes token-rejected from F2 would be lost.
+checks=$((checks + 1))
+if grep -qE '^[[:space:]]+PROBE_TRANSPORT: curl[[:space:]]*$' "$wf"; then
+  echo "ok   CI pins the curl transport"
+else
+  echo "FAIL CI does not pin PROBE_TRANSPORT=curl"; fails=$((fails + 1))
+fi
+
 echo "-- $((checks - fails))/$checks checks pass"
 if [[ "$fails" -gt 0 ]]; then echo "F2 PROBE TESTS FAILED: $fails"; exit 1; fi
 echo ok

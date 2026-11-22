@@ -261,7 +261,7 @@ jobs:
       # lane that works — serviceInstanceDeploy(latestCommit:true) — has never
       # been tried with the token CI holds, which exists only inside a runner.
       # So its verdict function is driven here against recorded payloads and a
-      # local stub edge: 52 checks including the measured HTTP-200 "Not
+      # local stub edge: 55 checks including the measured HTTP-200 "Not
       # Authorized" body and a red control that must NOT read as deployable.
       # Sub-second, no network to Railway.
       - name: Test the F2 token probe

@@ -46,7 +46,10 @@ jobs:
     if: github.repository == 'paymax2022/spotlight-latest1'
     env:
       PROBE_MODE: ${{ github.event.inputs.mode }}
-      SERVICE_NAME: ${{ github.event.inputs.service }}
+      # Must be PROBE_SERVICE_NAME, not SERVICE_NAME: the script reads
+      # ${PROBE_SERVICE_NAME:-backend}, so the wrong name makes every dispatch
+      # probe `backend` while the form says otherwise.
+      PROBE_SERVICE_NAME: ${{ github.event.inputs.service }}
       PROBE_TRANSPORT: curl
       # Same secret the release train's staging legs use — that is the whole
       # point: the probe answers for the token that actually fails.

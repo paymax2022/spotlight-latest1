@@ -124,6 +124,7 @@ PROBE_VERDICT[backend]=project-token-can-deploy
 | `token-rejected-at-graphql` | the mutation itself was refused while reads pass | secret is scoped to reads only — same ask, sharper |
 | `f2-reproduces-on-the-mutation-path` | the mutation returned an undecodable body | F2 is the transport/edge; stop changing scripts, escalate to Railway with the timing pattern |
 | `read-path-fault (…)` | even the plain read did not decode from inside the runner | the runner's network is the variable, not the token — compare against a self-hosted runner |
+| `token-read-unexpected (…)` | the read failed with wording outside the auth/forbidden sets | read the raw cell body in the log; the classifier is guessing, the API is saying something new |
 | `token-cannot-authenticate (…)` | the token did not authenticate at all | check the secret is `RAILWAY_TOKEN_STAGING` and unexpired; the probe is inconclusive, not the token |
 | `accepted-awaiting-build (…)` | accepted, row appeared, still building when the budget ran out | re-dispatch; raise `PROBE_POLL_BUDGET_S` above 300 for the frontends |
 | `read-only-ran` | reads proved, no mutation attempted | dispatch the mutate cell |
@@ -152,28 +153,35 @@ only way to exercise it is a real upload — which is the thing that fails.
 ## Verification
 
 `scripts/ci/test-f2-token-probe.sh` runs in the `ci.yml` hygiene job beside the
-deploy-retry test: **52/52 green** locally on 2026-11-22, no network to Railway.
+deploy-retry test: **55/55 green** locally on 2026-11-22, no network to Railway.
 It covers the classifier with recorded payloads (including the measured
 HTTP-200 `Not Authorized` body — Railway does not use the status code for auth,
 so any logic keyed on HTTP alone reads a token failure as success), plus
 end-to-end runs of the whole script against `scripts/ci/f2-probe-stub.py`:
 a green stub whose verdict must be `project-token-can-deploy`, an unauthorized
 stub that must **not** print it, and an undecodable-body stub in both modes.
+The remainder are wiring invariants read off the workflow and the script
+themselves: dispatch-only, defaults to `read-only`, repository guard, staging
+secret, `PROBE_TRANSPORT: curl`, no environment input, the one hardcoded
+environment id is staging's, the summary step cats the file the script writes,
+and every form input lands on a variable the script actually reads. It uses
+regex rather than PyYAML because the hygiene job's `python3` has no third-party
+packages installed.
 
-Both guards were mutation-proved, which is the only reason they are worth
+Three guards were mutation-proved, which is the only reason they are worth
 citing — a green suite proves nothing until the defect it names is installed on
 purpose and made to go red:
 
 | mutant installed | result |
 |---|---|
-| `mode == "read-only"` checked before `auth` | 3 failures — the faulting read-only run reports `read-only-ran` |
-| HTTP code returned through a variable instead of a file | 11 failures, every cell classified as a transport error |
+| `mode == "read-only"` checked before `auth` | 3 failures — a faulting read-only run reports `read-only-ran` |
+| HTTP code returned through a variable instead of a file | 11 failures — every cell classified as a transport error |
+| workflow env key renamed back to `SERVICE_NAME` | 1 failure — the `service` input would silently probe `backend` |
 
-Restored by `cp` and re-asserted byte-identical by sha256 in both cases, then
-re-run to 52/52.
+Restored with `cp`, re-asserted sha256-identical in every case, then re-run to
+55/55.
 
-Two live defects the stub found while writing it, both of which would have
-produced a confident wrong answer in CI:
+Three live defects that would have produced a confident wrong answer in CI:
 
 1. `HTTP_CODE` was assigned inside `gql`, and every call site is
    `body=$(gql …)` — a subshell. The parent always saw an empty code, so every
@@ -187,6 +195,9 @@ produced a confident wrong answer in CI:
    result for a run that had just reproduced F2 on the cheapest path available.
    `auth` now outranks `mode`, and a non-decoding read is reported as
    `read-path-fault` rather than blamed on the secret.
+3. The workflow exported `SERVICE_NAME` while the script reads
+   `${PROBE_SERVICE_NAME:-backend}`, so `service=frontend-web` would have
+   probed backend and printed a real-looking verdict for the wrong question.
 
 The same three documents were validated against the real API over the owner's
 session (`PROBE_TRANSPORT=cli PROBE_MODE=read-only`), which is why the transport
