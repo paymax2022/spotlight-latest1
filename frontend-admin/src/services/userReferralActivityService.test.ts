@@ -31,6 +31,31 @@ describe('getUserReferralCode', () => {
     await expect(getUserReferralCode('u1')).rejects.toMatchObject({ status: 403 })
     await expect(getUserReferralCode('u1')).rejects.toBeInstanceOf(AdminUsersRequestError)
   })
+
+  // The backend reports the code the account was issued when an admin has since
+  // customised it. The user record has to show both, so the read carries the
+  // original through instead of collapsing to the current value.
+  it('carries the original code when the backend reports one', async () => {
+    stub(200, { code: 'JIDE1', source: 'referral_links', original_code: '94JQ7' })
+    expect(await getUserReferralCode('u1')).toEqual({
+      code: 'JIDE1',
+      source: 'referral_links',
+      original: '94JQ7',
+    })
+  })
+
+  // Never customised: no second row on the page, so no key on the object.
+  it('omits the original when the code was never customised', async () => {
+    stub(200, { code: 'K7QX2', source: 'referral_links' })
+    expect(await getUserReferralCode('u1')).toEqual({ code: 'K7QX2', source: 'referral_links' })
+  })
+
+  it('ignores a blank or non-string original_code', async () => {
+    stub(200, { code: 'K7QX2', source: 'referral_links', original_code: '   ' })
+    expect(await getUserReferralCode('u1')).toEqual({ code: 'K7QX2', source: 'referral_links' })
+    stub(200, { code: 'K7QX2', source: 'referral_links', original_code: 42 })
+    expect(await getUserReferralCode('u1')).toEqual({ code: 'K7QX2', source: 'referral_links' })
+  })
 })
 
 describe('getReferral360', () => {

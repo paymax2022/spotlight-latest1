@@ -73,6 +73,14 @@ services:
       # sets this in staging-module-flags.yml — same local/staging parity gap as the
       # flags above.
       FEATURE_PROPERTY_ROLES_ENABLED: "true"
+      # Admin User 360 → "Module overview". The route GET /api/admin/users/:id/modules is
+      # mounted unconditionally (admin_user_modules_routes.go) but AdminUsersHandler.Modules
+      # answers 404 {"error":"not found"} while this is off, and config.go defaults it to
+      # false — so the panel showed a load failure on every environment that never set the
+      # variable, including local. Unlike the flags above this one does NOT change what any
+      # customer sees: it is a read-only membership census behind users.view plus the same
+      # object-level scope check Get already runs.
+      FEATURE_ADMIN_USER_MODULES_ENABLED: "true"
       # Point at the host-side local Supabase Postgres (supabase start → port 54322).
       # Override in CI/prod with a real DATABASE_URL.
       DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable

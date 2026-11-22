@@ -37,11 +37,16 @@ type recordingQuerier struct {
 	finance scriptedRow
 	link    scriptedRow
 	pu      scriptedRow
+	// events answers reads of the append-only referral_engine_events stream, which
+	// is where the pre-customisation code lives.
+	events scriptedRow
 }
 
 func (q *recordingQuerier) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
 	q.stmts = append(q.stmts, sql)
 	switch {
+	case strings.Contains(sql, "referral_engine_events"):
+		return q.events
 	case strings.Contains(sql, "finance_referral_codes"):
 		return q.finance
 	case strings.Contains(sql, "referral_links"):

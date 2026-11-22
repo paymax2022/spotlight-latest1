@@ -66,6 +66,41 @@ describe('ReferralActivityPanel', () => {
     expect(panel().queryByRole('link')).toBeNull();
   });
 
+  // The support question this section exists to answer is "what is this user's
+  // code, and did we change it?". A rename used to overwrite the only value the
+  // page had, so an admin could not tell an issued code from a vanity one.
+  it('shows the issued code above the customised one', async () => {
+    mockCode.mockResolvedValue({ code: 'JIDE1', source: 'referral_links', original: '94JQ7' });
+    render(<ReferralActivityPanel userId="u1" />);
+    await waitFor(() => expect(panel().getByTestId('referral-code').textContent).toBe('JIDE1'));
+    expect(panel().getByTestId('referral-code-original').textContent).toBe('94JQ7');
+    expect(panel().getByText('Original code')).toBeTruthy();
+    expect(panel().getByText('Current code')).toBeTruthy();
+    // The source chip belongs to the live code; the original has no row of its own
+    // to report a table for.
+    expect(panel().getByTestId('referral-code-source').textContent).toContain('referral_links');
+  });
+
+  // One code, no history: the section must not grow an empty "Original" row that
+  // reads like missing data.
+  it('shows a single code when the account was never customised', async () => {
+    render(<ReferralActivityPanel userId="u1" />);
+    await waitFor(() => expect(panel().getByTestId('referral-code').textContent).toBe('K7QX2'));
+    expect(panel().queryByTestId('referral-code-original')).toBeNull();
+    expect(panel().queryByText('Original code')).toBeNull();
+    expect(panel().queryByText('Current code')).toBeNull();
+  });
+
+  // With two codes on screen, the one button must still copy the one that works.
+  it('copies the current code when an original is also shown', async () => {
+    mockCode.mockResolvedValue({ code: 'JIDE1', source: 'referral_links', original: '94JQ7' });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    render(<ReferralActivityPanel userId="u1" />);
+    fireEvent.click(await panel().findByRole('button', { name: /copy/i }));
+    expect(writeText).toHaveBeenCalledWith('JIDE1');
+  });
+
   it('copy uses the clipboard and shows a transient Copied', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { clipboard: { writeText } });

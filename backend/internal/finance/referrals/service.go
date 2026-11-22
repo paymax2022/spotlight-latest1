@@ -461,15 +461,22 @@ func setCodeError(err error, what string) error {
 // Returns ErrCodeTaken if the code belongs to anyone else, in ANY namespace.
 // Re-assigning a referrer their own existing code is a no-op success, so a
 // double-submit from the admin UI does not read as a failure.
-func (s *RewardService) SetLinkCode(ctx context.Context, referrerID, rawCode string) (*Link, error) {
+// SetLinkCode replaces a referrer's code with an admin-chosen one, and records the
+// rename in the audit stream so the value it replaced stays readable (see
+// OriginalCode). actorID is the admin who asked for it; it is only ever written to
+// the audit payload, never used to authorise the call — that is the route's
+// permission check.
+func (s *RewardService) SetLinkCode(ctx context.Context, referrerID, rawCode, actorID string) (*Link, error) {
 	code := NormalizeCode(rawCode)
 	if err := ValidateCode(code); err != nil {
 		return nil, err
 	}
 
 	// Make sure the referrer has a link row to update; also covers "admin edits
-	// a user who has never opened the referral screen".
-	if _, err := s.GetOrCreateLink(ctx, referrerID); err != nil {
+	// a user who has never opened the referral screen". The code this returns is
+	// the one being replaced, which is the value the audit event has to carry.
+	prev, err := s.GetOrCreateLink(ctx, referrerID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -519,6 +526,19 @@ func (s *RewardService) SetLinkCode(ctx context.Context, referrerID, rawCode str
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("referrals: set code: commit: %w", err)
+	}
+
+	// Only a real rename is worth a row: the admin UI saves on every submit, and a
+	// no-op that filed history would make "this user changed their code" a lie.
+	// Emitted after COMMIT, like every other emit — the audit stream is best-effort
+	// and must not be able to fail the save the admin asked for.
+	if prev.Code != code {
+		s.emit(ctx, "referral.code.changed", map[string]any{
+			"referrer_id": referrerID,
+			"from":        prev.Code,
+			"to":          code,
+			"changed_by":  actorID,
+		})
 	}
 	return &l, nil
 }
