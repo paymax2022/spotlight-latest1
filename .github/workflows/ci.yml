@@ -257,6 +257,15 @@ jobs:
       # The test also proves dirty working-tree bytes cannot leak into a release.
       - name: Test the deploy archive shape
         run: bash scripts/ci/test-railway-deploy-archive.sh
+      # The same fault's probe. F2 kills every `deploy Staging` leg, and the one
+      # lane that works — serviceInstanceDeploy(latestCommit:true) — has never
+      # been tried with the token CI holds, which exists only inside a runner.
+      # So its verdict function is driven here against recorded payloads and a
+      # local stub edge: 55 checks including the measured HTTP-200 "Not
+      # Authorized" body and a red control that must NOT read as deployable.
+      # Sub-second, no network to Railway.
+      - name: Test the F2 token probe
+        run: bash scripts/ci/test-f2-token-probe.sh
       # RN-PLANE-001: a store build bakes mobile-app/reactnative/.env.production,
       # which is gitignored and which eas.json cannot correct — the build scripts run
       # local Gradle, so the profile's env never applies. Found with that file naming

@@ -1,0 +1,72 @@
+# Probes whether the staging PROJECT TOKEN can perform the Railway mutation that
+# the F2 fault blocks. The question is one 2x2 cell wide: the token's reads work,
+# and the owner's user session performs serviceInstanceDeploy(latestCommit:true)
+# on staging in ~3 minutes with no upload — but the token has never been tried
+# against that mutation, and only a GitHub runner ever holds it.
+#
+# Dispatch-only, on purpose. No trigger here may reach Railway without a human
+# choosing the cell, because the mutate cell starts a real staging deployment.
+# The full model, the truth table and how to read each verdict live in
+# docs/ops/railway-f2-token-probe.md.
+name: F2 token probe (staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "read-only authenticates and snapshots; mutate also calls serviceInstanceDeploy on staging"
+        required: true
+        default: read-only
+        type: choice
+        options:
+          - read-only
+          - mutate
+      service:
+        description: "Staging service to probe (mutate deploys it)"
+        required: true
+        default: backend
+        type: choice
+        options:
+          - backend
+          - frontend-web
+          - frontend-admin
+          - all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: f2-token-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    # Fork PRs and any repo other than this one must never see the token.
+    if: github.repository == 'paymax2022/spotlight-latest1'
+    env:
+      PROBE_MODE: ${{ github.event.inputs.mode }}
+      # Must be PROBE_SERVICE_NAME, not SERVICE_NAME: the script reads
+      # ${PROBE_SERVICE_NAME:-backend}, so the wrong name makes every dispatch
+      # probe `backend` while the form says otherwise.
+      PROBE_SERVICE_NAME: ${{ github.event.inputs.service }}
+      PROBE_TRANSPORT: curl
+      # Same secret the release train's staging legs use — that is the whole
+      # point: the probe answers for the token that actually fails.
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the probe
+        run: bash scripts/ci/f2-token-probe.sh
+
+      # Separate step so a non-zero exit above cannot overwrite the summary with
+      # silence; the verdict line is the deliverable of this workflow.
+      - name: Verdict
+        if: always()
+        run: |
+          if [[ -f /tmp/f2-probe-verdict ]]; then
+            echo "PROBE_VERDICT=$(cat /tmp/f2-probe-verdict)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No verdict written — the probe aborted before cell 1 returned." >> "$GITHUB_STEP_SUMMARY"
+          fi
