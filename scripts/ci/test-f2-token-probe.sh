@@ -101,8 +101,23 @@ expect "final: the green cell we are hunting" "project-token-can-deploy" \
   "$("${V[@]}" final ok ok accepted build-success mutate)" final "ok ok accepted build-success mutate"
 expect "final: accepted but inert" "mutation-is-noop-for-project-token" \
   "$("${V[@]}" final ok ok accepted no-new-row mutate)" final "ok ok accepted no-new-row mutate"
-expect "final: token cannot authenticate" "token-cannot-authenticate (token-rejected)" \
+expect "final: a refused read is not called a bad secret" "token-refused-at-read (token-rejected)" \
   "$("${V[@]}" final token-rejected ok not-run not-run mutate)" final "token-rejected ok not-run not-run mutate"
+# The two blind-readback shapes. Each must NOT be one of the two conclusions it
+# used to be able to print: "mutation-is-noop" (proven inert) and, worse,
+# "project-token-can-deploy" (the trigger for swapping the release.yml legs).
+expect "final: accepted with no baseline row to diff" "accepted-but-readback-blind (no-baseline-to-diff)" \
+  "$("${V[@]}" final ok token-rejected accepted no-baseline-to-diff mutate)" final "ok token-rejected accepted no-baseline-to-diff mutate"
+expect "final: accepted but the row watch was refused" "accepted-but-readback-blind (readback-unreadable)" \
+  "$("${V[@]}" final ok ok accepted readback-unreadable mutate)" final "ok ok accepted readback-unreadable mutate"
+for blind in no-baseline-to-diff readback-unreadable; do
+  out="$("${V[@]}" final ok ok accepted "$blind" mutate)"
+  checks=$((checks + 1))
+  case "$out" in
+    *project-token-can-deploy*|*mutation-is-noop*) echo "FAIL blind readback ($blind) printed $out"; fails=$((fails + 1));;
+    *) echo "ok   blind readback ($blind) claims neither a deploy nor a no-op";;
+  esac
+done
 expect "final: F2 reaches the mutation path" "f2-reproduces-on-the-mutation-path" \
   "$("${V[@]}" final ok ok body-undecodable not-run mutate)" final "ok ok body-undecodable not-run mutate"
 expect "final: read-only run never claims a deploy verdict" "read-only-ran" \
@@ -119,6 +134,43 @@ expect "final: a falsy field is NOT a deploy" "undecided (ok/returned-falsy/not-
   "$("${V[@]}" final ok ok returned-falsy not-run mutate)" final "ok ok returned-falsy not-run mutate"
 expect "final: an unchanged row is never project-token-can-deploy" "mutation-is-noop-for-project-token" \
   "$("${V[@]}" final ok ok accepted no-new-row mutate)" final "again: no-new-row"
+
+# ---------------------------------------------------- verdicts vs. the doc table
+# The drift this guards is one this repo actually shipped: `undecided (…)` was a
+# verdict final_verdict could print and the operator's table had no row for it,
+# because the table is hand-written prose and nothing compared the two. Now the
+# names are read out of the classifier, so a branch with no documented meaning
+# fails here instead of failing in front of somebody at 2 a.m.
+doc_table=docs/ops/railway-f2-token-probe.md
+emitted_verdicts=$(python3 - <<'PY'
+import re
+src = open("scripts/ci/f2-probe-verdict.py").read()
+body = src.split("def final_verdict", 1)[1]
+print("\n".join(sorted(set(re.findall(r'return f?"([a-z][a-z0-9_-]+)', body)))))
+PY
+)
+# The TABLE, not the file. The first draft of this guard grepped the whole doc
+# for each name and stayed green with the `undecided (…)` row deleted — the same
+# word is a row of the ci-railway-token-class.yml verdict table further down. A
+# check that passes while its own defect is installed is not a check, so the
+# comparison is set equality against the rows under the PROBE_VERDICT header,
+# in both directions: undocumented branch, and stale documented verdict.
+documented_verdicts=$(awk '/^\| `PROBE_VERDICT`/{f=1;next} f && /^\|/{print} f && !/^\|/{f=0}' "$doc_table" \
+  | sed -nE 's/^\| `([a-z0-9_-]+)( .*)?`.*/\1/p' | sort -u)
+checks=$((checks + 1))
+undocumented=$(comm -23 <(printf '%s\n' "$emitted_verdicts") <(printf '%s\n' "$documented_verdicts"))
+if [[ -n "$undocumented" ]]; then
+  echo "FAIL verdicts final_verdict can print with no doc row: $(printf '%s ' $undocumented)"; fails=$((fails + 1))
+else
+  echo "ok   every final_verdict branch has a row in the PROBE_VERDICT table"
+fi
+checks=$((checks + 1))
+stale=$(comm -13 <(printf '%s\n' "$emitted_verdicts") <(printf '%s\n' "$documented_verdicts"))
+if [[ -n "$stale" ]]; then
+  echo "FAIL doc rows naming a verdict the classifier cannot print: $(printf '%s ' $stale)"; fails=$((fails + 1))
+else
+  echo "ok   the PROBE_VERDICT table documents no verdict that does not exist"
+fi
 
 # ------------------------------------------------------- invariants of the run
 # 1. The probe must never upload: an upload that SUCCEEDED from a throwaway
@@ -166,10 +218,10 @@ else
 fi
 
 # ------------------------------------------------- end-to-end against a stub edge
-# The classifier cases above prove the MAPPING. These three prove the SCRIPT:
-# the transport, handing the HTTP code back out of the subshell, masking the
-# token, and diffing a new row id against the baseline — the four things that
-# can print a confident wrong answer and are invisible to a payload test. The
+# The classifier cases above prove the MAPPING. The four scenarios below prove
+# the SCRIPT: the transport, handing the HTTP code back out of the subshell,
+# masking the token, and diffing a new row id against the baseline — the things
+# that can print a confident wrong answer and are invisible to a payload test. The
 # subshell one is not hypothetical: the first local run printed
 # "auth=transport-error-no-response (http=)" under a body that parsed fine.
 stub_out=/tmp/f2-probe-stub.out
@@ -217,7 +269,7 @@ checks=$((checks + 1))
 # success because the status code is fine.
 run_stub unauthorized mutate
 contains "stub/unauthorized: body read as a token answer, not 200=ok" "PROBE_CELL auth=token-rejected"
-contains "stub/unauthorized: does not claim a deploy" "token-cannot-authenticate (token-rejected)"
+contains "stub/unauthorized: does not claim a deploy" "token-refused-at-read (token-rejected)"
 checks=$((checks + 1))
 if grep -qF 'project-token-can-deploy' /tmp/f2-probe-stub-run.out; then
   echo "FAIL stub/unauthorized still printed the green verdict"; fails=$((fails + 1))
@@ -227,7 +279,41 @@ fi
 checks=$((checks + 1))
 [[ "$STUB_RC" == 1 ]] && echo "ok   stub/unauthorized exits 1" || { echo "FAIL stub/unauthorized exit=$STUB_RC"; fails=$((fails + 1)); }
 
-# F2's own fingerprint, seen on a plain read: no JSON at all.
+# The cell that decides everything, seen with no eyes on it: the reads work, the
+# mutation says true, and the ROW QUERY afterwards is refused. Before the guard
+# in cell 4 the empty id diffed against a real baseline as "a new row", so this
+# shape could and did reach the green verdict. The two forbidden conclusions are
+# asserted by name because they point at opposite actions: one proposes the
+# release.yml swap, the other says the token is inert.
+run_stub blind-readback mutate
+contains "stub/blind: the reads and the mutation still behave" "PROBE_CELL mutation=accepted"
+contains "stub/blind: cell 4 says the row query was refused" "read=token-rejected"
+contains "stub/blind: cell 4 reports itself blind" "PROBE_CELL readback=readback-unreadable"
+contains "stub/blind: the blind verdict" "PROBE_VERDICT[backend]=accepted-but-readback-blind (readback-unreadable)"
+checks=$((checks + 1))
+if grep -qE 'project-token-can-deploy|mutation-is-noop-for-project-token' /tmp/f2-probe-stub-run.out; then
+  echo "FAIL stub/blind printed a deploy or an inert verdict from a refused row query"; fails=$((fails + 1))
+else
+  echo "ok   stub/blind claims neither a deploy nor a no-op"
+fi
+
+# The worst shape of the same defect, and the one that used to reach the green
+# verdict: cell 2 is refused so base_id is empty, cell 4 then reads a real
+# SUCCESS row that never existed before, and "" != that id reads as "new".
+run_stub no-baseline mutate
+contains "stub/no-baseline: the mutation still says true" "PROBE_CELL mutation=accepted"
+contains "stub/no-baseline: cell 4 says there is nothing to diff" "PROBE_CELL readback=no-baseline-to-diff"
+contains "stub/no-baseline: the blind verdict" "PROBE_VERDICT[backend]=accepted-but-readback-blind (no-baseline-to-diff)"
+checks=$((checks + 1))
+if grep -qF 'project-token-can-deploy' /tmp/f2-probe-stub-run.out; then
+  echo "FAIL stub/no-baseline printed the green verdict from an un-comparable row"; fails=$((fails + 1))
+else
+  echo "ok   stub/no-baseline never prints the green verdict"
+fi
+checks=$((checks + 1))
+[[ "$STUB_RC" == 0 ]] && echo "ok   stub/no-baseline exits 0 (auth passed; only the diff is blind)" \
+  || { echo "FAIL stub/no-baseline exit=$STUB_RC"; fails=$((fails + 1)); }
+
 # F2's own fingerprint, seen on a plain read: no JSON at all.
 run_stub undecodable mutate
 contains "stub/undecodable: the F2 body is recognised" "PROBE_CELL auth=body-undecodable"

@@ -109,11 +109,16 @@ def final_verdict(auth: str, baseline: str, mutation: str, build: str, mode: str
     """The one line the operator and the doc read."""
     if auth != "ok":
         if auth == "token-rejected":
-            return f"token-cannot-authenticate ({auth})"
+            # Railway answers "Not Authorized" for a bad token VALUE and for a
+            # missing SCOPE, with the same HTTP 200 body. The old name of this
+            # verdict asserted the first of those, which is exactly the
+            # conflation this probe was later built to separate:
+            # ci-railway-token-class.yml compares credentials to decide it.
+            return f"token-refused-at-read ({auth})"
         if auth.startswith("transport-error") or auth.startswith("edge-rejected") \
                 or auth == "body-undecodable":
             # A read that never got a parseable answer says nothing about the
-            # token's scope. Calling this "token-cannot-authenticate" would
+            # token's scope. Calling this "token-refused-at-read" would
             # blame the secret for what is the same decode fault being studied,
             # so it gets its own verdict: the fault reached the plain read.
             return f"read-path-fault ({auth})"
@@ -131,6 +136,15 @@ def final_verdict(auth: str, baseline: str, mutation: str, build: str, mode: str
             return "token-deployed-but-build-failed"
         if build == "no-new-row":
             return "mutation-is-noop-for-project-token"
+        if build in ("readback-unreadable", "no-baseline-to-diff"):
+            # The mutation said "true" and the row watch got no eyes on it: the
+            # readback query was refused (or there was no baseline row to diff
+            # against). Reading that as "no new row" would call it a proven
+            # no-op, and reading an unchanged-but-visible row as new would call
+            # it a deploy — the second one is the dangerous direction, because
+            # "project-token-can-deploy" is the trigger for swapping the
+            # release.yml staging legs. So this says the cell was blind.
+            return f"accepted-but-readback-blind ({build})"
         return f"accepted-awaiting-build ({build})"
     if mutation == "token-not-permitted":
         return "token-scope-blocks-mutation"
