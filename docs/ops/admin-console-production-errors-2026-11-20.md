@@ -764,6 +764,133 @@ used to run its harness out of the very tree it uploads, and its env called the 
 `ENVIRONMENT` while `scripts/ci/railway-deploy.sh` demands `RAILWAY_ENV`. Both verbatim errors are
 quoted in the workflow's own comments, so the next reader finds the reason where the fix lives.
 
+## 2026-11-22 (afternoon) — the same lane cannot be run for **staging**, and staging moved anyway
+
+The request was: bring staging up to `df6676406` for all three services, with this lane. Six
+dispatches ran — two waves of three — and all six ended inside 30 s of starting, at the step that
+exists to protect the deploy:
+
+| wave | runs (`service`) | created | failing step |
+|---|---|---|---|
+| 1 | `45029642480` (backend), `45029655782` (frontend-web), `45029668211` (frontend-admin) | 13:51:04Z / 13:51:14Z / 13:51:23Z | Confirm the token resolves the intended environment and service |
+| 2 | `45030318903` (backend), `45030322482` (frontend-web), `45030326422` (frontend-admin) | 13:59:09Z / 13:59:12Z / 13:59:14Z | the same step, the same three services |
+
+Each printed, after `railway 5.40.1` installed without complaint:
+
+```
+Failed to fetch: error decoding response body
+
+ Caused by:
+     0: error decoding response body
+     1: expected value at line 1 column 1
+```
+
+The refused call is the pre-flight's own `railway status --json`, so no byte was uploaded and no
+deployment row was written: the six runs are inert. **Re-dispatching them for staging is not a
+recovery path.**
+
+**The refusal follows the staging credential, and this file contains the pair that proves it.** Run
+`45022257571` (12:26:10Z, `environment=production`, `service=frontend-web`) executed *this same
+step* on *this same runner image* and the log shows it pass:
+
+```
+12:26:29.183Z   token resolves production / frontend-web
+12:26:30.564Z   UPLOAD_PATH=[frontend-web] ROOT_FLAG=[--path-as-root] BUILD_DIR=[]
+```
+
+and that second line only prints after `railway-root-shape.sh` has read the live `rootDirectory`
+over `railway api`. Same workflow, same CLI, same GraphQL documents, one secret different. Three
+controls, all taken inside the same hour, rule out the other candidates:
+
+1. *It is not a stale secret value.* `RAILWAY_TOKEN=bogus-token-abc railway status --json` answers
+   `Invalid RAILWAY_TOKEN. Please check that it is valid and has access to the resource you're
+   trying to use.` — a clean, distinct message. The staging runs got neither that message nor JSON.
+   (The local copies in `backend/.env` cannot be used for this comparison: both of them, staging and
+   development, now authenticate as invalid, which is why the question had to be settled on a
+   runner.)
+2. *It is not the pinned CLI.* Locally, minutes after the sixth refusal, both the installed
+   `railway 5.71.0` and `npx @railway/cli@5.40.1` returned the full status document for this
+   project, `staging / 6b5f27a3-a290-…` included, with a **user-scoped** token.
+3. *It is not the environment being down, and it is not billing.* Staging takes writes and serves
+   traffic, both shown below; and `grep -ci trial` over the wave-1 backend job log is **0**, so the
+   refusal carries neither Railway's plan sentence nor its authentication sentence.
+
+### Reconciling with #1150's CLASS verdict
+
+`docs/ops/railway-f2-token-probe.md` concludes **CLASS** ("no project token can read the deployment
+graph") from twelve runner samples, and its conclusion is the reason this lane's staging legs looked
+like a network fault rather than a credential one. The samples are real; the sentence drawn from them
+is not: the production project token read `project → environments → serviceInstances → rootDirectory`
+and `deployments(input:{serviceId,environmentId})` from a runner at 12:26:29Z, which is inside the
+deployment graph. Either `RAILWAY_TOKEN_PRODUCTION` is not the same token kind as the other two — a
+user-scoped token placed in CI, which would also explain why only production legs of this lane have
+ever worked — or the sampler's `project { id name }` document is refused where these documents are
+not. Both readings keep #1150's operational conclusion intact, because that one is about **uploads**
+and it stands on its own evidence; what has to go is the blanket "reads are impossible from CI", and
+with it the inference that the staging wall is a class rule Railway imposes on everyone. The
+experiments that would settle it are cheap and both belong in the support thread: state which token
+kind each of the three secrets holds, and ask whether a project token can be granted the deployment
+read.
+
+### What moved staging: the mutation, not the upload
+
+The three staging instances are git-linked (`source.repo = paymax2022/spotlight-latest1`,
+`meta.branch = main`), so no archive has to leave anyone's machine:
+
+```bash
+E=6b5f27a3-a290-4574-a977-363eb21d43ad              # staging
+SHA=df667640637bdc7da783ecf3e15e35a59cbcee32        # the requested commit
+for s in 70de07d8-c058-4221-b645-61c4f1ac7aa5       # backend
+         dda6372c-0bb7-4014-a2b1-aa646c11a281       # frontend-web
+         c4f1086e-0a2d-4367-b503-209c14a2ce6f; do   # frontend-admin
+  railway api 'mutation($s:String!,$e:String!,$h:String!){
+    serviceInstanceDeploy(serviceId:$s,environmentId:$e,commitSha:$h) }' \
+    --var "s=$s" --var "e=$E" --var "h=$SHA"
+done
+```
+
+Two properties to know before trusting it. `serviceInstanceDeploy` returns **`Boolean!`** — it has
+no subfields, so it can confirm nothing, and the only evidence is reading `deployments(…)` after it.
+And `commitSha:` being a silent no-op is a property of production's `frontend-web`, whose instance
+has no git source (`reason=redeploy`, `cliMessage=null`); **on staging `commitSha` is honoured**, and
+`meta.commitHash` reads `df6676406…` on all three rows. This ran from the owner's user session at
+14:03Z and needs no token in CI, which is the whole point of writing it down.
+
+### Read-back: what staging serves now
+
+| check | measured |
+|---|---|
+| `backend-staging-new/api/v1/public/build` | `{"commit":"df667640637bdc7da783ecf3e15e35a59cbcee32","source":"env","started_at":"2026-11-22T14:03:36Z","uptime_seconds":39}` — the running process, not a row |
+| `latestDeployment` ×3 | `faa7ff43` / `032caf24` / `95ed7740`, all `SUCCESS`, all `meta.commitHash df6676406…`, created 14:03:00Z / 14:03:05Z / 14:03:09Z |
+| `/api/admin/voting/contestants/01e02692-d38b-4f84-b13c-9363e4ab528d/photo` | **401** `{"success":false,"error":"Unauthorized"}` → the #1140 route is in the deployed BFF |
+| `/api/admin/open-mic/contests/c7ab8479-0275-473d-a78f-b923664a3b54/applicants` | **401** → same |
+| `/api/admin/definitely-not-a-route-xyz` | **404** `No API route matches GET …` → the control that makes the two `401`s mean "live" |
+| `frontend-web` `/`, `frontend-admin` `/` | `200` in 2.74 s and 1.26 s |
+
+All three rows reached `SUCCESS` inside two minutes, which is too fast for a cold `next build` — the
+images were almost certainly already there. That is why the table above leads with the backend
+process reporting its own SHA and a fresh `started_at`: the row is the intent, the response is the
+fact.
+
+**`snapshotId` is how to read this history.** `FAILED` with no `snapshotId` means the upload never
+produced a build: staging `frontend-web` rows `d9e7be19` (02:11Z, `cliCaller=automation:launchd`) and
+`04cf77d6` (02:17Z, `cliCaller=agent_unknown:shell:qoder`) both carry `cliMessage 10f6f72b6…`, both
+`FAILED`, both `snapshotId=null`. A row that *does* have a snapshot built, and `REMOVED` on such a row
+means only that it was superseded — `20af4cc5` (staging `backend`, 02:10:50Z, snapshot `6ba06d20`,
+same `cliMessage`) is a laptop upload of the 26 MB tree that worked, one minute from the 111 MB
+`frontend-web` upload that did not. Size, not the token, was the difference there.
+
+**Collision worth recording.** `df6676406` stopped being main's tip while this was running: PR #1150
+landed as `b55757379` (committer date 13:54:37Z) and another session promoted all three staging
+services to it at 13:59:02Z–13:59:22Z. The deploys above therefore moved staging back one commit. The
+two commits differ in exactly two files, both documentation — `docs/ops/DEPLOY_BLOCKED.md` and
+`docs/ops/railway-f2-token-probe.md` — and the three app subtrees are byte-identical: `backend`
+`657cfe39`, `frontend-web` `bd0060b9`, `frontend-admin` `cc944473`. So staging serves the same product
+either way, nothing was lost, and the rollback handle is
+`serviceInstanceDeploy(commitSha:b55757379…)` over the same three service ids, for the rows now marked
+`REMOVED` (`4118cd30`, `62b5451c`, `eff0c342`). Two Qoder sessions writing to one staging environment
+inside four minutes is the thing to watch here, not the content.
+
 ## Companion file
 
 `docs/ops/admin-pages-to-backend-flags.md` maps all 426 sidebar entries to routes and flags. Its
