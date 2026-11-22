@@ -735,6 +735,15 @@ section asked for: production `frontend-web` now runs the tree carrying #1140. W
 authenticated click, and per the ladder above a `403` there is a missing RBAC slug on that admin
 account, not a stale deploy.
 
+**The pairing re-check this file asked for at upload time:** `git diff --name-only
+528382b26..1002ec24e -- frontend-admin` measured **0 files**, so the pinned production console
+build (`33254f63`, built from `528382b26`) does not need re-pinning. `frontend-web` moved 7 files
+over the same range — all of #1144: `src/features/registration/lock.ts`,
+`src/server/registration-v2/registration-voting.ts`, `src/server/registration/errors.ts`,
+`src/server/registration/supabase-store.ts` and three registration specs — and neither #1140 route
+file is among them, which is exactly why the two `401`s above are the only behavioural difference
+the console can see.
+
 **Rollback handle.** The build that was serving before this upload is deployment `ea71b561…`
 (snapshot `52dcadf9-9277-4c1a-9c08-ffdb147d13bd`, `meta.cliMessage main-ef97ec64b-prod-web`,
 created 2026-11-16T09:06:41Z, a hand upload from a `qoder` CLI). It now reads `REMOVED`, and that
