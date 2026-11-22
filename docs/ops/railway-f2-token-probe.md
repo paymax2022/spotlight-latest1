@@ -68,6 +68,14 @@ one identical verdict, and check (8) fails if the quotes ever come off. The tabl
 above is the real sample set, reconstructed from the job log — the summary that
 should have held it was never written.
 
+Re-dispatched as `45027737590` (`main` at `df6676406`, 13:29:23Z, job `compare`,
+conclusion `success`) to verify the fix where it matters. The step ran, wrote the
+four rows into the job summary, and printed the same verdict independently of my
+reconstruction: `anonymous`, `development`, `staging` and `production` all
+`0/3 all-refused`, then **Verdict: CLASS**. Two runs, twenty-four samples, four
+credentials, no disagreement — the answer does not depend on how the reporter is
+spelled, and the reporter is now proven on a runner rather than only offline.
+
 ## The question, in one sentence
 
 Every `deploy Staging (…)` leg of every release train since 2026-11-16 dies on
