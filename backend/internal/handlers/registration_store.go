@@ -19,6 +19,16 @@ type RegistrationStore struct {
 	db *pgxpool.Pool
 }
 
+// ErrApplicationLocked is returned when a contestant attempts to mutate an
+// application after admin approval made its submitted answers binding.
+var ErrApplicationLocked = errors.New("application locked")
+
+var bindingApplicationStatuses = []string{
+	"approved",
+	"selected_for_public_voting",
+	"selected_for_bootcamp",
+}
+
 // NewRegistrationStore creates a new registration store.
 func NewRegistrationStore(db *pgxpool.Pool) *RegistrationStore {
 	return &RegistrationStore{db: db}
@@ -219,6 +229,27 @@ func (s *RegistrationStore) GetApplication(ctx context.Context, userID string, a
 	return &app, nil
 }
 
+func (s *RegistrationStore) isBindingApplication(ctx context.Context, userID string, appID string) (bool, error) {
+	var status string
+	err := s.db.QueryRow(ctx, `
+		SELECT status
+		FROM registrations
+		WHERE id = $1 AND user_id = $2
+	`, appID, userID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, bindingStatus := range bindingApplicationStatuses {
+		if status == bindingStatus {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // SaveStep updates form_data and step progress.
 func (s *RegistrationStore) SaveStep(ctx context.Context, userID string, appID string, stepKey string, values map[string]any, newPercent int) (*Application, error) {
 	row := s.db.QueryRow(ctx, `
@@ -229,6 +260,7 @@ func (s *RegistrationStore) SaveStep(ctx context.Context, userID string, appID s
 			completion_percent = $3,
 			updated_at = NOW()
 		WHERE id = $4 AND user_id = $5
+		  AND status NOT IN ('approved', 'selected_for_public_voting', 'selected_for_bootcamp')
 		RETURNING id, reference, contest_slug, status, role,
 		          created_at::text, updated_at::text, completion_percent,
 		          current_step, fraud_flags, form_data
@@ -241,6 +273,15 @@ func (s *RegistrationStore) SaveStep(ctx context.Context, userID string, appID s
 	err := row.Scan(&app.ID, &app.Reference, &app.ContestSlug, &app.Status, &app.Role,
 		&app.CreatedAt, &app.UpdatedAt, &app.CompletionPercent, &app.CurrentStep,
 		&fraudFlagsJSON, &formDataJSON)
+	if errors.Is(err, pgx.ErrNoRows) {
+		locked, lockErr := s.isBindingApplication(ctx, userID, appID)
+		if lockErr != nil {
+			return nil, fmt.Errorf("check application lock: %w", lockErr)
+		}
+		if locked {
+			return nil, ErrApplicationLocked
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("update step: %w", err)
 	}
@@ -264,6 +305,7 @@ func (s *RegistrationStore) SubmitApplication(ctx context.Context, userID string
 			submitted_at = NOW(),
 			updated_at = NOW()
 		WHERE id = $1 AND user_id = $2
+		  AND status NOT IN ('approved', 'selected_for_public_voting', 'selected_for_bootcamp')
 		RETURNING id, reference, contest_slug, status, role,
 		          created_at::text, updated_at::text, submitted_at::text,
 		          completion_percent, current_step, fraud_flags, form_data
@@ -276,6 +318,15 @@ func (s *RegistrationStore) SubmitApplication(ctx context.Context, userID string
 	err := row.Scan(&app.ID, &app.Reference, &app.ContestSlug, &app.Status, &app.Role,
 		&app.CreatedAt, &app.UpdatedAt, &app.SubmittedAt, &app.CompletionPercent,
 		&app.CurrentStep, &fraudFlagsJSON, &formDataJSON)
+	if errors.Is(err, pgx.ErrNoRows) {
+		locked, lockErr := s.isBindingApplication(ctx, userID, appID)
+		if lockErr != nil {
+			return nil, fmt.Errorf("check application lock: %w", lockErr)
+		}
+		if locked {
+			return nil, ErrApplicationLocked
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("submit application: %w", err)
 	}

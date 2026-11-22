@@ -13,6 +13,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
+import { votingCta } from '../utils/voting-cta';
 import type { RegistrationVoting, RegistrationVotingReason } from '../types/registration.types';
 
 /**
@@ -64,6 +65,7 @@ const REASON_COPY: Record<RegistrationVotingReason, { title: string; body: strin
 export default function ContestVotingCard({ voting }: { voting: RegistrationVoting }) {
   const [shareOpen, setShareOpen] = useState(false);
   const { contest, contestant, votable, reason } = voting;
+  const cta = votingCta(voting);
 
   const shareUrl = useMemo(() => {
     if (!voting.sharePath) return undefined;
@@ -101,6 +103,29 @@ export default function ContestVotingCard({ voting }: { voting: RegistrationVoti
             <Text style={styles.disabledActionText}>Vote for {waitingName}</Text>
           </View>
         )}
+
+        {cta.showShareButton && (
+          <>
+            {cta.caption && <Text style={styles.shareCaption}>{cta.caption}</Text>}
+            <Pressable style={styles.secondaryAction} onPress={() => setShareOpen(true)}>
+              <Share2 size={18} color={Colors.primary} />
+              <Text style={styles.secondaryActionText}>Start getting votes</Text>
+            </Pressable>
+            {!shareUrl && (
+              <Text style={styles.shareWarn}>
+                A shareable link is not configured for this build — sharing will send the message only.
+              </Text>
+            )}
+          </>
+        )}
+
+        <ShareBottomSheet
+          visible={shareOpen}
+          onClose={() => setShareOpen(false)}
+          contestantName={waitingName || 'your entry'}
+          shareUrl={shareUrl}
+          shareText={voting.shareText ?? undefined}
+        />
       </View>
     );
   }
@@ -214,6 +239,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceContainerHigh, borderRadius: Radius.md, paddingVertical: Spacing.md,
   },
   secondaryActionText: { ...Typography.labelLg, color: Colors.primary },
+  shareCaption: { ...Typography.bodySm, color: Colors.outline, marginTop: Spacing.xs },
   linkList:    { marginTop: Spacing.xs },
   linkRow:     { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
   linkText:    { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },

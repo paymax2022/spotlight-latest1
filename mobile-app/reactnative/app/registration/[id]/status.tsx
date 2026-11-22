@@ -39,6 +39,7 @@ import OpenMicBanner from '@/features/openmic/components/OpenMicBanner';
 import { isOpenMicApplication } from '@/features/openmic/edition';
 import { formatStamp } from '@/features/openmic/state';
 import { useOpenMicPhase } from '@/features/openmic/hooks';
+import { submissionBindingNotice } from '@/features/registration/utils/submission-lock';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 const TERMINAL = ['withdrawn', 'rejected', 'disqualified', 'eliminated', 'winner'];
@@ -104,6 +105,7 @@ export default function RegistrationStatusScreen() {
   const canWithdraw = !TERMINAL.includes(draft.status);
   const awaitingPayment = draft.status === 'awaiting_payment';
   const needsInfo = draft.status === 'more_information_requested';
+  const bindingNotice = submissionBindingNotice(draft.status);
 
   const contestant = votingQuery.data?.contestant ?? null;
   const displayName =
@@ -165,6 +167,11 @@ export default function RegistrationStatusScreen() {
               The review team requested more information.
               {draft.formData['admin.reviewNote'] ? ` ${String(draft.formData['admin.reviewNote'])}` : ''}
             </Text>
+          </View>
+        )}
+        {bindingNotice && (
+          <View style={[styles.notice, styles.noticeBinding]}>
+            <Text style={styles.noticeText}>{bindingNotice}</Text>
           </View>
         )}
 
@@ -244,6 +251,7 @@ const styles = StyleSheet.create({
   ref: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   notice: { borderRadius: Radius.md, padding: Spacing.md },
   noticeWarn: { backgroundColor: Colors.iconBgGold },
+  noticeBinding: { backgroundColor: Colors.iconBgTeal },
   noticeText: { ...Typography.labelMd, color: Colors.onSurface },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.sm },
   empty: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },

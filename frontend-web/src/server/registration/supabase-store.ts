@@ -27,6 +27,8 @@ import {
   getPersistedContestBySlug,
   getPersistedContestById,
 } from '@/src/server/registration-v2/contest-store';
+import { isSubmissionBinding } from '@/src/features/registration/lock';
+import { ApplicationLockedError } from '@/src/server/registration/errors';
 import type {
   ContestRegistrationDefinition,
   ApplicationStatus,
@@ -122,6 +124,15 @@ export async function saveRegistrationStep(params: {
   const draft = await getRegistrationDraft(params.applicationId);
   if (!draft) {
     throw new Error('Application not found.');
+  }
+
+  // CONTEST-LOCK — an approved application is binding: the answers a judge
+  // reviewed are the record of the entry and stop being editable. The refusal
+  // happens BEFORE anything is read or written, so a locked row is never
+  // partially touched. `more_information_requested` is deliberately not
+  // locked — that status is the admin asking for a change.
+  if (isSubmissionBinding(draft.status)) {
+    throw new ApplicationLockedError();
   }
 
   const mergedData = {
@@ -466,6 +477,14 @@ const CONSENT_RECORD_KEYS = ['media.rightsConfirmed', 'publicProfile.publicVotin
 export async function submitRegistrationApplication(applicationId: string) {
   const draft = await getRegistrationDraft(applicationId);
   if (!draft) throw new Error('Application not found.');
+
+  // CONTEST-LOCK — same rule as the step save: an approved application is
+  // binding, so it cannot be re-submitted either. Without this the row went
+  // straight back to 'submitted', which dropped it out of the roster the
+  // promotion seam had already put it on.
+  if (isSubmissionBinding(draft.status)) {
+    throw new ApplicationLockedError();
+  }
 
   if (['submitted', 'awaiting_payment', 'under_review'].includes(draft.status)) {
     return { success: true, draft, alreadySubmitted: true };
