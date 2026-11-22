@@ -633,6 +633,27 @@ Two further facts from the same reading, both useful and both currently unused:
   architecture choice for the owner, not something to slip in beside a docs fix. This file documents the
   trade-off instead of choosing it.
 
+**2026-11-22 — the trade-off was taken, and the narrow lane exists.** The instruction for this arc became
+"ensure the push gets to production", and by then every other route was closed by measurement rather than by
+preference: the full train could not reach production because all three `deploy Staging (…)` legs died again
+on F2 (run `45012115042`, head `6ade5f7bcb`, 9 decode refusals per leg, 0 trial lines, 0 GnuTLS — episode 18
+of the fault report), the zero-byte `serviceInstanceDeploy(latestCommit:true)` lane is inert on this git-less
+production service (it answered `reason=redeploy`, rebuilt a stale Next-16.4.0 snapshot and FAILED on
+`Can't resolve '@vercel/turbopack-next/internal/font/google/font'`), and this laptop cannot carry the archive
+(`git archive --format=tar origin/main -- frontend-web` measures **113.3 MB**, 100.6 MB of it
+`frontend-web/public/`; two `railway up` attempts were refused with HTTP 524 at 46 s and 20 s and each still
+wrote a FAILED, inert row). GitHub runners are not that machine — the same tree uploads there fine, which is
+why `deploy Development (frontend-web)` was green in that very run. So `.github/workflows/ops-railway-upload.yml`
+is the sanctioned Command 6: `workflow_dispatch` only, ONE service, a typed confirmation that names both the
+environment and the service, and **no migration step at all**. What it deliberately is not: it is not the
+release chain, it runs no `migrate production database`, and it cannot touch `backend` and the frontends in
+one wave, which is the specific thing that would have overwritten prod's Maplerad rail (13 files under
+`backend/` exist on `prod` and not on `main`: `internal/finance/maplerad/`,
+`internal/orchestration/adapters/maplerad.go`, `internal/provider/maplerad/`, two `tests/fx/` files). The
+upload shape is derived from each instance's live `rootDirectory` by
+`scripts/ci/railway-root-shape.sh` — pinned by `scripts/ci/test-railway-root-shape.sh`, run in `ci.yml` — so
+the §8 shape rule cannot be copied wrong the way a hardcoded matrix can.
+
 Verify after it lands — and verify it **against the web host itself**, not through the console: on
 `frontend-admin-production-*` the proxy guard answers 401 for *invented* paths too (the four-plane table in
 §7's last paragraph), so a 401 there proves nothing about the target. Run the pair directly:

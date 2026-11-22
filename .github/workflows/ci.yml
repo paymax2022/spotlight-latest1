@@ -257,6 +257,14 @@ jobs:
       # The test also proves dirty working-tree bytes cannot leak into a release.
       - name: Test the deploy archive shape
         run: bash scripts/ci/test-railway-deploy-archive.sh
+      # The manual single-service lane (ops-railway-upload.yml) has no release.yml
+      # matrix to copy, so it DERIVES the upload shape from the instance's live
+      # rootDirectory. Wrong here is the bug class that cost 40 minutes on 2026-11-16:
+      # a repo-root archive where rootDirectory is unset builds the MONOREPO, every
+      # route then 404s, and the upload still reports SUCCESS. Stub-driven — a phantom
+      # rootDirectory and a missing instance must both refuse to yield a shape.
+      - name: Test the upload shape resolver
+        run: bash scripts/ci/test-railway-root-shape.sh
       # The same fault's probe. F2 kills every `deploy Staging` leg, and the one
       # lane that works — serviceInstanceDeploy(latestCommit:true) — has never
       # been tried with the token CI holds, which exists only inside a runner.
