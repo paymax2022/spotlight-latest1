@@ -476,10 +476,10 @@ export async function listFraudAlerts(contestId?: string): Promise<OpenMicFraudA
 }
 
 /**
- * Record a payment event (entry fee, vote payment, refund). Nothing in this
- * codebase calls this yet — the real Open Mic entry-fee/vote-payment flow
- * does not post here — but the table and mapping are real and tested, ready
- * for that wiring rather than another silently-broken placeholder.
+ * Record a payment event (entry fee, vote payment, refund). Called by
+ * `reviewApplication` when an application reaches `paid`/`waived` (an `entry_fee`
+ * row) and by `castVote` for a paid vote (a `vote_payment` row sized from the
+ * contest's own vote price) — which is what the console's Payments tab lists.
  */
 export async function createPaymentEvent(input: {
   contestId: string;
@@ -512,7 +512,12 @@ export async function createPaymentEvent(input: {
   return mapPaymentEventRow(data);
 }
 
-/** Record a notification. Nothing in this codebase calls this yet — see createPaymentEvent. */
+/**
+ * Record a notification. Called by the three places an artist is owed one:
+ * `createApplication` (receipt), `reviewApplication` (approved/rejected) and
+ * `reviewSubmission` (the review note, best-effort so a notice that cannot be
+ * queued never turns a landed decision into a 500).
+ */
 export async function createNotification(input: {
   contestId?: string;
   applicationId?: string;
@@ -542,7 +547,11 @@ export async function createNotification(input: {
   return mapNotificationRow(data);
 }
 
-/** Record a fraud alert. Nothing in this codebase calls this yet — see createPaymentEvent. */
+/**
+ * Record a fraud alert. Called by `castVote` when one transaction reaches the
+ * contest's `suspiciousVoteThreshold`, which is what feeds the console's Fraud
+ * Alerts tab.
+ */
 export async function createFraudAlert(input: {
   contestId: string;
   submissionId: string;
@@ -939,6 +948,48 @@ export async function logBeatDownload(input: Parameters<typeof logBeatDownloadMe
   return logged;
 }
 
+/**
+ * An enrichment read that the listing can do without.
+ *
+ * `beat_download_logs` is the row that exists; the artist's name is a join, and this
+ * module's own writer treats the log table as best-effort ("beat access should not
+ * fail because the analytics table is unavailable"). A console listing follows the
+ * same rule in the other direction: a profile read that fails must not turn the
+ * Beat Downloads tab into an error page, because the downloads themselves — and the
+ * timestamp an operator is investigating — are already in hand. It degrades to
+ * "identity unknown", which the console renders as a dash.
+ */
+async function optionalRead(
+  label: string,
+  // PromiseLike, not Promise: a PostgrestFilterBuilder is thenable but is not a
+  // Promise, so a `Promise` parameter made every call site below fail `tsc`
+  // ("missing the following properties: catch, finally"). `await` accepts either.
+  run: () => PromiseLike<{ data: unknown; error: unknown }>
+): Promise<any[]> {
+  try {
+    const { data, error } = await run();
+    if (error) throw error;
+    return safeArray<any>(data);
+  } catch (error) {
+    console.warn(
+      `[open-mic] ${label} unavailable:`,
+      error instanceof Error ? error.message : error
+    );
+    return [];
+  }
+}
+
+/**
+ * The beat hand-offs recorded for one edition, with the artist the database knows.
+ *
+ * The log table stores who downloaded, not who they are: `artist_name` and
+ * `artist_email` are arguments of `logBeatDownload` that the insert has nowhere to
+ * put, so the identity has to come back from the profile and enrollment rows.
+ * Terms and paid access are the other half: a download is only possible when the
+ * caller has accepted the usage agreement, but that agreement is not recorded per
+ * download, so the honest value is `null` unless an enrollment row carries one —
+ * the console shows "Not recorded" rather than asserting a consent nobody stored.
+ */
 export async function listBeatDownloads(contestId?: string) {
   if (!shouldUseDb()) return [];
   try {
@@ -947,16 +998,49 @@ export async function listBeatDownloads(contestId?: string) {
     if (contestId) query = query.eq('competition_id', contestId);
     const { data, error } = await query;
     if (error) throw error;
-    return safeArray<any>(data).map((row) => ({
-      id: row.id,
-      beatId: row.beat_id,
-      contestId: row.competition_id,
-      userId: row.user_id || undefined,
-      artistName: 'Artist',
-      termsAccepted: true,
-      paidAccessConfirmed: true,
-      downloadedAt: row.downloaded_at,
-    }));
+    const rows = safeArray<any>(data);
+
+    const userIds = Array.from(
+      new Set(rows.map((row) => String(row.user_id || '')).filter(Boolean))
+    );
+    const [profileRows, enrollmentRows] = userIds.length
+      ? await Promise.all([
+          optionalRead('beat download profiles', () =>
+            supabase.from('user_profiles').select('id, full_name, display_name, email').in('id', userIds)
+          ),
+          contestId
+            ? optionalRead('beat download enrollments', () =>
+                supabase
+                  .from('competition_enrollments')
+                  .select('user_id, stage_name, email, terms_accepted, payment_status')
+                  .eq('competition_id', contestId)
+                  .in('user_id', userIds)
+              )
+            : Promise.resolve([] as any[]),
+        ])
+      : ([] as any[][]);
+
+    const profiles = new Map(profileRows.map((row) => [String(row.id), row]));
+    const enrollments = new Map(enrollmentRows.map((row) => [String(row.user_id), row]));
+
+    return rows.map((row) => {
+      const userId = String(row.user_id || '');
+      const profile = profiles.get(userId);
+      const enrollment = enrollments.get(userId);
+      return {
+        id: row.id,
+        beatId: row.beat_id,
+        contestId: row.competition_id,
+        userId: userId || undefined,
+        artistName: enrollment?.stage_name || profile?.display_name || profile?.full_name || '',
+        artistEmail: profile?.email || enrollment?.email || '',
+        termsAccepted: enrollment ? enrollment.terms_accepted === true : null,
+        paidAccessConfirmed: enrollment
+          ? ['paid', 'waived'].includes(String(enrollment.payment_status || ''))
+          : null,
+        downloadedAt: row.downloaded_at,
+      };
+    });
   } catch (error) {
     if (!shouldFallback(error)) throw error;
     return listBeatDownloadsMemory(contestId);
@@ -1000,6 +1084,42 @@ export async function latestBeatDownloadAt(input: {
       error instanceof Error ? error.message : error,
     );
     return null;
+  }
+}
+
+/**
+ * Every artist the beat log records for one edition, as user ids.
+ *
+ * The Applications tab has a "Beat Download" column, and the only way it could fill
+ * it was `metadata.beatDownloadStatus` — a value `createApplication` stamps once when
+ * the row is inserted and `logBeatDownload` never updates (the download route writes
+ * the log table and nothing else). So the tab reported "not available" for artists the
+ * log shows downloading, contradicting the Beat Downloads tab on the same page.
+ *
+ * This is the log read for that question: one column, no profile join, and — the same
+ * posture as `latestBeatDownloadAt` above — an unreadable table answers "nobody is
+ * recorded" rather than failing the list, because the column is a convenience and the
+ * applicants are the point of the tab.
+ */
+export async function listBeatDownloadUserIds(contestId: string): Promise<string[]> {
+  if (!shouldUseDb()) return [];
+  const id = String(contestId || '').trim();
+  if (!id) return [];
+  try {
+    const { data, error } = await createAdminClient()
+      .from('beat_download_logs')
+      .select('user_id')
+      .eq('competition_id', id);
+    if (error) throw error;
+    return Array.from(
+      new Set(safeArray<any>(data).map((row) => String(row?.user_id || '')).filter(Boolean))
+    );
+  } catch (error) {
+    console.warn(
+      '[open-mic] beat download ids unavailable:',
+      error instanceof Error ? error.message : error,
+    );
+    return [];
   }
 }
 
@@ -1570,9 +1690,25 @@ export async function listSubmissions(input?: { contestId?: string; userId?: str
     if (input?.status) query = query.eq('status', input.status);
     const { data, error } = await query;
     if (error) throw error;
-    return safeArray<any>(data)
+    const mapped = safeArray<any>(data)
       .map(mapSubmissionRow)
       .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+
+    // The announced award, for the rows that have one. `announceWinner` writes a
+    // `winner_records` row next to flipping the entry's status, and the console's
+    // Winners tab shows that award — so the read happens only once a winner row is
+    // in the page, never for an artist's own dashboard list.
+    const winnerIds = mapped.filter((row) => row.isWinner).map((row) => row.id);
+    if (!winnerIds.length || !input?.contestId) return mapped;
+    const awards = await optionalRead('winner awards', () =>
+      createAdminClient()
+        .from('winner_records')
+        .select('entry_id, award_title, winner_tier')
+        .eq('competition_id', input.contestId)
+        .in('entry_id', winnerIds)
+    );
+    const byEntry = new Map(awards.map((row) => [String(row.entry_id), row]));
+    return mapped.map((row) => (byEntry.has(row.id) ? { ...row, awardTitle: byEntry.get(row.id)?.award_title || null } : row));
   } catch (error) {
     if (!shouldFallback(error)) throw error;
     return listSubmissionsMemory(input);

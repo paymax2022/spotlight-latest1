@@ -49,10 +49,14 @@ export type OpenMicApplicantRow = {
   applicationStatus: OpenMicApplicationStatus;
   paymentStatus: OpenMicPaymentStatus;
   /**
-   * Beat downloads are only tracked on the enrollment plane (`beat_download_logs`
-   * joins `competition_enrollments.id`), so a registration-plane applicant has
-   * no download record to report — 'not_available' means "this plane does not
-   * track it", not "this applicant was refused the beat".
+   * Whether this artist is recorded as having taken the beat.
+   *
+   * Both planes can answer it, from different places. The enrollment plane carries
+   * `metadata.beatDownloadStatus`, which `createApplication` writes once and the
+   * download route never updates; the registration plane has no such column, so its
+   * rows are read against `beat_download_logs` (which keys on `user_id`, a column
+   * `registrations` also has) through `listBeatDownloadUserIds`. 'not_available'
+   * therefore means "no download is recorded", never "this applicant was refused".
    */
   beatDownloadStatus: OpenMicBeatDownloadStatus;
   appliedAt: string;
@@ -82,6 +86,11 @@ export type OpenMicApplicantSources = {
   listEnrollmentApplicants: (contestId: string) => Promise<OpenMicApplicantRow[]>;
   /** `registrations` applicants for this contest slug. */
   listRegistrationDrafts: (contestSlug: string) => Promise<RegistrationDraft[]>;
+  /**
+   * User ids with a `beat_download_logs` row for this contest id — the record the
+   * Applications tab's Beat Download column is allowed to be built from.
+   */
+  listBeatDownloadUserIds: (contestId: string) => Promise<string[]>;
 };
 
 const OPEN_MIC_PAYMENT_STATUSES: readonly OpenMicPaymentStatus[] = [
@@ -137,8 +146,13 @@ export function toOpenMicBeatStatus(value: unknown): OpenMicBeatDownloadStatus {
     : 'not_available';
 }
 
-export function mapRegistrationApplicant(draft: RegistrationDraft, contestId: string): OpenMicApplicantRow {
+export function mapRegistrationApplicant(
+  draft: RegistrationDraft,
+  contestId: string,
+  downloadedUserIds?: ReadonlySet<string>,
+): OpenMicApplicantRow {
   const formData = (draft?.formData || {}) as Record<string, unknown>;
+  const userId = text(draft.userId);
   return {
     id: draft.id,
     contestId,
@@ -151,7 +165,9 @@ export function mapRegistrationApplicant(draft: RegistrationDraft, contestId: st
     // tile that counts them; see the field's comment on OpenMicApplicantRow.
     registrationStatus: text(draft.status),
     paymentStatus: toOpenMicPaymentStatus(formData['payment.paymentStatus']),
-    beatDownloadStatus: 'not_available',
+    // Read off the log rather than written as a literal: a draft with no user id has
+    // nothing to match a download against, so it stays unrecorded instead of guessed.
+    beatDownloadStatus: userId && downloadedUserIds?.has(userId) ? 'downloaded' : 'not_available',
     appliedAt: draft.submittedAt || draft.createdAt || draft.updatedAt,
     source: 'registration',
   };
@@ -217,7 +233,16 @@ export async function listOpenMicContestApplicants(
   }
 
   const drafts = await sources.listRegistrationDrafts(contest.slug);
-  return mergeOpenMicApplicants(enrollmentRows, drafts.map((draft) => mapRegistrationApplicant(draft, contestId)));
+  // Asked after the drafts, and never allowed to fail the tab: the applicants are the
+  // point of this read, the download column is one of their fields.
+  const downloaded = await sources
+    .listBeatDownloadUserIds(contestId)
+    .then((ids) => new Set(ids.map((id) => text(id)).filter(Boolean)))
+    .catch(() => new Set<string>());
+  return mergeOpenMicApplicants(
+    enrollmentRows,
+    drafts.map((draft) => mapRegistrationApplicant(draft, contestId, downloaded)),
+  );
 }
 
 /**
@@ -245,5 +270,9 @@ export const defaultOpenMicApplicantSources: OpenMicApplicantSources = {
   listRegistrationDrafts: async (contestSlug) => {
     const { listRegistrationApplications } = await import('@/src/server/registration/supabase-store');
     return listRegistrationApplications({ contestSlug });
+  },
+  listBeatDownloadUserIds: async (contestId) => {
+    const { listBeatDownloadUserIds } = await import('@/src/server/openmic/persistence');
+    return listBeatDownloadUserIds(contestId);
   },
 };

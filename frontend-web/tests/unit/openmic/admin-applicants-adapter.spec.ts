@@ -69,11 +69,13 @@ function sourcesWith(input: {
   contest?: { slug: string; contestType: string } | null;
   enrollments?: OpenMicApplicantRow[];
   drafts?: RegistrationDraft[];
+  downloads?: string[];
 }): OpenMicApplicantSources & { findContest: ReturnType<typeof vi.fn> } {
   const findContest = vi.fn(async () => input.contest ?? null);
   const listEnrollmentApplicants = vi.fn(async () => input.enrollments ?? []);
   const listRegistrationDrafts = vi.fn(async () => input.drafts ?? []);
-  return { findContest, listEnrollmentApplicants, listRegistrationDrafts };
+  const listBeatDownloadUserIds = vi.fn(async () => input.downloads ?? []);
+  return { findContest, listEnrollmentApplicants, listRegistrationDrafts, listBeatDownloadUserIds };
 }
 
 describe('mapRegistrationApplicant', () => {
@@ -150,6 +152,35 @@ describe('mapRegistrationApplicant', () => {
     );
     expect(row.paymentStatus).toBe('not_required');
   });
+
+  /**
+   * The Beat Downloads column used to be a literal. The adapter's own comment said
+   * registration-plane applicants "have no download record to report", which was
+   * true of `beat_download_logs` only in the sense that the adapter never looked:
+   * the log stores `user_id`, and `registrations` stores `user_id`, so the hand-off
+   * is exactly as visible to this plane as to the other. On the dev database the
+   * same three artists appear in both tables for contest c7ab8479 while the tab
+   * said "not available" for every one of them.
+   */
+  it('reports a downloaded beat for the artist the download set contains', () => {
+    const downloaded = new Set(['ed2c401b-44b4-4074-9a1a-756b3e256225']);
+    expect(mapRegistrationApplicant(registrationDraft(), CONTEST_ID, downloaded).beatDownloadStatus)
+      .toBe('downloaded');
+  });
+
+  it('keeps the status unrecorded for an artist the log holds no row for', () => {
+    const downloaded = new Set(['6c6d04cd-5635-4b94-acd1-b5378b8a2975']);
+    expect(mapRegistrationApplicant(registrationDraft(), CONTEST_ID, downloaded).beatDownloadStatus)
+      .toBe('not_available');
+    expect(mapRegistrationApplicant(registrationDraft(), CONTEST_ID).beatDownloadStatus)
+      .toBe('not_available');
+  });
+
+  it('cannot claim a download for a draft with no user id', () => {
+    const downloaded = new Set(['ed2c401b-44b4-4074-9a1a-756b3e256225']);
+    expect(mapRegistrationApplicant(registrationDraft({ userId: undefined }), CONTEST_ID, downloaded)
+      .beatDownloadStatus).toBe('not_available');
+  });
 });
 
 describe('mergeOpenMicApplicants', () => {
@@ -191,6 +222,61 @@ describe('listOpenMicContestApplicants', () => {
     expect(sources.listRegistrationDrafts).toHaveBeenCalledWith('open-mic-dev');
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ artistName: 'Mock Testuser', applicationStatus: 'approved', source: 'registration' });
+  });
+
+  /**
+   * One read for the whole list, not one per applicant: the tab shows every
+   * applicant of one contest, and `beat_download_logs` is already filtered by
+   * competition. The download read runs alongside the merge, and an applicant whose
+   * id is in it stops being reported as "not available".
+   */
+  it('marks the applicants the log recorded, from one scoped read', async () => {
+    const sources = sourcesWith({
+      contest: { slug: 'open-mic-dev', contestType: 'one_beat_one_verse' },
+      drafts: [
+        registrationDraft(),
+        registrationDraft({
+          id: '8977dc4a-630c-4658-9967-120dfbad1e44',
+          userId: '6c6d04cd-5635-4b94-acd1-b5378b8a2975',
+          formData: { 'personal.email': 'spec.ng+openmic@gmail.com' },
+        }),
+      ],
+      downloads: ['6c6d04cd-5635-4b94-acd1-b5378b8a2975', 'ed2c401b-44b4-4074-9a1a-756b3e256225'],
+    });
+
+    const rows = await listOpenMicContestApplicants(CONTEST_ID, sources);
+
+    expect(sources.listBeatDownloadUserIds).toHaveBeenCalledTimes(1);
+    expect(sources.listBeatDownloadUserIds).toHaveBeenCalledWith(CONTEST_ID);
+    expect(rows.find((r) => r.email === 'spec.ng+openmic@gmail.com')?.beatDownloadStatus).toBe('downloaded');
+    expect(rows.find((r) => r.email === 'spec.ng+doctor@gmail.com')?.beatDownloadStatus).toBe('downloaded');
+  });
+
+  it('lists the applicants anyway when the download read fails', async () => {
+    const sources = sourcesWith({
+      contest: { slug: 'open-mic-dev', contestType: 'one_beat_one_verse' },
+      drafts: [registrationDraft()],
+    });
+    sources.listBeatDownloadUserIds = vi.fn(async () => {
+      throw new Error('beat_download_logs unreadable');
+    });
+
+    const rows = await listOpenMicContestApplicants(CONTEST_ID, sources);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ artistName: 'Mock Testuser', beatDownloadStatus: 'not_available' });
+  });
+
+  it('leaves enrollment rows on the status their own record carries', async () => {
+    const sources = sourcesWith({
+      contest: { slug: 'open-mic-dev', contestType: 'one_beat_one_verse' },
+      enrollments: [enrollmentRow({ beatDownloadStatus: 'available' })],
+      downloads: [],
+    });
+
+    const rows = await listOpenMicContestApplicants(CONTEST_ID, sources);
+
+    expect(rows.find((r) => r.source === 'enrollment')?.beatDownloadStatus).toBe('available');
   });
 
   it('does not read the registration plane for a contest that is not an Open Mic edition', async () => {
