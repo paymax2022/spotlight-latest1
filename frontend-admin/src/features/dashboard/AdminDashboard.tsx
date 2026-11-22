@@ -68,8 +68,16 @@ const quickLinks: QuickLink[] = [
  *    it looked like a measurement and was a literal constant. Everything drawn
  *    here is a number the backend returned.
  *
- * The legacy programme counters are NOT deleted; they move into the Programs
- * group, which is what they always were — one domain among many.
+ * 4. THE REGISTRY OWNS THE QUEUE LIST. "Needs attention" is built ONLY from
+ *    GET /api/v1/admin/overview, whose rows live in
+ *    backend/internal/handlers/admin_overview.go. This file adds nothing to it.
+ *    It used to append programme rows with `attention: { value: 0 }` written by
+ *    hand — a number no one had read — which made four queues (Open Mic songs,
+ *    Open Mic applications, audition registrations, contest approvals) look
+ *    cleared forever. A queue is either reported by the backend or it is not
+ *    shown as a queue; volume may be summarised client-side, attention may not.
+ *    Anything that requires an admin decision therefore belongs in the registry:
+ *    see docs/ops/admin-needs-attention-standard.md.
  */
 
 const C = {
@@ -140,44 +148,38 @@ export function AdminDashboard() {
   const modules = useMemo<OverviewModule[]>(() => {
     const live = overview?.modules ?? [];
     if (!counts) return live;
-    // The legacy programme counters, folded in as a peer domain rather than as
-    // the headline. Their queue is the registration review backlog, which the
-    // overview endpoint already reports, so these carry volume only.
-    const programme: OverviewModule[] = [
+    // Volume only, and only for the three programme tallies the overview endpoint
+    // does not report. These carry NO attention value: the registry owns every
+    // queue (Open Mic songs, Open Mic applications, auditions and contest
+    // approvals are rows there), and a hand-written 0 here would claim a queue
+    // was read and clear when it never was.
+    const registered = new Set(live.map((m) => m.key));
+    const volumeOnly: OverviewModule[] = [
       { key: 'contestants', label: 'Contestants', group: 'Programs', href: '/admin/contests',
-        volume: { label: 'Registered', value: counts.contestants ?? null },
-        attention: { label: '', value: 0, href: '/admin/contests', severity: 'warn' } },
-      { key: 'open-mic', label: 'Open Mic', group: 'Programs', href: '/admin/open-mic',
-        volume: { label: 'Submissions', value: counts.open_mic ?? null },
-        attention: { label: '', value: 0, href: '/admin/open-mic', severity: 'warn' } },
-      { key: 'auditions', label: 'Auditions', group: 'Programs', href: '/admin/competitions',
-        volume: { label: 'In queue', value: counts.auditions ?? null },
-        attention: { label: '', value: 0, href: '/admin/competitions', severity: 'warn' } },
-      { key: 'academy', label: 'Academy', group: 'Programs', href: '/admin/academy',
-        volume: { label: 'Applications', value: counts.academy ?? null },
-        attention: { label: '', value: 0, href: '/admin/academy', severity: 'warn' } },
-      { key: 'film-academy', label: 'Film Academy', group: 'Programs', href: '/admin/academy/film',
-        volume: { label: 'Applications', value: counts.film_academy ?? null },
-        attention: { label: 'Awaiting review', value: null, href: '/admin/academy/film', severity: 'warn' } },
-    ];
-    return [...live, ...programme];
+        volume: { label: 'Registered', value: counts.contestants ?? null } },
+      { key: 'academy', label: 'Academy intake', group: 'Programs', href: '/admin/academy',
+        volume: { label: 'Applications on file', value: counts.academy ?? null } },
+      { key: 'film-academy', label: 'Film Academy intake', group: 'Programs', href: '/admin/academy/film',
+        volume: { label: 'Applications on file', value: counts.film_academy ?? null } },
+    ].filter((m) => !registered.has(m.key));
+    return [...live, ...volumeOnly];
   }, [overview, counts]);
 
   /** Only modules with work outstanding, worst first. */
   const needsAttention = useMemo(
     () =>
       modules
-        .filter((m) => typeof m.attention.value === 'number' && m.attention.value > 0)
+        .filter((m) => typeof m.attention?.value === 'number' && m.attention.value > 0)
         .sort((a, b) => {
-          if (a.attention.severity !== b.attention.severity) return a.attention.severity === 'critical' ? -1 : 1;
-          return (b.attention.value ?? 0) - (a.attention.value ?? 0);
+          if (a.attention?.severity !== b.attention?.severity) return a.attention?.severity === 'critical' ? -1 : 1;
+          return (b.attention?.value ?? 0) - (a.attention?.value ?? 0);
         }),
     [modules],
   );
 
   /** Named explicitly so "could not read" never hides behind a zero. */
   const degraded = useMemo(
-    () => modules.filter((m) => m.volume.value === null || m.attention.value === null),
+    () => modules.filter((m) => m.volume.value === null || m.attention?.value === null),
     [modules],
   );
 
@@ -190,8 +192,8 @@ export function AdminDashboard() {
   }, [modules]);
 
   const criticalTotal = needsAttention
-    .filter((m) => m.attention.severity === 'critical')
-    .reduce((sum, m) => sum + (m.attention.value ?? 0), 0);
+    .filter((m) => m.attention?.severity === 'critical')
+    .reduce((sum, m) => sum + (m.attention?.value ?? 0), 0);
 
   return (
     <div style={{ color: C.text, background: C.bg, minHeight: '100%', margin: -24, padding: 24 }}>
@@ -248,27 +250,28 @@ export function AdminDashboard() {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(268px, 1fr))', gap: 12, marginTop: 14 }}>
             {needsAttention.map((m) => {
-              const tint = m.attention.severity === 'critical' ? C.red : C.orange;
+              const attn = m.attention ?? { label: '', value: null, href: '', severity: 'warn' as const };
+              const tint = attn.severity === 'critical' ? C.red : C.orange;
               const boxStyle: CSSProperties = { textDecoration: 'none', color: 'inherit', display: 'block',
                 border: `1px solid ${rgba(tint, 0.35)}`, background: rgba(tint, 0.06), borderRadius: 10, padding: '12px 14px' };
               const body = (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                     <span style={{ fontSize: 13, fontWeight: 700 }}>{m.label}</span>
-                    <span style={{ fontSize: 22, fontWeight: 800, color: tint }}>{fmt(m.attention.value)}</span>
+                    <span style={{ fontSize: 22, fontWeight: 800, color: tint }}>{fmt(attn.value)}</span>
                   </div>
-                  <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{m.attention.label}</div>
-                  {m.attention.href ? (
+                  <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{attn.label}</div>
+                  {attn.href ? (
                     <div style={{ fontSize: 12, color: tint, fontWeight: 600, marginTop: 8 }}>Open queue →</div>
                   ) : (
-                    <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>{m.attention.note ?? 'No review screen yet'}</div>
+                    <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>{attn.note ?? 'No review screen yet'}</div>
                   )}
                 </>
               );
               // An item with no working screen is shown, not linked: a link to a page
               // that cannot act (or to the legacy bridge) is worse than none.
-              return m.attention.href ? (
-                <Link key={m.key} href={m.attention.href} style={boxStyle}>{body}</Link>
+              return attn.href ? (
+                <Link key={m.key} href={attn.href} style={boxStyle}>{body}</Link>
               ) : (
                 <div key={m.key} style={boxStyle}>{body}</div>
               );
@@ -292,24 +295,24 @@ export function AdminDashboard() {
                 <div style={{ fontSize: 27, fontWeight: 800, marginTop: 8 }}>{loaded ? fmt(m.volume.value) : '—'}</div>
                 <div style={{ fontSize: 12, color: C.muted }}>{m.volume.label}</div>
 
-                {m.attention.label ? (
-                  (() => {
-                    const rowStyle: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-                      marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}`, textDecoration: 'none' };
-                    const row = (
-                      <>
-                        <span style={{ fontSize: 12, color: C.muted }}>{m.attention.label}</span>
-                        <span style={{ fontSize: 13, fontWeight: 800,
-                          color: (m.attention.value ?? 0) > 0
-                            ? (m.attention.severity === 'critical' ? C.red : C.orange)
-                            : C.muted }}>
-                          {loaded ? fmt(m.attention.value) : '—'}
-                        </span>
-                      </>
-                    );
-                    return m.attention.href ? <Link href={m.attention.href} style={rowStyle}>{row}</Link> : <div style={rowStyle}>{row}</div>;
-                  })()
-                ) : null}
+                {(() => {
+                  const attn = m.attention;
+                  if (!attn?.label) return null;
+                  const rowStyle: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                    marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}`, textDecoration: 'none' };
+                  const row = (
+                    <>
+                      <span style={{ fontSize: 12, color: C.muted }}>{attn.label}</span>
+                      <span style={{ fontSize: 13, fontWeight: 800,
+                        color: (attn.value ?? 0) > 0
+                          ? (attn.severity === 'critical' ? C.red : C.orange)
+                          : C.muted }}>
+                        {loaded ? fmt(attn.value) : '—'}
+                      </span>
+                    </>
+                  );
+                  return attn.href ? <Link href={attn.href} style={rowStyle}>{row}</Link> : <div style={rowStyle}>{row}</div>;
+                })()}
               </div>
             ))}
           </div>

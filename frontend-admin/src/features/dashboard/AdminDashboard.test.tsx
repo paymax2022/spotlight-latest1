@@ -117,6 +117,76 @@ describe('AdminDashboard — awaiting approval', () => {
   });
 });
 
+describe('AdminDashboard — the registry owns the queue list', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // The bug this pins: the console used to append programme rows whose attention
+  // value it wrote by hand (`0`, or `null` labelled "Awaiting review"). The filter
+  // that hoists work is `> 0`, so four real queues — Open Mic songs, Open Mic
+  // applications, auditions, contest approvals — could never surface, and the page
+  // reported an all-clear it had not read. See
+  // docs/ops/admin-needs-attention-standard.md.
+  it('reports nothing in "Needs attention" that the overview API did not return', async () => {
+    // Deliberately no registry module uses the words "awaiting review": if they
+    // reach the page, they came from the console itself.
+    serve([queue('restaurant-kyb', 'Restaurant business verification', {
+      label: 'Submitted, needing sign-off', value: 3, href: '/admin/restaurant/onboarding',
+    })]);
+    // Legacy menu counts present: they may add VOLUME rows, never a queue.
+    mockGetAdminMenuCounts.mockResolvedValue({
+      contestants: 41, open_mic: 12, auditions: 7, academy: 30, film_academy: 18,
+    });
+    const { container } = render(<AdminDashboard />);
+
+    const section = await needsAttention();
+    expect(section.getByText('Restaurant business verification')).toBeTruthy();
+    // No programme queue may appear here…
+    for (const label of ['Open Mic', 'Auditions', 'Contestants', 'Academy']) {
+      expect(section.queryByText(new RegExp(`^${label}`, 'i'))).toBeNull();
+    }
+    // …and no queue label may be invented beside one. The old rows wrote
+    // `label: 'Awaiting review', value: null` for Film Academy, so the page
+    // claimed a queue it had never read — and then named it as unreadable in
+    // Data status.
+    expect(container.textContent).not.toMatch(/awaiting review/i);
+    expect(screen.getByText(/all answered/i)).toBeTruthy();
+  });
+
+  it('keeps the programme tallies as volume, with no queue row invented beside them', async () => {
+    serve([queue('registration', 'Registrations', {
+      label: 'Awaiting review', value: 2, href: '/admin/registration',
+    })]);
+    mockGetAdminMenuCounts.mockResolvedValue({ contestants: 41, film_academy: 18, academy: 30 });
+    render(<AdminDashboard />);
+
+    await screen.findByText('Operations');
+    const card = screen.getByText('Contestants').closest('div');
+    expect(card?.textContent).toContain('41');
+    // The card shows the count and nothing else — no "Awaiting review" line.
+    expect(card?.textContent).not.toMatch(/awaiting/i);
+  });
+
+  it('does not render a second card for a module the registry already reports', async () => {
+    const noise: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a) => { noise.push(String(a[0])); });
+    serve([queue('auditions', 'Audition registrations', {
+      label: 'Registrations awaiting confirmation', value: 4, href: '',
+    })]);
+    mockGetAdminMenuCounts.mockResolvedValue({ auditions: 7, contestants: 41, academy: 30 });
+    render(<AdminDashboard />);
+
+    const section = await needsAttention();
+    spy.mockRestore();
+    // The fabricated rows used to reuse the registry's own keys, which React
+    // reports as duplicate children — and which double-counted the module.
+    expect(noise.filter((m) => /same key/i.test(m))).toHaveLength(0);
+    expect(section.getByText('Audition registrations')).toBeTruthy();
+    // Card + queue box, and no third copy.
+    expect(screen.getAllByText('Audition registrations')).toHaveLength(2);
+    expect(section.getByText('No review screen yet')).toBeTruthy();
+  });
+});
+
 describe('AdminDashboard — the backend rejected the session', () => {
   beforeEach(() => vi.clearAllMocks());
 

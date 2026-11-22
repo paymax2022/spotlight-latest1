@@ -402,7 +402,7 @@ func (h *RewardHandler) AdminSetCode(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{keyError: keyInvalidBody})
 		return
 	}
-	link, err := h.svc.SetLinkCode(c.Request.Context(), referrerID, req.Code)
+	link, err := h.svc.SetLinkCode(c.Request.Context(), referrerID, req.Code, ginutil.UserID(c))
 	switch {
 	case errors.Is(err, ErrCodeTaken):
 		// 409, not 400: the request is well formed, the code is simply spoken

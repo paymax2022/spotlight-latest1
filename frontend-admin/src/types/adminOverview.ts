@@ -28,7 +28,14 @@ export type OverviewModule = {
   group: string;
   href: string;
   volume: OverviewValue;
-  attention: OverviewAttention;
+  /**
+   * Absent means this module is a VOLUME METRIC, not a queue — there is nothing
+   * for an admin to decide about it. The registry in
+   * backend/internal/handlers/admin_overview.go is the only source of attention
+   * values: the console must never invent one (a client-side `value: 0` reads as
+   * "checked, nothing outstanding" for a queue nobody queried).
+   */
+  attention?: OverviewAttention;
 };
 
 export type AdminOverview = {

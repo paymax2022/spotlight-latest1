@@ -14,6 +14,10 @@ import (
 // CodeReader is the read seam AdminGetCode needs (satisfied by *Service).
 type CodeReader interface {
 	LookupCode(ctx context.Context, userID string) (code, source string, err error)
+	// OriginalCode is the code the account was issued, when an admin has since
+	// customised it ("" when nobody has). It reads a different table from the code
+	// itself, so it can fail on its own.
+	OriginalCode(ctx context.Context, userID string) (string, error)
 }
 
 // AdminGetCode handles GET /finance/admin/referrals/:user_id/code — a pure
@@ -34,6 +38,14 @@ func AdminGetCode(r CodeReader) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": httperr.Msg(c, http.StatusInternalServerError, err)})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"code": code, "source": source})
+		out := gin.H{"code": code, "source": source}
+		// The history is a second read, and a failure there may not take the code
+		// down with it: an admin chasing "what is this user's code" does not need to
+		// know that the audit stream is briefly unreachable. Absent, not empty —
+		// "" would render an "Original:" row that reads like a data bug.
+		if original, err := r.OriginalCode(c.Request.Context(), id); err == nil && original != "" {
+			out["original_code"] = original
+		}
+		c.JSON(http.StatusOK, out)
 	}
 }
