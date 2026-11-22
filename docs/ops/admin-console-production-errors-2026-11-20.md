@@ -706,6 +706,55 @@ is still stale, 401 = the route is live and you are anonymous, 403 = the route i
 account lacks the slug.** The same ladder is how you tell Command 6's success from an unrelated gap without
 touching Supabase.
 
+## 2026-11-22 — Command 6 ran on a runner, and production `frontend-web` is main-lineage
+
+`.github/workflows/ops-railway-upload.yml` (added by #1146, repaired by #1147) is Command 6
+executed by a GitHub runner instead of a laptop: one service, one environment, no migrations. Its
+first green dispatch is
+[run 45022257571](https://github.com/paymax2022/spotlight-latest1/actions/runs/45022257571), ref
+`ops/upload-tooling-split` @ `fa3146287`, inputs
+`environment=production`, `service=frontend-web`, `sha=1002ec24ec6eab39fe980a39c22a3888142d2bf1`,
+`confirm=UPLOAD-production-frontend-web`.
+
+Everything in this table was read back after the run closed — from Railway's API and from the
+service itself, not from the run log:
+
+| when (UTC) | read | value |
+|---|---|---|
+| 12:26:33 | production `frontend-web` deployment row | `5df16f41-3a28-4084-aa9c-b491d99e5dd7` **`SUCCESS`**, `meta.cliMessage = 1002ec24e…`, snapshot `0e84baf7-1e77-4245-817b-eeae36507159` |
+| 12:28:26 | probe while the build was still running | all three `/api/admin/…` paths still `404` — the old build serving |
+| 12:30:12 | the run | `completed / success`; steps 1–12 plus the three post steps all `success`, none failed. Step 12 is `railway-smoke.sh` with `REQUIRE_READYZ=true` |
+| 12:31:58 | `/api/admin/voting/contestants/01e02692-d38b-4f84-b13c-9363e4ab528d/photo` | **`401`** `{"success":false,"error":"Unauthorized"}` |
+| 12:32:00 | `/api/admin/open-mic/contests/c7ab8479-0275-473d-a78f-b923664a3b54/applicants` | **`401`**, same envelope |
+| 12:32:01 | `/api/admin/definitely-not-a-route` (control) | `404` "No API route matches GET …" — so the two `401`s are mounted routes, not a catch-all |
+| 12:34:07 / 12:34:10 | `/` and `/voting` | `200`, `200` |
+| 12:34:11 | `/api/v1/public/build` (proxied to the Go API) | `200`, commit `e43c6455…` — unchanged |
+
+Two routes moving `404 → 401` with the control route still `404` is the acceptance test this
+section asked for: production `frontend-web` now runs the tree carrying #1140. What is left is the
+authenticated click, and per the ladder above a `403` there is a missing RBAC slug on that admin
+account, not a stale deploy.
+
+**Rollback handle.** The build that was serving before this upload is deployment `ea71b561…`
+(snapshot `52dcadf9-9277-4c1a-9c08-ffdb147d13bd`, `meta.cliMessage main-ef97ec64b-prod-web`,
+created 2026-11-16T09:06:41Z, a hand upload from a `qoder` CLI). It now reads `REMOVED`, and that
+flip is worth knowing before you use history as a rollback tool: **a superseded build stops being
+`SUCCESS` and becomes `REMOVED`, so "the newest `SUCCESS` row" names whatever is serving right now
+and nothing else** — the same property that makes a `FAILED` row invisible to that query while the
+previous build keeps answering `200`.
+
+**What this lane deliberately did not do.** It runs no `migrate …` job and uploads exactly one
+service, so `deploy Production (backend)` never fired: production `backend` stayed `e43c6455`, and
+the `prod`-branch-only files (`backend/internal/finance/maplerad/`,
+`backend/internal/orchestration/adapters/maplerad.go`, `backend/internal/provider/maplerad/`) are
+untouched. That separation is the whole reason this workflow exists instead of re-running the
+`release.yml` production dispatch.
+
+Two dispatches of the lane failed before this one, and neither failure came from Railway: the job
+used to run its harness out of the very tree it uploads, and its env called the variable
+`ENVIRONMENT` while `scripts/ci/railway-deploy.sh` demands `RAILWAY_ENV`. Both verbatim errors are
+quoted in the workflow's own comments, so the next reader finds the reason where the fix lives.
+
 ## Companion file
 
 `docs/ops/admin-pages-to-backend-flags.md` maps all 426 sidebar entries to routes and flags. Its
