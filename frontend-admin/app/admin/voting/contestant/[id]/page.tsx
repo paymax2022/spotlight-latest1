@@ -109,10 +109,38 @@ export default function ContestantProfilePage() {
           <h2 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700 }}>📋 Profile</h2>
 
           {contestant.photo_url ? (
+            // Portrait 3:4, and `contain`. This slot was 100% of the card wide
+            // by 180 tall with `cover`, which scales the source until the box
+            // is filled and cuts what overflows — so a 3:4 headshot in a
+            // landscape box loses the top, the part holding the face. An
+            // operator confirming who a contestant is was being shown a crop.
+            // `contain` shows the whole image; that letterboxes a wide source,
+            // so the frame carries a surface and a border and reads as a frame
+            // rather than as a broken image. The numbers mirror the
+            // placeholder below and are pinned by contestant-photo.test.tsx.
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={contestant.photo_url} alt={contestant.name} style={{ width: '100%', height: 180, objectFit: 'cover', borderRadius: 8, marginBottom: 16 }} />
+            <img
+              src={contestant.photo_url}
+              alt={contestant.name}
+              data-testid="contestant-photo"
+              style={{
+                width: 240,
+                height: 320,
+                objectFit: 'contain',
+                background: colors.bg,
+                border: `1px solid ${colors.border}`,
+                borderRadius: 8,
+                display: 'block',
+                margin: '0 auto 16px',
+              }}
+            />
           ) : (
-            <div style={{ width: '100%', height: 180, background: `linear-gradient(135deg, ${colors.primary}40, ${colors.secondary}40)`, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16, fontSize: 56 }}>
+            // The same 240×320 frame, so the card does not jump between the
+            // two states.
+            <div
+              data-testid="contestant-photo-empty"
+              style={{ width: 240, height: 320, background: `linear-gradient(135deg, ${colors.primary}40, ${colors.secondary}40)`, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 56 }}
+            >
               📸
             </div>
           )}
