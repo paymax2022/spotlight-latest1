@@ -445,8 +445,15 @@ want "token-class: each attempt writes its own file" \
 want "token-class: the sampler calls the decider" \
   'python3 scripts/ci/f2-token-class-verdict\.py' "$tc" present
 want "token-class: no verdict rules embedded in the YAML" 'python3 - <<' "$tc" absent
-want "token-class: the sampler passes the files it writes" \
-  '--glob /tmp/class-\*\.txt' "$tc" present
+# This used to pin `--glob /tmp/class-*.txt` — i.e. it pinned the UNQUOTED
+# spelling, so the suite stayed green while run 45024735432 died in this very
+# step ("unrecognized arguments", exit 2, after twelve good samples). What has to
+# be true is that the decider is handed the files the sampler writes AND that the
+# shell cannot word-split the pattern into eleven positional extras: the quoted
+# form is the one that keeps both properties, and check (8) below fails if the
+# quotes ever come off.
+want "token-class: the sampler hands the decider its own files, quoted" \
+  '--glob "/tmp/class-\*\.txt"' "$tc" present
 want "token-class: the decider appends to the job summary" \
   '--out "\$GITHUB_STEP_SUMMARY"' "$tc" present
 # The decider is pure: it reads files and renders text. If it grows a network
@@ -569,6 +576,59 @@ expect_verdict "verdict: a missing credential is undecided, not CLASS" \
 reset_class
 mkrows anonymous token-rejected token-rejected token-rejected
 expect_verdict "verdict: the control alone answers nothing" "Verdict: undecided" "Verdict: CLASS"
+# (7) the ARGUMENT SHAPE, not only the rules. Everything above calls this script
+#     with a QUOTED glob, which is the spelling that works; run 45024735432 ran it
+#     with the workflow's UNQUOTED glob, and the runner's shell handed argparse
+#     twelve words — exit 2, "unrecognized arguments", twelve sampled cells and no
+#     verdict. A suite that only ever exercises the convenient spelling cannot see
+#     that, so this case expands the glob on purpose and compares.
+reset_class
+mkrows anonymous token-rejected token-rejected token-rejected
+mkrows development ok ok ok
+mkrows staging token-rejected token-rejected token-rejected
+mkrows production token-rejected token-rejected token-rejected
+quoted=$(python3 "$tcs" --glob "${classd}/class-*.txt" 2>&1)
+rc_q=$?
+# Deliberately unquoted: this is the spelling that killed the live job.
+unquoted=$(python3 "$tcs" --glob ${classd}/class-*.txt 2>&1)
+rc_u=$?
+checks=$((checks + 1))
+if [[ "$rc_u" == "0" ]]; then
+  echo "ok   arg shape: an expanded glob still exits 0 (quoted rc=$rc_q, expanded rc=$rc_u)"
+else
+  echo "FAIL arg shape: expanded glob exits $rc_u — this is exactly where run 45024735432 died"; fails=$((fails + 1))
+fi
+checks=$((checks + 1))
+nv=$(printf '%s\n' "$unquoted" | grep -c '^\*\*Verdict:')
+if [[ "$nv" == "1" ]]; then
+  echo "ok   arg shape: an expanded glob prints exactly one verdict"
+else
+  echo "FAIL arg shape: expanded glob printed $nv verdict lines"; fails=$((fails + 1))
+fi
+checks=$((checks + 1))
+if [[ "$quoted" == "$unquoted" ]]; then
+  echo "ok   arg shape: both spellings answer identically"
+else
+  echo "FAIL arg shape: quoted and expanded globs disagree — one of them is reading a subset"; fails=$((fails + 1))
+  diff <(printf '%s\n' "$quoted") <(printf '%s\n' "$unquoted") | sed 's/^/         /' | head -8
+fi
+
+# (8) the workflow must not silently re-introduce the unquoted line. The mutation
+#     proof: delete the quotes from ci-railway-token-class.yml:144 and this check
+#     goes red while every classifier check stays green.
+checks=$((checks + 1))
+if grep -qE '^[[:space:]]*--glob "/tmp/class-\*\.txt"' "$tc"; then
+  echo "ok   workflow: the Verdict step quotes its glob"
+else
+  echo "FAIL workflow: the Verdict step passes an unquoted glob — the shell expands it and the verdict dies"; fails=$((fails + 1))
+  grep -n 'class-verdict.py\|--glob' "$tc" | sed 's/^/         /'
+fi
+checks=$((checks + 1))
+if grep -qF -- 'already-expanded sample paths' "$tcs"; then
+  echo "ok   workflow: the script still accepts the expanded spelling as a backstop"
+else
+  echo "FAIL workflow: the positional backstop is gone, so a quoting slip silences the verdict again"; fails=$((fails + 1))
+fi
 reset_class
 rm -rf "$classd"
 
