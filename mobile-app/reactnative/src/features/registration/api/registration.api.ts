@@ -263,6 +263,7 @@ export async function getRegistrationVoting(id: string): Promise<RegistrationVot
     // inventing a votable contest the tester cannot actually vote in.
     return waitMock<RegistrationVoting>({
       votable: false,
+      shareable: false,
       reason: 'not_promoted',
       applicationStatus: 'submitted',
       contest: null,
