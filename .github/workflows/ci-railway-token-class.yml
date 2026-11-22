@@ -21,16 +21,32 @@ name: Railway token class probe (read-only)
 #
 # The three secrets are the discriminator, and they only exist inside a runner.
 # Development's legs upload successfully with `RAILWAY_TOKEN_DEVELOPMENT` (3/3
-# green at 09:39Z on train 45005535349), so *some* project token drives the upload
-# lane; whether one can drive GraphQL reads is what this file answers.
+# green at 09:39Z on train 45005535349), so *some* project token drives the
+# upload lane; whether one can drive GraphQL reads is what this file answers.
 #
-# Reading the answer (the job summary prints this table):
-#   dev ok + staging refused   → (B) VALUE: rotate the staging secret.
-#   all three refused          → (A) CLASS: no CI script change can help.
-#   dev ok + staging ok        → neither: re-read the raw bodies, something new.
-# The anonymous control is there because Railway answers HTTP 200 for auth
-# failures: without a no-credential row, "Not Authorized" from a token is
-# indistinguishable from "Not Authorized" from nothing.
+# WHY EACH CREDENTIAL IS READ THREE TIMES
+#
+# Both #1143 probe runs agreed, so nothing here is known to be intermittent:
+#   run 45009371410 (read-only, 09:49:38Z)  auth=token-rejected (http=200)
+#   run 45009997472 (write cell, 09:57:10Z) auth=token-rejected (http=200)
+#                                                     mutation=token-rejected
+# Repeats are for robustness, not for a phenomenon: one sample per credential
+# cannot tell a stable refusal from a transient edge or rate-limit refusal, and
+# this job's whole output is a three-way choice — class, value, or a credential
+# behaving inconsistently. Agreement across attempts is what makes the chosen
+# branch worth acting on; disagreement is itself an answer, and the only verdict
+# that forbids an action.
+#
+# Reading the answer (the job summary prints the table and one verdict):
+#   anonymous 3/3 ok           → CONTROL BROKEN: the classifier is not proving
+#                                anything, because a token and no token looked
+#                                identical. Railway answers HTTP 200 for auth
+#                                failures, which is why that row exists at all.
+#   mixed for any token        → INTERMITTENT: neither class nor value; the ask
+#                                goes to Railway, not to Settings and not to CI.
+#   dev 3/3 ok + staging 0/3   → (B) VALUE: rotate the staging secret.
+#   all three 0/3              → (A) CLASS: no CI script change can help.
+#   dev 3/3 ok + staging 3/3 ok→ neither: re-read the raw bodies, something new.
 #
 # SAFETY: there is no `inputs:` block at all — nothing a dispatch can type turns
 # this into a deploy — and `PROBE_MODE` is pinned to the literal `read-only`, so
@@ -64,93 +80,65 @@ jobs:
       # Cell 2's row query needs a service; backend is the smallest and this
       # workflow only ever reads, so the choice cannot deploy anything.
       PROBE_SERVICE_NAME: backend
+      # Attempts per credential. Three is enough to tell "always refused" from
+      # "refused sometimes" without turning a read-only probe into a load test.
+      PROBE_CLASS_REPEATS: 3
+      PROBE_CLASS_PAUSE_S: 5
     steps:
       - uses: actions/checkout@v4
 
+      # One read per credential is not enough for a three-way answer. Both #1143
+      # runs refused the staging token (read-only 09:49:38Z; write cell
+      # 09:57:10Z, `auth=token-rejected` and `mutation=token-rejected`), so
+      # agreement is the expected result here — and agreement is exactly what a
+      # single sample cannot show. Three attempts each, and a mixed rate becomes
+      # its own verdict rather than an average.
       - name: control - no credential at all
         env:
           RAILWAY_TOKEN: ''
           CLASS_LABEL: anonymous
         run: |
-          echo "CLASS_CELL label=${CLASS_LABEL}"
-          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/class-${CLASS_LABEL}.txt" || true
+          for i in $(seq 1 "${PROBE_CLASS_REPEATS:-3}"); do
+            { echo "CLASS_CELL label=${CLASS_LABEL} attempt=${i}"; bash scripts/ci/f2-token-probe.sh 2>&1; } | tee "/tmp/class-${CLASS_LABEL}-${i}.txt" || true
+            sleep "${PROBE_CLASS_PAUSE_S:-5}"
+          done
 
       - name: development project token
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
           CLASS_LABEL: development
         run: |
-          echo "CLASS_CELL label=${CLASS_LABEL}"
-          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/class-${CLASS_LABEL}.txt" || true
+          for i in $(seq 1 "${PROBE_CLASS_REPEATS:-3}"); do
+            { echo "CLASS_CELL label=${CLASS_LABEL} attempt=${i}"; bash scripts/ci/f2-token-probe.sh 2>&1; } | tee "/tmp/class-${CLASS_LABEL}-${i}.txt" || true
+            sleep "${PROBE_CLASS_PAUSE_S:-5}"
+          done
 
       - name: staging project token
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
           CLASS_LABEL: staging
         run: |
-          echo "CLASS_CELL label=${CLASS_LABEL}"
-          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/class-${CLASS_LABEL}.txt" || true
+          for i in $(seq 1 "${PROBE_CLASS_REPEATS:-3}"); do
+            { echo "CLASS_CELL label=${CLASS_LABEL} attempt=${i}"; bash scripts/ci/f2-token-probe.sh 2>&1; } | tee "/tmp/class-${CLASS_LABEL}-${i}.txt" || true
+            sleep "${PROBE_CLASS_PAUSE_S:-5}"
+          done
 
       - name: production project token
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
           CLASS_LABEL: production
         run: |
-          echo "CLASS_CELL label=${CLASS_LABEL}"
-          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/class-${CLASS_LABEL}.txt" || true
+          for i in $(seq 1 "${PROBE_CLASS_REPEATS:-3}"); do
+            { echo "CLASS_CELL label=${CLASS_LABEL} attempt=${i}"; bash scripts/ci/f2-token-probe.sh 2>&1; } | tee "/tmp/class-${CLASS_LABEL}-${i}.txt" || true
+            sleep "${PROBE_CLASS_PAUSE_S:-5}"
+          done
 
       - name: Verdict
         if: always()
+        # The rules live in scripts/ci/f2-token-class-verdict.py, not in a
+        # heredoc, so they can be driven from recorded sample sets by
+        # scripts/ci/test-f2-token-probe.sh instead of only ever running on a
+        # runner that holds three live credentials.
         run: |
-          python3 - <<'PY'
-          import glob, os, re
-
-          cells = {}
-          for path in sorted(glob.glob("/tmp/class-*.txt")):
-              label = os.path.basename(path)[len("class-"):-len(".txt")]
-              txt = open(path, encoding="utf-8", errors="replace").read()
-              auth = re.findall(r"PROBE_CELL auth=(\S+)", txt)
-              base = re.findall(r"PROBE_CELL baseline=(\S+)", txt)
-              cells[label] = (auth[-1] if auth else "no-output", base[-1] if base else "no-output")
-
-          order = ["anonymous", "development", "staging", "production"]
-          rows = [(k, cells[k]) for k in order if k in cells]
-
-          out = ["**Read-only cells per credential** (`project` = does the class+value "
-                 "authenticate for GraphQL at all; `serviceInstance` = the staging "
-                 "environment row, so a read that passes the first and fails the second "
-                 "is environment scoping, not a broken token).", ""]
-          out.append("| credential | `project` read | `serviceInstance` read |")
-          out.append("|---|---|---|")
-          for label, (a, b) in rows:
-              out.append(f"| `{label}` | `{a}` | `{b}` |")
-
-          dev = cells.get("development", ("", ""))[0]
-          stg = cells.get("staging", ("", ""))[0]
-          prod = cells.get("production", ("", ""))[0]
-          out.append("")
-          if dev == "ok" and stg != "ok":
-              out.append("**Verdict: VALUE, not class.** A project token *can* drive "
-                         "GraphQL reads (`development` proved it) while the staging one "
-                         "cannot, so `RAILWAY_TOKEN_STAGING` is the variable: stale, "
-                         "rotated out, or mistyped. Rotate it and re-run the F2 probe — "
-                         "and this is the first explanation that also covers F2's own "
-                         "position, since the failing request is the one that obtains the "
-                         "upload destination with that credential.")
-          elif dev != "ok" and prod != "ok" and stg != "ok":
-              out.append("**Verdict: CLASS.** No project token reads the deployment graph, "
-                         "so `serviceInstanceDeploy` is unreachable from CI whatever the "
-                         "secret says. The mutation lane cannot replace `railway up` in "
-                         "this repo without a credential-class change (a user-scoped token "
-                         "in CI, or a scope grant from Railway).")
-          elif dev == "ok" and stg == "ok":
-              out.append("**Verdict: neither.** Both tokens authenticate for reads, which "
-                         "contradicts the 09:57Z staging run — read the raw bodies above "
-                         "before acting on anything.")
-          else:
-              out.append("**Verdict: undecided** — `development` did not read cleanly, so "
-                         "the class question is still open. Read the table.")
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
-              fh.write("\n".join(out) + "\n")
-          print("\n".join(out))
-          PY
+          python3 scripts/ci/f2-token-class-verdict.py \
+            --glob /tmp/class-*.txt --out "$GITHUB_STEP_SUMMARY"

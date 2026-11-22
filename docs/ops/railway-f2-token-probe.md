@@ -1,11 +1,24 @@
 # F2 project-token probe — the one cell that decides the release wall
 
-Status: **the cell is filled.** Landed as #1143 (`b76130674`), dispatched from
-`main` on 2026-11-22, and the project token CI holds was **refused the
-mutation**: run `45009997472` printed `PROBE_CELL mutation=token-rejected`, after
-run `45009371410` had already shown it refused both reads. That single answer has
-two explanations and they need different fixes, which is what
-`ci-railway-token-class.yml` settles next — see "The follow-up question" below.
+Status: **the cell is filled, and the answer is a refusal.** Both dispatches ran
+from `main` on 2026-11-22 with the same `RAILWAY_TOKEN_STAGING` and the same
+`project { id name }` document, and both were refused on every cell they probed:
+
+| run | created | mode | cells |
+|---|---|---|---|
+| `45009371410` | 09:49:03Z | read-only | `auth=token-rejected (http=200)`, `baseline=token-rejected` |
+| `45009997472` | 09:56:55Z | mutate | `auth=token-rejected (http=200)`, `baseline=token-rejected`, `mutation=token-rejected (http=200)` |
+
+Both jobs therefore ended `token-cannot-authenticate (token-rejected)` — the
+verdict the probe reaches when the read cell fails, which is also why the
+mutation answer needed its own line in the log rather than the summary verdict
+(fix filed as a follow-up: the verdict should say *scope*, not *authenticate*,
+when the cell that failed is the mutation). The same three documents, run with
+the owner's **user session** over `PROBE_TRANSPORT=cli`, printed `auth=ok` and
+`baseline=ok row=005ab765 status=SUCCESS` — so the query shapes are live-correct
+and the difference is the credential. That contrast is what
+`ci-railway-token-class.yml` is built to interpret: class, or this one secret's
+value. See the two explanations under "The 2×2".
 Reading of the wall:
 [railway-f2-staging-upload](./railway-f2-staging-upload.md) is the fault ledger;
 [admin-console-production-errors-2026-11-20.md](./admin-console-production-errors-2026-11-20.md)
@@ -71,30 +84,52 @@ So the cell is fillable exactly one way: a runner that already holds the secret.
 
 | | user session (owner CLI) | project token (CI secret) |
 |---|---|---|
-| **reads** (`project`, `serviceInstance`) | works — proven 2026-11-22, and again in the probe's own `cli` transport run | **refused** — run `45009371410`: `Not Authorized` at HTTP 200 on `project` and on `serviceInstance`. *The claim this row used to make — "works, proven by every `railway up` leg that gets as far as stamping `BUILD_COMMIT`" — was wrong: `railway-deploy.sh` stamps it with `printf '%s' "$SHA" > "$BUILD_DIR/BUILD_COMMIT"`, a local file write that precedes any network call, so it says nothing about whether the token can read the API.* |
+| **reads** (`project`, `serviceInstance`) | works — proven 2026-11-22, and again in the probe's own `cli` transport run | **refused** — 2/2 runs: `Not Authorized` at HTTP 200 on `project` and on `serviceInstance`. *The claim this row used to make — "works, proven by every `railway up` leg that gets as far as stamping `BUILD_COMMIT`" — was wrong: `railway-deploy.sh` stamps it with `printf '%s' "$SHA" > "$BUILD_DIR/BUILD_COMMIT"`, a local file write that precedes any network call, so it says nothing about whether the token can read the API.* |
 | **`railway up` upload** | works — every manual deploy in the ledger | **fails with F2** — 9 retries per leg, three legs per train, reproduced on runs `44922280434`, `44927881957` and `45005535349` |
-| **`serviceInstanceDeploy(latestCommit:true)`** | works — staging promoted to `f9309845c` on 2026-11-22 with zero uploads | **refused** — run `45009997472`: `PROBE_CELL mutation=token-rejected` |
+| **`serviceInstanceDeploy(latestCommit:true)`** | works — staging promoted to `f9309845c` on 2026-11-22 with zero uploads | **refused on the one attempt** — run `45009997472`: `PROBE_CELL mutation=token-rejected` |
 
-The branch this table was written to test is closed: the token cannot drive the
-mutation, so `release.yml`'s staging legs cannot be swapped onto it. Two
-possibilities remain and they need different fixes —
+The swap this table was built to test is off the table: with this credential the
+mutation was refused, and so were the reads, in both runs. What is *not* settled
+is why. Two explanations are live and they need different fixes:
 
-- **Scope by design.** Railway's project tokens may simply not be allowed to
-  call the deployment graph, in which case `token-rejected` is the documented
-  answer and the ask goes to Railway.
-- **A broken value.** If *no* project token — staging, development or
-  production — can read GraphQL, then CI has never been able to make a GraphQL
-  call and F2 lives in the same blind spot: `railway up` obtains its upload
-  destination over HTTP, so a token that cannot authenticate at the edge would
-  fail there too. This is not academic — development's legs upload with
-  `RAILWAY_TOKEN_DEVELOPMENT` (3/3 green on train `45005535349`), so *some*
-  project token clearly does reach Railway.
+- **(A) CLASS.** Project tokens cannot reach the deployment graph at all. Then
+  the mutation lane can never replace `railway up` in CI and the credential
+  class has to change (a user-scoped token in CI, or a scope grant from Railway).
+- **(B) VALUE.** The class is fine and `RAILWAY_TOKEN_STAGING` is stale,
+  rotated-out or wrong. It is the only explanation that reaches F2 directly,
+  because the request that obtains the upload destination carries that same
+  credential. Weakened, but not refuted, by development's legs uploading 3/3
+  green on train `45005535349` with `RAILWAY_TOKEN_DEVELOPMENT`: that proves the
+  class works *for the upload lane*, which is a different request.
 
-`ci-railway-token-class.yml` separates them: one read-only probe per credential
-(development, staging, production, plus an anonymous control) in one dispatch,
-no mutation cell anywhere in the file. `dev ok / staging refused` = a value
-problem with the staging secret; `all three refused` = the class, and the
-explanation of F2 moves to the edge.
+A third shape is worth detecting even though nothing observed so far shows it:
+**(C) INTERMITTENT** — the same bearer accepted on some attempts and refused on
+others. That is the signature F2 has, so if it ever appears it is the finding,
+and it is also the reason the comparison samples each credential more than once
+rather than trusting one reading.
+
+`ci-railway-token-class.yml` decides between them. It samples each credential —
+anonymous control, development, staging, production — **three times** and
+reports `ok/N` rates: one sample cannot tell a stable refusal from a transient
+edge refusal, and `Not Authorized` is Railway's wording for both a bad value and
+a missing scope. `PROBE_MODE` is a literal `read-only` in the YAML and the file
+has no inputs, so no dispatch can reach the cell that deploys.
+
+```bash
+gh workflow run ci-railway-token-class.yml --ref main
+gh run view <id>   # the summary table and one verdict line
+```
+
+Reading its verdict — the order is the design, so read the line, not the table:
+
+| verdict | meaning | do |
+|---|---|---|
+| `CONTROL BROKEN` | the no-credential row authenticated, so a token and no token were indistinguishable | fix the classifier; nothing else here is evidence |
+| `INTERMITTENT` | at least one project token is accepted sometimes and refused other times | **rotate nothing.** Ask Railway what an HTTP-200 `Not Authorized` means for a project token and why identical calls minutes apart differ |
+| `VALUE, not class` | development 3/3 ok, staging 0/3 | rotate `RAILWAY_TOKEN_STAGING` (owner action), re-dispatch this probe |
+| `CLASS` | all three tokens 0/3 | no CI script change can help; the credential class has to change |
+| `neither` | dev and staging both 3/3 ok | contradicts the runs above — read the raw bodies |
+| `undecided` | a credential wrote no row | a step crashed; the comparison did not run |
 
 ## How to run it
 
@@ -170,7 +205,7 @@ only way to exercise it is a real upload — which is the thing that fails.
 ## Verification
 
 `scripts/ci/test-f2-token-probe.sh` runs in the `ci.yml` hygiene job beside the
-deploy-retry test: **55/55 green** locally on 2026-11-22, no network to Railway.
+deploy-retry test: **86/86 green** locally on 2026-11-22, no network to Railway.
 It covers the classifier with recorded payloads (including the measured
 HTTP-200 `Not Authorized` body — Railway does not use the status code for auth,
 so any logic keyed on HTTP alone reads a token failure as success), plus
@@ -183,9 +218,19 @@ secret, `PROBE_TRANSPORT: curl`, no environment input, the one hardcoded
 environment id is staging's, the summary step cats the file the script writes,
 and every form input lands on a variable the script actually reads. It uses
 regex rather than PyYAML because the hygiene job's `python3` has no third-party
-packages installed.
+packages.
 
-Three guards were mutation-proved, which is the only reason they are worth
+The token-class comparison is covered the same two ways, and this is why its
+rules live in `scripts/ci/f2-token-class-verdict.py` instead of a YAML heredoc: a
+heredoc only ever executes on a runner holding three live credentials, so every
+branch would ship unexecuted. Eight recorded sample sets drive the branches —
+dev-3/3-plus-staging-0/3, all-refused, the mixed shape (recorded, not observed:
+both #1143 runs refused every cell), an authenticating control,
+both-tokens-clean, and three missing-credential shapes — and each asserts not
+just its own verdict but that the wrong one is absent, which is the only way to
+test an ordering.
+
+Five more guards were mutation-proved, which is the only reason they are worth
 citing — a green suite proves nothing until the defect it names is installed on
 purpose and made to go red:
 
@@ -194,9 +239,14 @@ purpose and made to go red:
 | `mode == "read-only"` checked before `auth` | 3 failures — a faulting read-only run reports `read-only-ran` |
 | HTTP code returned through a variable instead of a file | 11 failures — every cell classified as a transport error |
 | workflow env key renamed back to `SERVICE_NAME` | 1 failure — the `service` input would silently probe `backend` |
+| `CONTROL BROKEN` demoted below `INTERMITTENT` | 1 failure — and every text assertion stayed green, which is what makes the behavioural case the load-bearing one |
+| a missing credential counted as refused | 2 failures — a crashed step reported `CLASS` |
+| the decider keying each attempt as its own credential | 8 failures — the table filled with `staging-1`/`staging-2` rows and no verdict matched |
+| the attempt index dropped from the sample filenames | 1 failure — rates could never be anything but N/N |
+| one credential sampled once | 1 failure — 3/4 steps loop |
 
 Restored with `cp`, re-asserted sha256-identical in every case, then re-run to
-55/55.
+86/86.
 
 Three live defects that would have produced a confident wrong answer in CI:
 

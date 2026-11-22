@@ -37,7 +37,10 @@ expect() { # <label> <expected> <actual> <cell> <payload...>
 
 want() { # <label> <regex> <file> <present|absent>
   checks=$((checks + 1))
-  if grep -qE "$2" "$3"; then
+  # `--` is load-bearing: patterns that start with a dash ('--glob', '--out')
+  # were otherwise read as grep options, which makes the check red for a reason
+  # that has nothing to do with the file.
+  if grep -qE -- "$2" "$3"; then
     [[ "$4" == present ]] && echo "ok   $1" || { echo "FAIL $1"; fails=$((fails + 1)); }
   else
     [[ "$4" == absent ]] && echo "ok   $1" || { echo "FAIL $1"; fails=$((fails + 1)); }
@@ -191,7 +194,7 @@ run_stub() { # <scenario> <mode>
 }
 contains() { # <label> <needle>
   checks=$((checks + 1))
-  if grep -qF "$2" /tmp/f2-probe-stub-run.out; then echo "ok   $1";
+  if grep -qF -- "$2" /tmp/f2-probe-stub-run.out; then echo "ok   $1";
   else echo "FAIL $1 — got: $(cat /tmp/f2-probe-stub-run.out | tr '\n' ' ' | head -c 400)"; fails=$((fails + 1)); fi
 }
 
@@ -272,7 +275,7 @@ fi
 #     produced one — a silent loss of the only deliverable.
 verdict_default=$(sed -nE 's/^VERDICT_FILE="\$\{PROBE_VERDICT_FILE:-([^}]+)\}"$/\1/p' "$probe")
 checks=$((checks + 1))
-if [[ -n "$verdict_default" ]] && grep -qF "$verdict_default" "$wf"; then
+if [[ -n "$verdict_default" ]] && grep -qF -- "$verdict_default" "$wf"; then
   echo "ok   the summary step reads the file the script writes ($verdict_default)"
 else
   echo "FAIL verdict path drift: script writes '${verdict_default:-<unparsed>}', workflow cats another file"; fails=$((fails + 1))
@@ -288,34 +291,38 @@ else
   echo "FAIL CI does not pin PROBE_TRANSPORT=curl"; fails=$((fails + 1))
 fi
 
-# ---------------------------------------------------------------- token-class
-# .github/workflows/ci-railway-token-class.yml answers "is the staging credential
-# broken, or is the whole project-token class unable to reach the deployment
-# graph?" — and it does it while holding three live tokens, so its safety
-# invariants are the thing under test, not decoration.
+# ------------------------------------------------------------- token-class
+# Two files answer one question: ci-railway-token-class.yml SAMPLES the three
+# project tokens plus an anonymous control, read-only, and
+# scripts/ci/f2-token-class-verdict.py DECIDES what the samples mean. The split
+# is the point: the rules have to be drivable from recorded sample sets, because
+# inside a runner they are only ever executed while holding live credentials.
 tc=.github/workflows/ci-railway-token-class.yml
-checks=$((checks + 1))
-if [[ -f "$tc" ]]; then echo "ok   the token-class comparison exists"
-else echo "FAIL $tc missing"; fails=$((fails + 1)); fi
+tcs=scripts/ci/f2-token-class-verdict.py
+for f in "$tc" "$tcs"; do
+  checks=$((checks + 1))
+  if [[ -f "$f" ]]; then echo "ok   $f exists"; else echo "FAIL $f missing"; fails=$((fails + 1)); fi
+done
+
+# --- safety invariants of the sampler: nothing here may reach the deployment graph
 want "token-class: dispatch-only, nothing can reach it by pushing" \
   '^[[:space:]]*(push|schedule|pull_request|release):' "$tc" absent
-# The load-bearing one: PROBE_MODE is the only thing that keeps this file out of
-# the mutation cell, so it must be a literal in the YAML, not an input mapping.
+want "token-class: entry point is workflow_dispatch" 'workflow_dispatch' "$tc" present
+want "token-class: repository guard present" 'if: github.repository ==' "$tc" present
+# The load-bearing one: PROBE_MODE is the only thing keeping the probe out of its
+# write cell, so it must be a literal in the YAML and never an input mapping.
 want "token-class: mode is the literal read-only, not an input" \
   '^[[:space:]]+PROBE_MODE: read-only[[:space:]]*$' "$tc" present
-want "token-class: the word 'mutate' appears nowhere in the file" 'mutate' "$tc" absent
+want "token-class: the word 'mutate' appears nowhere in the sampler" 'mutate' "$tc" absent
 want "token-class: no inputs block to steer it" '^[[:space:]]+inputs:' "$tc" absent
-want "token-class: repository guard present" 'if: github.repository ==' "$tc" present
-# All three credentials, because a comparison of one token against nothing cannot
-# separate class from value. Names must match what the repository actually has.
 for s in RAILWAY_TOKEN_DEVELOPMENT RAILWAY_TOKEN_STAGING RAILWAY_TOKEN_PRODUCTION; do
   want "token-class: uses $s" "$s" "$tc" present
 done
 # A refused read is the ANSWER here. A step that stops on the first non-zero exit
-# leaves the later credentials untested and the summary table half-filled — which
-# reads exactly like "the class is fine, staging alone broke".
-# Same-line, not two counts: the file's own header documents this rule, so a
-# `|| true` counted anywhere would pass on the prose that explains it.
+# leaves the later credentials untested and the table half-filled — which reads
+# exactly like "the class is fine, staging alone broke". Counted same-line
+# against the probe call rather than as two totals, because the sampler's header
+# documents this rule and a bare count would pass on the prose that explains it.
 tc_tolerant=$(grep -Ec 'f2-token-probe\.sh.*\|\| true' "$tc")
 checks=$((checks + 1))
 if [[ "$tc_tolerant" == 4 ]]; then
@@ -323,21 +330,161 @@ if [[ "$tc_tolerant" == 4 ]]; then
 else
   echo "FAIL token-class: only $tc_tolerant/4 probe calls tolerate a non-zero exit"; fails=$((fails + 1))
 fi
-# The control row is what makes "Not Authorized" mean something: Railway answers
-# HTTP 200 for auth failures, so a token and no-token look identical unless both
-# are run against the same query.
-want "token-class: an empty-credential control exists" \
-  "RAILWAY_TOKEN: ''" "$tc" present
-want "token-class: the summary globs the files the steps tee" \
-  'glob\.glob\("/tmp/class-' "$tc" present
-want "token-class: tee writes the per-label file the summary reads" \
-  'tee "/tmp/class-' "$tc" present
-# Reading rules that the workflow header claims — assert the code says them, so
-# the doc cannot drift from the classifier it describes.
-want "token-class: dev-ok/staging-refused is reported as VALUE" \
-  'VALUE, not class' "$tc" present
-want "token-class: all-refused is reported as CLASS" \
-  'Verdict: CLASS' "$tc" present
+# The empty-credential control is what makes "Not Authorized" mean something:
+# Railway answers HTTP 200 for auth failures, so a bad token and no token look
+# identical unless both run against the same document.
+want "token-class: an empty-credential control exists" "RAILWAY_TOKEN: ''" "$tc" present
+# One read per credential cannot carry a three-way answer. Both #1143 runs
+# refused the staging token on every cell (read-only 09:49:38Z; write cell
+# 09:57:10Z — `auth=token-rejected`, `mutation=token-rejected`), so agreement is
+# the expected result, and agreement is precisely what one sample cannot
+# demonstrate: a stable refusal looks identical to a transient edge or
+# rate-limit refusal. So every credential is sampled PROBE_CLASS_REPEATS times.
+want "token-class: the repeat count is declared" \
+  '^[[:space:]]+PROBE_CLASS_REPEATS: 3[[:space:]]*$' "$tc" present
+reps=$(grep -c 'for i in $(seq 1 "${PROBE_CLASS_REPEATS' "$tc")
+checks=$((checks + 1))
+if [[ "$reps" == 4 ]]; then
+  echo "ok   token-class: all four credentials are sampled, not read once"
+else
+  echo "FAIL token-class: only $reps/4 credential steps loop"; fails=$((fails + 1))
+fi
+# Each attempt must land in its own file. Without the attempt index the tee
+# overwrote itself, so a rate could never be anything but N/N and the mixed case
+# this sampler exists to catch was invisible by construction.
+want "token-class: each attempt writes its own file" \
+  'class-\$\{CLASS_LABEL\}-\$\{i\}\.txt' "$tc" present
+
+# --- the decider must be a script the sampler calls, not a heredoc
+want "token-class: the sampler calls the decider" \
+  'python3 scripts/ci/f2-token-class-verdict\.py' "$tc" present
+want "token-class: no verdict rules embedded in the YAML" 'python3 - <<' "$tc" absent
+want "token-class: the sampler passes the files it writes" \
+  '--glob /tmp/class-\*\.txt' "$tc" present
+want "token-class: the decider appends to the job summary" \
+  '--out "\$GITHUB_STEP_SUMMARY"' "$tc" present
+# The decider is pure: it reads files and renders text. If it grows a network
+# call it runs with a live token in the environment of the step whose only job is
+# to interpret.
+want "token-class: the decider opens no connection" \
+  'urllib|requests|httpx|socket|subprocess' "$tcs" absent
+
+# --- behavioural cases: recorded sample sets in, rendered verdicts out
+classd=$(mktemp -d)
+mkrows() { # <label> <auth> [<auth> …] — one file per attempt; baseline always ok
+  local label="$1" n=0 a
+  shift
+  for a in "$@"; do
+    n=$((n + 1))
+    { echo "CLASS_CELL label=${label} attempt=${n}"
+      echo "PROBE_CELL auth=${a} (http=200)"
+      echo "PROBE_CELL baseline=ok (http=200)"
+    } > "${classd}/class-${label}-${n}.txt"
+  done
+}
+run_class() { python3 "$tcs" --glob "${classd}/class-*.txt" 2>&1; }
+reset_class() { rm -f "${classd}"/class-*.txt; }
+expect_verdict() { # <label> <expected substring> <forbidden substring>
+  checks=$((checks + 1))
+  local label="$1"
+  local out; out=$(run_class)
+  local n; n=$(printf '%s\n' "$out" | grep -c '^\*\*Verdict:')
+  if [[ "$n" != 1 ]]; then
+    echo "FAIL $label: $n verdict lines, expected exactly 1"; fails=$((fails + 1))
+    printf '%s\n' "$out" | sed 's/^/         /' | head -8
+    return
+  fi
+  if ! printf '%s\n' "$out" | grep -qF -- "$2"; then
+    echo "FAIL $label: expected '$2'"; fails=$((fails + 1))
+    printf '%s\n' "$out" | grep '^\*\*Verdict:' | sed 's/^/         /'
+    return
+  fi
+  if [[ -n "$3" ]] && printf '%s\n' "$out" | grep -qF -- "$3"; then
+    echo "FAIL $label: must not also say '$3'"; fails=$((fails + 1)); return
+  fi
+  echo "ok   $label"
+}
+expect_cell() { # <label> <credential> <expected substring in that row>
+  checks=$((checks + 1))
+  local label="$1"
+  local line; line=$(run_class | grep "^| \`$2\`" | head -1)
+  if printf '%s\n' "$line" | grep -qF -- "$3"; then
+    echo "ok   $label"
+  else
+    echo "FAIL $label: the row reads '${line:-<absent>}'"; fails=$((fails + 1))
+  fi
+}
+
+# (1) development authenticates 3/3 while staging is refused 3/3: one secret is
+#     the variable, not the class.
+reset_class
+mkrows anonymous token-rejected token-rejected token-rejected
+mkrows development ok ok ok
+mkrows staging token-rejected token-rejected token-rejected
+mkrows production token-rejected token-rejected token-rejected
+expect_cell "cell: a 0/3 credential shows three attempts and the rate" staging \
+  '**0/3 all-refused**'
+expect_verdict "verdict: dev 3/3 ok + staging 0/3 = VALUE" "Verdict: VALUE, not class." INTERMITTENT
+
+# (2) every token refused: the class cannot reach the graph whatever the values.
+reset_class
+mkrows anonymous token-rejected token-rejected token-rejected
+mkrows development token-rejected token-rejected token-rejected
+mkrows staging token-rejected token-rejected token-rejected
+mkrows production token-rejected token-rejected token-rejected
+expect_verdict "verdict: all three refused = CLASS" "Verdict: CLASS." "Verdict: VALUE"
+
+# (3) the mixed shape: refused, then accepted. NOT observed — both #1143 runs
+#     refused every cell — but this is the branch that must exist before a
+#     single inconsistent reading can be mistaken for a reason to rotate a
+#     secret, so it is exercised here with recorded rows.
+reset_class
+mkrows anonymous token-rejected token-rejected token-rejected
+mkrows development ok ok ok
+mkrows staging token-rejected ok ok
+mkrows production ok ok ok
+expect_cell "cell: a mixed credential keeps all three attempts" staging '**2/3 mixed**'
+expect_verdict "verdict: mixed attempts = INTERMITTENT" "Verdict: INTERMITTENT" "Verdict: VALUE"
+checks=$((checks + 1))
+if run_class | grep -qF 'Do NOT rotate the secret'; then
+  echo "ok   verdict: INTERMITTENT forbids the destructive guess"
+else
+  echo "FAIL verdict: INTERMITTENT does not forbid rotating the secret"; fails=$((fails + 1))
+fi
+
+# (4) an authenticating control means a token and no token looked identical, so
+#     nothing else in the table is evidence. This is the ordering check: CONTROL
+#     outranks INTERMITTENT, which outranks VALUE and CLASS.
+reset_class
+mkrows anonymous ok ok ok
+mkrows development ok ok ok
+mkrows staging token-rejected ok token-rejected
+mkrows production token-rejected token-rejected token-rejected
+expect_verdict "verdict: an authenticating control outranks everything" \
+  "Verdict: CONTROL BROKEN." "Verdict: INTERMITTENT"
+
+# (5) both tokens clean contradicts the read-only run — say that, do not pick a
+#     side of the argument.
+reset_class
+mkrows anonymous token-rejected token-rejected token-rejected
+mkrows development ok ok ok
+mkrows staging ok ok ok
+mkrows production ok ok ok
+expect_verdict "verdict: dev and staging both clean = neither" "Verdict: neither." "Verdict: CLASS"
+
+# (6) a credential that never wrote a row is not evidence of refusal. Without
+#     this the CLASS branch reads a crashed step as an answer.
+reset_class
+mkrows anonymous token-rejected token-rejected token-rejected
+mkrows development token-rejected token-rejected token-rejected
+mkrows production token-rejected token-rejected token-rejected
+expect_verdict "verdict: a missing credential is undecided, not CLASS" \
+  "Verdict: undecided" "Verdict: CLASS"
+reset_class
+mkrows anonymous token-rejected token-rejected token-rejected
+expect_verdict "verdict: the control alone answers nothing" "Verdict: undecided" "Verdict: CLASS"
+reset_class
+rm -rf "$classd"
 
 echo "-- $((checks - fails))/$checks checks pass"
 if [[ "$fails" -gt 0 ]]; then echo "F2 PROBE TESTS FAILED: $fails"; exit 1; fi
