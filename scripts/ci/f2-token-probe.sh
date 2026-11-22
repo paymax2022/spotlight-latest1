@@ -194,18 +194,37 @@ probe_service() {
 
     if [[ "$mut" == "accepted" ]]; then
       echo "--- cell 4: did a ROW appear? \`true\` alone is not proof"
-      local waited=0 new_id new_st is_new
-      while [[ "$waited" -lt "$POLL_BUDGET_S" ]]; do
-        sleep "$POLL_INTERVAL_S"; waited=$((waited + POLL_INTERVAL_S))
-        body=$(gql "$DOC_ROW" "{\"s\":\"$service_id\",\"e\":\"$STAGING_ENV_ID\"}")
-        new_id=$(row_field "$body" id); new_st=$(row_field "$body" status)
-        is_new=false; [[ "$new_id" != "$base_id" ]] && is_new=true
-        rows="[{\"id\":\"${new_id:0:8}\",\"status\":\"$new_st\",\"isNew\":$is_new}]"
-        echo "  [+${waited}s] row=${new_id:0:8} status=$new_st isNew=$is_new"
-        if $is_new && [[ "$new_st" == SUCCESS || "$new_st" == FAILED ]]; then break; fi
-      done
-      build=$(python3 "$HERE/f2-probe-verdict.py" readback "$rows")
-      echo "PROBE_CELL readback=$build after ${waited}s"
+      local waited=0 new_id new_st is_new read_st=ok
+      if [[ -z "$base_id" ]]; then
+        # Cell 2 was refused, so there is no baseline id to diff against and no
+        # number of polls will produce one. Say the cell is blind instead of
+        # letting an empty base make every row look new.
+        read_st=skipped
+        build=no-baseline-to-diff
+      else
+        while [[ "$waited" -lt "$POLL_BUDGET_S" ]]; do
+          sleep "$POLL_INTERVAL_S"; waited=$((waited + POLL_INTERVAL_S))
+          body=$(gql "$DOC_ROW" "{\"s\":\"$service_id\",\"e\":\"$STAGING_ENV_ID\"}")
+          new_id=$(row_field "$body" id); new_st=$(row_field "$body" status)
+          read_st=$(python3 "$HERE/f2-probe-verdict.py" read "$body" "$(http_code)")
+          # "new" is only a fact when the readback actually named a row: an
+          # empty new_id against a real base_id is a difference, and the code
+          # before this guard read that as a new SUCCESS row — a refused
+          # readback could therefore end the run with the green verdict.
+          is_new=false
+          [[ -n "$new_id" && "$new_id" != "$base_id" ]] && is_new=true
+          rows="[{\"id\":\"${new_id:0:8}\",\"status\":\"$new_st\",\"isNew\":$is_new}]"
+          echo "  [+${waited}s] row=${new_id:0:8} status=$new_st isNew=$is_new read=$read_st"
+          [[ "$read_st" == "ok" ]] || break
+          if $is_new && [[ "$new_st" == SUCCESS || "$new_st" == FAILED ]]; then break; fi
+        done
+        if [[ "$read_st" == "ok" ]]; then
+          build=$(python3 "$HERE/f2-probe-verdict.py" readback "$rows")
+        else
+          build=readback-unreadable
+        fi
+      fi
+      echo "PROBE_CELL readback=$build after ${waited}s (read=$read_st)"
     fi
   fi
 
