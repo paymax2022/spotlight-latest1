@@ -14,9 +14,10 @@ name: Railway token class probe (read-only)
 #       token in CI, or a scope grant from Railway).
 #   (B) VALUE.  The project-token CLASS is fine and only the STAGING secret is
 #       broken — stale, rotated-out, or mistyped. Then the fix is one paste in
-#       Settings → Secrets, and it plausibly explains F2 itself: the leg that
-#       obtains the upload destination over an unauthenticated credential is
-#       exactly the request that has never returned a decodable body.
+#       Settings → Secrets, and it plausibly explains F2 itself: the request
+#       that obtains the upload destination carries this same project token, and
+#       it is the only request in the leg that has never returned a decodable
+#       body.
 #
 # The three secrets are the discriminator, and they only exist inside a runner.
 # Development's legs upload successfully with `RAILWAY_TOKEN_DEVELOPMENT` (3/3
