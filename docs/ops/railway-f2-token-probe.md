@@ -1,8 +1,12 @@
 # F2 project-token probe — the one cell that decides the release wall
 
-Status: built and tested (PR #1143); the mutate cell is **still unrun**, because
-`workflow_dispatch` only registers a workflow that exists on the default branch —
-so this file has to land before the probe can fire. Reading of the wall:
+Status: **the cell is filled.** Landed as #1143 (`b76130674`), dispatched from
+`main` on 2026-11-22, and the project token CI holds was **refused the
+mutation**: run `45009997472` printed `PROBE_CELL mutation=token-rejected`, after
+run `45009371410` had already shown it refused both reads. That single answer has
+two explanations and they need different fixes, which is what
+`ci-railway-token-class.yml` settles next — see "The follow-up question" below.
+Reading of the wall:
 [railway-f2-staging-upload](./railway-f2-staging-upload.md) is the fault ledger;
 [admin-console-production-errors-2026-11-20.md](./admin-console-production-errors-2026-11-20.md)
 carries the owner-run recipes.
@@ -67,17 +71,30 @@ So the cell is fillable exactly one way: a runner that already holds the secret.
 
 | | user session (owner CLI) | project token (CI secret) |
 |---|---|---|
-| **reads** (`project`, `serviceInstance`) | works — proven 2026-11-22 | works — proven by every `railway up` leg that gets as far as stamping `BUILD_COMMIT` |
-| **`railway up` upload** | works — every manual deploy in the ledger | **fails with F2** — 9 retries per leg, three legs per train, reproduced on runs `44922280434` and `44927881957` |
-| **`serviceInstanceDeploy(latestCommit:true)`** | works — staging promoted to `f9309845c` on 2026-11-22 with zero uploads | **THIS PROBE** |
+| **reads** (`project`, `serviceInstance`) | works — proven 2026-11-22, and again in the probe's own `cli` transport run | **refused** — run `45009371410`: `Not Authorized` at HTTP 200 on `project` and on `serviceInstance`. *The claim this row used to make — "works, proven by every `railway up` leg that gets as far as stamping `BUILD_COMMIT`" — was wrong: `railway-deploy.sh` stamps it with `printf '%s' "$SHA" > "$BUILD_DIR/BUILD_COMMIT"`, a local file write that precedes any network call, so it says nothing about whether the token can read the API.* |
+| **`railway up` upload** | works — every manual deploy in the ledger | **fails with F2** — 9 retries per leg, three legs per train, reproduced on runs `44922280434`, `44927881957` and `45005535349` |
+| **`serviceInstanceDeploy(latestCommit:true)`** | works — staging promoted to `f9309845c` on 2026-11-22 with zero uploads | **refused** — run `45009997472`: `PROBE_CELL mutation=token-rejected` |
 
-One cell. If it returns `project-token-can-deploy`, the fix to `release.yml` is
-to swap the three staging legs from `railway up` onto this mutation — a script
-call per environment, staging-only at first, and the wall moves without touching
-the upload path at all. If it returns `token-scope-blocks-mutation`, the token
-is the variable and the ask goes to Railway. If it returns
-`f2-reproduces-on-the-mutation-path`, then F2 is the transport or the edge, not
-the upload endpoint, and no CI-side script change will fix it.
+The branch this table was written to test is closed: the token cannot drive the
+mutation, so `release.yml`'s staging legs cannot be swapped onto it. Two
+possibilities remain and they need different fixes —
+
+- **Scope by design.** Railway's project tokens may simply not be allowed to
+  call the deployment graph, in which case `token-rejected` is the documented
+  answer and the ask goes to Railway.
+- **A broken value.** If *no* project token — staging, development or
+  production — can read GraphQL, then CI has never been able to make a GraphQL
+  call and F2 lives in the same blind spot: `railway up` obtains its upload
+  destination over HTTP, so a token that cannot authenticate at the edge would
+  fail there too. This is not academic — development's legs upload with
+  `RAILWAY_TOKEN_DEVELOPMENT` (3/3 green on train `45005535349`), so *some*
+  project token clearly does reach Railway.
+
+`ci-railway-token-class.yml` separates them: one read-only probe per credential
+(development, staging, production, plus an anonymous control) in one dispatch,
+no mutation cell anywhere in the file. `dev ok / staging refused` = a value
+problem with the staging secret; `all three refused` = the class, and the
+explanation of F2 moves to the edge.
 
 ## How to run it
 

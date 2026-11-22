@@ -1,0 +1,155 @@
+name: Railway token class probe (read-only)
+
+# WHY THIS EXISTS
+#
+# The F2 probe (#1143) filled the mutation cell on 2026-11-22 and the answer was
+# `mutation=token-rejected`: the credential in `RAILWAY_TOKEN_STAGING` is refused
+# `serviceInstanceDeploy`, and also refused the two plain reads (`project`,
+# `serviceInstance`). That single result has TWO explanations, and they lead to
+# completely different fixes:
+#
+#   (A) CLASS.  Project tokens cannot use the deployment GraphQL API at all — any
+#       of them, in any environment. Then the mutation lane can never replace
+#       `railway up` in CI, and the credential class has to change (a user-scoped
+#       token in CI, or a scope grant from Railway).
+#   (B) VALUE.  The project-token CLASS is fine and only the STAGING secret is
+#       broken — stale, rotated-out, or mistyped. Then the fix is one paste in
+#       Settings → Secrets, and it plausibly explains F2 itself: the leg that
+#       obtains the upload destination over an unauthenticated credential is
+#       exactly the request that has never returned a decodable body.
+#
+# The three secrets are the discriminator, and they only exist inside a runner.
+# Development's legs upload successfully with `RAILWAY_TOKEN_DEVELOPMENT` (3/3
+# green at 09:39Z on train 45005535349), so *some* project token drives the upload
+# lane; whether one can drive GraphQL reads is what this file answers.
+#
+# Reading the answer (the job summary prints this table):
+#   dev ok + staging refused   → (B) VALUE: rotate the staging secret.
+#   all three refused          → (A) CLASS: no CI script change can help.
+#   dev ok + staging ok        → neither: re-read the raw bodies, something new.
+# The anonymous control is there because Railway answers HTTP 200 for auth
+# failures: without a no-credential row, "Not Authorized" from a token is
+# indistinguishable from "Not Authorized" from nothing.
+#
+# SAFETY: there is no `inputs:` block at all — nothing a dispatch can type turns
+# this into a deploy — and `PROBE_MODE` is pinned to the literal `read-only`, so
+# scripts/ci/f2-token-probe.sh never reaches its mutation cell. Every credential
+# step ends in `|| true` on purpose: a refused read is a RESULT here, not a
+# failure, and the job that stops at the first refusal answers nothing.
+#
+# How to run:
+#   gh workflow run ci-railway-token-class.yml --ref main
+#   gh run view <id> --log | grep -E 'CLASS_CELL|PROBE_CELL'
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-token-class
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    # Same guard as the F2 probe: this reaches the network with three live
+    # credentials, so it must not run in a fork.
+    if: github.repository == 'paymax2022/spotlight-latest1'
+    runs-on: ubuntu-latest
+    env:
+      PROBE_MODE: read-only
+      PROBE_TRANSPORT: curl
+      # Cell 2's row query needs a service; backend is the smallest and this
+      # workflow only ever reads, so the choice cannot deploy anything.
+      PROBE_SERVICE_NAME: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: control - no credential at all
+        env:
+          RAILWAY_TOKEN: ''
+          CLASS_LABEL: anonymous
+        run: |
+          echo "CLASS_CELL label=${CLASS_LABEL}"
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/class-${CLASS_LABEL}.txt" || true
+
+      - name: development project token
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+          CLASS_LABEL: development
+        run: |
+          echo "CLASS_CELL label=${CLASS_LABEL}"
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/class-${CLASS_LABEL}.txt" || true
+
+      - name: staging project token
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          CLASS_LABEL: staging
+        run: |
+          echo "CLASS_CELL label=${CLASS_LABEL}"
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/class-${CLASS_LABEL}.txt" || true
+
+      - name: production project token
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          CLASS_LABEL: production
+        run: |
+          echo "CLASS_CELL label=${CLASS_LABEL}"
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/class-${CLASS_LABEL}.txt" || true
+
+      - name: Verdict
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, os, re
+
+          cells = {}
+          for path in sorted(glob.glob("/tmp/class-*.txt")):
+              label = os.path.basename(path)[len("class-"):-len(".txt")]
+              txt = open(path, encoding="utf-8", errors="replace").read()
+              auth = re.findall(r"PROBE_CELL auth=(\S+)", txt)
+              base = re.findall(r"PROBE_CELL baseline=(\S+)", txt)
+              cells[label] = (auth[-1] if auth else "no-output", base[-1] if base else "no-output")
+
+          order = ["anonymous", "development", "staging", "production"]
+          rows = [(k, cells[k]) for k in order if k in cells]
+
+          out = ["**Read-only cells per credential** (`project` = does the class+value "
+                 "authenticate for GraphQL at all; `serviceInstance` = the staging "
+                 "environment row, so a read that passes the first and fails the second "
+                 "is environment scoping, not a broken token).", ""]
+          out.append("| credential | `project` read | `serviceInstance` read |")
+          out.append("|---|---|---|")
+          for label, (a, b) in rows:
+              out.append(f"| `{label}` | `{a}` | `{b}` |")
+
+          dev = cells.get("development", ("", ""))[0]
+          stg = cells.get("staging", ("", ""))[0]
+          prod = cells.get("production", ("", ""))[0]
+          out.append("")
+          if dev == "ok" and stg != "ok":
+              out.append("**Verdict: VALUE, not class.** A project token *can* drive "
+                         "GraphQL reads (`development` proved it) while the staging one "
+                         "cannot, so `RAILWAY_TOKEN_STAGING` is the variable: stale, "
+                         "rotated out, or mistyped. Rotate it and re-run the F2 probe — "
+                         "and this is the first explanation that also covers F2's own "
+                         "position, since the failing request is the one that obtains the "
+                         "upload destination with that credential.")
+          elif dev != "ok" and prod != "ok" and stg != "ok":
+              out.append("**Verdict: CLASS.** No project token reads the deployment graph, "
+                         "so `serviceInstanceDeploy` is unreachable from CI whatever the "
+                         "secret says. The mutation lane cannot replace `railway up` in "
+                         "this repo without a credential-class change (a user-scoped token "
+                         "in CI, or a scope grant from Railway).")
+          elif dev == "ok" and stg == "ok":
+              out.append("**Verdict: neither.** Both tokens authenticate for reads, which "
+                         "contradicts the 09:57Z staging run — read the raw bodies above "
+                         "before acting on anything.")
+          else:
+              out.append("**Verdict: undecided** — `development` did not read cleanly, so "
+                         "the class question is still open. Read the table.")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("\n".join(out) + "\n")
+          print("\n".join(out))
+          PY

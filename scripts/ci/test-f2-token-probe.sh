@@ -288,6 +288,57 @@ else
   echo "FAIL CI does not pin PROBE_TRANSPORT=curl"; fails=$((fails + 1))
 fi
 
+# ---------------------------------------------------------------- token-class
+# .github/workflows/ci-railway-token-class.yml answers "is the staging credential
+# broken, or is the whole project-token class unable to reach the deployment
+# graph?" — and it does it while holding three live tokens, so its safety
+# invariants are the thing under test, not decoration.
+tc=.github/workflows/ci-railway-token-class.yml
+checks=$((checks + 1))
+if [[ -f "$tc" ]]; then echo "ok   the token-class comparison exists"
+else echo "FAIL $tc missing"; fails=$((fails + 1)); fi
+want "token-class: dispatch-only, nothing can reach it by pushing" \
+  '^[[:space:]]*(push|schedule|pull_request|release):' "$tc" absent
+# The load-bearing one: PROBE_MODE is the only thing that keeps this file out of
+# the mutation cell, so it must be a literal in the YAML, not an input mapping.
+want "token-class: mode is the literal read-only, not an input" \
+  '^[[:space:]]+PROBE_MODE: read-only[[:space:]]*$' "$tc" present
+want "token-class: the word 'mutate' appears nowhere in the file" 'mutate' "$tc" absent
+want "token-class: no inputs block to steer it" '^[[:space:]]+inputs:' "$tc" absent
+want "token-class: repository guard present" 'if: github.repository ==' "$tc" present
+# All three credentials, because a comparison of one token against nothing cannot
+# separate class from value. Names must match what the repository actually has.
+for s in RAILWAY_TOKEN_DEVELOPMENT RAILWAY_TOKEN_STAGING RAILWAY_TOKEN_PRODUCTION; do
+  want "token-class: uses $s" "$s" "$tc" present
+done
+# A refused read is the ANSWER here. A step that stops on the first non-zero exit
+# leaves the later credentials untested and the summary table half-filled — which
+# reads exactly like "the class is fine, staging alone broke".
+# Same-line, not two counts: the file's own header documents this rule, so a
+# `|| true` counted anywhere would pass on the prose that explains it.
+tc_tolerant=$(grep -Ec 'f2-token-probe\.sh.*\|\| true' "$tc")
+checks=$((checks + 1))
+if [[ "$tc_tolerant" == 4 ]]; then
+  echo "ok   token-class: all four credentials run even when a read is refused"
+else
+  echo "FAIL token-class: only $tc_tolerant/4 probe calls tolerate a non-zero exit"; fails=$((fails + 1))
+fi
+# The control row is what makes "Not Authorized" mean something: Railway answers
+# HTTP 200 for auth failures, so a token and no-token look identical unless both
+# are run against the same query.
+want "token-class: an empty-credential control exists" \
+  "RAILWAY_TOKEN: ''" "$tc" present
+want "token-class: the summary globs the files the steps tee" \
+  'glob\.glob\("/tmp/class-' "$tc" present
+want "token-class: tee writes the per-label file the summary reads" \
+  'tee "/tmp/class-' "$tc" present
+# Reading rules that the workflow header claims — assert the code says them, so
+# the doc cannot drift from the classifier it describes.
+want "token-class: dev-ok/staging-refused is reported as VALUE" \
+  'VALUE, not class' "$tc" present
+want "token-class: all-refused is reported as CLASS" \
+  'Verdict: CLASS' "$tc" present
+
 echo "-- $((checks - fails))/$checks checks pass"
 if [[ "$fails" -gt 0 ]]; then echo "F2 PROBE TESTS FAILED: $fails"; exit 1; fi
 echo ok
