@@ -252,11 +252,16 @@ jobs:
       # the stub is on PATH.
       - name: Test the deploy upload retry
         run: bash scripts/ci/test-railway-deploy-retry.sh
+      # Staging frontends have a Railway rootDirectory, so their archive must keep
+      # the app folder at the archive root while avoiding a full-monorepo upload.
+      # The test also proves dirty working-tree bytes cannot leak into a release.
+      - name: Test the deploy archive shape
+        run: bash scripts/ci/test-railway-deploy-archive.sh
       # The same fault's probe. F2 kills every `deploy Staging` leg, and the one
       # lane that works — serviceInstanceDeploy(latestCommit:true) — has never
       # been tried with the token CI holds, which exists only inside a runner.
       # So its verdict function is driven here against recorded payloads and a
-      # local stub edge: 49 checks including the measured HTTP-200 "Not
+      # local stub edge: 52 checks including the measured HTTP-200 "Not
       # Authorized" body and a red control that must NOT read as deployable.
       # Sub-second, no network to Railway.
       - name: Test the F2 token probe

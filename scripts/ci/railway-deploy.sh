@@ -19,6 +19,9 @@
 #   UPLOAD_PATH      positional path for `railway up` ('' = none)
 #   ROOT_FLAG        '--path-as-root' or ''
 #   BUILD_DIR        when set, $SHA is written to $BUILD_DIR/BUILD_COMMIT first
+#   ARCHIVE_SUBDIR   optional committed directory to include under the archive root;
+#                    used by staging frontends to keep rootDirectory shape without
+#                    uploading unrelated monorepo bytes
 #   ATTEMPTS         poll attempts, 15s apart (default 40 = 10 minutes)
 #   RAILWAY_HTTP_TIMEOUT  set by the caller; the CLI default of 90s truncates the
 #                    110 MB frontend-web upload
@@ -40,6 +43,10 @@
 #     rootDirectory None -> UPLOAD_PATH=<folder>  ROOT_FLAG=--path-as-root
 #                           (archive root must BE the app folder; same as backend,
 #                           whose Dockerfile it has to find)
+#   For a rootDirectory-backed frontend, ARCHIVE_SUBDIR=<folder> creates a
+#   commit-derived archive containing only that folder, while retaining the
+#   repo-root shape Railway expects. The resulting archive still contains
+#   <folder>/..., so Railway can strip its configured rootDirectory.
 #   Getting this backwards fails in two different, now-observed ways:
 #     - repo root where the instance has no rootDirectory builds the MONOREPO. The
 #       upload reports SUCCESS and the app then 404s everything: development's
@@ -63,11 +70,41 @@ set -euo pipefail
 UPLOAD_PATH="${UPLOAD_PATH:-}"
 ROOT_FLAG="${ROOT_FLAG:-}"
 BUILD_DIR="${BUILD_DIR:-}"
+ARCHIVE_SUBDIR="${ARCHIVE_SUBDIR:-}"
 ATTEMPTS="${ATTEMPTS:-40}"
 
 # Never printed, never logged. Referenced only so a missing token fails here with
 # a clear name rather than deep inside the CLI.
 [ -n "$RAILWAY_TOKEN" ] || { echo "::error::RAILWAY_TOKEN is empty for $RAILWAY_ENV/$SERVICE"; exit 1; }
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ARCHIVE_TMP=""
+cleanup_archive() {
+  if [ -n "$ARCHIVE_TMP" ]; then
+    rm -rf "$ARCHIVE_TMP"
+  fi
+}
+trap cleanup_archive EXIT
+
+if [ -n "$ARCHIVE_SUBDIR" ]; then
+  case "$ARCHIVE_SUBDIR" in
+    /*|.|./*|../*|*/../*|*/./*)
+      echo "::error::ARCHIVE_SUBDIR must be a relative top-level directory: $ARCHIVE_SUBDIR" >&2
+      exit 1
+      ;;
+  esac
+  if ! git ls-tree -d --name-only "$SHA" -- "$ARCHIVE_SUBDIR" \
+      | grep -Fxq "$ARCHIVE_SUBDIR"; then
+    echo "::error::ARCHIVE_SUBDIR is not a directory in $SHA: $ARCHIVE_SUBDIR" >&2
+    exit 1
+  fi
+  ARCHIVE_TMP="$(mktemp -d)"
+  git archive --format=tar "$SHA" -- "$ARCHIVE_SUBDIR" | tar -xf - -C "$ARCHIVE_TMP"
+  if [ -n "$BUILD_DIR" ]; then
+    mkdir -p "$ARCHIVE_TMP/$BUILD_DIR"
+    printf '%s' "$SHA" > "$ARCHIVE_TMP/$BUILD_DIR/BUILD_COMMIT"
+  fi
+fi
 
 redact() {
   # Application logs can contain anything, and a raw dump into a job log is how a
@@ -141,7 +178,6 @@ fi
 # $UPLOAD_PATH and $ROOT_FLAG are UNQUOTED ON PURPOSE: an empty value must vanish
 # from the argument list, not arrive as an empty-string argument (which the CLI
 # reads as a path of ""). See THE UPLOAD RULE above.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-9}"
 export RETRY_BASE_DELAY_S="${RETRY_BASE_DELAY_S:-60}"
 # THE BUDGET RIDES OUT A WINDOW; IT MUST NOT ARGUE WITH AN ACCOUNT STATE.
@@ -167,14 +203,25 @@ export RETRY_BASE_DELAY_S="${RETRY_BASE_DELAY_S:-60}"
 # different fault from billing. Reading these two columns as one outage is what cost
 # two runs of triage on 2026-11-19; keeping them separate is the point.
 export RETRY_NON_RETRYABLE="${RETRY_NON_RETRYABLE:-trial has expired|please select a plan}"
-# shellcheck disable=SC2086
-bash "$SCRIPT_DIR/with-retry.sh" railway up $UPLOAD_PATH $ROOT_FLAG --no-gitignore \
-  --service "$SERVICE" \
-  --environment "$RAILWAY_ENV" \
-  --project "$RAILWAY_PROJECT" \
-  --detach \
-  --verbose \
-  --message "$SHA"
+upload() {
+  # shellcheck disable=SC2086
+  bash "$SCRIPT_DIR/with-retry.sh" railway up $UPLOAD_PATH $ROOT_FLAG --no-gitignore \
+    --service "$SERVICE" \
+    --environment "$RAILWAY_ENV" \
+    --project "$RAILWAY_PROJECT" \
+    --detach \
+    --verbose \
+    --message "$SHA"
+}
+
+if [ -n "$ARCHIVE_TMP" ]; then
+  (
+    cd "$ARCHIVE_TMP"
+    upload
+  )
+else
+  upload
+fi
 
 for attempt in $(seq 1 "$ATTEMPTS"); do
   # --limit 10 because the deployment may not be first in the list yet, and

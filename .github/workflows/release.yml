@@ -338,22 +338,25 @@ jobs:
             upload_path: backend
             root_flag: --path-as-root
             build_dir: backend
+            archive_subdir: ''
           # Frontends: NO positional path, NO --path-as-root — the only
           # environment where that is correct. staging's two frontend instances
           # carry `rootDirectory: frontend-web` / `frontend-admin` (measured
-          # 2026-11-16), which the services' own git-source builds need, so Railway
-          # strips that prefix and the archive must be the whole repo. Uploading an
-          # app folder here would make it look for `frontend-*/` inside an archive
-          # that already IS that folder. development and production have
-          # `rootDirectory: None` and take the opposite shape.
+          # 2026-11-16), so the archive must retain that top-level folder for
+          # Railway to strip it. ARCHIVE_SUBDIR keeps that exact shape while
+          # cutting the archive from the requested commit and omitting unrelated
+          # monorepo bytes. development and production have `rootDirectory: None`
+          # and take the opposite shape below.
           - service: frontend-web
             upload_path: ''
             root_flag: ''
             build_dir: ''
+            archive_subdir: frontend-web
           - service: frontend-admin
             upload_path: ''
             root_flag: ''
             build_dir: ''
+            archive_subdir: frontend-admin
     steps:
       - uses: actions/checkout@v4
         with:
@@ -372,6 +375,7 @@ jobs:
           UPLOAD_PATH: ${{ matrix.upload_path }}
           ROOT_FLAG: ${{ matrix.root_flag }}
           BUILD_DIR: ${{ matrix.build_dir }}
+          ARCHIVE_SUBDIR: ${{ matrix.archive_subdir }}
         run: bash scripts/ci/railway-deploy.sh
 
   smoke-staging:
