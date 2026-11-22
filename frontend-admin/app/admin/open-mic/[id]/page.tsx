@@ -47,6 +47,7 @@ import {
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 import { submissionWindowNotice, toDateTimeLocalInput } from '@/features/openmic/submission-window';
 import OpenMicSubmissionReviewPanel from '@/features/openmic/song-review-panel';
+import { beatDownloadCells, winnerPrizeCell } from './open-mic-cells';
 
 const TABS = [
   'Edit Contest', 'Applications', 'Submissions', 'Finalists', 'Winners', 'Payments',
@@ -791,7 +792,8 @@ export default function OpenMicContestAdminPage() {
           <Table
             columns={['Winner', 'Song', 'Votes', 'Prize']}
             rows={(rows as Awaited<ReturnType<typeof listOpenMicSubmissions>>).map((w) => [
-              w.stageName, w.songTitle, w.voteCount, contest?.prizes?.[0]?.title || 'Winner Perks',
+              w.stageName, w.songTitle, w.voteCount,
+              winnerPrizeCell({ awardTitle: w.awardTitle, firstPrizeTitle: contest?.prizes?.[0]?.title }),
             ])}
           />
         )}
@@ -819,11 +821,7 @@ export default function OpenMicContestAdminPage() {
         {!loading && !error && loadedTab === 'Beat Downloads' && (
           <Table
             columns={['Artist', 'Email', 'Terms', 'Paid Access', 'Downloaded At']}
-            rows={(rows as Awaited<ReturnType<typeof listOpenMicBeatDownloads>>).map((d) => [
-              d.artistName, d.artistEmail || '—', d.termsAccepted ? 'Accepted' : 'No',
-              d.paidAccessConfirmed ? 'Confirmed' : 'Not confirmed',
-              d.downloadedAt ? new Date(d.downloadedAt).toLocaleString('en-NG') : '—',
-            ])}
+            rows={(rows as Awaited<ReturnType<typeof listOpenMicBeatDownloads>>).map((d) => beatDownloadCells(d))}
           />
         )}
 

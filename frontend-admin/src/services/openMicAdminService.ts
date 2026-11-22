@@ -136,6 +136,8 @@ export type OpenMicSubmissionRow = {
   voteCount: number;
   isFinalist: boolean;
   isWinner: boolean;
+  /** `winner_records.award_title`, present on a row whose winner was announced. */
+  awardTitle?: string | null;
   genre?: string;
   submittedAt?: string;
   /**
@@ -176,10 +178,15 @@ export type OpenMicFraudAlertRow = {
 
 export type OpenMicBeatDownloadRow = {
   id: string;
+  /** '' when the download has no profile row behind it — see open-mic-cells. */
   artistName: string;
   artistEmail?: string;
-  termsAccepted: boolean;
-  paidAccessConfirmed: boolean;
+  /**
+   * Null means the database recorded nothing: `beat_download_logs` stores the
+   * hand-off only, and consent/payment exist only on an enrollment row.
+   */
+  termsAccepted: boolean | null;
+  paidAccessConfirmed: boolean | null;
   downloadedAt: string;
 };
 

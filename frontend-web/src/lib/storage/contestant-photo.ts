@@ -1,4 +1,5 @@
-import { createR2DownloadUrl, hasR2Config } from '@/src/lib/storage/r2';
+import { contentTypeForKey, readLocalUpload } from '@/src/lib/storage/local-uploads';
+import { assertR2ObjectExists, createR2DownloadUrl, hasR2Config } from '@/src/lib/storage/r2';
 
 /**
  * A `contestants.photo_url` is not necessarily a URL. The registration flow
@@ -10,7 +11,11 @@ import { createR2DownloadUrl, hasR2Config } from '@/src/lib/storage/r2';
  *
  * So a photo is rendered by signing its object key at read time, which is what
  * the Go connect module does for the app (`internal/connect/voting/
- * contestant_photo.go`); this is the same rule for the web readers.
+ * contestant_photo.go`); this is the same rule for the web readers — with one
+ * thing the Go readers cannot know: when this deployment has no bucket
+ * configured, the upload route wrote those same bytes to local disk, and the key
+ * must be read from there instead of signed against a bucket that never received
+ * the file (`serveContestantPhoto`).
  */
 
 /**
@@ -109,4 +114,95 @@ export async function resolveContestantPhotoUrl(
   // but the uploader.
   if (value.startsWith('{') || value.includes(UPLOADS_ROUTE_PREFIX)) return null;
   return value.includes('://') || value.startsWith('/') ? value : null;
+}
+
+/**
+ * A `Response` a console page can point an `<img>` at.
+ *
+ * This is the answering half of the same rule, and it exists because a presigned
+ * URL is not a promise that the object is there. `registration/<userId>/` is
+ * where the registration flow puts a member's photo, and on any deployment
+ * without R2 credentials that flow writes to the local fallback store instead
+ * (`$TMPDIR/spotlight-registration-uploads`) — so signing the key against the
+ * bucket yields a perfectly valid signature for an object R2 has never heard of
+ * (404 NoSuchKey), which the admin console drew as a broken image. Only this
+ * plane can see both stores, so only this plane can serve the file.
+ *
+ * Three answers, in the order they can be trusted:
+ *   - the key exists in the bucket  → 307 to a presigned GET (the browser follows it);
+ *   - the key is a local upload     → the bytes, with the type their extension implies;
+ *   - neither, or an external photo → 307 when the stored value is already a
+ *     reachable URL, otherwise 404 — never a preview route, which is 403 for
+ *     everyone but the uploader, and never a signature for a missing object.
+ *
+ * The key always comes from the row that was read, never from the request, so
+ * there is no way to ask this responder for an arbitrary object in the bucket.
+ */
+export async function serveContestantPhoto(
+  stored: string | null | undefined,
+  ttlSeconds = IN_APP_PHOTO_TTL_SECONDS
+): Promise<Response> {
+  const value = (stored ?? '').trim();
+  const key = contestantPhotoObjectKey(value);
+
+  if (!key) {
+    if (/^https?:\/\//i.test(value)) {
+      return new Response(null, { status: 307, headers: { Location: value } });
+    }
+    return photoNotFound('No contestant photo on record');
+  }
+
+  if (hasR2Config()) {
+    try {
+      await assertR2ObjectExists(key);
+    } catch {
+      // The row names an object the bucket does not have. 404, not a signature
+      // for it: a dead presigned URL looks like a working image tag right up
+      // until the browser renders nothing.
+      return photoNotFound('Contestant photo not found in storage');
+    }
+    const url = await createR2DownloadUrl({
+      key,
+      fileName: key.split('/').pop(),
+      disposition: 'inline',
+      expiresIn: ttlSeconds,
+    });
+    return new Response(null, { status: 307, headers: { Location: url } });
+  }
+
+  const bytes = await readLocalUpload(key);
+  if (!bytes) return photoNotFound('Contestant photo not found on this server');
+
+  // Copy the bytes into an ArrayBuffer of their own rather than handing the
+  // Buffer (or `new Uint8Array(bytes.buffer)`) to Response.
+  //
+  // The immediate reason is the type gate: `tsc --noEmit` runs in CI and rejects
+  // both forms, because `Buffer<ArrayBufferLike>` is not an
+  // `ArrayBufferView<ArrayBuffer>` — a possibly-shared buffer cannot be a body.
+  //
+  // The copy also makes the body length independent of how the reader allocated.
+  // Today that is already true by luck: `readLocalUpload` uses the promises API,
+  // which for a 49-byte file returns `buffer.byteLength 49, byteOffset 0`, whereas
+  // the sync API pools small reads (`8192` at offset `64`, measured) — so a view
+  // over `.buffer` would send 8,192 bytes under a real `Content-Length`. Not a bug
+  // in this file as written; a hazard the copy removes.
+  const body = new Uint8Array(bytes.byteLength);
+  body.set(bytes);
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'Content-Type': contentTypeForKey(key),
+      'Content-Length': String(bytes.byteLength),
+      // Who may see this is decided by the caller's gate, so nothing in between
+      // may hold a copy for the next visitor.
+      'Cache-Control': 'private, no-store',
+    },
+  });
+}
+
+function photoNotFound(message: string): Response {
+  return new Response(JSON.stringify({ success: false, error: message }), {
+    status: 404,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }

@@ -26,11 +26,16 @@ export default function ContestantProfilePage() {
   const [votesInput, setVotesInput] = useState('1');
   const [voting, setVoting] = useState(false);
   const [toast, setToast] = useState('');
+  // Set when the photo request comes back unusable, so the profile shows the
+  // same initials-free placeholder an empty photo_url gets instead of the
+  // browser's broken-image icon.
+  const [photoFailed, setPhotoFailed] = useState(false);
 
   const load = useCallback(async () => {
     if (!contestantId) return;
     setLoading(true);
     setError(null);
+    setPhotoFailed(false);
     try {
       setContestant(await getContestant(contestantId));
     } catch (e) {
@@ -108,21 +113,29 @@ export default function ContestantProfilePage() {
         <Card style={{ padding: 16 }}>
           <h2 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700 }}>📋 Profile</h2>
 
-          {contestant.photo_url ? (
-            // Portrait 3:4, and `contain`. This slot was 100% of the card wide
-            // by 180 tall with `cover`, which scales the source until the box
-            // is filled and cuts what overflows — so a 3:4 headshot in a
-            // landscape box loses the top, the part holding the face. An
-            // operator confirming who a contestant is was being shown a crop.
-            // `contain` shows the whole image; that letterboxes a wide source,
-            // so the frame carries a surface and a border and reads as a frame
-            // rather than as a broken image. The numbers mirror the
-            // placeholder below and are pinned by contestant-photo.test.tsx.
+          {contestant.photo_url && !photoFailed ? (
+            // Asked of the web app, not read off `contestant.photo_url`: the Go
+            // roster returns a presigned GET for THIS deployment's bucket, and a
+            // registration upload made where the web app has no R2 credentials
+            // went to its local fallback store instead — so the signature is
+            // valid, the object is absent, and the tag rendered as a broken
+            // image (measured: naturalWidth 0, R2 answering 404 NoSuchKey).
+            // /api/admin/voting/contestants/:id/photo reads the same column and
+            // answers with local bytes, a confirmed bucket redirect, or a 404.
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={contestant.photo_url}
+              src={`/api/web-proxy/api/admin/voting/contestants/${contestant.contestant_id || contestantId}/photo`}
               alt={contestant.name}
+              onError={() => setPhotoFailed(true)}
               data-testid="contestant-photo"
+              // Portrait 3:4 with `contain`, so the headshot is shown entire.
+              // This slot was card-wide by 180 tall with `cover`, which scales
+              // the source until the box is filled and cuts what overflows — so
+              // a 3:4 headshot lost the top of the frame, the part holding the
+              // face, on the very screen used to confirm who a contestant is.
+              // `contain` letterboxes a wide source, so the frame carries a
+              // surface and a border and reads as a frame, not a broken image.
+              // Same numbers as the placeholder below. Landed on main as PR #1139.
               style={{
                 width: 240,
                 height: 320,
