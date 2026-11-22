@@ -140,5 +140,11 @@ jobs:
         # scripts/ci/test-f2-token-probe.sh instead of only ever running on a
         # runner that holds three live credentials.
         run: |
+          # QUOTED, and that is not cosmetic. Run 45024735432 had this line
+          # unquoted: the runner's shell expanded `/tmp/class-*.txt` into twelve
+          # words, argparse read the first as --glob's value and the other eleven
+          # as positional garbage, exited 2 with "unrecognized arguments", and the
+          # job reported no verdict after twelve successful samples. The script now
+          # also tolerates the expanded spelling, so neither form can silence it.
           python3 scripts/ci/f2-token-class-verdict.py \
-            --glob /tmp/class-*.txt --out "$GITHUB_STEP_SUMMARY"
+            --glob "/tmp/class-*.txt" --out "$GITHUB_STEP_SUMMARY"

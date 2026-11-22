@@ -1,6 +1,8 @@
 # F2 project-token probe — the one cell that decides the release wall
 
-Status: **the cell is filled, and the answer is a refusal.** Both dispatches ran
+Status: **the cell is filled, and the answer is a refusal.** The follow-up
+question — class or value — is also answered, and it is the class: see "The class
+question, answered" below. Both dispatches ran
 from `main` on 2026-11-22 with the same `RAILWAY_TOKEN_STAGING` and the same
 `project { id name }` document, and both were refused on every cell they probed:
 
@@ -27,6 +29,44 @@ Reading of the wall:
 fault ledger and support evidence pack;
 [admin-console-production-errors-2026-11-20.md](./admin-console-production-errors-2026-11-20.md)
 carries the owner-run recipes.
+
+## The class question, answered: it is the CLASS
+
+Sampler run `45024735432` (`workflow_dispatch` on `main` at `d6f282f5a`, job
+`compare`, 12:55:10Z–12:56:22Z) wrote all twelve samples before anything went
+wrong, and every one of them was refused:
+
+| credential | `project` read, 3 attempts | staging `serviceInstance`, 3 attempts |
+|---|---|---|
+| `anonymous` (control) | `token-rejected` ×3 | `token-rejected` ×3 |
+| `RAILWAY_TOKEN_DEVELOPMENT` | `token-rejected` ×3 | `token-rejected` ×3 |
+| `RAILWAY_TOKEN_STAGING` | `token-rejected` ×3 | `token-rejected` ×3 |
+| `RAILWAY_TOKEN_PRODUCTION` | `token-rejected` ×3 | `token-rejected` ×3 |
+
+Fed to `f2-token-class-verdict.py`, that table reads **Verdict: CLASS** — no
+project token can read the deployment graph, so hypothesis (B) ("only the staging
+secret is broken") is dead and rotating that secret could never have moved this
+wall. The discriminator is the control row's own meaning: `development`'s token is
+the credential whose `railway up` legs upload 3/3 green on every train, and it is
+refused GraphQL reads exactly like the other two. The class, not the value.
+
+Consequence, stated precisely: the `serviceInstanceDeploy(…, latestCommit:true)`
+lane that promotes staging in ~3 minutes is reachable **only** with a user-scoped
+credential — the owner's session, or a user token placed in CI — and never from a
+project token. `release.yml`'s staging legs therefore cannot be swapped onto the
+mutation lane, which is the change this probe was built to authorize. What the
+answer does not say: whether the refused reads are a scope grant Railway could add
+to a project token, or a hard rule on the token class. Only Railway can say, and
+that question now belongs in the support thread alongside the upload refusal.
+
+The step that computes this died on its own spelling and is fixed here: the
+workflow passed `--glob /tmp/class-*.txt` unquoted, the runner's shell handed
+argparse twelve words, and the job exited 2 with `unrecognized arguments:
+/tmp/class-anonymous-2.txt …` after twelve good samples. Check (7) in
+`scripts/ci/test-f2-token-probe.sh` now runs the decider both ways and requires
+one identical verdict, and check (8) fails if the quotes ever come off. The table
+above is the real sample set, reconstructed from the job log — the summary that
+should have held it was never written.
 
 ## The question, in one sentence
 
@@ -211,7 +251,8 @@ only way to exercise it is a real upload — which is the thing that fails.
 ## Verification
 
 `scripts/ci/test-f2-token-probe.sh` runs in the `ci.yml` hygiene job beside the
-deploy-retry test: **102/102 green** locally on 2026-11-22, no network to Railway.
+deploy-retry test: **107/107 green** locally at 13:20Z on 2026-11-22, no network
+to Railway.
 It covers the classifier with recorded payloads (including the measured
 HTTP-200 `Not Authorized` body — Railway does not use the status code for auth,
 so any logic keyed on HTTP alone reads a token failure as success), plus
@@ -239,9 +280,10 @@ both-tokens-clean, and three missing-credential shapes — and each asserts not
 just its own verdict but that the wrong one is absent, which is the only way to
 test an ordering.
 
-Thirteen mutants were installed on purpose and made to go red — the three #1143
-probe-script ones, five for the comparison, and five for the cell-4 blindness
-fixed here. A green suite proves nothing until the defect it names is present:
+Fifteen mutants were installed on purpose and made to go red — the three #1143
+probe-script ones, five for the comparison, five for the cell-4 blindness
+fixed here, and two for the argument surface that silenced run 45024735432.
+A green suite proves nothing until the defect it names is present:
 
 | mutant installed | result |
 |---|---|
@@ -258,8 +300,10 @@ fixed here. A green suite proves nothing until the defect it names is present:
 | the `accepted-but-readback-blind` branch dropped | 4 failures — two classifier cases and both stub end-to-end verdict lines |
 | a row deleted from the doc's `PROBE_VERDICT` table | 1 failure naming `undecided` |
 | a row added to that table for a verdict that cannot fire | 1 failure naming the fake verdict |
+| the quotes taken off the workflow's `--glob` line, as run `45024735432` had it | 2 failures — both YAML guards — **while all thirteen classifier checks stayed green**, which is exactly how the live job could die after twelve good samples |
+| `--glob` back to a single value with the positional backstop gone (script still parses and runs) | 2 failures — the two spellings disagreed, i.e. a decider silently reading one file of twelve, and the backstop grep |
 
-Two of those thirteen were invalid, and both failures are worth recording
+Three of those fifteen were invalid, and every one of those failures is worth recording
 because they are how a suite quietly lies:
 
 - the first `accepted-but-readback-blind` mutant deleted the eight leading
@@ -274,11 +318,19 @@ because they are how a suite quietly lies:
   down the page. It now extracts the rows under the `PROBE_VERDICT` header and
   compares the two sets in both directions, which is why the last two mutants
   above have any force.
+- the first argument-surface mutant deleted the `extra` declaration but left
+  `args.extra` in the body, so the decider raised `AttributeError` and **14
+  checks** went red — including eight that were about verdict ordering. The
+  failure count was the tell, not the defect. Redone so the script still runs and
+  only the tolerance is gone: 2 failures, both intended, and the two arg-shape
+  checks that stayed green are themselves a lesson — a single-value `--glob` still
+  exits 0 and still prints exactly one verdict, because it is quietly reading one
+  file of twelve. Only the byte-comparison against the quoted spelling catches it.
 
 Everything restored with `cp`, re-asserted sha256-identical in every case, then
-re-run to 102/102.
+re-run to 107/107.
 
-Five live defects that would each have produced a confident wrong answer in CI:
+Six live defects that would each have produced a confident wrong answer in CI:
 
 1. `HTTP_CODE` was assigned inside `gql`, and every call site is
    `body=$(gql …)` — a subshell. The parent always saw an empty code, so every
@@ -308,6 +360,16 @@ Five live defects that would each have produced a confident wrong answer in CI:
    scope with the same HTTP-200 body, so the name claimed more than the payload
    can carry; it is now `token-refused-at-read`, and the comparison that *can*
    separate value from scope is `ci-railway-token-class.yml`.
+6. The sampler's own Verdict step passed `--glob /tmp/class-*.txt` **unquoted**.
+   The runner's shell expanded it, argparse took the first file as the pattern's
+   value and rejected the other eleven (`unrecognized arguments`, exit 2), so
+   `45024735432` produced no verdict after twelve correct samples — and every
+   check in the suite called the decider with a quoted pattern, so the suite was
+   green the whole time. The workflow line is quoted now, `--glob` accepts the
+   expanded words, and the decider also takes them positionally; checks (7) and
+   (8) run both spellings, require byte-identical output, and fail if the quotes
+   come off. This is the same failure mode as defect 1 one layer up: a probe that
+   cannot report is not a probe that proved nothing happened.
 
 The same three documents were validated against the real API over the owner's
 session (`PROBE_TRANSPORT=cli PROBE_MODE=read-only`), which is why the transport

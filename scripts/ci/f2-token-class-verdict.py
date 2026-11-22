@@ -11,7 +11,15 @@ shipped unexecuted, and this script's rules are the ones that tell someone
 whether to rotate a secret.
 
 Usage:
-    f2-token-class-verdict.py [--glob GLOB] [--out FILE]
+    f2-token-class-verdict.py [--glob GLOB ...] [--out FILE]
+
+`--glob` takes one pattern when the caller quotes it and as many as the shell
+hands over when it does not. Measured on run 45024735432: the workflow line was
+`--glob /tmp/class-*.txt`, the runner's shell expanded it into ten words, argparse
+kept the first as the pattern's value and called the other nine
+`unrecognized arguments`, and the job died with exit 2 having read one file and
+printed no verdict at all. Both spellings therefore have to reach the same
+answer, which is also what the offline test asserts.
 
 Sample files are /tmp/class-<label>-<attempt>.txt, written one per attempt by the
 workflow steps. Only the lines the probe prints matter:
@@ -43,7 +51,7 @@ def cell(text, key):
     return hits[-1] if hits else "no-output"
 
 
-def samples(pattern):
+def samples(patterns):
     """Return {label: [(attempt, auth, baseline), …]} keyed by credential.
 
     The attempt is stripped before grouping. Keying by the whole basename yields
@@ -53,7 +61,8 @@ def samples(pattern):
     the question.
     """
     found = defaultdict(list)
-    for path in sorted(glob.glob(pattern)):
+    paths = sorted({p for pat in patterns for p in glob.glob(pat)})
+    for path in paths:
         name = os.path.basename(path)
         name = name[len("class-"):] if name.startswith("class-") else name
         name = name[:-len(".txt")] if name.endswith(".txt") else name
@@ -175,11 +184,15 @@ def render(found, repeats):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--glob", default="/tmp/class-*.txt", dest="pattern")
+    ap.add_argument("--glob", nargs="+", default=["/tmp/class-*.txt"], dest="patterns",
+                    help="sample-file pattern(s); repeats are accepted because a "
+                         "runner shell that expands the glob hands back words")
+    ap.add_argument("extra", nargs="*", help="already-expanded sample paths")
     ap.add_argument("--out", default=None, help="append the rendering here (GITHUB_STEP_SUMMARY)")
     args = ap.parse_args()
+    patterns = list(args.patterns) + list(args.extra)
     repeats = os.environ.get("PROBE_CLASS_REPEATS", "?")
-    text = render(samples(args.pattern), repeats)
+    text = render(samples(patterns), repeats)
     if args.out:
         with open(args.out, "a", encoding="utf-8") as fh:
             fh.write(text + "\n")
