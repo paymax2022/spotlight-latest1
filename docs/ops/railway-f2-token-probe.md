@@ -32,20 +32,36 @@ Tried and refuted on 2026-11-22, so nobody re-attempts it:
   `HTTP 200` + `errors[0].message = "Not Authorized"`, `path: ["projectTokenCreate"]`.
   The account owner cannot mint a project token, so there is no local stand-in
   for `RAILWAY_TOKEN_STAGING`.
-- `projectTokens(projectId:)` is a Relay **connection**
-  (`QueryProjectTokensConnection`: `edges`/`nodes`/`pageInfo`), not a list —
-  `{ id name }` on it fails validation, which is what makes "list the tokens and
-  reuse one" a dead end as well as a bad idea.
+- `projectTokens(projectId:)` is a Relay **connection** whose only fields are
+  `edges` and `pageInfo` — there is **no `nodes`**. `{ id name }` directly on it,
+  or `{ nodes { … } }`, both fail validation, which is what makes
+  "list the tokens and reuse one" a dead end as well as a bad idea.
 - The GitHub secret's value is not readable by design (`/actions/secrets`
   returns names only).
 
-So the cell is fillable exactly one way: a runner that already holds the secret.
+What the list *does* show, via `edges { node { id name createdAt } }`
+(names and ids are not secrets), is the credential class CI holds:
 
-One incidental finding from the failed mint: the driver treated the CLI's
-error text as the token because the only guard was "file is non-empty", and the
-probe then reported `token-rejected` for a credential that never existed. The
-verdict was honest — a bearer value that is not a token is rejected — but the
-run proved nothing. Any mint must be validated by shape before it is used.
+| token id | name | created |
+|---|---|---|
+| `c0a9a094` | `github-staging-action` | 2026-11-18 21:17Z |
+| `7fc8b1c3` | `staging-new` | 2026-11-18 21:12Z |
+| `89729d2d` | `production` | 2026-11-16 15:04Z |
+| `f2aae2c5` | `development` | 2026-11-14 19:42Z |
+
+Four tokens, none of them minted by this work — which also confirms the refused
+mint above wrote nothing. The name `github-staging-action` is what
+`RAILWAY_TOKEN_STAGING` almost certainly is, so a throwaway staging-scoped token
+would have been the right *kind* of stand-in; it simply cannot be created from
+the owner session.
+
+One transport trap worth knowing before re-attempting any of this: when
+`railway api --compact` hits GraphQL errors it prints a **prose line**
+("Railway API returned 1 GraphQL error(s)") instead of JSON. A caller that only
+checks "is the output non-empty" will hand that sentence to the next step as a
+credential.
+
+So the cell is fillable exactly one way: a runner that already holds the secret.
 
 ## The 2×2
 
