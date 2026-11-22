@@ -23,7 +23,8 @@ and the difference is the credential. That contrast is what
 `ci-railway-token-class.yml` is built to interpret: class, or this one secret's
 value. See the two explanations under "The 2×2".
 Reading of the wall:
-[railway-f2-staging-upload](./railway-f2-staging-upload.md) is the fault ledger;
+[railway-upload-fault-report.md](../devops/railway-upload-fault-report.md) is the
+fault ledger and support evidence pack;
 [admin-console-production-errors-2026-11-20.md](./admin-console-production-errors-2026-11-20.md)
 carries the owner-run recipes.
 
