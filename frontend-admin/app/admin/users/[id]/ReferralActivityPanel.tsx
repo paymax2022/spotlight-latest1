@@ -162,11 +162,20 @@ function CodeSection({ userId }: { userId: string }) {
         {({ v }) => (
           <div style={{ display: 'grid', gap: 10 }}>
             {v ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, flexWrap: 'wrap' }}>
-                <code data-testid="referral-code" style={{ fontWeight: 700, fontSize: 15 }}>{v.code}</code>
-                <span data-testid="referral-code-source" style={{ color: colors.muted }}>source: {v.source}</span>
-                <Button variant="outline" sm onClick={() => void copy(v.code)}>Copy</Button>
-                {copied ? <span style={{ color: colors.success }}>Copied</span> : null}
+              <div style={{ display: 'grid', gap: 6 }}>
+                {v.original ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, flexWrap: 'wrap' }}>
+                    <span style={{ color: colors.muted, fontSize: 12, minWidth: 84 }}>Original code</span>
+                    <code data-testid="referral-code-original" style={{ fontWeight: 600, color: colors.muted }}>{v.original}</code>
+                  </div>
+                ) : null}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, flexWrap: 'wrap' }}>
+                  {v.original ? <span style={{ color: colors.muted, fontSize: 12, minWidth: 84 }}>Current code</span> : null}
+                  <code data-testid="referral-code" style={{ fontWeight: 700, fontSize: 15 }}>{v.code}</code>
+                  <span data-testid="referral-code-source" style={{ color: colors.muted }}>source: {v.source}</span>
+                  <Button variant="outline" sm onClick={() => void copy(v.code)}>Copy</Button>
+                  {copied ? <span style={{ color: colors.success }}>Copied</span> : null}
+                </div>
               </div>
             ) : (
               <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>No referral code yet</p>
