@@ -124,6 +124,144 @@ func TestOverviewSpecs_FxKycQueueIsRegistered(t *testing.T) {
 	}
 }
 
+// THE STANDARD, ENFORCED. Every queue where the platform waits on a human admin
+// is a registry row, and this ledger is the list a reviewer cannot forget.
+//
+// It exists because the Programs group used to be invisible: the console appended
+// its own rows with attention hardcoded to 0, so Open Mic songs, Open Mic
+// applications, audition registrations and contest approvals reported "cleared"
+// forever while they filled. Adding a review screen, a decide endpoint, or a new
+// module with a decision state therefore requires a row here; the doc test below
+// additionally requires the rule to be written down.
+// See docs/ops/admin-needs-attention-standard.md.
+func TestOverviewSpecs_DecisionQueuesAreRegistered(t *testing.T) {
+	byKey := map[string]moduleSpec{}
+	for _, s := range overviewSpecs {
+		byKey[s.Key] = s
+	}
+
+	// key, the screen that resolves it, and how the attention SQL must express the queue.
+	//   contains  — fragments that must appear anywhere in AttnSQL
+	//   absent    — status literals that must not appear at all (the queue is a
+	//               whitelist, so a decided state must never be matched)
+	//   excluded  — status literals that must sit INSIDE the `NOT IN (...)` list
+	//               (the queue is a blacklist, so anything not excluded — including
+	//               a status invented next quarter — counts as outstanding)
+	ledger := []struct {
+		key, href, severity string
+		contains            []string
+		absent              []string
+		excluded            []string
+	}{
+		// An Open Mic edition is identified three ways, exactly as the app does
+		// (frontend-web/src/features/openmic/edition-identity.ts).
+		{key: "open-mic-submissions", href: "/admin/open-mic", severity: "warn",
+			contains: []string{"competition_entries", "one_beat_one_verse", "open_mic"},
+			excluded: []string{"'draft'", "'awaiting_payment'", "'correction_requested'",
+				"'clean_version_requested'", "'published_for_voting'", "'rejected'", "'disqualified'", "'winner'"}},
+		// The Applications review endpoint writes 'approved' | 'rejected';
+		// 'pending' is therefore the only state left that is the admin's to clear.
+		{key: "open-mic-applications", href: "/admin/open-mic", severity: "warn",
+			contains: []string{"competition_enrollments", "status='pending'"},
+			absent:   []string{"'approved'", "'rejected'"}},
+		// PATCH /api/admin/academy/applications/[id] writes approved|rejected and,
+		// on approval, creates the instalment plan and enrols the learner.
+		{key: "academy-applications", href: "/admin/academy/film", severity: "warn",
+			contains: []string{"academy_applications", "status='pending'"},
+			absent:   []string{"'approved'", "'rejected'"}},
+		// registration_status is an enum: pending|confirmed|cancelled|attended. No
+		// console page reads the table, so this row must carry a note, not a link.
+		{key: "auditions", href: "", severity: "warn",
+			contains: []string{"audition_registrations", "status='pending'"},
+			absent:   []string{"'confirmed'", "'attended'", "'cancelled'"}},
+		// Maker-checker: held until a second admin signs, so a published result is
+		// not yet one person's word. Critical, not warn.
+		{key: "contest-approvals", href: "/admin/voting/approvals", severity: "critical",
+			contains: []string{"contest_admin_approvals", "status='pending_approval'"},
+			absent:   []string{"'executed'", "'rejected'", "'cancelled'"}},
+		// Regression pins for queues that were already here.
+		{key: "registration", href: "/admin/registration", severity: "warn",
+			contains: []string{"'submitted'", "'under_review'"}},
+		{key: "sme-pitch", href: "/admin/sme-pitch", severity: "warn",
+			contains: []string{"'submitted'", "'under_review'"}},
+		{key: "academy-tutors", href: "/admin/academy/tutors", severity: "warn",
+			contains: []string{"status='pending'"}},
+		{key: "academy-questions", href: "/admin/academy/question-bank", severity: "warn",
+			contains: []string{"status='review'"}},
+		{key: "stem-schools", href: "/admin/schools", severity: "warn",
+			contains: []string{"'PENDING'", "'UNDER_REVIEW'"}},
+	}
+
+	for _, want := range ledger {
+		s, ok := byKey[want.key]
+		if !ok {
+			t.Errorf("%s is missing from overviewSpecs — the dashboard cannot report a queue it does not read", want.key)
+			continue
+		}
+		if s.Severity != want.severity {
+			t.Errorf("%s: severity %q, want %q", want.key, s.Severity, want.severity)
+		}
+		if want.href == "" {
+			if s.AttnHref != "" {
+				t.Errorf("%s: has no working screen but links %q — send the admin somewhere they can act", want.key, s.AttnHref)
+			}
+			if s.AttnNote == "" {
+				t.Errorf("%s: a queue with no screen must say so in AttnNote", want.key)
+			}
+		} else if s.AttnHref != want.href {
+			t.Errorf("%s: attention href %q, want %q", want.key, s.AttnHref, want.href)
+		}
+		for _, frag := range want.contains {
+			if !strings.Contains(s.AttnSQL, frag) {
+				t.Errorf("%s: attention SQL omits %s — the screen acts on it, so the queue would never match:\n  %s", want.key, frag, s.AttnSQL)
+			}
+		}
+		for _, lit := range want.absent {
+			if strings.Contains(s.AttnSQL, lit) {
+				t.Errorf("%s: attention SQL counts %s, a state that is not the admin's to wait on:\n  %s", want.key, lit, s.AttnSQL)
+			}
+		}
+		for _, lit := range want.excluded {
+			if !excludedByNotIn(s.AttnSQL, lit) {
+				t.Errorf("%s: attention SQL must exclude %s inside its `NOT IN (...)` blacklist — leaving it out of a whitelist would silently stop counting work:\n  %s", want.key, lit, s.AttnSQL)
+			}
+		}
+	}
+}
+
+// excludedByNotIn reports whether the literal sits inside the attention SQL's
+// `NOT IN (...)` list — the blacklist holding drafts, artist-side states and
+// finished decisions out of the queue.
+func excludedByNotIn(sql, lit string) bool {
+	for _, part := range strings.Split(sql, "NOT IN (")[1:] {
+		end := strings.Index(part, ")")
+		if end < 0 {
+			continue
+		}
+		if strings.Contains(part[:end], lit) {
+			return true
+		}
+	}
+	return false
+}
+
+// The written rule is part of the guard: a registry row that is not in the
+// standard's ledger means the doc has fallen behind the code, and the doc is what
+// tells the next contributor a queue belongs here at all.
+func TestOverviewSpecs_AreLedgedInTheStandardDoc(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "docs", "ops", "admin-needs-attention-standard.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the standard (%s): every admin decision queue must be documented there: %v", path, err)
+	}
+	doc := string(data)
+	for _, s := range overviewSpecs {
+		if !strings.Contains(doc, "`"+s.Key+"`") {
+			t.Errorf("%s (%s) is not ledged in docs/ops/admin-needs-attention-standard.md", s.Key, s.Label)
+		}
+	}
+}
+
 // ---- live-DB: the predicates against the real, migrated schema ----------------
 // Skipped unless TEST_DATABASE_URL is set (never falls back to DATABASE_URL).
 // A table that does not exist FAILS here: CI replays every migration, so an absent
