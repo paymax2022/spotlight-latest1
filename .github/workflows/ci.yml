@@ -252,6 +252,11 @@ jobs:
       # the stub is on PATH.
       - name: Test the deploy upload retry
         run: bash scripts/ci/test-railway-deploy-retry.sh
+      # Staging frontends have a Railway rootDirectory, so their archive must keep
+      # the app folder at the archive root while avoiding a full-monorepo upload.
+      # The test also proves dirty working-tree bytes cannot leak into a release.
+      - name: Test the deploy archive shape
+        run: bash scripts/ci/test-railway-deploy-archive.sh
       # RN-PLANE-001: a store build bakes mobile-app/reactnative/.env.production,
       # which is gitignored and which eas.json cannot correct — the build scripts run
       # local Gradle, so the profile's env never applies. Found with that file naming
