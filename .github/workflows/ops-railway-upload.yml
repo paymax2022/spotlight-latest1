@@ -1,0 +1,240 @@
+name: Ops - Railway upload (one service)
+
+# ONE service, ONE environment, by hand, without a release train.
+#
+# WHY THIS EXISTS
+# docs/ops/admin-console-production-errors-2026-11-20.md Command 6 is a shell recipe:
+# upload one folder to one Railway environment with scripts/ci/railway-deploy.sh and
+# the per-environment token. It is written to be run by a person from a machine with
+# a big enough uplink, because production `frontend-web` is ~113 MB in the index
+# (100.6 MB of it frontend-web/public/) and a laptop upload of that size is refused
+# with HTTP 524 — measured twice on 2026-11-21 from this repo's authoring machine,
+# each attempt still writing a FAILED, inert deployment row.
+#
+# GitHub runners are not that machine. The same tree uploads fine there: run
+# 45012115042's `deploy Development (frontend-web)` leg completed on 2026-11-22 with
+# the identical `railway up frontend-web --path-as-root --no-gitignore` command. So
+# the missing piece of Command 6 is a runner that will execute it on request.
+#
+# WHY NOT REUSE release.yml
+# Its `deploy-production` job needs `migrate-production` needs `smoke-staging` needs
+# `deploy-staging`, and `deploy-staging` is a three-service matrix. On 2026-11-22 all
+# three staging legs died on Railway's upload-initiate refusal (9 attempts each, the
+# fault documented in docs/devops/railway-upload-fault-report.md), which cascade-skipped
+# every production leg. So the only commit that can reach production through that
+# graph is one that got all three staging uploads accepted first, and that same wave
+# also runs `deploy Production (backend)` — which ships main's `backend/**` over the
+# lineage production actually runs (13 files under backend/ exist on `prod` and not on
+# `main`, including all of backend/internal/finance/maplerad/,
+# backend/internal/orchestration/adapters/maplerad.go and backend/internal/provider/maplerad/).
+# This workflow cannot do that: it deploys exactly one service, and it runs no
+# migrations at all.
+#
+# WHY NOT deploy-railway-action.yml
+# That lane is dark by design (RAILWAY_ACTION_DEPLOY_ENABLED unset) and its gate only
+# accepts refs/heads/{develop,staging,prod}, which are frozen. Re-targeting it is the
+# unrequested change its own header warns against.
+#
+# SAFETY
+#   * workflow_dispatch only; nothing here runs on a push.
+#   * A typed confirmation that names the environment AND the service, compared
+#     literally, so a mis-selected dropdown cannot slip through an empty field.
+#   * `concurrency` without cancel-in-progress: a half-uploaded 113 MB archive is not
+#     something to abort mid-flight.
+#   * The upload SHA is chosen at dispatch, so the operator decides which commit ships
+#     — this file never implies "main tip".
+#   * The upload shape is DERIVED from each instance's live `rootDirectory`
+#     (scripts/ci/railway-root-shape.sh, pinned by scripts/ci/test-railway-root-shape.sh)
+#     rather than copied from a comment, because guessing it produces a green run that
+#     deploys the wrong tree.
+#   * No `environment:` stanza, so the GitHub `Production` environment's branch policy
+#     (custom, written for the `prod` lineage) neither blocks this nor is bypassed as a
+#     deployment target. If the owner wants a manual approval on top, adding
+#     `environment: ${{ inputs.environment }}` is a one-line change.
+#   * Secrets stay repo-level (RAILWAY_TOKEN_{DEVELOPMENT,STAGING,PRODUCTION}), the
+#     same names release.yml and deploy-railway-action.yml already use. No value is
+#     ever printed; the token is masked before it reaches the CLI.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Railway environment to upload to'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      service:
+        description: 'Railway service to upload'
+        required: true
+        type: choice
+        options:
+          - backend
+          - frontend-web
+          - frontend-admin
+      sha:
+        description: 'Full commit SHA to ship (the tree is checked out at this SHA)'
+        required: true
+        type: string
+      confirm:
+        description: "Type UPLOAD-<environment>-<service>, e.g. UPLOAD-production-frontend-web"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-railway-upload-${{ inputs.environment }}-${{ inputs.service }}
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: ${{ inputs.service }} -> ${{ inputs.environment }} @ ${{ inputs.sha }}
+    if: inputs.confirm == format('UPLOAD-{0}-{1}', inputs.environment, inputs.service)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      SERVICE: ${{ inputs.service }}
+      SHA: ${{ inputs.sha }}
+      RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+    steps:
+      - name: Refuse a mismatched confirmation instead of silently skipping
+        run: |
+          set -euo pipefail
+          expected="UPLOAD-${ENVIRONMENT}-${SERVICE}"
+          if [ "${{ inputs.confirm }}" != "$expected" ]; then
+            echo "::error::confirm is '${{ inputs.confirm }}', this run needs exactly '$expected'"
+            exit 1
+          fi
+          case "$SERVICE" in
+            backend|frontend-web|frontend-admin) ;;
+            *) echo "::error::unknown service '$SERVICE'"; exit 1 ;;
+          esac
+          case "$ENVIRONMENT" in
+            development|staging|production) ;;
+            *) echo "::error::unknown environment '$ENVIRONMENT'"; exit 1 ;;
+          esac
+          if [ "$(printf '%s' "$SHA" | wc -c)" -ne 40 ]; then
+            echo "::error::sha must be a full 40-character commit SHA, got $(printf '%s' "$SHA" | wc -c) characters"
+            exit 1
+          fi
+          echo "confirmed: ship $SHA as $SERVICE in $ENVIRONMENT"
+
+      - name: Check out the tree that will be uploaded
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 1
+
+      - name: Resolve the per-environment Railway token
+        env:
+          TOK_PRODUCTION: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          TOK_STAGING: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          TOK_DEVELOPMENT: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+        run: |
+          set -euo pipefail
+          case "$ENVIRONMENT" in
+            production)  tok="$TOK_PRODUCTION" ;;
+            staging)     tok="$TOK_STAGING" ;;
+            development) tok="$TOK_DEVELOPMENT" ;;
+            *) echo "::error::unknown environment $ENVIRONMENT"; exit 1 ;;
+          esac
+          if [ -z "$tok" ]; then
+            echo "::error::missing repo secret RAILWAY_TOKEN_$(printf '%s' "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')"
+            exit 1
+          fi
+          echo "::add-mask::$tok"
+          printf 'RAILWAY_TOKEN=%s\n' "$tok" >> "$GITHUB_ENV"
+          unset tok
+          echo "  token resolved for $ENVIRONMENT (value never printed)"
+
+      - name: Install the pinned Railway CLI
+        run: |
+          set -euo pipefail
+          npm install --global @railway/cli@5.40.1 >/dev/null
+          railway --version
+
+      # Prove the token reaches the intended environment and service BEFORE any
+      # byte leaves the runner, so a mis-set secret cannot upload to a different
+      # place than the operator chose. Same check deploy-railway-action.yml uses.
+      - name: Confirm the token resolves the intended environment and service
+        run: |
+          set -euo pipefail
+          railway status --json > /tmp/railway-status.json
+          envs=$(jq -r '.environments.edges[]?.node.name' /tmp/railway-status.json | sort -u)
+          if ! printf '%s\n' "$envs" | grep -qx "$ENVIRONMENT"; then
+            echo "::error::the $ENVIRONMENT token resolves environments [$(printf '%s' "$envs" | paste -sd, -)]; refusing to deploy"
+            exit 1
+          fi
+          svcs=$(jq -r --arg env "$ENVIRONMENT" '.environments.edges[] | select(.node.name == $env) | .node.serviceInstances.edges[]?.node.serviceName' /tmp/railway-status.json | sort -u)
+          if ! printf '%s\n' "$svcs" | grep -qx "$SERVICE"; then
+            echo "::error::service $SERVICE not found in $ENVIRONMENT (found: $(printf '%s' "$svcs" | paste -sd, -))"
+            exit 1
+          fi
+          echo "  token resolves $ENVIRONMENT / $SERVICE"
+
+      - name: Record what is serving now (the rollback handle)
+        run: |
+          set -euo pipefail
+          # Snapshot ids, not HTTP: a FAILED latestDeployment row leaves the previous
+          # build serving 200 (measured 2026-11-21), so `curl` can never tell you what
+          # to roll back to. `railway deployment list --json` carries id, status,
+          # createdAt and meta but NO snapshotId, so this reads the GraphQL field
+          # directly. The ids come from the same project query
+          # scripts/ci/railway-root-shape.sh uses — verified 2026-11-22: production
+          # frontend-web resolves to dda6372c… / f84c4558…, which is what
+          # docs/ops/admin-console-production-errors-2026-11-20.md has written down.
+          ids="$(railway api 'query($p:String!){ project(id:$p){ environments(first:50){ edges{ node{ name id serviceInstances(first:50){ edges{ node{ serviceId service{ name } } } } } } } } }' \
+                   --var "p=$RAILWAY_PROJECT" --compact \
+                 | jq -r --arg env "$ENVIRONMENT" --arg svc "$SERVICE" '
+                     [.data.project.environments.edges[] | select(.node.name == $env)][0]
+                     | .node.id as $eid
+                     | ([.node.serviceInstances.edges[].node | select(.service.name == $svc)][0])
+                     | if . == null then "" else [(.serviceId // ""), $eid] | @tsv end')"
+          sid="${ids%%$'\t'*}"; eid="${ids##*$'\t'}"
+          if [ -z "$sid" ] || [ -z "$eid" ]; then
+            echo "::warning::could not resolve the $ENVIRONMENT/$SERVICE instance id; record the rollback handle by hand before uploading"
+            exit 0
+          fi
+          railway api 'query($s:String!,$e:String!){ deployments(input:{serviceId:$s,environmentId:$e},first:5){ edges{ node{ id status createdAt snapshotId meta } } } }' \
+            --var "s=$sid" --var "e=$eid" --compact > /tmp/before.json
+          {
+            echo "### Pre-upload deployments ($ENVIRONMENT / $SERVICE)"
+            echo
+            echo '| when | status | deployment | snapshot | cliMessage |'
+            echo '|---|---|---|---|---|'
+            jq -r '.data.deployments.edges[].node
+                   | "| \(.createdAt) | \(.status) | `\(.id)` | `\(.snapshotId // "none")` | `\(.meta.cliMessage // "-")` |"' \
+              /tmp/before.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "  rollback handle recorded in the job summary"
+
+      # THE UPLOAD RULE, read from Railway instead of copied out of a comment.
+      - name: Resolve the upload shape from the live rootDirectory
+        run: |
+          set -euo pipefail
+          eval "$(SERVICE="$SERVICE" RAILWAY_ENV="$ENVIRONMENT" RAILWAY_PROJECT="$RAILWAY_PROJECT" \
+                 bash scripts/ci/railway-root-shape.sh)"
+          printf 'UPLOAD_PATH=%s\n' "$UPLOAD_PATH" >> "$GITHUB_ENV"
+          printf 'ROOT_FLAG=%s\n' "$ROOT_FLAG" >> "$GITHUB_ENV"
+          printf 'BUILD_DIR=%s\n' "$BUILD_DIR" >> "$GITHUB_ENV"
+          echo "  UPLOAD_PATH=[$UPLOAD_PATH] ROOT_FLAG=[$ROOT_FLAG] BUILD_DIR=[$BUILD_DIR]"
+
+      - name: Upload ${{ inputs.service }} to ${{ inputs.environment }}
+        env:
+          # 90 s is the CLI default and it truncates the 113 MB frontend-web archive.
+          RAILWAY_HTTP_TIMEOUT: '600'
+          ATTEMPTS: '40'
+        run: |
+          set -euo pipefail
+          bash scripts/ci/railway-deploy.sh
+
+      - name: Read back what ${{ inputs.environment }} is now serving
+        run: |
+          set -euo pipefail
+          SERVICE="$SERVICE" RAILWAY_ENV="$ENVIRONMENT" SHA="$SHA" REQUIRE_READYZ=true \
+            bash scripts/ci/railway-smoke.sh
