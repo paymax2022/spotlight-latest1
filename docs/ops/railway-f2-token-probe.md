@@ -1,6 +1,11 @@
 # F2 project-token probe — the one cell that decides the release wall
 
-Status: built, first dispatch pending. Reading of the wall: [railway-f2-staging-upload](./railway-f2-staging-upload.md) is the fault ledger; [admin-console-production-errors-2026-11-20.md](./admin-console-production-errors-2026-11-20.md) carries the owner-run recipes.
+Status: built and tested (PR #1143); the mutate cell is **still unrun**, because
+`workflow_dispatch` only registers a workflow that exists on the default branch —
+so this file has to land before the probe can fire. Reading of the wall:
+[railway-f2-staging-upload](./railway-f2-staging-upload.md) is the fault ledger;
+[admin-console-production-errors-2026-11-20.md](./admin-console-production-errors-2026-11-20.md)
+carries the owner-run recipes.
 
 ## The question, in one sentence
 
@@ -16,6 +21,31 @@ holds. `RAILWAY_TOKEN_STAGING` is a **project token**; the working calls above
 were made with the owner's **user session**. `projectTokenCreate` is refused for
 that session, so the token that matters only ever exists inside CI — which is
 why this is a workflow and not a laptop command.
+
+## Why this cannot be answered from a laptop
+
+Tried and refuted on 2026-11-22, so nobody re-attempts it:
+
+- `projectTokenCreate(input: {projectId, environmentId, name})` — all three
+  fields are `NON_NULL String`, and the mutation returns a bare `String`, not a
+  `ProjectToken` object. Sent correctly from the owner session it answers
+  `HTTP 200` + `errors[0].message = "Not Authorized"`, `path: ["projectTokenCreate"]`.
+  The account owner cannot mint a project token, so there is no local stand-in
+  for `RAILWAY_TOKEN_STAGING`.
+- `projectTokens(projectId:)` is a Relay **connection**
+  (`QueryProjectTokensConnection`: `edges`/`nodes`/`pageInfo`), not a list —
+  `{ id name }` on it fails validation, which is what makes "list the tokens and
+  reuse one" a dead end as well as a bad idea.
+- The GitHub secret's value is not readable by design (`/actions/secrets`
+  returns names only).
+
+So the cell is fillable exactly one way: a runner that already holds the secret.
+
+One incidental finding from the failed mint: the driver treated the CLI's
+error text as the token because the only guard was "file is non-empty", and the
+probe then reported `token-rejected` for a credential that never existed. The
+verdict was honest — a bearer value that is not a token is rejected — but the
+run proved nothing. Any mint must be validated by shape before it is used.
 
 ## The 2×2
 
@@ -36,16 +66,18 @@ the upload endpoint, and no CI-side script change will fix it.
 ## How to run it
 
 Dispatch-only by construction — no `push`, `schedule`, or `pull_request` trigger
-exists on this file, so pushing it cannot reach Railway:
+exists on this file, so pushing it cannot reach Railway. `--ref main` is
+required, not stylistic: dispatching from the feature branch was tried and
+answered `HTTP 404: workflow ci-f2-token-probe.yml not found on the default
+branch`, because GitHub registers `workflow_dispatch` workflows only from the
+default branch. Land it first, then:
 
 ```bash
 # 1. read-only: two queries per service, no state change. Run this first.
-gh workflow run ci-f2-token-probe.yml --ref ci/f2-project-token-probe \
-  -f mode=read-only -f service=backend
+gh workflow run ci-f2-token-probe.yml --ref main -f mode=read-only -f service=backend
 
 # 2. the missing cell: one real staging deploy, backend only.
-gh workflow run ci-f2-token-probe.yml --ref ci/f2-project-token-probe \
-  -f mode=mutate -f service=backend
+gh workflow run ci-f2-token-probe.yml --ref main -f mode=mutate -f service=backend
 ```
 
 Then read the run:
