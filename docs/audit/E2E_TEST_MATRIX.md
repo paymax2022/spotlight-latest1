@@ -19,7 +19,7 @@ Legend: ✅ verified working · ⚠️ works with caveats · ❌ broken · ⬜ u
 | Check | Status | Evidence |
 |---|---|---|
 | Login (valid) | ✅ | `POST /api/auth/login` 200 → session cookie `sb-127-auth-token` + Bearer token in body |
-| Login (bad password) | ✅ | 401 `invalid credentials` |
+| Login (bad password) | ✅ | 401 `incorrect_password` — the sentence names the address and the attempts left. Before [ADR-PR802](../adr/ADR-PR802-login-names-the-failure-cause.md) every refusal was a blanket 401 `invalid credentials`; that string is now only the **unclassified** fallback. Causes and statuses: 400 `invalid_identifier`/`ambiguous_identifier`, 401 `account_not_found`/`incorrect_password`, 403 `account_suspended`/`account_closed`, 423 `account_locked`/`account_locked_by_support`, 500 `account_record_missing`, 503 `auth_unavailable` |
 | Login (empty body) | ✅ | 400 `Email or phone number and password are required` |
 | `GET /api/auth/me` authed | ✅ | 200 — real user, `kycStatus: verified` |
 | `GET /api/auth/me` anonymous | ✅ | 401 — fails closed |

@@ -46,8 +46,15 @@ const MAILPIT_URL = process.env.E2E_MAILPIT_URL || 'http://localhost:54324';
 const EMAIL_INPUT = 'input[type="email"]';
 const PASSWORD_INPUT = 'input[type="password"]';
 const SUBMIT_BUTTON = 'form button[type="submit"]';
-/** Rendered verbatim by toReadableAuthError for a wrong password. */
-export const BAD_CREDENTIALS_TEXT = /invalid email or password/i;
+/**
+ * Rendered verbatim by toReadableAuthError. Since ADR-PR802 Go names the cause
+ * instead of answering "invalid credentials" for everything, so an unregistered
+ * address reads "No account found for <what you typed>" and a wrong password on
+ * a known account reads "Incorrect password for …, N attempts left". The
+ * historic "Invalid email or password." survives only as the unclassified
+ * fallback and the legacy Supabase wording.
+ */
+export const BAD_CREDENTIALS_TEXT = /no account found|incorrect password|invalid email or password/i;
 /** MFA step-up panel (FEATURE_OTP_LOGIN_MFA_ENABLED; off by default locally). */
 const OTP_INPUT = 'input[autocomplete="one-time-code"]';
 

@@ -43,6 +43,11 @@ function OpenMicLoginPageInner() {
     if (lowered.includes('already registered') || lowered.includes('user already registered')) {
       return 'This email already has an account. Please sign in instead.';
     }
+    // Supabase's own wording (the pre-AUTH-016 direct call). Everything the Go
+    // backend NAMES — locked, suspended, closed, wrong password, no such account
+    // (ADR-PR802) — arrives as a finished sentence and must reach the user through
+    // the final `return message` below. Do not add branches that flatten those back
+    // into "invalid email or password"; that generalisation is what ADR-PR802 removes.
     if (lowered.includes('invalid login credentials')) {
       return 'Invalid email or password. If you just created this account, use the same password you registered with.';
     }

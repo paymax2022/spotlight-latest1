@@ -73,12 +73,24 @@ export async function POST(request: Request) {
           { status: 403 },
         );
       }
-      // Otherwise pass Go's status through. It answers 401 with a DELIBERATELY
-      // generic message so a wrong password and an unknown account are
-      // indistinguishable; do not enrich it here.
+      // Otherwise pass Go's status AND its machine-readable code through.
+      //
+      // Go used to answer every refusal with a deliberately generic 401
+      // "invalid credentials", and this route documented that as something not to
+      // enrich. It no longer does that (ADR-PR802): each cause now has its own
+      // status, `code`, and a sentence that names the problem — locked, suspended,
+      // closed, wrong password, no such account, unusable/ambiguous identifier.
+      // Nothing here may rewrite or re-generalise them; the client renders `error`
+      // verbatim, so this route's only job is to not lose it.
+      const code = typeof payload?.code === 'string' ? payload.code : undefined;
+      // A 400 used to mean only "the body did not bind", and was coerced to 401 so
+      // clients reported a credential problem. A 400 can now be a real verdict
+      // (invalid_identifier, ambiguous_identifier) whose message the user needs, so
+      // coerce only when Go sent no code — i.e. the legacy binding failure.
+      const status = upstream.status === 400 && !code ? 401 : upstream.status;
       const passthru = NextResponse.json(
-        { error: payload?.error ?? 'Invalid credentials' },
-        { status: upstream.status === 400 ? 401 : upstream.status },
+        { error: payload?.error ?? 'Invalid credentials', ...(code ? { code } : {}) },
+        { status },
       );
       forwardRateLimitHeaders(upstream, passthru);
       return passthru;

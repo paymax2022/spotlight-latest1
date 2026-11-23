@@ -150,10 +150,15 @@ func TestLoginUser_GoTrueUndecodable2xxIsUnavailable(t *testing.T) {
 }
 
 // The unchanged half of the contract: a definitive credential rejection still
-// answers with the same generic message AND still counts a strike. This is the
-// behaviour the fix must not dilute — a wrong password during a healthy window
-// is the only thing the lockout budget exists for.
-func TestLoginUser_GoTrue4xxStillCountsAStrikeAndReadsInvalidCredentials(t *testing.T) {
+// counts a strike. This is the behaviour the fix must not dilute — a wrong
+// password during a healthy window is the only thing the lockout budget exists
+// for.
+//
+// What changed (ADR-PR802) is only the WORDING: the strike now reports
+// ErrIncorrectPassword with the budget left, instead of the blanket
+// "invalid credentials" that also covered locked, suspended and unregistered
+// accounts.
+func TestLoginUser_GoTrue4xxStillCountsAStrikeAndReadsIncorrectPassword(t *testing.T) {
 	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized} {
 		var rpcCalls atomic.Int32
 		srv := loginUpstreamServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -170,9 +175,16 @@ func TestLoginUser_GoTrue4xxStillCountsAStrikeAndReadsInvalidCredentials(t *test
 		if errors.Is(err, ErrAuthUnavailable) {
 			t.Fatalf("status %d: a genuine wrong-password rejection must NOT be classified as upstream", status)
 		}
+		if errors.Is(err, ErrAccountNotFound) {
+			t.Fatalf("status %d: this account has a platform_users row — calling a bad password a missing account is wrong", status)
+		}
 		var fail *LoginFailureError
-		if !errors.As(err, &fail) || fail.Err.Error() != "invalid credentials" {
-			t.Fatalf("status %d: err = %v, want LoginFailureError wrapping \"invalid credentials\"", status, err)
+		if !errors.As(err, &fail) || !errors.Is(err, ErrIncorrectPassword) {
+			t.Fatalf("status %d: err = %v, want LoginFailureError wrapping ErrIncorrectPassword", status, err)
+		}
+		var wrong *WrongPasswordError
+		if !errors.As(err, &wrong) || wrong.AttemptsRemaining != 4 {
+			t.Fatalf("status %d: err = %v, want *WrongPasswordError with 4 attempts left (max 5, bump returned 1)", status, err)
 		}
 		if got := rpcCalls.Load(); got != 1 {
 			t.Fatalf("status %d: bump_failed_login_attempts called %d times, want exactly 1 — the strike must still count", status, got)

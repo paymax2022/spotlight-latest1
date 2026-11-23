@@ -25,6 +25,25 @@ const FRIENDLY: Record<string, string> = {
   REFUND_PROCESSED:     'Transaction failed. Your wallet has been refunded.',
 };
 
+// The login refusal codes Go sends since ADR-PR802 (see
+// backend/internal/handlers/auth_handler.go and docs/adr/ADR-PR802-*.md). Each one
+// already arrives with a sentence naming the cause, and THAT sentence is the whole
+// point of the change: a locked, suspended, closed, unregistered or mistyped
+// sign-in must not be reported as "wrong password". So these codes are rendered
+// verbatim instead of being mapped — adding one here without a matching server
+// sentence would silently re-generalise it.
+export const LOGIN_CAUSE_CODES: readonly string[] = [
+  'invalid_identifier',
+  'ambiguous_identifier',
+  'account_not_found',
+  'incorrect_password',
+  'account_locked',
+  'account_locked_by_support',
+  'account_suspended',
+  'account_closed',
+  'account_record_missing',
+];
+
 export function normalizeApiError(error: unknown): NormalizedError {
   if (error instanceof AxiosError) {
     if (!error.response) {
@@ -40,7 +59,20 @@ export function normalizeApiError(error: unknown): NormalizedError {
           ? data.error
           : undefined;
 
-    if (status === 401) return { message: FRIENDLY.UNAUTHORIZED, status, code: 'UNAUTHORIZED' };
+    if (status === 401) {
+      // A 401 that NAMES a login cause is a verdict about the account the user
+      // just tried to sign into, and the server's own words are the answer.
+      if (code && LOGIN_CAUSE_CODES.includes(code) && serverMessage) {
+        return { message: serverMessage, status, code };
+      }
+      // Every other 401 keeps the historic reading: a bearer token lapsed. The
+      // code is deliberately NOT consulted on this branch. On an authenticated
+      // request a 401 means the session whatever else the body claims — the
+      // principle pinned by tests/unit/social/requestActions.spec.ts ("a 401
+      // that reaches this screen is a lapsed session, not a money problem") — so
+      // only the explicitly-named login causes above may override it.
+      return { message: FRIENDLY.UNAUTHORIZED, status, code: 'UNAUTHORIZED' };
+    }
     if (code && FRIENDLY[code]) return { message: FRIENDLY[code], status, code };
     if (serverMessage) return { message: serverMessage, status, code };
     return { message: 'Something went wrong. Please try again.', status };
@@ -74,7 +106,10 @@ export interface ErrorMessageOptions {
 
 export function getErrorMessage(error: unknown, opts?: ErrorMessageOptions): string {
   const normalized = normalizeApiError(error);
-  if (opts?.authAttempt && normalized.status === 401) {
+  if (opts?.authAttempt && normalized.status === 401 && !(normalized.code && LOGIN_CAUSE_CODES.includes(normalized.code))) {
+    // Only the UNNAMED 401 needs the generic credentials copy. Once Go names the
+    // cause, replacing its sentence with "incorrect email/phone number or
+    // password" is the generalisation ADR-PR802 removes.
     return FRIENDLY.INVALID_CREDENTIALS;
   }
   return normalized.message;

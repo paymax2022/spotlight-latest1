@@ -11,13 +11,18 @@ import {
 /**
  * MOB-005 — invalid credentials produce the error state.
  *
- * The live proxy answers 401 for a bad password; the login screen maps it via
- * getErrorMessage({ authAttempt: true }) to the INVALID_CREDENTIALS copy.
- * No mock — the 401 is the real backend's verdict.
+ * The live proxy answers 401 for a bad password. Since ADR-PR802 that 401 also
+ * NAMES the cause (`code: incorrect_password` plus a sentence carrying the
+ * attempts left), and errorMapper passes the server's words through instead of
+ * substituting the generic INVALID_CREDENTIALS copy — which is now only the
+ * fallback for an UNNAMED 401. No mock — the 401 is the real backend's verdict.
  *
  * NOTE: each run performs ONE failed attempt against the shared fixture, which
  * increments platform_users.failed_login_attempts — serial execution and a
- * single submission per run keep that well below the lockout threshold.
+ * single submission per run keep that well below the lockout threshold. If it
+ * ever crosses, this lane legitimately stops being a wrong-password test: the
+ * backend answers 423 account_locked and the lock must be cleared on the
+ * fixture rather than the assertion relaxed.
  */
 test.describe('MOB-005 invalid credentials', () => {
   const netLog: NetEntry[] = [];
@@ -35,12 +40,19 @@ test.describe('MOB-005 invalid credentials', () => {
     await page.getByPlaceholder('Enter your password').fill(`${LIVE_USER.password}-wrong`);
     await page.getByText('Sign In', { exact: true }).click();
 
-    // The credentials copy errorMapper produces for a 401 on the auth path.
-    // Matched by prefix, not the whole sentence: the tail ("… or use Forgot
-    // password to reset it") is guidance and is allowed to be reworded.
+    // The sentence Go produces for a wrong password on a known account, rendered
+    // verbatim. Matched by the part that carries the meaning ("Incorrect password
+    // for …"), not the whole sentence: the attempts-left count and the reset
+    // advice in the tail are both allowed to be reworded. The legacy generic copy
+    // stays in the alternation because this lane runs against whatever backend is
+    // deployed — the per-cause contract itself is pinned, where it can be
+    // controlled, in tests/unit/auth/errorMapper.spec.ts.
     await expect(
-      page.getByText(/Incorrect email\/phone number or password/),
+      page.getByText(/Incorrect password for|Incorrect email\/phone number or password/),
     ).toBeVisible({ timeout: 30_000 });
+    // Whichever copy is deployed, a refused sign-in must not be reported as a
+    // lapsed session — the bug this screen originally had.
+    await expect(page.getByText(/session has expired/i)).toHaveCount(0);
 
     // Live evidence: the login POST hit the real proxy and was REJECTED.
     const logins = findCalls(netLog, /\/api\/auth\/login/, 'POST');

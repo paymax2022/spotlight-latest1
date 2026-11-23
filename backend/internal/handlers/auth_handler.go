@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"log"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -316,6 +318,27 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	c.JSON(http.StatusCreated, body)
 }
 
+// loginTypedIdentifier returns what the caller actually sent, for sentences
+// that have to talk about the user's own input ("No account found for …").
+//
+// It is deliberately NOT the resolved account email: a phone sign-in resolves
+// server-side, and echoing the address behind a number would turn the error
+// message into the lookup endpoint this design refuses to publish. Truncated
+// because the value is user-controlled and ends up rendered on the client.
+func loginTypedIdentifier(in domain.LoginRequest) string {
+	id := strings.TrimSpace(in.Identifier)
+	if id == "" {
+		id = strings.TrimSpace(in.Email)
+	}
+	if id == "" {
+		return "your email or phone number"
+	}
+	if r := []rune(id); len(r) > 120 {
+		return string(r[:120])
+	}
+	return id
+}
+
 func (h *AuthHandler) Login(c *gin.Context) {
 	var in domain.LoginRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -365,6 +388,138 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			})
 			return
 		}
+		// Everything below is ADR-PR802: one status, one code and one plain
+		// sentence per cause. Each sentence names the thing that is actually
+		// wrong, because "invalid credentials" told a locked, suspended,
+		// unregistered or mistyped user that their password was wrong — and they
+		// responded by retrying a correct password until the lockout deepened.
+		//
+		// The identifier echoed back is always WHAT THE USER TYPED, never the
+		// resolved account email: a phone sign-in must not hand out the address
+		// behind the number.
+		typed := loginTypedIdentifier(in)
+		switch {
+		case errors.Is(err, services.ErrInvalidIdentifier):
+			h.audit.LogLogin(failUserID, failEmail, "failed", "invalid_identifier", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"code":    "invalid_identifier",
+				"error":   "Enter a valid email address or phone number.",
+			})
+			return
+		case errors.Is(err, services.ErrAmbiguousIdentifier):
+			h.audit.LogLogin(failUserID, failEmail, "failed", "ambiguous_identifier", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"code":    "ambiguous_identifier",
+				"error":   "That phone number is linked to more than one account. Sign in with your email address instead.",
+			})
+			return
+		case errors.Is(err, services.ErrAccountNotFound):
+			h.audit.LogLogin(failUserID, failEmail, "failed", "account_not_found", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"code":    "account_not_found",
+				"error":   "No account found for " + typed + ". Check you typed it correctly, or create an account.",
+			})
+			return
+		case errors.Is(err, services.ErrAccountLockedByAdmin):
+			// No expiry to wait for — the admin console's "Lock User" action sets
+			// status=locked with locked_until NULL. Saying "try again in N
+			// minutes" here would send the user back at intervals forever.
+			h.audit.LogLogin(failUserID, failEmail, "failed", "account_locked_by_support", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusLocked, gin.H{
+				"success": false,
+				"code":    "account_locked_by_support",
+				"error":   "Your account is locked by our team. Contact support to have it reviewed.",
+			})
+			return
+		case errors.Is(err, services.ErrAccountLocked):
+			var until time.Time
+			var locked *services.AccountLockedError
+			if errors.As(err, &locked) {
+				until = locked.Until
+			}
+			// Counted in minutes rather than printed as a clock time: the API
+			// runs in UTC and the user does not, so "locked until 22:20" is a
+			// different wall clock for them and reads as a lie.
+			minutesLeft := 1
+			if d := time.Until(until); d > 0 {
+				minutesLeft = int(math.Ceil(d.Minutes()))
+			}
+			h.audit.LogLogin(failUserID, failEmail, "failed", "account_locked", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusLocked, gin.H{
+				"success": false,
+				"code":    "account_locked",
+				// Deliberately no "reset your password to unlock it now": a
+				// successful reset does NOT clear failed_login_attempts/locked_until
+				// (ResetPassword never touches platform_users), so promising that
+				// here would be a second lie on top of the one being fixed. The
+				// lock does expire, so the countdown is the honest instruction.
+				// Reported separately as a defect worth fixing.
+				"error": "Account locked for " + typed + " after too many failed sign-in attempts. Try again in " +
+					strconv.Itoa(minutesLeft) + " minutes.",
+			})
+			return
+		case errors.Is(err, services.ErrAccountSuspended):
+			h.audit.LogLogin(failUserID, failEmail, "failed", "account_suspended", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"code":    "account_suspended",
+				"error":   "This account is suspended. Contact support to have it reviewed.",
+			})
+			return
+		case errors.Is(err, services.ErrAccountClosed):
+			h.audit.LogLogin(failUserID, failEmail, "failed", "account_closed", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"code":    "account_closed",
+				"error":   "This account was closed. You can create a new one with the same email address.",
+			})
+			return
+		case errors.Is(err, services.ErrIdentityRecordMissing):
+			// GoTrue accepted the password but platform_users has no row, so the
+			// suspension/lock gate could not run and the session was withheld.
+			// That is data drift, not a credential problem — never phrase it as
+			// one, and never let it look like the user's fault.
+			log.Printf("[auth] login: identity record missing for user %q (session withheld)", failUserID)
+			h.audit.LogLogin(failUserID, failEmail, "failed", "identity_record_missing", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"code":    "account_record_missing",
+				"error":   "We can't load your account right now. Try again, or contact support.",
+			})
+			return
+		case errors.Is(err, services.ErrIncorrectPassword):
+			remaining := 0
+			var wrong *services.WrongPasswordError
+			if errors.As(err, &wrong) {
+				remaining = wrong.AttemptsRemaining
+			}
+			reason := "incorrect_password"
+			// The exit gets named because the same sentence covers two people: one
+			// who mistyped, and one whose sign-up was a decoy because the address
+			// already had an account (auth_service.go AlreadyExisted) and so has
+			// never had this password stored. "Try again" sends the second one back
+			// to the same dead end; the reset path is the way out for both, and it
+			// says the same thing either way, so nothing new is disclosed.
+			message := "Incorrect password for " + typed + "."
+			if remaining > 0 {
+				message += " " + strconv.Itoa(remaining) + " attempts left before the account locks."
+			}
+			message += " Use Forgot password to reset it."
+			h.audit.LogLogin(failUserID, failEmail, "failed", reason, c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"code":    "incorrect_password",
+				"error":   message,
+			})
+			return
+		}
+		// Anything unclassified keeps the historic 401. A cause this switch does
+		// not know about must not be dressed up as one it does — but neither may
+		// a KNOWN cause land here, which is what
+		// TestLogin_AnswersEachCauseWithItsOwnMessage pins.
 		h.audit.LogLogin(failUserID, failEmail, "failed", "invalid_credentials", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid credentials"})
 		return

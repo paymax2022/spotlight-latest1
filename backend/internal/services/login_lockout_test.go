@@ -300,22 +300,30 @@ func TestResolveLoginEmail_PhoneShapedIdentifierResolvesViaProfileLookup(t *test
 	}
 }
 
-func TestPhoneToEmail_NoMatchReturnsEmpty(t *testing.T) {
+func TestPhoneToEmail_NoMatchIsAccountNotFound(t *testing.T) {
 	svc := newAuthServiceWithProfilesFiltered(t, "8159491618", nil)
-	if got := svc.phoneToEmail(t.Context(), "8159491618"); got != "" {
+	got, err := svc.phoneToEmail(t.Context(), "8159491618")
+	if got != "" {
 		t.Errorf("phoneToEmail = %q, want \"\" on no match", got)
+	}
+	if !errors.Is(err, ErrAccountNotFound) {
+		t.Errorf("err = %v, want ErrAccountNotFound — the cause, not a blank", err)
 	}
 }
 
 // Two accounts sharing a normalised number is a data problem — refuse rather
 // than guess which one to sign in.
-func TestPhoneToEmail_AmbiguousMatchReturnsEmpty(t *testing.T) {
+func TestPhoneToEmail_AmbiguousMatchIsItsOwnCause(t *testing.T) {
 	svc := newAuthServiceWithProfilesFiltered(t, "8159491618", []map[string]any{
 		{"email": "first@example.com", "phone": "08159491618"},
 		{"email": "second@example.com", "phone": "+2348159491618"},
 	})
-	if got := svc.phoneToEmail(t.Context(), "8159491618"); got != "" {
+	got, err := svc.phoneToEmail(t.Context(), "8159491618")
+	if got != "" {
 		t.Errorf("phoneToEmail = %q, want \"\" when two accounts share a number", got)
+	}
+	if !errors.Is(err, ErrAmbiguousIdentifier) {
+		t.Errorf("err = %v, want ErrAmbiguousIdentifier", err)
 	}
 }
 
@@ -326,8 +334,12 @@ func TestPhoneToEmail_DiscardsRowsThatDoNotActuallyMatchAfterNormalisation(t *te
 	svc := newAuthServiceWithProfilesFiltered(t, "8159491618", []map[string]any{
 		{"email": "close-but-no.example.com", "phone": "9159491618"}, // like-matched, normalises differently
 	})
-	if got := svc.phoneToEmail(t.Context(), "8159491618"); got != "" {
+	got, err := svc.phoneToEmail(t.Context(), "8159491618")
+	if got != "" {
 		t.Errorf("phoneToEmail = %q, want \"\" — the row does not actually match after normalisation", got)
+	}
+	if !errors.Is(err, ErrAccountNotFound) {
+		t.Errorf("err = %v, want ErrAccountNotFound once the false-positive row is discarded", err)
 	}
 }
 
@@ -341,40 +353,55 @@ func TestPhoneToEmail_DiscardsRowsThatDoNotActuallyMatchAfterNormalisation(t *te
 // always has a row by the time it can log in — a missing row is anomalous,
 // not a race to tolerate, and the fix is to fail closed.
 
-// authServerRefusingToken answers GET .../platform_users with zero rows and
-// fails the test if /auth/v1/token is ever called — the fixed LoginUser must
-// refuse before it would reach GoTrue at all.
-func authServerRefusingToken(t *testing.T) *httptest.Server {
+// authServerNoPlatformRow answers GET .../platform_users with zero rows and
+// answers /auth/v1/token with the injected handler, so the two possible
+// classifications of a missing row can both be exercised.
+func authServerNoPlatformRow(t *testing.T, token http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "platform_users") && r.Method == http.MethodGet {
-			w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "platform_users") && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`[]`))
-			return
+		case strings.Contains(r.URL.Path, "/auth/v1/token"):
+			token(w, r)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		if strings.Contains(r.URL.Path, "/auth/v1/token") {
-			t.Fatalf("LoginUser reached GoTrue at %s despite a missing platform_users row — the AUTH-014 gate must refuse first", r.URL.Path)
-		}
-		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 	}))
 }
 
 func TestLoginUser_MissingPlatformUsersRowRefusesLogin(t *testing.T) {
-	srv := authServerRefusingToken(t)
+	// AUTH-014's security property is unchanged: with no platform_users row the
+	// suspension/lock gate cannot run, so NO session may be issued — GoTrue is
+	// consulted for classification only, and a 2xx answer is thrown away (see
+	// TestLoginClass_GoTrueAcceptsWithoutPlatformRowRefuses).
+	//
+	// What ADR-PR802 changed is the WORDING: the refusal no longer claims the
+	// password was wrong. GoTrue rejecting an address with no local row means
+	// the address is not registered, and that is what the user is told.
+	srv := authServerNoPlatformRow(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error_code":"invalid_credentials","msg":"Invalid login credentials"}`))
+	}))
 	defer srv.Close()
 
 	svc := &authService{
 		supabase: integrations.NewSupabaseRestClient(srv.URL, "key"),
 		cfg:      config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30},
 	}
-	_, err := svc.LoginUser(t.Context(), domain.LoginRequest{Email: "ghost@example.com", Password: "correct-horse-battery"})
+	out, err := svc.LoginUser(t.Context(), domain.LoginRequest{Email: "ghost@example.com", Password: "correct-horse-battery"})
 	if err == nil {
 		t.Fatal("LoginUser must refuse when the account has zero platform_users rows, got nil error")
 	}
-	// Must be the SAME generic message every other refusal on this path uses —
-	// a distinct message here would be a new account-enumeration signal.
-	if err.Error() != "invalid credentials" {
-		t.Fatalf(`err = %q, want "invalid credentials" (the same message wrong-password uses)`, err.Error())
+	if out != nil {
+		t.Fatal("a missing platform_users row must never produce a session")
+	}
+	if !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("err = %v, want ErrAccountNotFound — GoTrue rejected an address with no local row", err)
+	}
+	if errors.Is(err, ErrIncorrectPassword) {
+		t.Fatal(`an unregistered address must not be reported as "incorrect password"`)
 	}
 }
 

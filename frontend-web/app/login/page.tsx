@@ -27,8 +27,14 @@ function toReadableAuthError(err: unknown, fallback: string): string {
     return 'This email already has an account. Please sign in instead.';
   }
   // 'invalid login credentials' is Supabase's own wording (the old direct-call
-  // error); 'invalid credentials' is Go's (see backend/internal/handlers/auth_handler.go).
-  // Both mean the same thing to a user and should read the same.
+  // error); 'invalid credentials' is Go's UNCLASSIFIED fallback
+  // (backend/internal/handlers/auth_handler.go). Both mean "the server did not
+  // name a cause", so they still read the same.
+  //
+  // Everything Go names now arrives as a finished sentence — locked, suspended,
+  // closed, wrong password with the attempts left, no such account (ADR-PR802) —
+  // and it must reach the user unchanged through the final `return message`. Do
+  // not add branches that re-generalise those; that is the bug being fixed.
   if (lowered.includes('invalid login credentials') || lowered.includes('invalid credentials')) {
     return 'Invalid email or password.';
   }
