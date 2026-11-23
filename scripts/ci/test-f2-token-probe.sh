@@ -629,6 +629,278 @@ if grep -qF -- 'already-expanded sample paths' "$tcs"; then
 else
   echo "FAIL workflow: the positional backstop is gone, so a quoting slip silences the verdict again"; fails=$((fails + 1))
 fi
+# ------------------------------------------------- (9) the status decode probe
+# WHY THIS EXISTS AT ALL. Six staging dispatches of ops-railway-upload.yml
+# (45029642480 … 45030326422, 2026-11-22 13:51Z/13:59Z) died 0.3 s into their own
+# pre-flight — `railway status --json` — printing F2's string:
+#   Failed to fetch: error decoding response body
+# while `railway api` with the same token on the same runner decodes fine and
+# answers `Not Authorized`. So the decode refusal is not upload-specific, and the
+# question the answer turns on is which credential classes can decode that
+# response. Locally, pinned 5.40.1 with the owner's USER token exits 0 with
+# 213,691 bytes of JSON, so the CLI version alone is exonerated and only a runner
+# holding a PROJECT token can settle it. That is scripts/ci/f2-status-probe.sh,
+# and because a runner is the only place it can run, the classification below is
+# what makes its output checkable afterwards.
+#
+# Convention: `status <rc> <stdout> <stderr>`. Order matters — rc=124 is a
+# timeout before it is anything else, and rc=0 with no bytes is NOT a decode.
+expect "status: exit 0 with parseable JSON" "decoded" \
+  "$("${V[@]}" status 0 '{"environments":{"edges":[]}}' '')" \
+  status "0 '{\"environments\"...}' ''"
+# The realistic shape: this workspace's status body carries project,
+# environments and services. Held in a variable because the inline spelling above
+# is fine while a nested-quote spelling in the same position silently reaches the
+# classifier as text — the payload, not the parser, was the bug here.
+STATUS_BIG='{"project":{"id":"e7dca861"},"environments":{"edges":[{"node":{"name":"staging"}}]},"services":[]}'
+expect "status: exit 0 with a huge real-shaped body" "decoded" \
+  "$("${V[@]}" status 0 "$STATUS_BIG" '')" \
+  status "0 project+environments ''"
+# The measured CI shape, verbatim from job 137230172408.
+expect "status: the measured F2 decode refusal" "decode-refused" \
+  "$("${V[@]}" status 1 '' 'Failed to fetch: error decoding response body
+    0: error decoding response body')" \
+  status "1 '' 'Failed to fetch: error decoding response body'"
+# RED CONTROL: this must not read green, whatever the classifier does next.
+checks=$((checks + 1))
+if [[ "$("${V[@]}" status 1 '' 'Failed to fetch: error decoding response body')" != "decoded" ]]; then
+  echo "ok   status red control: a decode refusal never reads as decoded"
+else
+  echo "FAIL status red control: a decode refusal read as 'decoded' — the classifier trusts rc or presence alone"; fails=$((fails + 1))
+fi
+expect "status: an HTML body at exit 1" "non-json-body" \
+  "$("${V[@]}" status 1 '<html><title>502 Bad Gateway</title></html>' '')" \
+  status "1 '<html>…502…' ''"
+expect "status: exit 0 that wrote nothing" "empty-body" \
+  "$("${V[@]}" status 0 '' '')" status "0 '' ''"
+expect "status: truncated JSON (a body cut mid-write)" "truncated-json" \
+  "$("${V[@]}" status 0 '{"environments":{"edges":[' '')" \
+  status "0 '{\"environments\":{\"edges\":[' ''"
+expect "status: the runner was never linked" "not-linked" \
+  "$("${V[@]}" status 1 '' 'Error: No project linked. Run `railway link` to connect to a project.')" \
+  status "1 '' 'No project linked'"
+expect "status: a credential the API rejects outright" "unauthorized" \
+  "$("${V[@]}" status 1 '' 'Error: Unauthorized. Please check your token.')" \
+  status "1 '' 'Unauthorized'"
+expect "status: the CLI hung and timed out" "timeout-no-response" \
+  "$("${V[@]}" status 124 '' '')" status "124 '' ''"
+expect "status: exit 0 but the body says Not Authorized" "token-rejected" \
+  "$("${V[@]}" status 0 '{"errors":[{"message":"Not Authorized","extensions":{"code":"INTERNAL_SERVER_ERROR"}}],"data":null}' '')" \
+  status "0 errors:Not Authorized ''"
+expect "status: an unexplained exit is not a verdict" "other-failure" \
+  "$("${V[@]}" status 3 '' 'some unrelated CLI complaint')" status "3 '' 'unrelated'"
+
+# The probe script and the workflow that runs it.
+sp=scripts/ci/f2-status-probe.sh
+checks=$((checks + 1))
+if [[ -f "$sp" ]]; then
+  echo "ok   status probe: scripts/ci/f2-status-probe.sh exists"
+else
+  echo "FAIL status probe: $sp is missing — the classifier has nothing to drive it"; fails=$((fails + 1))
+fi
+if [[ -f "$sp" ]]; then
+  want "status probe: it calls the classifier, not its own inline rules" 'f2-probe-verdict.py' "$sp" present
+  want "status probe: the pinned CLI version is an override, not a guess" 'PROBE_RAILWAY_VERSION' "$sp" present
+  want "status probe: the runner CLI matches the ops lane's 5.40.1" '5\.40\.1' "$sp" present
+  want "status probe: it bounds the call with timeout" '\btimeout ' "$sp" present
+  want "status probe: it never prints the token" 'printf.*RAILWAY_TOKEN' "$sp" absent
+  want "status probe: it masks the credential in its own banner" 'masked|MASKED' "$sp" present
+  want "status probe: stdout goes to a file, not straight to the classifier" 'status-out\.json' "$sp" present
+  want "status probe: it reports the byte count it saw" 'wc -c' "$sp" present
+fi
+want "workflow: the class probe runs the status cell too" 'f2-status-probe\.sh' "$tc" present
+want "workflow: status cells land in their own files" '/tmp/status-' "$tc" present
+want "workflow: the status summary globs quoted" '"\$GITHUB_STEP_SUMMARY"' "$tc" present
+want "workflow: the status probe is installed at the pinned version" 'npm install --global' "$tc" present
+# ------------------------------------------------ (10) the status verdict rules
+# WHY THE RULES ARE A FILE AND NOT A HEREDOC. ci-railway-token-class.yml used to
+# build this comparison inside a `python3 - <<'PY'` block. That made the
+# four-way choice (class fault / staging-only payload / upload-path-only /
+# incomplete run) untestable, because the only machine that ever ran it also
+# held three live credentials. Run 45024735432 is the precedent from section 7:
+# one quoting mistake in a heredoc rule silenced the class verdict on a run
+# whose twelve samples were all fine. So the rules live in
+# scripts/ci/f2-status-verdict.py, take recorded cells, and the workflow calls
+# them — which is only worth something if this file drives them.
+echo
+echo "--- f2-status-verdict.py: recorded cells in, comparison and verdict out"
+sv=scripts/ci/f2-status-verdict.py
+checks=$((checks + 1))
+if [[ -f "$sv" ]]; then
+  echo "ok   the status verdict rules are a file the workflow calls"
+else
+  echo "FAIL $sv is missing — the rules went back into a workflow heredoc"; fails=$((fails + 1))
+fi
+svd=$(mktemp -d)
+
+# Shapes copied from f2-status-probe.sh's own echo lines. The `cli= rc= bytes=
+# verdict=` quadruple really is ONE line, and `first=` really does contain
+# spaces. A fixture that invents a tidier format tests the fixture and not the
+# reader, which is how the first version of this file reported every live cell
+# as `verdict=missing` and still printed a confident paragraph.
+svcell() { # <label> <present> <rc> <bytes> <verdict> [first]
+  {
+    echo "STATUS_CELL_BEGIN label=$1"
+    echo "STATUS_CELL credential=masked=yes present=$2"
+    echo "STATUS_CELL cli=5.40.1 rc=$3 bytes=$4 verdict=$5"
+    [[ -n "${6:-}" ]] && echo "STATUS_CELL first=$6"
+    echo "STATUS_CELL_END label=$1"
+  } > "$svd/status-$1.txt"
+}
+svclear() { rm -f "$svd"/status-*.txt; }
+svout() { python3 "$sv" --glob "$svd/status-*.txt"; }
+svsay() { # <label> <needle that must appear>
+  checks=$((checks + 1))
+  local out; out=$(svout)
+  if grep -qF -- "$2" <<<"$out"; then
+    echo "ok   $1"
+  else
+    echo "FAIL $1: no '$2' in the summary"; sed 's/^/         /' <<<"$out"; fails=$((fails + 1))
+  fi
+}
+svquiet() { # <label> <needle that must NOT appear>
+  checks=$((checks + 1))
+  local out; out=$(svout)
+  if grep -qF -- "$2" <<<"$out"; then
+    echo "FAIL $1: the summary says '$2' anyway"; sed 's/^/         /' <<<"$out"; fails=$((fails + 1))
+  else
+    echo "ok   $1"
+  fi
+}
+REFUSED="Failed to fetch: error decoding response body"
+
+# Case A — what the six dead staging dispatches predict, now on every
+# credential: a project token in a runner cannot decode a plain read any better
+# than it can decode an upload. That is the repro the support thread needs, and
+# development's green upload legs are what makes it a credential finding rather
+# than a staging finding.
+svclear
+svcell anonymous no 1 0 decode-refused "$REFUSED"
+svcell development yes 1 0 decode-refused "$REFUSED"
+svcell staging yes 1 0 decode-refused "$REFUSED"
+svcell production yes 1 0 decode-refused "$REFUSED"
+svsay "cells: uniform refusal reads as F2 on a plain read, with a repro" "two-line repro"
+svquiet "cells: a uniform refusal is not softened into a staging-only story" "Only staging refuses"
+
+# Case B — what the laptop control predicts: every credential decodes, so the
+# pre-flight deaths are some other fault and F2 stays upload-specific.
+svclear
+svcell anonymous yes 0 213691 decoded
+svcell development yes 0 213691 decoded
+svcell staging yes 0 213691 decoded
+svcell production yes 0 213691 decoded
+svsay "cells: all-decoded reads as upload-path-only, not a proof of health" \
+  "confined to the upload request path"
+svquiet "cells: all-decoded does not claim the class fault" "two-line repro"
+
+# Case C — staging alone: the one result that re-opens rotating the secret, so
+# it must name the environment and must not claim a class fault.
+svclear
+svcell anonymous yes 0 213691 decoded
+svcell development yes 0 213691 decoded
+svcell staging yes 1 0 decode-refused "$REFUSED"
+svcell production yes 0 213691 decoded
+svsay "cells: staging-only refusal names the environment" "Only staging refuses"
+svquiet "cells: a staging-only refusal is not reported as a class fault" "two-line repro"
+
+# Case D — RED CONTROL. Two decoded cells, one refused cell, and a production
+# cell that never arrived. Case C's sentence is the wrong answer here: with
+# production unmeasured, "only staging refuses" is a guess about a row nobody
+# read. This is the check that keeps the rules honest, and it is the one that
+# would have caught a `refused == ["staging"]` condition written without
+# `complete and`.
+svclear
+svcell anonymous yes 0 213691 decoded
+svcell development yes 0 213691 decoded
+svcell staging yes 1 0 decode-refused "$REFUSED"
+svquiet "cells: a missing production cell blocks the staging-only story (red control)" \
+  "Only staging refuses"
+svsay "cells: a missing cell is shown as missing" "cell missing"
+
+# Case E — three decoded, one absent: reads like case B at a glance, and case
+# B is the sentence that would justify closing F2 as upload-only.
+svclear
+svcell anonymous yes 0 213691 decoded
+svcell development yes 0 213691 decoded
+svcell staging yes 0 213691 decoded
+svquiet "cells: an incomplete run never reads as upload-path-only (red control)" \
+  "confined to the upload request path"
+svsay "cells: an incomplete run says an unmeasured cell is not a passing cell" \
+  "unmeasured cell is not a passing cell"
+
+# Case F — nothing collected at all: the install step died, and an empty table
+# must be reported as "the probe never ran", not as agreement between cells.
+svclear
+svsay "cells: an empty collection says the probe never ran" \
+  "No status cells were collected"
+
+# Case G — the control refusing while every token decodes does not invalidate
+# the token rows, but "decode-refused" stops being attributable to credentials,
+# so the run has to say so out loud.
+svclear
+svcell anonymous yes 1 0 decode-refused "$REFUSED"
+svcell development yes 0 213691 decoded
+svcell staging yes 0 213691 decoded
+svcell production yes 0 213691 decoded
+svsay "cells: a control that refuses in the credential words is called broken" "CONTROL BROKEN"
+
+# Safety: the summary is written with --out exactly like $GITHUB_STEP_SUMMARY,
+# and it must carry the masked marks and the CLI's sentence and nothing that
+# looks like a credential (ra_ and rlwy_ are Railway's token prefixes).
+# The payloads are shaped but not real, and they say FAKE in the value:
+# the point of the case is that the renderer must redact them.
+svclear
+svcell staging yes 1 0 decode-refused "$REFUSED"
+printf 'STATUS_CELL_BEGIN label=leak\nSTATUS_CELL credential=masked=yes present=yes\nSTATUS_CELL cli=5.40.1 rc=1 bytes=0 verdict=decode-refused\nSTATUS_CELL first=ra_FAKEfakefake rlwy_proj_FAKEfakefake\nSTATUS_CELL_END label=leak\n' > "$svd/status-leak.txt"
+python3 "$sv" --glob "$svd/status-*.txt" --out "$svd/summary.md"
+checks=$((checks + 1))
+if grep -q 'masked=yes' "$svd/summary.md" \
+   && ! grep -qE 'ra_[a-zA-Z0-9]{4}|rlwy_[a-zA-Z0-9]{4}' "$svd/summary.md"; then
+  echo "ok   safety: the summary carries masked marks only, never a credential"
+else
+  echo "FAIL safety: something credential-shaped reached the summary"
+  sed 's/^/         /' "$svd/summary.md"; fails=$((fails + 1))
+fi
+
+# The first-line field is the one place a body fragment is echoed on purpose, so
+# it must stay bounded — an unbounded `first=` would paste the whole refusal
+# response into the run summary.
+checks=$((checks + 1))
+if grep -qE -- 'STATUS_CELL first=\$\{head\}.*cut -c|head -1 "\$ERR" \| cut' scripts/ci/f2-status-probe.sh; then
+  echo "ok   safety: the probe truncates the CLI's first line before printing it"
+else
+  echo "FAIL safety: f2-status-probe.sh prints an unbounded first line"; fails=$((fails + 1))
+fi
+
+# Arg shape: quoted glob and an already-expanded list must agree, because the
+# class verdict learned that the hard way in section 7.
+svclear
+svcell staging yes 1 0 decode-refused "$REFUSED"
+checks=$((checks + 1))
+sq=$(python3 "$sv" --glob "$svd/status-*.txt")
+su=$(python3 "$sv" "$svd/status-staging.txt")
+if [[ "$sq" == "$su" ]]; then
+  echo "ok   arg shape: quoted glob and expanded paths answer identically"
+else
+  echo "FAIL arg shape: the two spellings disagree, so one reads a subset"
+  diff <(printf '%s\n' "$sq") <(printf '%s\n' "$su") | sed 's/^/         /' | head -6
+  fails=$((fails + 1))
+fi
+
+# The workflow must CALL the file rather than re-inline the rules, or the rules
+# this suite drives stop being the rules that run.
+want "workflow: the status verdict calls the rules file" 'python3 scripts/ci/f2-status-verdict.py' "$tc" present
+want "workflow: the status verdict quotes its glob" '--glob "/tmp/status-\*\.txt"' "$tc" present
+checks=$((checks + 1))
+if grep -qE -- "<<'PY'" "$tc"; then
+  echo "FAIL workflow: a python heredoc is back in ci-railway-token-class.yml — its rules are untestable again"
+  grep -nE -- "<<'PY'" "$tc" | sed 's/^/         /'
+  fails=$((fails + 1))
+else
+  echo "ok   workflow: no python heredoc, so every rule in this job is offline-tested"
+fi
+rm -rf "$svd"
+
 reset_class
 rm -rf "$classd"
 
