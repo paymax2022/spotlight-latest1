@@ -208,7 +208,14 @@ wrong in ways that would have produced a confident, false verdict:
 Also proven here, because the transport cells depend on it: `railway api`
 resolves **both** documents from a directory that has never been linked. The
 runner reports `link_state=no-config` on every cell, so "the lane never linked a
-project" is not an available excuse for a refused read.
+project" is not an available excuse for a refused read. Checked twice — with the
+installed CLI, and again at 12:45Z on 2026-11-23 through
+`npx @railway/cli@5.40.1 api … --compact --allow-errors` from `/tmp`, which is
+the version the runner installs: `project(id)` returned
+`name = spotlight-platform` and the row query returned the staging backend's
+`latestDeployment` (`faa7ff43…`, `SUCCESS`, 2026-11-22T14:03:00.891Z). That also
+confirms 5.40.1 accepts both flags the cli branch passes, so the cells cannot
+fail for want of a flag.
 
 ## The question, in one sentence
 
