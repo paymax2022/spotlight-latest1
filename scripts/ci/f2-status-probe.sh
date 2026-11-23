@@ -86,11 +86,34 @@ fi
 # `--version` is local and instant, so this cannot be confused with the read.
 # Unquoted `$CLI` is deliberate for the npx form (it carries its own arguments),
 # which is why the same split appears at the status call below.
+#
+# The first version of this block computed CLI_ACTUAL and then printed
+# `${VERSION}` anyway (run 45171097305 is the proof: every cell said cli=5.40.1,
+# which is what the workflow asked for, not what ran). A computed value that no
+# line emits is dead code that reads like a guarantee, so the cell now carries
+# BOTH spellings — `cli=` measured, `pin=` requested — and disagrees out loud.
 if [[ "$CLI" == npx* ]]; then
   # shellcheck disable=SC2086
-  CLI_ACTUAL=$(timeout 30 $CLI --version 2>&1 | head -1 | tr -d '\r' || true)
+  CLI_RAW=$(timeout 30 $CLI --version 2>&1 | tr -d '\r' || true)
 else
-  CLI_ACTUAL=$(timeout 30 "$CLI" --version 2>&1 | head -1 | tr -d '\r' || true)
+  CLI_RAW=$(timeout 30 "$CLI" --version 2>&1 | tr -d '\r' || true)
+fi
+# One space-free token, because the summary parser splits cells on whitespace
+# pairs: `railway 5.40.1` would land as cli=railway and the rest of the line
+# would shift. `--version` prints either shape depending on the build, and the
+# npx form can prepend install noise, so take the LAST dotted number in the
+# whole output and say so when there is none.
+CLI_ACTUAL=$(printf '%s' "$CLI_RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+[[ -n "$CLI_ACTUAL" ]] || CLI_ACTUAL=unmeasured
+
+# Caveats accumulate into one line: the cell parser keeps the LAST value of a
+# key, so two `caveat=` lines would silently delete the first observation.
+CAVEAT=""
+add_caveat() {
+  if [[ -z "$CAVEAT" ]]; then CAVEAT="$1"; else CAVEAT="$CAVEAT; $1"; fi
+}
+if [[ "$CLI_ACTUAL" != "$VERSION" ]]; then
+  add_caveat "the binary that ran was ${CLI_ACTUAL}, not the pinned ${VERSION} — this cell is about the wrong CLI"
 fi
 
 echo "STATUS_CELL_BEGIN label=${LABEL}"
@@ -108,13 +131,13 @@ BYTES=$(wc -c < "$OUT" | tr -d '[:space:]')
 # The classifier owns the taxonomy, so it can be driven from recorded shapes by
 # scripts/ci/test-f2-token-probe.sh instead of only ever running on a runner.
 VERDICT=$(python3 scripts/ci/f2-probe-verdict.py status "$RC" "$(cat "$OUT")" "$(cat "$ERR")")
-echo "STATUS_CELL cli=${VERSION} rc=${RC} bytes=${BYTES} verdict=${VERDICT}"
+echo "STATUS_CELL cli=${CLI_ACTUAL} pin=${VERSION} rc=${RC} bytes=${BYTES} verdict=${VERDICT}"
 
 # A shape check the verdict cannot make: `decoded` on a body smaller than the
 # ~213 KB this workspace's status actually is means the CLI answered something
 # that is JSON but is not this project's graph.
 if [[ "$VERDICT" == "decoded" ]] && (( BYTES < 1024 )); then
-  echo "STATUS_CELL caveat=decoded-but-small bytes=${BYTES}"
+  add_caveat "decoded-but-small: the CLI answered something that is JSON but is not this project's graph (bytes=${BYTES})"
 fi
 
 # Link state, reported separately because `not-linked` would otherwise be
@@ -133,6 +156,11 @@ else
   LINKED=no-config
 fi
 echo "STATUS_CELL link_state=${LINKED}"
+
+# One line, because the renderer keeps the last value of a repeated key.
+if [[ -n "$CAVEAT" ]]; then
+  echo "STATUS_CELL caveat=${CAVEAT}"
+fi
 
 if [[ "$VERDICT" == "decode-refused" || "$VERDICT" == "non-json-body" || "$VERDICT" == "truncated-json" ]]; then
   # The first line is the CLI's own sentence, which carries no credential.

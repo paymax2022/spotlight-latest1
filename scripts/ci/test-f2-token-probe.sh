@@ -409,12 +409,16 @@ done
 # exactly like "the class is fine, staging alone broke". Counted same-line
 # against the probe call rather than as two totals, because the sampler's header
 # documents this rule and a bare count would pass on the prose that explains it.
+# Compared against the number of calls the file actually makes instead of a
+# hard-coded 4: the workflow grew a second set of four (the cli-transport cells)
+# and a literal would have made an honest addition look like a safety regression.
+tc_calls=$(grep -Ec 'bash scripts/ci/f2-token-probe\.sh' "$tc")
 tc_tolerant=$(grep -Ec 'f2-token-probe\.sh.*\|\| true' "$tc")
 checks=$((checks + 1))
-if [[ "$tc_tolerant" == 4 ]]; then
-  echo "ok   token-class: all four credentials run even when a read is refused"
+if [[ "$tc_calls" -ge 8 && "$tc_calls" == "$tc_tolerant" ]]; then
+  echo "ok   token-class: all $tc_calls probe calls tolerate a refused read"
 else
-  echo "FAIL token-class: only $tc_tolerant/4 probe calls tolerate a non-zero exit"; fails=$((fails + 1))
+  echo "FAIL token-class: $tc_tolerant of $tc_calls probe calls tolerate a non-zero exit"; fails=$((fails + 1))
 fi
 # The empty-credential control is what makes "Not Authorized" mean something:
 # Railway answers HTTP 200 for auth failures, so a bad token and no token look
@@ -900,6 +904,278 @@ else
   echo "ok   workflow: no python heredoc, so every rule in this job is offline-tested"
 fi
 rm -rf "$svd"
+
+# ------------------------------------------------------------------ transport
+# (11) the curl-vs-CLI comparison, and the two measurement fixes it forced
+echo "--- f2-transport-verdict.py: same document, two clients, compared per credential"
+tv=scripts/ci/f2-transport-verdict.py
+tvd=$(mktemp -d)
+checks=$((checks + 1))
+if [[ -f "$tv" ]]; then
+  echo "ok   the transport comparison is a file the workflow calls"
+else
+  echo "FAIL $tv is missing — the comparison went back into a heredoc"; fails=$((fails + 1))
+fi
+
+# Cell shapes copied from f2-token-probe.sh's own output. The curl side really is
+# one file PER ATTEMPT (`class-<label>-<n>.txt`, written by the loop in the
+# workflow step) and the cli side one PER CREDENTIAL (`cli-<label>.txt`), so a
+# fixture that tidies that up tests the fixture and not the reader.
+tvreset() { rm -f "$tvd"/class-*.txt "$tvd"/cli-*.txt; }
+tvcurl() { # <label> <attempt> <auth>
+  {
+    echo "CLASS_CELL label=$1 attempt=$2"
+    echo "PROBE_CELL auth=$3 (http=200)"
+    echo "PROBE_CELL baseline=$3 row= status="
+  } > "$tvd/class-$1-$2.txt"
+}
+tvcli() { # <label> <auth>
+  {
+    echo "CLASS_CELL label=$1 attempt=1"
+    echo "PROBE_CELL auth=$2 (http=cli-transport)"
+    echo "PROBE_CELL baseline=$2 row= status="
+  } > "$tvd/cli-$1.txt"
+}
+tvout() { python3 "$tv" --curl-glob "$tvd/class-*.txt" --cli-glob "$tvd/cli-*.txt"; }
+tvsay() { # <label> <needle that must appear>
+  checks=$((checks + 1))
+  local out; out=$(tvout)
+  if grep -qF -- "$2" <<<"$out"; then
+    echo "ok   $1"
+  else
+    echo "FAIL $1: no '$2' in the summary"; sed 's/^/         /' <<<"$out" | tail -8; fails=$((fails + 1))
+  fi
+}
+tvnot() { # <label> <needle that must NOT appear>
+  checks=$((checks + 1))
+  local out; out=$(tvout)
+  if grep -qF -- "$2" <<<"$out"; then
+    echo "FAIL $1: '$2' appeared, and someone would act on it"; fails=$((fails + 1))
+  else
+    echo "ok   $1"
+  fi
+}
+tvall() { # <curl-auth> <cli-auth> — three tokens, plus a control refused on both
+  tvreset
+  local lab
+  for lab in development staging production; do
+    tvcurl "$lab" 1 "$1"; tvcurl "$lab" 2 "$1"; tvcurl "$lab" 3 "$1"
+    tvcli "$lab" "$2"
+  done
+  tvcurl anonymous 1 token-rejected; tvcurl anonymous 2 token-rejected
+  tvcurl anonymous 3 token-rejected; tvcli anonymous token-rejected
+}
+
+tvall token-rejected token-rejected
+tvsay "class: refused on both clients is the credential class" \
+  "Class, confirmed across both clients"
+tvnot "class: does not blame the sampler" "The sampler, not the token"
+
+tvall token-rejected ok
+tvsay "sampler: refused on curl and ok on cli retires the class claim" \
+  "The sampler, not the token"
+tvnot "sampler: does not confirm the class" "Class, confirmed across both clients"
+
+tvall token-rejected ok
+tvcli anonymous ok
+tvsay "control: a credential-less cli row that resolves the field breaks the run" \
+  "CONTROL BROKEN"
+
+tvall token-rejected ok
+rm -f "$tvd/cli-staging.txt"
+tvsay "coverage: a credential with no cli cell is not a comparison" \
+  "The comparison is not available"
+tvnot "coverage: the clean class sentence stays unreachable on a missing cell" \
+  "Class, confirmed across both clients"
+tvnot "coverage: the sampler sentence stays unreachable too" \
+  "The sampler, not the token"
+
+tvall token-rejected body-undecodable
+tvsay "taxonomy: an unparseable cli body is a new observation, not a verdict" \
+  "outside the taxonomy"
+# The red control for that branch. F2's own sentence is `body-undecodable`
+# (2026-11-22, job 137230172408), and the sampler used to reason "no `Not
+# Authorized` text, so not an auth failure" — a rule that let a table of decode
+# faults resolve to CLASS would hide the fault inside the credential probe.
+tvnot "class over cli silence: unparseable bodies never read as the class" \
+  "Class, confirmed across both clients"
+# And not as a per-credential story either: with the cli side unparseable the
+# honest sentence is "no answer", not "rotate these three secrets".
+tvnot "class over cli silence: unparseable bodies are not a scope story either" \
+  "Per-credential, not per-class"
+
+tvall ok ok
+tvsay "agreement: both clients authenticating contradicts 12:07Z" \
+  "Both transports authenticate"
+
+tvall token-rejected token-rejected
+tvcli development ok
+tvsay "per credential: one token differing is not a class statement" \
+  "Per-credential, not per-class"
+
+tvreset
+checks=$((checks + 1))
+if grep -qF -- "No cells at all" <<<"$(tvout)"; then
+  echo "ok   empty: no transcripts says nothing was measured"
+else
+  echo "FAIL empty: an empty collection rendered as a result"; fails=$((fails + 1))
+fi
+
+# Three curl attempts are ONE credential. Rendered as three rows the table looks
+# like three more credentials and every branch below it reads `missing` — the
+# exact failure the class verdict had before its grouping was fixed.
+tvall token-rejected ok
+checks=$((checks + 1))
+n_rows=$(tvout | grep -c '^| development |')
+if [[ "$n_rows" == "1" ]]; then
+  echo "ok   collapse: three curl attempts render as one credential row"
+else
+  echo "FAIL collapse: development rendered $n_rows rows"; fails=$((fails + 1))
+fi
+checks=$((checks + 1))
+if tvout | grep -qF -- "3/3 token-rejected"; then
+  echo "ok   collapse: the curl row shows its agreement rate, not a bare verdict"
+else
+  echo "FAIL collapse: no agreement rate in the curl column"; fails=$((fails + 1))
+fi
+
+# Safety: nothing credential-shaped may reach $GITHUB_STEP_SUMMARY, and the cli
+# side is exactly where a CLI sentence could carry one.
+tvreset
+tvcurl staging 1 'ra_FAKEfakefake'
+tvcli staging 'rlwy_proj_FAKEfakefake'
+checks=$((checks + 1))
+if tvout > "$tvd/out.md" && ! grep -qE -- 'ra_FAKEfakefake|rlwy_proj_FAKEfakefake' "$tvd/out.md"; then
+  echo "ok   safety: no credential-shaped text reaches the summary"
+else
+  echo "FAIL safety: a credential-shaped value was rendered verbatim"; fails=$((fails + 1))
+fi
+
+# Arg shape: quoted globs and the already-expanded file list must agree, or the
+# first runner that forgets to quote prints a verdict this suite never tested.
+tvall token-rejected ok
+checks=$((checks + 1))
+tq=$(tvout)
+te=$(python3 "$tv" --curl-glob "$tvd"/class-*.txt --cli-glob "$tvd"/cli-*.txt)
+if [[ "$tq" == "$te" ]]; then
+  echo "ok   arg shape: quoted globs and expanded paths answer identically"
+else
+  echo "FAIL arg shape: the two spellings disagree"; fails=$((fails + 1))
+fi
+
+want "workflow: the transport verdict calls the rules file" 'python3 scripts/ci/f2-transport-verdict.py' "$tc" present
+want "workflow: the transport verdict quotes the cli glob" '--cli-glob "/tmp/cli-\*\.txt"' "$tc" present
+want "workflow: the cli cells override the transport per step" 'PROBE_TRANSPORT: cli' "$tc" present
+want "workflow: the cli cells tee beside the curl cells" 'tee "/tmp/cli-\$\{CLASS_LABEL\}.txt"' "$tc" present
+checks=$((checks + 1))
+n_cli=$(grep -cE -- '^\s+- name: .cli transport' "$tc")
+if [[ "$n_cli" == "4" ]]; then
+  echo "ok   workflow: four cli-transport steps — control plus three credentials"
+else
+  echo "FAIL workflow: expected 4 cli-transport steps, found $n_cli"; fails=$((fails + 1))
+fi
+
+# The status cell used to print the version the workflow ASKED FOR and nothing
+# else, while its own comment promised a measurement. Drive the probe against a
+# stub whose version disagrees with the pin and require BOTH spellings in the
+# cell, so a silently wrong binary is visible instead of asserted.
+stub=$(mktemp -d)
+cat > "$stub/timeout" <<'STUB'
+#!/bin/sh
+# macOS ships no coreutils timeout; the probe calls `timeout <secs> cmd…`.
+shift
+exec "$@"
+STUB
+cat > "$stub/railway" <<'STUB'
+#!/bin/sh
+if [ "$1" = "--version" ]; then echo "railway 9.9.9"; exit 0; fi
+if [ "$1" = "status" ]; then
+  printf '{"environments":['
+  i=0
+  while [ "$i" -lt 120 ]; do printf '"a-b-c-d-e-f-g-h",' ; i=$((i + 1)); done
+  printf '"x"]}'
+  exit 0
+fi
+exit 1
+STUB
+chmod +x "$stub/timeout" "$stub/railway"
+runstub() {
+  PATH="$stub:$PATH" PROBE_STATUS_CLI="$stub/railway" CLASS_LABEL=stubbed \
+    PROBE_RAILWAY_VERSION=5.40.1 bash scripts/ci/f2-status-probe.sh 2>&1
+}
+
+checks=$((checks + 1))
+scell=$(runstub)
+if grep -qF -- "cli=9.9.9 pin=5.40.1" <<<"$scell"; then
+  echo "ok   status cell reports the binary that ran AS WELL AS the pin"
+else
+  echo "FAIL status cell does not distinguish measured from requested:"
+  sed 's/^/         /' <<<"$scell" | head -6; fails=$((fails + 1))
+fi
+checks=$((checks + 1))
+if grep -qF -- "not the pinned 5.40.1" <<<"$scell"; then
+  echo "ok   status cell caveats when the binary disagrees with the pin"
+else
+  echo "FAIL status cell silently accepted the wrong binary"; fails=$((fails + 1))
+fi
+
+# And the other direction: agreement must add no caveat, or the caveat becomes
+# noise a reader learns to skip.
+cat > "$stub/railway" <<'STUB'
+#!/bin/sh
+if [ "$1" = "--version" ]; then echo "railway 5.40.1"; exit 0; fi
+if [ "$1" = "status" ]; then
+  printf '{"environments":['
+  i=0
+  while [ "$i" -lt 120 ]; do printf '"a-b-c-d-e-f-g-h",' ; i=$((i + 1)); done
+  printf '"x"]}'
+  exit 0
+fi
+exit 1
+STUB
+checks=$((checks + 1))
+scell2=$(runstub)
+if grep -qF -- "verdict=decoded" <<<"$scell2" && ! grep -qF -- "not the pinned" <<<"$scell2"; then
+  echo "ok   a matching pin decodes with no caveat"
+else
+  echo "FAIL matching pin still caveats:"
+  sed 's/^/         /' <<<"$scell2" | head -6; fails=$((fails + 1))
+fi
+
+# Two caveats in one cell must not delete each other: the cell parser keeps the
+# LAST value of a repeated key, which is why the probe accumulates into one line.
+# Here the wrong binary AND a too-small body are both true of one run.
+cat > "$stub/railway" <<'STUB'
+#!/bin/sh
+if [ "$1" = "--version" ]; then echo "railway 9.9.9"; exit 0; fi
+if [ "$1" = "status" ]; then printf '{"environments":[]}'; exit 0; fi
+exit 1
+STUB
+checks=$((checks + 1))
+scell3=$(runstub)
+n_cav=$(grep -c "^STATUS_CELL caveat=" <<<"$scell3")
+if [[ "$n_cav" == "1" ]] && grep -qF -- "not the pinned 5.40.1" <<<"$scell3" \
+   && grep -qF -- "decoded-but-small" <<<"$scell3"; then
+  echo "ok   caveats accumulate into one line instead of overwriting each other"
+else
+  echo "FAIL caveat collision: $n_cav caveat line(s)"; sed 's/^/         /' <<<"$scell3" | head -6; fails=$((fails + 1))
+fi
+
+# The cli transport branch has to survive the CLI's own commentary. Measured on
+# 5.40.1: a non-200 response prints the JSON body AND a sentence on the next
+# line, and a body with a sentence glued to it does not parse — a refused
+# credential would have been reported as a transport fault.
+tp=scripts/ci/f2-token-probe.sh
+want "cli transport lets the CLI print an error body without failing" '--allow-errors' "$tp" present
+want "cli transport keeps only the compact body line" "sed -n '1p' \\| mask" "$tp" present
+checks=$((checks + 1))
+if grep -qE -- 'STATUS_CELL cli=\$\{VERSION\}' scripts/ci/f2-status-probe.sh; then
+  echo "FAIL the status cell prints the pin as if it were the measurement again"; fails=$((fails + 1))
+else
+  echo "ok   the status cell no longer prints the pin as the measurement"
+fi
+
+rm -rf "$stub" "$tvd"
 
 reset_class
 rm -rf "$classd"

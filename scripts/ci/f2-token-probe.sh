@@ -126,14 +126,22 @@ gql() {
   local doc="$1" vars="$2"
   if [[ "$TRANSPORT" == "cli" ]]; then
     printf 'cli-transport' > "$HTTP_FILE"
-    local args=(api "$doc" --compact)
+    local args=(api "$doc" --compact --allow-errors)
     local pair
     for pair in $(python3 -c '
 import json,sys
 for k,v in json.loads(sys.argv[1]).items(): print(f"{k}={v}")' "$vars"); do
       args+=(--var "$pair")
     done
-    "${RAILWAY_CLI:-railway}" "${args[@]}" 2>&1 | mask
+    # `sed -n '1p'` is measurement, not tidiness. Measured on 2026-11-23 against
+    # @railway/cli@5.40.1: for any non-200 HTTP status the CLI prints the JSON
+    # body AND a human sentence ("Railway API request failed with HTTP 400 Bad
+    # Request") on the next line, and a two-line "body" is not parseable JSON —
+    # f2-probe-verdict.py would have called a refused credential a transport
+    # fault. --compact makes the document one line, so line 1 is the answer and
+    # everything after it is commentary. An auth refusal that arrives as a plain
+    # 200 (the shape that matters here) prints only the body either way.
+    "${RAILWAY_CLI:-railway}" "${args[@]}" 2>&1 | sed -n '1p' | mask
   else
     local payload
     payload=$(python3 -c '
