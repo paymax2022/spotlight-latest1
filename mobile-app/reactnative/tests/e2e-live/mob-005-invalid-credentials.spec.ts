@@ -35,9 +35,11 @@ test.describe('MOB-005 invalid credentials', () => {
     await page.getByPlaceholder('Enter your password').fill(`${LIVE_USER.password}-wrong`);
     await page.getByText('Sign In', { exact: true }).click();
 
-    // The exact copy produced by errorMapper for a 401 on the auth path.
+    // The credentials copy errorMapper produces for a 401 on the auth path.
+    // Matched by prefix, not the whole sentence: the tail ("… or use Forgot
+    // password to reset it") is guidance and is allowed to be reworded.
     await expect(
-      page.getByText('Incorrect email/phone number or password. Please try again.'),
+      page.getByText(/Incorrect email\/phone number or password/),
     ).toBeVisible({ timeout: 30_000 });
 
     // Live evidence: the login POST hit the real proxy and was REJECTED.

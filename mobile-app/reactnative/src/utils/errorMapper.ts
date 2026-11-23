@@ -16,7 +16,7 @@ const FRIENDLY: Record<string, string> = {
   // SIGN-IN attempt there is no session to expire, and telling someone their
   // session expired while they are signing in is simply confusing. Callers on
   // the auth path pass { authAttempt: true } to get this instead.
-  INVALID_CREDENTIALS:  'Incorrect email/phone number or password. Please try again.',
+  INVALID_CREDENTIALS:  'Incorrect email/phone number or password. Try again, or use Forgot password to reset it.',
   INSUFFICIENT_BALANCE: 'Insufficient wallet balance for this transaction.',
   METER_NOT_FOUND:      'Unable to validate meter number. Please check the number and try again.',
   CARD_NOT_FOUND:       'Smart card number not found. Please check and try again.',
