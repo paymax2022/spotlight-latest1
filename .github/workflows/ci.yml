@@ -257,6 +257,20 @@ jobs:
       # The test also proves dirty working-tree bytes cannot leak into a release.
       - name: Test the deploy archive shape
         run: bash scripts/ci/test-railway-deploy-archive.sh
+      # The staging legs' replacement for that upload, since 2026-11-23:
+      # release.yml now calls serviceInstanceDeploy(commitSha:) instead of
+      # `railway up`, because the upload-initiate endpoint has refused every
+      # staging leg since 2026-11-16 — trains 45179479514 and 45194518587 each
+      # exhausted the full 900 s ladder, 9-for-9, with zero Indexing/Uploading
+      # lines. What this pins is the part that cannot be eyeballed from a runner
+      # log: the leg is decided by a NEW deployment row that NAMES the commit,
+      # because `true` on its own is the silent no-op measured on production's
+      # git-less frontend-admin, and "a row appeared" is satisfied by someone
+      # else's deploy. Stub-driven, no network, and it counts which CLI
+      # subcommands the leg reached — so a mutation leg that quietly went back
+      # to uploading would go red here rather than on a release.
+      - name: Test the staging mutation deploy leg
+        run: bash scripts/ci/test-staging-deploy-watch.sh
       # The manual single-service lane (ops-railway-upload.yml) has no release.yml
       # matrix to copy, so it DERIVES the upload shape from the instance's live
       # rootDirectory. Wrong here is the bug class that cost 40 minutes on 2026-11-16:
