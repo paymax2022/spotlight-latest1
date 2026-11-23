@@ -316,15 +316,78 @@ upload() {
 # deploys "whatever the connection points at" rather than the reviewed SHA.
 DOC_DEPLOY_SHA='mutation($s:String!,$e:String!,$sha:String!){ serviceInstanceDeploy(serviceId:$s, environmentId:$e, commitSha:$sha) }'
 
+# The row-read document, byte-for-byte f2-token-probe.sh's DOC_ROW — because
+# THIS read is the one that is PROVEN with the staging PROJECT TOKEN on a
+# runner: run 45194092365 (write cell, PROBE_TRANSPORT=cli, i.e. through
+# `railway api`, from a runner that has never been linked) answered cell 2's
+# baseline and cell 4's post-mutation read-backs with it — row d1fb169d,
+# BUILDING then SUCCESS. `railway deployment list`, the transport the first
+# mutation train (run 45234100845) used for its baseline read, has only ever
+# been proven under the owner's local OAuth session, and that run is what it
+# cost: the CLI exited non-zero inside
+#     BASELINE_ROW="$(baseline_row_id)"
+# under the step shell's errexit (/usr/bin/bash -e), which kills the whole step
+# at the substitution — BEFORE the loud guard below it can run — and the read's
+# `2>/dev/null` threw away the CLI's reason. All three staging legs died ~2 s
+# after the banner with only `Process completed with exit code 1`. So BOTH row
+# reads of a mutation leg (the baseline and the watch poll) use this document,
+# and neither may fail silently. DO NOT "fix" either read back to
+# `railway deployment list`, and do not add a `2>/dev/null` anywhere near them;
+# scripts/ci/test-staging-deploy-watch.sh pins both rules.
+DOC_ROW='query($s:String!,$e:String!){ serviceInstance(serviceId:$s, environmentId:$e){ latestDeployment{ id createdAt status meta } } }'
+
 baseline_row_id() {
   # The row that exists BEFORE the mutation. Everything the watch below learns
   # comes from comparing against this id, so a failure to read it is not a
   # blank-slate condition: an empty baseline would make the pre-existing
   # deployment look like the new one and report a leg green that deployed
-  # nothing. The caller stops on empty.
-  railway deployment list --service "$SERVICE" --environment "$RAILWAY_ENV" \
-    --project "$RAILWAY_PROJECT" --limit 1 --json 2>/dev/null \
-    | jq -r 'if type=="array" then (.[0].id // empty) else empty end'
+  # nothing. Three outcomes, three loud endings — and the two failure shapes
+  # get DIFFERENT messages, because "the read command failed" (a credential, a
+  # network or a CLI fault) and "the read succeeded and named no row" (a
+  # service instance with no deployment history) are different fixes:
+  #   read failed / body refused / body unparseable -> one ::error:: here that
+  #       names the command, its exit code and the first 400 chars of the
+  #       captured output (stderr INCLUDED — 2>&1, never /dev/null), then rc 1
+  #   read succeeded, no row -> empty stdout, rc 0; the caller's own guard
+  #       prints the no-row ::error::
+  #   read succeeded, row id -> the id on stdout
+  # This function is always called as `BASELINE_ROW="$(baseline_row_id)" || exit 1`
+  # so that a non-zero return can never ride errexit past the loud guards.
+  local out rc=0 line parsed prc=0
+  out="$(railway api "$DOC_ROW" --compact --allow-errors \
+           --var "s=$SERVICE_ID" --var "e=$RAILWAY_ENVIRONMENT_ID" 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "::error::baseline row read failed for $SERVICE/$RAILWAY_ENV: 'railway api' (GraphQL serviceInstance.latestDeployment) exited $rc; first 400 chars of its output: $(printf '%s' "$out" | head -c 400 | redact)" >&2
+    return 1
+  fi
+  # --compact makes the body one line; any later line is the CLI's commentary
+  # ("Railway API request completed"), which is not part of the JSON.
+  line="$(printf '%s\n' "$out" | sed -n '1p')"
+  parsed="$(printf '%s' "$line" | jq -r '
+      if type=="object" and ((.errors | type) == "array")
+        then "REFUSED:" + ((.errors[0].message // "no message") | tostring)
+      elif type=="object"
+        then (.data.serviceInstance.latestDeployment.id // "")
+      else ""
+      end' 2>&1)" || prc=$?
+  if [ "$prc" -ne 0 ]; then
+    echo "::error::baseline row read for $SERVICE/$RAILWAY_ENV answered a body jq could not parse (jq exited $prc); first 400 chars: $(printf '%s' "$line" | head -c 400 | redact)" >&2
+    return 1
+  fi
+  case "$parsed" in
+    REFUSED:*)
+      # --allow-errors keeps an HTTP-200 errors[] envelope on stdout instead of
+      # failing the CLI, so a token refusal lands HERE, not in the rc branch.
+      echo "::error::baseline row read refused for $SERVICE/$RAILWAY_ENV: 'railway api' exited 0 with errors[] (${parsed#REFUSED:}); first 400 chars of the body: $(printf '%s' "$line" | head -c 400 | redact)" >&2
+      return 1
+      ;;
+    "")
+      return 0
+      ;;
+    *)
+      printf '%s' "$parsed"
+      ;;
+  esac
 }
 
 mutate_deploy() {
@@ -346,9 +409,17 @@ mutate_deploy() {
 }
 
 if [ "$DEPLOY_METHOD" = mutation ]; then
-  BASELINE_ROW="$(baseline_row_id)"
-  [ -n "$BASELINE_ROW" ] || { echo "::error::could not read the pre-mutation $SERVICE/$RAILWAY_ENV deployment row; refusing to guess at 'new row'"; exit 1; }
-  echo "baseline row before the mutation: $BASELINE_ROW"
+  # `|| exit 1` IS LOAD-BEARING. Without it, a failing read inside the command
+  # substitution kills the step under the runner's errexit before ANY guard
+  # below runs — that is verbatim how run 45234100845 lost all three staging
+  # legs with no ::error:: line. baseline_row_id has already printed the loud
+  # ::error:: (command, exit code, captured stderr) by the time it returns 1.
+  BASELINE_ROW="$(baseline_row_id)" || exit 1
+  # A DIFFERENT failure from the above: the read worked and Railway named no
+  # row. Both refuse to guess what counts as a "new row"; only the reason
+  # differs, and the log must say which one it was.
+  [ -n "$BASELINE_ROW" ] || { echo "::error::baseline row read for $SERVICE/$RAILWAY_ENV SUCCEEDED but returned no deployment row; refusing to guess at 'new row'"; exit 1; }
+  echo "baseline row before the mutation: $BASELINE_ROW (transport: railway api serviceInstance.latestDeployment)"
   # The cutoff is taken AFTER the baseline read and BEFORE the mutation, so it
   # sits inside the window this leg owns: a row Railway minted for us is not
   # older than it, and anything from an earlier second — another train on the
@@ -426,10 +497,36 @@ dump_crash_log() {
 watch_verdict=not-run
 for attempt in $(seq 1 "$ATTEMPTS"); do
   if [ "$DEPLOY_METHOD" = mutation ]; then
-    # One page, both calls: the verdict and the row behind it come from the same
-    # snapshot, so the log line cannot describe a page the verdict never saw.
-    rows_page="$(railway deployment list --service "$SERVICE" --environment "$RAILWAY_ENV" \
-                  --project "$RAILWAY_PROJECT" --limit 10 --json)"
+    # The watch read, over the SAME proven transport as the baseline (DOC_ROW):
+    # both halves of the leg ask Railway the same question the same way, so a
+    # credential or shape fault cannot show up in one half only. The verdict
+    # contract is untouched — staging-deploy-watch.py still decides from the
+    # ROW's id/status/createdAt/meta against BASELINE_ROW, $SHA and STARTED_AT.
+    # The page is the single latestDeployment row wrapped as a one-element
+    # array: latestDeployment IS the newest row, and the classifier's
+    # newest-first assumption holds trivially. A concurrent train parking a
+    # newer row on top of ours can only hide our row — the failure direction
+    # is `other-commit` or a timeout, red, never a false green.
+    #
+    # A failed read here must NOT kill the step: the pre-fix poll read was a
+    # bare command substitution under errexit, the same silent death as the
+    # baseline (run 45234100845). So the exit status is captured, the failure
+    # is logged with its code and output, and the page is handed to the
+    # classifier as unparseable — which keeps the leg waiting. A read that
+    # fails every attempt ends red as `watch-blind` via `final`, which is loud.
+    ROWS_OUT="" ROWS_RC=0
+    ROWS_OUT="$(railway api "$DOC_ROW" --compact --allow-errors \
+                  --var "s=$SERVICE_ID" --var "e=$RAILWAY_ENVIRONMENT_ID" 2>&1)" || ROWS_RC=$?
+    if [ "$ROWS_RC" -ne 0 ]; then
+      echo "  ::warning::row read failed for $SERVICE/$RAILWAY_ENV (attempt $attempt/$ATTEMPTS): 'railway api' exited $ROWS_RC; first 400 chars of its output: $(printf '%s' "$ROWS_OUT" | head -c 400 | redact)"
+    fi
+    rows_page=""
+    rows_page="$(printf '%s\n' "$ROWS_OUT" | sed -n '1p' | jq -c '
+        if type=="object" and ((.errors | type) == "array") then {refused: .errors}
+        elif type=="object" and ((.data.serviceInstance.latestDeployment | type) == "object")
+          then [.data.serviceInstance.latestDeployment]
+        else []
+        end')" || rows_page="row-read-unparseable"
     watch_verdict="$(python3 "$SCRIPT_DIR/staging-deploy-watch.py" watch \
                       "$rows_page" "$BASELINE_ROW" "$SHA" "${STARTED_AT:-}")"
     echo "  row under watch (id / status / commit / which): $(
