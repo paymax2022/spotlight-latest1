@@ -35,9 +35,10 @@
 # see a silent no-op and another train's row alike.
 #
 # Run:  bash scripts/ci/test-staging-deploy-watch.sh
-# No network. Measured 98 checks in 57 s on a laptop on 2026-11-23 — 12 stubbed
-# legs, the classifier cells including the STARTED_AT cutoff matrix, the argument
-# guards and the wiring pins. `sleep` is stubbed so none of it waits on a clock.
+# No network. Measured 98 checks in 57 s on a laptop on 2026-11-23 — 11 stubbed
+# legs (4 green shapes, 7 red controls), the classifier cells including the
+# STARTED_AT cutoff matrix, the argument guards and the wiring pins. `sleep` is
+# stubbed so none of it waits on a clock.
 # It shares the secret-hygiene runner with the other deploy tests rather than
 # getting a lane of its own.
 set -uo pipefail
@@ -511,4 +512,4 @@ if [ "$failures" -ne 0 ]; then
   echo "FAIL  $failures of $checks check(s) failed"
   exit 1
 fi
-echo "ok — staging mutation leg pinned ($checks checks: 6 green shapes, 7 ways to lie red, guards and wiring)"
+echo "ok — staging mutation leg pinned ($checks checks: 4 green legs, 7 red controls, the cutoff matrix, guards and wiring)"
