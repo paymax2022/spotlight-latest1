@@ -327,6 +327,38 @@ jobs:
     if: needs.gates.outputs.verdict == 'proceed'
     runs-on: ubuntu-latest
     environment: staging
+    # NO `railway up` on this job any more — 2026-11-23.
+    #
+    # Staging's upload-initiate request has refused every leg of every train
+    # since 2026-11-16 with `Failed to fetch: error decoding response body`,
+    # 9-for-9 against the full 900 s ladder, with zero `Indexing`/`Uploading`
+    # lines (it dies before the archive is packed). Trains 45179479514 and
+    # 45194518587 on 2026-11-23 are the counter-evidence to the two readings
+    # that were left standing: the legs spanned 1,052-1,137 s — longer than the
+    # window the ladder was sized to — and staging still refused every time.
+    # See docs/devops/railway-upload-fault-report.md, Episodes 20 and 21; F2
+    # stays OPEN upstream and this job is not the fix, it is the way around.
+    #
+    # What replaces it is the call the same afternoon MEASURED as working with
+    # the credential this job already holds: ci-railway-token-class.yml's write
+    # cell (run 45194092365) sent `serviceInstanceDeploy(commitSha:)` with
+    # RAILWAY_TOKEN_STAGING and got `mutation=accepted`, then a NEW SUCCESS row
+    # `d1fb169d` 30 s later — zero bytes uploaded. Verdict on the lane:
+    # `project-token-can-deploy`.
+    #
+    # It works here and is a silent no-op on production's `frontend-admin`
+    # because these three staging instances are git-connected: the mutation
+    # asks Railway to build `commitSha` from the project's repo, which is why
+    # the SHA must be full 40-hex (a short one mints a FAILED row for a commit
+    # that does not exist) and why nothing in this job packs an archive.
+    #
+    # The leg is NOT judged on `true`. `railway-deploy.sh`'s mutation mode
+    # watches for a new Deployment row that names this commit and refuses
+    # `mutation-is-noop` if none appears — scripts/ci/staging-deploy-watch.py,
+    # pinned by scripts/ci/test-staging-deploy-watch.sh in secret-hygiene.
+    #
+    # Development and production legs keep uploading, unchanged: they succeed,
+    # and they are what an owner re-measures F2 with.
     strategy:
       # Unlike development, fail-fast is acceptable here — but it is still set false
       # so one red service produces a complete picture instead of two cancelled
@@ -334,29 +366,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Railway Service.id values, re-read with `railway api` on 2026-11-23.
+          # Ids are not secrets; naming them here is the house rule, because an
+          # id silently changes when a service is recreated and a guessed one at
+          # the call site is undiagnosable.
           - service: backend
-            upload_path: backend
-            root_flag: --path-as-root
-            build_dir: backend
-            archive_subdir: ''
-          # Frontends: NO positional path, NO --path-as-root — the only
-          # environment where that is correct. staging's two frontend instances
-          # carry `rootDirectory: frontend-web` / `frontend-admin` (measured
-          # 2026-11-16), so the archive must retain that top-level folder for
-          # Railway to strip it. ARCHIVE_SUBDIR keeps that exact shape while
-          # cutting the archive from the requested commit and omitting unrelated
-          # monorepo bytes. development and production have `rootDirectory: None`
-          # and take the opposite shape below.
+            service_id: 70de07d8-c058-4221-b645-61c4f1ac7aa5
           - service: frontend-web
-            upload_path: ''
-            root_flag: ''
-            build_dir: ''
-            archive_subdir: frontend-web
+            service_id: dda6372c-0bb7-4014-a2b1-aa646c11a281
           - service: frontend-admin
-            upload_path: ''
-            root_flag: ''
-            build_dir: ''
-            archive_subdir: frontend-admin
+            service_id: c4f1086e-0a2d-4367-b503-209c14a2ce6f
     steps:
       - uses: actions/checkout@v4
         with:
@@ -368,14 +387,18 @@ jobs:
         run: npm install --global @railway/cli@5.40.1
       - name: Deploy ${{ matrix.service }}
         env:
+          DEPLOY_METHOD: mutation
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
           SERVICE: ${{ matrix.service }}
           RAILWAY_ENV: staging
           SHA: ${{ needs.gates.outputs.sha }}
-          UPLOAD_PATH: ${{ matrix.upload_path }}
-          ROOT_FLAG: ${{ matrix.root_flag }}
-          BUILD_DIR: ${{ matrix.build_dir }}
-          ARCHIVE_SUBDIR: ${{ matrix.archive_subdir }}
+          SERVICE_ID: ${{ matrix.service_id }}
+          # staging's Environment.id, re-read with `railway api` on 2026-11-23.
+          # Hardcoded, like the service ids: the mutation takes ids, and a leg
+          # that aimed at the wrong environment would deploy the reviewed commit
+          # to production. scripts/ci/test-staging-deploy-watch.sh pins that this
+          # job carries the staging id and not the production one.
+          RAILWAY_ENVIRONMENT_ID: 6b5f27a3-a290-4574-a977-363eb21d43ad
         run: bash scripts/ci/railway-deploy.sh
 
   smoke-staging:

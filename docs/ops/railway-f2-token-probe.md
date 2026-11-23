@@ -1,11 +1,16 @@
 # F2 project-token probe — the one cell that decides the release wall
 
-Status: **the cell is filled, and the answer is a refusal.** The follow-up
-question — class or value — was answered on 2026-11-22 as "the class", and that
-answer has since been narrowed twice: see "The class question, answered" and
-"The 12:07Z measurement: the tokens are not silent". Both dispatches ran
-from `main` on 2026-11-22 with the same `RAILWAY_TOKEN_STAGING` and the same
-`project { id name }` document, and both were refused on every cell they probed:
+Status: **the cell is filled, and the answer is `project-token-can-deploy`.** The
+2026-11-22 dispatches below ended in a refusal and were read as "the class"; that
+answer has since been narrowed twice (see "The class question, answered" and "The
+12:07Z measurement: the tokens are not silent"), retired for the reads by the
+transport cells, and finally closed on the write at 14:27:14Z on 2026-11-23 by run
+`45194092365` — CI's own `RAILWAY_TOKEN_STAGING` calling
+`serviceInstanceDeploy(commitSha:)` and a new `SUCCESS` row appearing 30 s later.
+Both original dispatches ran from `main` on 2026-11-22 with the same
+`RAILWAY_TOKEN_STAGING` and the same `project { id name }` document, and both were
+refused on every cell they probed — which is what the transport cells later
+explained as the curl sampler rather than the credential:
 
 | run | created | mode | cells |
 |---|---|---|---|
@@ -326,6 +331,49 @@ Reading the result:
 | `f2-reproduces-on-the-mutation-path` | the mutation returned an undecodable body | F2 is the transport, not the endpoint — escalate with the timing pattern |
 | `accepted-but-readback-blind (…)` | said `true`, cell 4 had no eyes on the rows | **neither a deploy nor a no-op is proven**; do not act on this line |
 
+### The 14:27Z write cell fired, and the answer is `project-token-can-deploy`
+
+Run `45194092365` (`ci-railway-token-class.yml`, dispatched on `d91a6e2e9` at
+14:25:44Z, job `compare` = `137759803757`, `write_cell` checked, `deploy_sha =
+df6676406` — the sha staging already served, per the cheapest-honest-version rule
+above). Cell 3 at 14:27:12.918Z:
+
+```
+14:27:14.200Z {"data":{"serviceInstanceDeploy":true}}
+14:27:14.216Z PROBE_CELL mutation=accepted (http=cli-transport) sha=df6676406
+14:27:29.777Z   [+15s] row=d1fb169d status=BUILDING isNew=true read=ok
+14:27:45.405Z   [+30s] row=d1fb169d status=SUCCESS isNew=true read=ok
+14:27:45.438Z PROBE_VERDICT[backend]=project-token-can-deploy
+```
+
+So the last unmeasured fact is measured: **the project token CI holds can deploy
+staging**, by sha, with no upload, and the row appeared and reached `SUCCESS` in
+about 30 s. The 2×2 below is now wrong in its mutation row and is left standing
+only as the history of what was believed at the time.
+
+Two things this does *not* say, both of which would have been easy to over-read
+from the same log:
+
+- At 14:27:03.450Z the run printed `**Verdict: CLASS.** No project token reads the
+  deployment graph, so serviceInstanceDeploy is unreachable from CI`. That line is
+  the **curl** branch of the sampler, retired four seconds earlier by the run's own
+  cli cells and by run `45179580758`; the write cell below it is the cli branch.
+  Read cells, not inherited summary lines.
+- Only `backend` was written to. The generalisation to all three staging services
+  came 27 minutes later from the owner lane, and it is visible in the row history:
+  `2df11e51` (backend, 14:29:10.823Z), `d7abcc2e` (frontend-web, 14:29:24.779Z),
+  `6e39f119` (frontend-admin, 14:29:38.077Z) — all `SUCCESS`, all
+  `meta.reason = "deploy"` with `meta.cliMessage = null` and
+  `meta.commitHash = 0329a903a…`, i.e. all three mutation-shaped. Production's
+  `frontend-admin` stays excluded on its own measured evidence (the git-less silent
+  no-op, `reason=redeploy`), and the swap's `no-new-row` verdict is what catches any
+  service that turns out to be a no-op too rather than letting `true` pass as a deploy.
+
+Consequence, per the `project-token-can-deploy` row of the table above: the staging
+legs of `release.yml` moved to `serviceInstanceDeploy(commitSha:)` and are judged by
+the deployment row that names the commit, not by the mutation's return value. See
+Episode 21 of `docs/devops/railway-upload-fault-report.md`.
+
 ## The question, in one sentence
 
 Every `deploy Staging (…)` leg of every release train since 2026-11-16 dies on
@@ -337,11 +385,14 @@ three staging services with no upload at all, in about three minutes. (The `late
 true` spelling did the same job until 2026-11-22T13:53Z and is refused since; see Episode 18
 of `docs/devops/railway-upload-fault-report.md`.)
 
-What is not known is whether that mutation works with the credential a runner
-holds. `RAILWAY_TOKEN_STAGING` is a **project token**; the working calls above
-were made with the owner's **user session**. `projectTokenCreate` is refused for
-that session, so the token that matters only ever exists inside CI — which is
-why this is a workflow and not a laptop command.
+What was not known — and is now answered, 2026-11-23T14:27:14Z, run
+`45194092365` — is whether that mutation works with the credential a runner
+holds. It does: `PROBE_VERDICT[backend]=project-token-can-deploy`, a new `SUCCESS`
+row 30 s later, zero bytes uploaded. `RAILWAY_TOKEN_STAGING` is a **project
+token**; the working calls above were made with the owner's **user session**, and
+`projectTokenCreate` is refused for that session, so the token that matters only
+ever exists inside a CI runner — which is why this is a workflow and not a laptop
+command, and why the answer had to be paid for with a real staging deploy.
 
 ## Why this cannot be answered from a laptop
 
@@ -391,14 +442,14 @@ So the cell is fillable exactly one way: a runner that already holds the secret.
 | **reads** (`project`, `serviceInstance`) | works — proven 2026-11-22, and again in the probe's own `cli` transport run | **refused for these two fields** — 2/2 runs: `Not Authorized` at HTTP 200 on `project` and on `serviceInstance`. Not "no reads": the same tokens decode `railway status --json` in a runner (2026-11-23, run `45171097305`), so this cell is about two fields, not about the whole graph. *The claim this row used to make — "works, proven by every `railway up` leg that gets as far as stamping `BUILD_COMMIT`" — was wrong: `railway-deploy.sh` stamps it with `printf '%s' "$SHA" > "$BUILD_DIR/BUILD_COMMIT"`, a local file write that precedes any network call, so it says nothing about whether the token can read the API.* |
 | **`railway up` upload** | works — every manual deploy in the ledger | **fails with F2** — 9 retries per leg, three legs per train, reproduced on runs `44922280434`, `44927881957` and `45005535349` |
 | **`serviceInstanceDeploy(latestCommit:true)`** | worked earlier on 2026-11-22 (staging promoted to `f9309845c`, zero uploads) but was refused in all three attempts from 13:53Z in this session — the reproducible owner-side spelling is `commitSha`, which promoted staging to `b55757379` at 13:59Z (the `df6676406` rows ten minutes later came from the same lane driven by another session) | **refused on the one attempt** — run `45009997472`: `PROBE_CELL mutation=token-rejected` |
+| **`serviceInstanceDeploy(commitSha:"<40-hex>")`** | works — the reproducible owner-side spelling, and the one that promoted staging to `0329a903a…` on all three services at 14:29:10-14:29:38Z (rows `2df11e51`, `d7abcc2e`, `6e39f119`) | **works** — run `45194092365` at 14:27:14Z: `true`, new row `d1fb169d` `BUILDING` +15 s and `SUCCESS` +30 s, `PROBE_VERDICT[backend]=project-token-can-deploy` |
 
-The swap this table was built to test is **still unproven, but the reason it was
-refused has changed.** On 2026-11-22 both runs refused every read, and that is
-what put the swap off the table; on 2026-11-23 13:01Z the transport cells showed
-those refusals came from the curl client, and the staging token reads the
-instance field the mutation needs. What still blocks the swap is the write cell,
-which cannot be measured without deploying. Two explanations are live and they
-need different fixes:
+The question this table was built to ask is now **answered on the write**: the
+project token CI holds can deploy staging by sha. The swap it was gating —
+`release.yml`'s three `deploy Staging (…)` legs, off `railway up` and onto the
+mutation — is therefore no longer blocked by an unmeasured fact, and the two
+explanations below survive only as the history of what was believed and as the
+open support question about *scope between the three tokens*:
 
 - **(A) CLASS — retired for the reads, open for the write.** Project tokens were
   said to be unable to reach the two fields that resolve a deployment target.
