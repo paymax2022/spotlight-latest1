@@ -265,6 +265,15 @@ jobs:
       # rootDirectory and a missing instance must both refuse to yield a shape.
       - name: Test the upload shape resolver
         run: bash scripts/ci/test-railway-root-shape.sh
+      # The ops lane's other Railway call. Dispatch 45179114945 died on a single-shot
+      # `railway status --json` at ~12:53Z with Railway's decode body and never packed an
+      # archive, while the same command/secret/CLI decoded 52 KB at 13:01:27Z in run
+      # 45179580758 — a window, not a credential. This pins that the pre-flight rides the
+      # window out AND still refuses a token aimed at another environment or service, so
+      # the retry cannot quietly become "keep asking until anything answers". Stub-driven,
+      # no network.
+      - name: Test the ops status pre-flight
+        run: bash scripts/ci/test-railway-status-guard.sh
       # The same fault's probe. F2 kills every `deploy Staging` leg, and the one
       # lane that works — serviceInstanceDeploy(latestCommit:true) — has never
       # been tried with the token CI holds, which exists only inside a runner.
