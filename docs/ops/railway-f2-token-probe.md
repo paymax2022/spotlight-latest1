@@ -33,10 +33,12 @@ carries the owner-run recipes.
 
 ## The class question, answered: those two fields are refused for every project token
 
-*(Read this section with the 2026-11-23 correction below it. The table is real and
-still stands; the sentence "no project token can read the deployment graph" that
-this section drew from it does not — `railway status --json` with those same
-tokens is measured a few hundred bytes below.)*
+*(Read this section with the two corrections under it. The table is real and
+still stands as a statement about curl; the sentence "no project token can read
+the deployment graph" that this section drew from it does not — `railway status
+--json` with those same tokens is measured a few hundred bytes below, and the
+13:01Z transport cells underneath it measure those same tokens reading the very
+fields this table said they could not, once the client is `railway api`.)*
 
 Sampler run `45024735432` (`workflow_dispatch` on `main` at `d6f282f5a`, job
 `compare`, 12:55:10Z–12:56:22Z) wrote all twelve samples before anything went
@@ -58,18 +60,35 @@ the control row's own meaning: `development`'s token is the credential whose
 `railway up` legs upload 3/3 green on every train, and it is refused those two
 reads exactly like the other two. The class, not the value — for those fields.
 
+**[Retired by the 13:01Z transport measurement below: those same three tokens,
+sent through `railway api` instead of curl, all resolve `project(id)`. What that
+table was measuring is the curl surface's refusal, not the credential class. The
+fact that survived is narrower and not a class fact at all — on the CLI surface
+`serviceInstance` resolves for `RAILWAY_TOKEN_STAGING` and for nobody else.]**
+
 What the same verdict could not say, and was later read as if it did, is that a
 project token reaches *nothing* on the graph. That sentence needed a cell nobody
 had: a read that is not `project(id)`/`serviceInstance`, taken with the same
 token in the same runner. It exists now, and it came back decoded.
 
-Consequence, stated precisely: the `serviceInstanceDeploy` lane that promotes staging in
-~3 minutes is reachable **only** with a user-scoped credential — the owner's session, or a
-user token placed in CI — and never from a project token. `release.yml`'s staging legs
-therefore cannot be swapped onto the mutation lane, which is the change this probe was built
-to authorize. What the answer does not say: whether the refused reads are a scope grant
-Railway could add to a project token, or a hard rule on the token class. Only Railway can
-say, and that question now belongs in the support thread alongside the upload refusal.
+Consequence, as re-stated at 13:01Z on 2026-11-23: **the reads no longer keep CI
+off the mutation lane.** With `PROBE_TRANSPORT=cli`, `RAILWAY_TOKEN_STAGING`
+reads staging's `serviceInstance.latestDeployment` — the field pair CI needs in
+order to name a deployment target — while the development and production tokens
+authenticate on `project(id)` and are refused that field. The earlier sentence
+here, that the lane is reachable "only with a user-scoped credential and never
+from a project token", was read from the curl cells and is withdrawn. What now
+stands between CI and the swap is the write cell alone, and measuring it *is*
+deploying staging: so it stays an owner-signed action, `PROBE_MODE` stays a
+literal `read-only` in the YAML with no dispatch input, and no accidental run can
+cross that line. What remains unknown: whether the staging token's read scope
+extends to `serviceInstanceDeploy`, and whether curl's refusal of a project token
+is a header the CLI adds that the sampler does not (the sampler sends only
+`Content-Type` and `Authorization: Bearer`) or a rule on that surface. Either way
+the question that belongs in the support thread alongside the upload refusal
+changes shape: not "why can project tokens not read the graph", but "why does the
+same project-token bearer authenticate through the CLI client and come back `Not
+Authorized` through raw HTTP".
 
 A second discriminator fell out of using that lane on 2026-11-22, and it is not about
 credentials: within one logged-in user session, `serviceInstanceDeploy(…, latestCommit:
@@ -217,6 +236,52 @@ the version the runner installs: `project(id)` returned
 confirms 5.40.1 accepts both flags the cli branch passes, so the cells cannot
 fail for want of a flag.
 
+### The 13:01Z transport measurement: the sampler was the broken instrument
+
+Run `45179580758` (`ci-railway-token-class.yml` dispatched on `main` at
+`0329a903a`, 13:00:04Z–13:01:33Z, job `compare` = `137709644373`, conclusion
+`success`) is the first train-free pass of both clients on the same documents.
+Sixteen cell files, one verdict. These are the raw cells, read out of the job log
+and fed back through `scripts/ci/f2-transport-verdict.py` itself — the step's own
+writing goes to `$GITHUB_STEP_SUMMARY`, which the CLI does not print, so the log
+plus the decider is the reproducible channel:
+
+| credential | curl `project(id)` | curl `serviceInstance` | cli `project(id)` | cli `serviceInstance` |
+|---|---|---|---|---|
+| `anonymous` (control) | `token-rejected` ×3 | `token-rejected` | `token-rejected` | `token-rejected` |
+| `RAILWAY_TOKEN_DEVELOPMENT` | `token-rejected` ×3 | `token-rejected` | **`ok`** | `token-rejected` |
+| `RAILWAY_TOKEN_STAGING` | `token-rejected` ×3 | `token-rejected` | **`ok`** | **`ok`** — `faa7ff43…`, `SUCCESS` |
+| `RAILWAY_TOKEN_PRODUCTION` | `token-rejected` ×3 | `token-rejected` | **`ok`** | `token-rejected` |
+
+The decider lands on the second row of the table above: **The sampler, not the
+token.** Four things follow, and they are not all the same kind of thing.
+
+- Every project token authenticates. Three of three labels return
+  `{"data":{"project":{"id":"e7dca861-…","name":"spotlight-platform"}}}` through
+  `railway api`. The `CLASS` reading this probe carried for a day was a property
+  of the raw-HTTP call, not of the credential.
+- The control is intact: the credential-less cell is refused on **both** clients,
+  so an `ok` row means a token did something and not "this field needs nobody".
+  Without that row the three `ok`s would be evidence for nothing.
+- The scope that remains is per-token, not per-class: only the staging secret can
+  resolve a staging `serviceInstance`. Development's and production's tokens are
+  refused that exact field minutes after they resolve `project(id)` on the same
+  instance of the same project, which rules out an outage and rules out a header
+  they all share.
+- F2 is nowhere in this table. Sixteen reads on the same endpoint, with three
+  project tokens, on both clients, and `body-undecodable` never appears — the
+  transport verdict would have said "outside the taxonomy" rather than fold it
+  into a credential claim, and it did not need to.
+
+What this changes in practice: CI holds a credential that can already see the
+deployment targets of staging, so the `serviceInstanceDeploy` swap is no longer
+blocked by a proven read restriction — it is blocked by an unmeasured write. The
+next cell is `PROBE_MODE=mutation PROBE_TRANSPORT=cli` with
+`RAILWAY_TOKEN_STAGING`, and unlike every other cell in this file that one has a
+side effect: if it is authorized it promotes staging to the sha it names. The
+workflow cannot dispatch it (`PROBE_MODE` is a literal, no inputs), and it should
+stay that way until someone decides the deploy is the point.
+
 ## The question, in one sentence
 
 Every `deploy Staging (…)` leg of every release train since 2026-11-16 dies on
@@ -283,23 +348,32 @@ So the cell is fillable exactly one way: a runner that already holds the secret.
 | **`railway up` upload** | works — every manual deploy in the ledger | **fails with F2** — 9 retries per leg, three legs per train, reproduced on runs `44922280434`, `44927881957` and `45005535349` |
 | **`serviceInstanceDeploy(latestCommit:true)`** | worked earlier on 2026-11-22 (staging promoted to `f9309845c`, zero uploads) but was refused in all three attempts from 13:53Z in this session — the reproducible owner-side spelling is `commitSha`, which promoted staging to `b55757379` at 13:59Z (the `df6676406` rows ten minutes later came from the same lane driven by another session) | **refused on the one attempt** — run `45009997472`: `PROBE_CELL mutation=token-rejected` |
 
-The swap this table was built to test is off the table: with this credential the
-mutation was refused, and so were the reads, in both runs. What is *not* settled
-is why. Two explanations are live and they need different fixes:
+The swap this table was built to test is **still unproven, but the reason it was
+refused has changed.** On 2026-11-22 both runs refused every read, and that is
+what put the swap off the table; on 2026-11-23 13:01Z the transport cells showed
+those refusals came from the curl client, and the staging token reads the
+instance field the mutation needs. What still blocks the swap is the write cell,
+which cannot be measured without deploying. Two explanations are live and they
+need different fixes:
 
-- **(A) CLASS.** Project tokens cannot reach the two fields that resolve a
-  deployment target. Then the mutation lane can never replace `railway up` in CI
-  and the credential class has to change (a user-scoped token in CI, or a scope
-  grant from Railway). *Wording note: this row originally read "cannot reach the
-  deployment graph at all", which the 2026-11-23 status cells refute — the tokens
-  do reach the graph the CLI queries. What survives is the narrower claim, and
-  the transport cells exist to say which of the two it is.*
-- **(B) VALUE.** The class is fine and `RAILWAY_TOKEN_STAGING` is stale,
-  rotated-out or wrong. It is the only explanation that reaches F2 directly,
-  because the request that obtains the upload destination carries that same
-  credential. Weakened, but not refuted, by development's legs uploading 3/3
-  green on train `45005535349` with `RAILWAY_TOKEN_DEVELOPMENT`: that proves the
-  class works *for the upload lane*, which is a different request.
+- **(A) CLASS — retired for the reads, open for the write.** Project tokens were
+  said to be unable to reach the two fields that resolve a deployment target.
+  Through `railway api` all three reach `project(id)` and the staging token
+  reaches `serviceInstance`, so the class story is dead on the CLI surface for
+  those reads. *(Wording history: this row first read "cannot reach the
+  deployment graph at all", which the 12:07Z status cells refuted; the narrower
+  claim it was corrected to is the one the transport cells retired. What is left
+  of it is a scope question with exactly one answer-giving call, the mutation.)*
+- **(B) SCOPE, per secret — now the live reading.** The class is fine and the
+  three secrets are not equally scoped: staging alone can resolve a staging
+  service instance. That is neither "stale" nor "rotated out" — the refused
+  tokens authenticate — it is a grant difference between three project tokens on
+  the same project, which is a Railway-side settings question and belongs in the
+  support thread. The original (B) hypothesis, that `RAILWAY_TOKEN_STAGING` was
+  the broken value, is dead: it is the only one of the three that works on that
+  field. *Weakened, but not refuted, by development's legs uploading 3/3 green on
+  train `45005535349` with `RAILWAY_TOKEN_DEVELOPMENT`: that proves the class
+  works for the upload lane, which is a different request.*
 
 A third shape is worth detecting even though nothing observed so far shows it:
 **(C) INTERMITTENT** — the same bearer accepted on some attempts and refused on
@@ -326,7 +400,7 @@ Reading its verdict — the order is the design, so read the line, not the table
 | `CONTROL BROKEN` | the no-credential row authenticated, so a token and no token were indistinguishable | fix the classifier; nothing else here is evidence |
 | `INTERMITTENT` | at least one project token is accepted sometimes and refused other times | **rotate nothing.** Ask Railway what an HTTP-200 `Not Authorized` means for a project token and why identical calls minutes apart differ |
 | `VALUE, not class` | development 3/3 ok, staging 0/3 | rotate `RAILWAY_TOKEN_STAGING` (owner action), re-dispatch this probe |
-| `CLASS` | all three tokens 0/3 | no CI script change can help *for those two fields*. Before treating it as "the token reaches nothing", read the transport verdict below: a curl-only table cannot tell a class refusal from a refusal that only the raw-HTTP surface produces. |
+| `CLASS` | all three tokens 0/3 | read the transport verdict below before treating it as anything about the credentials: a curl-only table cannot tell a class refusal from a refusal that only the raw-HTTP surface produces, and on 2026-11-23 13:01Z the transport cells proved it was the surface. |
 | `neither` | dev and staging both 3/3 ok | contradicts the runs above — read the raw bodies |
 | `undecided` | a credential wrote no row | a step crashed; the comparison did not run |
 
