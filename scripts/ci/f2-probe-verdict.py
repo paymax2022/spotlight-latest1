@@ -105,6 +105,65 @@ def classify_readback(rows_json: str) -> str:
     return "no-new-row"
 
 
+def classify_status(rc: str, out: str, err: str) -> str:
+    """Verdict for ``railway status --json`` — the read that F2 also breaks.
+
+    Measured on 2026-11-22: six staging dispatches of ``ops-railway-upload.yml``
+    died 0.3 s into their own pre-flight, on job 137230172408 printing
+
+        Failed to fetch: error decoding response body
+            0: error decoding response body
+
+    with **no archive and no upload anywhere in the call**, while ``railway api``
+    with the same project token on the same runner decoded fine and answered
+    ``Not Authorized``. Locally, the pinned ``@railway/cli@5.40.1`` run with the
+    owner's *user* token exits 0 with 213,691 bytes of parseable JSON. So the
+    question this cell answers is which credential class can decode that response,
+    and a runner holding a project token is the only place it can be asked.
+
+    The order below is the content of the answer. ``rc`` alone lies in both
+    directions: exit 0 with an empty body is not a decode, and exit 1 with a body
+    the CLI printed is a *transport* verdict, not an auth one. So the stdout is
+    parsed first when there is any, and only an absent stdout falls through to the
+    CLI's complaint on stderr.
+    """
+    rc = (rc or "").strip()
+    out = out or ""
+    err = err or ""
+    if rc in ("124", "137"):
+        return "timeout-no-response"
+    if out.strip():
+        try:
+            parsed = json.loads(out)
+        except json.JSONDecodeError:
+            if out.lstrip()[:1] in ("{", "["):
+                # A body that began like JSON and stopped mid-write.
+                return "truncated-json"
+            return "non-json-body"
+        if isinstance(parsed, dict) and parsed.get("errors"):
+            messages = " ".join(
+                str((e or {}).get("message", "")) for e in parsed["errors"]
+            ).lower()
+            if any(needle in messages for needle in FORBIDDEN):
+                return "token-not-permitted"
+            if any(needle in messages for needle in NOT_AUTHED):
+                return "token-rejected"
+            return "cli-error-body"
+        if isinstance(parsed, dict) and "environments" in parsed:
+            return "decoded"
+        return "decoded-unshaped"
+    low = err.lower()
+    if "error decoding response body" in low or "failed to fetch" in low:
+        return "decode-refused"
+    if "no project linked" in low or "railway link" in low:
+        return "not-linked"
+    if any(needle in low for needle in NOT_AUTHED):
+        return "unauthorized"
+    if rc == "0":
+        return "empty-body"
+    return "other-failure"
+
+
 def final_verdict(auth: str, baseline: str, mutation: str, build: str, mode: str) -> str:
     """The one line the operator and the doc read."""
     if auth != "ok":
@@ -164,6 +223,9 @@ def main() -> int:
         print(classify_mutation(args[0], args[1]))
     elif cell == "readback":
         print(classify_readback(args[0]))
+    elif cell == "status":
+        print(classify_status(args[0], args[1] if len(args) > 1 else "",
+                              args[2] if len(args) > 2 else ""))
     elif cell == "final":
         print(final_verdict(*args[:5]))
     else:

@@ -84,8 +84,24 @@ jobs:
       # "refused sometimes" without turning a read-only probe into a load test.
       PROBE_CLASS_REPEATS: 3
       PROBE_CLASS_PAUSE_S: 5
+      # The status-decode probe has to run the binary the ops lane runs, not the
+      # newest one: ops-railway-upload.yml installs 5.40.1 (step "Install the
+      # pinned Railway CLI"), and this laptop's 5.71.0 decodes the same response
+      # with a user token, so a different version here would answer a different
+      # question.
+      PROBE_RAILWAY_VERSION: 5.40.1
     steps:
       - uses: actions/checkout@v4
+
+      # Installed once for four probes. The class probe above never needed a CLI
+      # — it speaks GraphQL with curl — but the status question is specifically
+      # "what does this binary do with this credential", so the binary is the
+      # subject, not the transport.
+      - name: Install the pinned Railway CLI
+        run: |
+          set -euo pipefail
+          npm install --global @railway/cli@"${PROBE_RAILWAY_VERSION}" >/dev/null
+          railway --version
 
       # One read per credential is not enough for a three-way answer. Both #1143
       # runs refused the staging token (read-only 09:49:38Z; write cell
@@ -148,3 +164,77 @@ jobs:
           # also tolerates the expanded spelling, so neither form can silence it.
           python3 scripts/ci/f2-token-class-verdict.py \
             --glob "/tmp/class-*.txt" --out "$GITHUB_STEP_SUMMARY"
+
+      # ------------------------------------------------------------------
+      # STATUS DECODE CELLS
+      #
+      # The class probe above speaks GraphQL with curl, so it can only ever
+      # report what the edge returns. These four steps ask a question curl
+      # cannot: what the pinned CLI itself does with the same credential. On
+      # 2026-11-22 six staging dispatches of ops-railway-upload.yml died 0.3 s
+      # into their own pre-flight — job 137230172408 — printing
+      #
+      #     Failed to fetch: error decoding response body
+      #         0: error decoding response body
+      #
+      # with no archive and no upload anywhere in the call, while `railway api`
+      # on the same runner and the same token decoded fine. Locally the same
+      # pinned binary with a user token exits 0 with 213,691 bytes. The one
+      # variable left is the credential class, and only a runner holds one.
+      #
+      # Reading the table:
+      #   anonymous decode-refused, tokens decoded  → CONTROL BROKEN: the
+      #     refusal is what a missing token looks like, so the rows say nothing.
+      #   all tokens decode-refused                 → F2 reproduces on a plain
+      #     read with every CI credential: not staging's data, not the upload
+      #     endpoint. Support thread gets a two-line repro.
+      #   development+production decoded, staging decode-refused
+      #                                             → the fault is staging's
+      #     environment payload, not the credential class.
+      #   all decoded                               → the CLI path is healthy
+      #     in runners; F2 lives in the upload request alone, as eleven earlier
+      #     episodes assumed.
+      # One sample per credential: unlike the class cells, this question has no
+      # intermittency to separate — the six dispatches agreed, and a decode is
+      # a property of the response, not of timing.
+      # ------------------------------------------------------------------
+      - name: 'status decode - control (no credential)'
+        env:
+          RAILWAY_TOKEN: ''
+          CLASS_LABEL: anonymous
+        run: |
+          bash scripts/ci/f2-status-probe.sh 2>&1 | tee "/tmp/status-${CLASS_LABEL}.txt" || true
+
+      - name: 'status decode - development project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+          CLASS_LABEL: development
+        run: |
+          bash scripts/ci/f2-status-probe.sh 2>&1 | tee "/tmp/status-${CLASS_LABEL}.txt" || true
+
+      - name: 'status decode - staging project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          CLASS_LABEL: staging
+        run: |
+          bash scripts/ci/f2-status-probe.sh 2>&1 | tee "/tmp/status-${CLASS_LABEL}.txt" || true
+
+      - name: 'status decode - production project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          CLASS_LABEL: production
+        run: |
+          bash scripts/ci/f2-status-probe.sh 2>&1 | tee "/tmp/status-${CLASS_LABEL}.txt" || true
+
+      - name: Status decode verdict
+        if: always()
+        # Presentation and comparison only. Every verdict WORD comes from
+        # scripts/ci/f2-probe-verdict.py's `status` cell, and the rule that
+        # turns four words into one line lives in
+        # scripts/ci/f2-status-verdict.py —
+        # a file, not a heredoc, so scripts/ci/test-f2-token-probe.sh can drive
+        # it from recorded cells instead of only from a runner holding three
+        # live credentials. Quoted glob: same lesson as the class verdict above.
+        run: |
+          python3 scripts/ci/f2-status-verdict.py \
+            --glob "/tmp/status-*.txt" --out "$GITHUB_STEP_SUMMARY"
