@@ -61,6 +61,17 @@ POLL_INTERVAL_S="${PROBE_POLL_INTERVAL_S:-15}"
 # doing right now" is a probe that deploys an unreviewed tree, and the short shas
 # the platform accepts elsewhere are not accepted here on purpose.
 DEPLOY_SHA="${PROBE_DEPLOY_SHA:-}"
+# Which credential this run is answering for. Raw `Authorization: Bearer` refuses
+# every project token on documents that the same value authenticates through
+# `railway api` (measured 2026-11-23, transport cells of run 45179580758), so a
+# per-credential verdict is only evidence about the credential if its KIND sits
+# on the record next to the verdict — otherwise "curl refuses it" and "it is a
+# project token" are the same line, and the class question stays open.
+# The prefix IS the kind (`rlwy_proj_` vs `rlwy_user_`), so ten characters
+# records it and leaks none of the secret — which is why this is safe to tee into
+# an artefact and print in the job log, unlike the token itself.
+TOKEN_KIND="$(printf '%s' "${RAILWAY_TOKEN:-}" | cut -c1-10)"
+[[ -n "$TOKEN_KIND" ]] || TOKEN_KIND=unset
 VERDICT_FILE="${PROBE_VERDICT_FILE:-/tmp/f2-probe-verdict}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -197,6 +208,12 @@ probe_service() {
   echo "::group::F2 token probe — ${name} / staging / mode=${MODE} / transport=${TRANSPORT}"
   echo "project=${PROJECT_ID}  stagingEnvironment=${STAGING_ENV_ID}  service=${service_id}"
   echo "endpoint=${ENDPOINT}"
+  # Recorded before any verdict, on purpose: cell 1's answer is only evidence
+  # about a credential if the reader knows which credential was asked. The class
+  # lanes ask the same document of three values on purpose and the curl-vs-cli
+  # lanes ask it of one value over two transports, and a `token-rejected` line
+  # with no kind beside it cannot tell those two experiments apart after the fact.
+  echo "PROBE_TOKEN_KIND=${TOKEN_KIND}"
 
   echo "--- cell 1: auth (project read — does this token authenticate?)"
   local http; local body; body=$(gql "$DOC_AUTH" "{\"p\":\"$PROJECT_ID\"}"); http=$(http_code)

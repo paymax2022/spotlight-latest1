@@ -192,6 +192,40 @@ if grep -nE 'query|mutation' "$probe" | grep -q 'RAILWAY_TOKEN'; then
 else
   echo "ok   token never appears on a document line"
 fi
+# 2b. The credential KIND travels with the verdict. Raw `Authorization: Bearer`
+#     refuses every project token on documents the same value answers through
+#     `railway api`, so a `token-rejected` line is ambiguous unless the artifact
+#     says which kind was asked — and the class lanes vs the transport lanes would
+#     otherwise be indistinguishable after the fact. Checked as a block, not as a
+#     word: a TOKEN_KIND assignment that no cell ever prints would score nothing.
+kind_line=$(grep -nE '^TOKEN_KIND=' "$probe" | head -1)
+checks=$((checks + 1))
+if [[ -z "$kind_line" ]]; then
+  echo "FAIL the probe never derives a credential kind"; fails=$((fails + 1))
+elif ! grep -q "cut -c" <<<"$kind_line"; then
+  echo "FAIL TOKEN_KIND is derived without a length cap, so it could print the secret"; fails=$((fails + 1))
+else
+  echo "ok   the credential kind is derived from a capped prefix, not the value"
+fi
+checks=$((checks + 1))
+fn_block=$(awk '/^probe_service\(\) \{/{f=1} f&&/^\}/{exit} f' "$probe")
+if grep -q 'PROBE_TOKEN_KIND' <<<"$fn_block"; then
+  echo "ok   every probed service prints the credential kind before its cells"
+else
+  echo "FAIL the credential kind is computed but never printed with the cells"; fails=$((fails + 1))
+fi
+# And printing it must not be a way to print the token: no echo line may expand
+# RAILWAY_TOKEN itself. Line 172's curl header and the mask's env assignment pass
+# the value as an argument, which is not output, so those are not what this bans.
+# [[:space:]] not \s, because the hygiene job's grep is BSD and has no \s.
+checks=$((checks + 1))
+if grep -nE '^[[:space:]]*echo [^#]*\$\{?RAILWAY_TOKEN' "$probe" > /tmp/f2-echo-token.txt; then
+  echo "FAIL an echo expands the token itself:"
+  sed -E 's/RAILWAY_TOKEN.*/RAILWAY_TOKEN<hidden>/' /tmp/f2-echo-token.txt | head -3
+  fails=$((fails + 1))
+else
+  echo "ok   no echo can leak the token: the value reaches only curl and the masker"
+fi
 # 3. Each cell sends only its own declared variables. An undeclared extra is a
 #    GraphQL validation error, and a silent 400 would read as a token answer.
 bash "$probe" --check-documents > /tmp/f2-probe-docs.txt
