@@ -21,6 +21,17 @@ test('401 on a sign-in attempt reads as rejected credentials', () => {
   assert.doesNotMatch(msg, /session/i, 'must not mention a session on the sign-in screen');
 });
 
+// WHY THE COPY MUST NAME THE EXIT. A sign-up whose email was already taken gets a
+// DECOY success (auth_service.go returns AlreadyExisted so signup cannot enumerate
+// accounts), so no account is created with the password just typed — and the very
+// next login is this 401. "Please try again" sends that person back to the same
+// dead end. The reset link is the way out, and pointing at it says exactly the
+// same thing for an unknown address as for a known one, so no existence leaks.
+test('the sign-in 401 names the way out', () => {
+  const msg = getErrorMessage(axios401(), { authAttempt: true });
+  assert.match(msg, /forgot password/i, 'a rejected sign-in must point at the reset path');
+});
+
 test('401 elsewhere still reads as an expired session', () => {
   const msg = getErrorMessage(axios401());
   assert.match(msg, /session has expired/i);
