@@ -1728,7 +1728,12 @@ That is F2's string, verbatim, on an endpoint that has nothing to do with upload
 things held at once, on the same runner, within an hour: `railway api` with the staging
 project token **decodes fine** and answers the GraphQL read with `Not Authorized` at HTTP
 200 (the probe's own cells, run `45027737590`), while `railway status --json` with that same
-token **cannot decode the response at all**. The decode refusal therefore tracks a request
+token **cannot decode the response at all**. **[Corrected by Episode 19: that is what these
+six dispatches did on 2026-11-22, not what a project token always does — at 12:07Z on
+2026-11-23 the same pinned CLI with the same staging token decoded the same read into
+52,349 bytes, rc=0. So the refusal is time-windowed, and the narrowing below — "at least two
+CLI requests, one of which is a plain status read" — holds as a set of requests that CAN
+refuse, not as a property of the credential.]** The decode refusal therefore tracks a request
 shape, not the upload-initiate call — which narrows the hypothesis in this file's "what is
 F2" section from "the request that obtains the upload destination" to "at least two CLI
 requests, one of which is a plain status read, and not the raw `railway api` path".
@@ -1833,7 +1838,10 @@ question itself is unchanged: staging's upload-initiate still never returns a bo
 episode removes only staging's *dependence* on it — and the episode adds one line to that
 question, because `railway status --json` with the same staging project token returns a body
 the CLI cannot decode in 0.3 s, which is the same failure string on an endpoint with no
-upload anywhere in it.
+upload anywhere in it. **[Episode 19 measures the same command succeeding with the same
+token eleven hours later on a runner, so this line is now a window, not a standing property
+of the credential — and the transport cells exist to say whether the `Not Authorized` half of
+this paragraph was ever a statement about the tokens at all.]**
 
 **What this does not fix.** No code, no secret, no workflow changed here. `release.yml`'s
 staging legs still upload with a project token and still die 9/9; production still receives

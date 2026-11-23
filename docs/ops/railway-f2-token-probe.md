@@ -436,16 +436,18 @@ both-tokens-clean, and three missing-credential shapes — and each asserts not
 just its own verdict but that the wrong one is absent, which is the only way to
 test an ordering.
 
-The transport comparison (`scripts/ci/f2-transport-verdict.py`) is driven the same
-way from nine recorded cell sets, and its fixtures deliberately keep the two
-filenames the workflow really writes — `class-<label>-<n>.txt` per attempt,
+The transport comparison (`scripts/ci/f2-transport-verdict.py`) is driven the
+same way from nine recorded cell sets, and its fixtures deliberately keep the
+two filenames the workflow really writes — `class-<label>-<n>.txt` per attempt,
 `cli-<label>.txt` per credential — because a fixture that tidied that difference
-out would test the fixture and not the reader. Thirteen assertions cover the nine
-sets — seven positive verdict lines and six that name the sentence which must
-stay unreachable for that shape, which is the only way to test an ordering. A
-missing cli cell must print neither of the two clean conclusions, and a cli body
-of `body-undecodable` — F2's own fingerprint, seen from a read — falls to
-"outside the taxonomy" rather than being folded into a credential claim.
+out would test the fixture and not the reader. Thirteen of that file's checks
+are those nine sets: seven positive verdict lines and six that name the sentence
+which must stay unreachable for that shape, which is the only way to test an
+ordering. The rest of the block pins the wiring the run depends on (four cli
+steps, both quoted globs, `PROBE_TRANSPORT: cli`) and the two measurement fixes
+below. A missing cli cell must print neither of the two clean conclusions, and a
+cli body of `body-undecodable` — F2's own fingerprint, seen from a read — falls
+to "outside the taxonomy" rather than being folded into a credential claim.
 
 Seventeen mutants were installed on purpose and made to go red — the three #1143
 probe-script ones, five for the comparison, five for the cell-4 blindness
