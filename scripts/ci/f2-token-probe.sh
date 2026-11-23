@@ -56,6 +56,22 @@ PROJECT_ID="${PROBE_PROJECT_ID:-e7dca861-3667-4d9a-8090-6d2f4d179ec2}"
 STAGING_ENV_ID="${PROBE_ENVIRONMENT_ID:-6b5f27a3-a290-4574-a977-363eb21d43ad}"
 POLL_BUDGET_S="${PROBE_POLL_BUDGET_S:-300}"
 POLL_INTERVAL_S="${PROBE_POLL_INTERVAL_S:-15}"
+# The commit the mutate cell names. Empty by default, and `mutate` refuses to
+# run without a full 40-hex value: a probe that could deploy "whatever main is
+# doing right now" is a probe that deploys an unreviewed tree, and the short shas
+# the platform accepts elsewhere are not accepted here on purpose.
+DEPLOY_SHA="${PROBE_DEPLOY_SHA:-}"
+# Which credential this run is answering for. Raw `Authorization: Bearer` refuses
+# every project token on documents that the same value authenticates through
+# `railway api` (measured 2026-11-23, transport cells of run 45179580758), so a
+# per-credential verdict is only evidence about the credential if its KIND sits
+# on the record next to the verdict — otherwise "curl refuses it" and "it is a
+# project token" are the same line, and the class question stays open.
+# The prefix IS the kind (`rlwy_proj_` vs `rlwy_user_`), so ten characters
+# records it and leaks none of the secret — which is why this is safe to tee into
+# an artefact and print in the job log, unlike the token itself.
+TOKEN_KIND="$(printf '%s' "${RAILWAY_TOKEN:-}" | cut -c1-10)"
+[[ -n "$TOKEN_KIND" ]] || TOKEN_KIND=unset
 VERDICT_FILE="${PROBE_VERDICT_FILE:-/tmp/f2-probe-verdict}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -73,7 +89,14 @@ service_id_for() {
 
 DOC_AUTH='query($p:String!){ project(id:$p){ id name } }'
 DOC_ROW='query($s:String!,$e:String!){ serviceInstance(serviceId:$s, environmentId:$e){ latestDeployment{ id createdAt status meta } } }'
+# The `latestCommit` spelling is kept here because it is the shape that stopped
+# working: it was refused `Not Authorized` in three of three owner-side attempts
+# from 2026-11-22T13:53Z, while `commitSha` returned `true` minutes later for the
+# same instances and the same bearer identity. Probing the write cell with it
+# therefore cannot tell a scope refusal from a shape refusal, so the mutate cell
+# below uses DOC_DEPLOY_SHA and this document is never sent.
 DOC_DEPLOY='mutation($s:String!,$e:String!,$latest:Boolean){ serviceInstanceDeploy(serviceId:$s, environmentId:$e, latestCommit:$latest) }'
+DOC_DEPLOY_SHA='mutation($s:String!,$e:String!,$sha:String!){ serviceInstanceDeploy(serviceId:$s, environmentId:$e, commitSha:$sha) }'
 
 if [[ "${1:-}" == "--check-documents" ]]; then
   # Read by the offline test, and by anyone re-checking the arg shapes against
@@ -81,13 +104,20 @@ if [[ "${1:-}" == "--check-documents" ]]; then
   # serviceInstance(environmentId:String!, serviceId:String!);
   # __type(name:"Mutation") gives serviceInstanceDeploy(commitSha:String,
   # environmentId:String, latestCommit:Boolean, serviceId:String).
-  printf 'DOC\t%s\n' "$DOC_AUTH" "$DOC_ROW" "$DOC_DEPLOY"
+  printf 'DOC\t%s\n' "$DOC_AUTH" "$DOC_ROW" "$DOC_DEPLOY" "$DOC_DEPLOY_SHA"
   exit 0
 fi
 
 case "$MODE" in read-only | mutate) : ;; *)
   echo "::error::unknown PROBE_MODE '$MODE' (read-only|mutate)"; exit 2 ;;
 esac
+
+# A write cell without an exact commit is not a measurement, it is a release.
+if [[ "$MODE" == "mutate" && ! "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "::error::PROBE_MODE=mutate needs PROBE_DEPLOY_SHA set to a full 40-hex commit sha; refusing to send a deploy"
+  echo "PROBE_REFUSED mutate-without-explicit-sha sha='${DEPLOY_SHA}'"
+  exit 2
+fi
 
 services=()
 if [[ "$SERVICE_NAME" == "all" ]]; then
@@ -178,6 +208,12 @@ probe_service() {
   echo "::group::F2 token probe — ${name} / staging / mode=${MODE} / transport=${TRANSPORT}"
   echo "project=${PROJECT_ID}  stagingEnvironment=${STAGING_ENV_ID}  service=${service_id}"
   echo "endpoint=${ENDPOINT}"
+  # Recorded before any verdict, on purpose: cell 1's answer is only evidence
+  # about a credential if the reader knows which credential was asked. The class
+  # lanes ask the same document of three values on purpose and the curl-vs-cli
+  # lanes ask it of one value over two transports, and a `token-rejected` line
+  # with no kind beside it cannot tell those two experiments apart after the fact.
+  echo "PROBE_TOKEN_KIND=${TOKEN_KIND}"
 
   echo "--- cell 1: auth (project read — does this token authenticate?)"
   local http; local body; body=$(gql "$DOC_AUTH" "{\"p\":\"$PROJECT_ID\"}"); http=$(http_code)
@@ -194,11 +230,11 @@ probe_service() {
 
   local mut=not-run build=not-run rows='[]'
   if [[ "$MODE" == "mutate" ]]; then
-    echo "--- cell 3: the missing cell — project token x serviceInstanceDeploy"
-    body=$(gql "$DOC_DEPLOY" "{\"s\":\"$service_id\",\"e\":\"$STAGING_ENV_ID\",\"latest\":true}"); http=$(http_code)
+    echo "--- cell 3: the missing cell — project token x serviceInstanceDeploy(commitSha:)"
+    body=$(gql "$DOC_DEPLOY_SHA" "{\"s\":\"$service_id\",\"e\":\"$STAGING_ENV_ID\",\"sha\":\"$DEPLOY_SHA\"}"); http=$(http_code)
     echo "${body:0:400}"; echo
     mut=$(python3 "$HERE/f2-probe-verdict.py" mutation "$body" "$http")
-    echo "PROBE_CELL mutation=$mut (http=$http)"
+    echo "PROBE_CELL mutation=$mut (http=$http) sha=${DEPLOY_SHA:0:9}"
 
     if [[ "$mut" == "accepted" ]]; then
       echo "--- cell 4: did a ROW appear? \`true\` alone is not proof"

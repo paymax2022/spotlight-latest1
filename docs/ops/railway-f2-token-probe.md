@@ -79,9 +79,9 @@ authenticate on `project(id)` and are refused that field. The earlier sentence
 here, that the lane is reachable "only with a user-scoped credential and never
 from a project token", was read from the curl cells and is withdrawn. What now
 stands between CI and the swap is the write cell alone, and measuring it *is*
-deploying staging: so it stays an owner-signed action, `PROBE_MODE` stays a
-literal `read-only` in the YAML with no dispatch input, and no accidental run can
-cross that line. What remains unknown: whether the staging token's read scope
+deploying staging — so it stays an owner-signed action, and the checkbox that
+reaches it is default-off and names a full commit or nothing at all (see "The
+write cell" below). What remains unknown: whether the staging token's read scope
 extends to `serviceInstanceDeploy`, and whether curl's refusal of a project token
 is a header the CLI adds that the sampler does not (the sampler sends only
 `Content-Type` and `Authorization: Bearer`) or a rule on that surface. Either way
@@ -100,7 +100,9 @@ identity (`spec.ng@gmail.com`, user `bbb8bca4-84df-483e-a227-97a971e9f4a7` — t
 of every resulting row, all `SUCCESS` by 14:02:44Z). `isUpdatable=false` correlated with the
 refusals but did not cause them: the same instance accepted an explicit sha minutes later
 while still reporting `false`. So the argument *shape*, not the token, decides that call
-today — and the probe's own `DOC_DEPLOY` document pins the refused shape. One cell is
+today — and the probe's own `DOC_DEPLOY` document pins the refused shape **[retired as the
+document that is sent: `DOC_DEPLOY_SHA` is what cell 3 now calls, and `DOC_DEPLOY` stays in
+the file as the recorded exclusion, asserted-never-sent by the suite]**. One cell is
 therefore still empty: the CI attempt (`45009997472`) called `latestCommit`, so no project
 token has ever been asked for `commitSha`. The verdict did not depend on filling it
 then, because that same token was refused every read this probe knows how to make
@@ -275,12 +277,54 @@ token.** Four things follow, and they are not all the same kind of thing.
 
 What this changes in practice: CI holds a credential that can already see the
 deployment targets of staging, so the `serviceInstanceDeploy` swap is no longer
-blocked by a proven read restriction — it is blocked by an unmeasured write. The
-next cell is `PROBE_MODE=mutation PROBE_TRANSPORT=cli` with
-`RAILWAY_TOKEN_STAGING`, and unlike every other cell in this file that one has a
-side effect: if it is authorized it promotes staging to the sha it names. The
-workflow cannot dispatch it (`PROBE_MODE` is a literal, no inputs), and it should
-stay that way until someone decides the deploy is the point.
+blocked by a proven read restriction — it is blocked by an unmeasured write.
+
+### The write cell: the last unmeasured fact, and what it costs to measure it
+
+That write cell is `serviceInstanceDeploy` called with a project token. It is the
+only fact standing between this repo and moving the staging legs off `railway up`
+onto the mutation, and it cannot be answered from a laptop: `projectTokenCreate`
+is refused for the owner session, so the only token that matters exists inside a
+runner. It is also, uniquely, a cell with a side effect — if the answer is
+"authorized", the run deploys staging.
+
+So the cell was built rather than run by accident. `ci-railway-token-class.yml`
+now has two dispatch inputs, and neither names a target:
+
+- `write_cell` — a checkbox, **default off**. Nothing checks it automatically:
+  no other workflow calls this file, and it has no `push`, `schedule`, or
+  `pull_request` trigger.
+- `deploy_sha` — a full 40-hex commit. A short sha (the shape GitHub's own UI
+  displays) or an empty one is refused twice over: a guard step before any
+  credential is loaded, and the script itself before it builds a request.
+
+When the checkbox is checked, one step runs — staging token, `backend` service,
+`PROBE_TRANSPORT: cli` (curl cannot authenticate a project-token bearer on the
+read surface, so a curl refusal here could never be read as a scope answer),
+`PROBE_MODE: mutate` — and the environment id stays hardcoded to staging inside
+the script, with no production id anywhere in the file. Everything else in the
+workflow keeps reading.
+
+**The cheapest honest version of the measurement is to name the sha staging
+already serves.** An authorized call then creates a new deployment row for a tree
+that is already running, so the cell proves authorization with effectively no
+version change and no unmigrated schema; a refused call changes nothing at all.
+That is why `deploy_sha` is a required part of the dispatch rather than a
+"latestCommit" convenience: `latestCommit` is also the spelling that has been
+refused owner-side three of three (see the measured exclusion above), so it would
+confound a shape refusal with a scope refusal — the exact ambiguity this file was
+rewritten to remove.
+
+Reading the result:
+
+| `PROBE_VERDICT[backend]` | meaning | do |
+|---|---|---|
+| `project-token-can-deploy` | authorized, and a new SUCCESS row appeared | propose the `release.yml` staging-leg swap — owner sign-off, it is a CI change |
+| `mutation-is-noop-for-project-token` | returned `true`, created no row | the git-less-service shape production's `frontend-admin` already showed; the swap buys nothing |
+| `token-scope-blocks-mutation` | Forbidden to a token that can read | ask Railway for deploy scope on the project token |
+| `token-rejected-at-graphql` | the mutation refused while the reads pass | the staging secret is read-scoped; same ask, sharper |
+| `f2-reproduces-on-the-mutation-path` | the mutation returned an undecodable body | F2 is the transport, not the endpoint — escalate with the timing pattern |
+| `accepted-but-readback-blind (…)` | said `true`, cell 4 had no eyes on the rows | **neither a deploy nor a no-op is proven**; do not act on this line |
 
 ## The question, in one sentence
 
@@ -385,8 +429,11 @@ rather than trusting one reading.
 anonymous control, development, staging, production — **three times** and
 reports `ok/N` rates: one sample cannot tell a stable refusal from a transient
 edge refusal, and `Not Authorized` is Railway's wording for both a bad value and
-a missing scope. `PROBE_MODE` is a literal `read-only` in the YAML and the file
-has no inputs, so no dispatch can reach the cell that deploys.
+a missing scope. `PROBE_MODE` is a literal `read-only` in the job env, so every
+step that does not override it is a read; the one step that overrides it sits
+behind the default-off `write_cell` checkbox and a 40-hex `deploy_sha` (see "The
+write cell" above), and the suite checks that structurally rather than by
+banishing the word.
 
 ```bash
 gh workflow run ci-railway-token-class.yml --ref main
@@ -417,8 +464,21 @@ default branch. Land it first, then:
 # 1. read-only: two queries per service, no state change. Run this first.
 gh workflow run ci-f2-token-probe.yml --ref main -f mode=read-only -f service=backend
 
-# 2. the missing cell: one real staging deploy, backend only.
-gh workflow run ci-f2-token-probe.yml --ref main -f mode=mutate -f service=backend
+# 2. the same reads plus the transport cells, on all four credentials.
+gh workflow run ci-railway-token-class.yml --ref main
+
+# 3. the write cell — THIS ONE DEPLOYS. Checked box, staging backend only, and
+#    the commit it names must be a full 40-hex sha. Naming the sha staging
+#    already serves makes the deploy a no-op version change, which is the
+#    cheapest way to buy the answer:
+gh workflow run ci-railway-token-class.yml --ref main \
+  -f write_cell=true -f deploy_sha="$(git rev-parse df6676406)"
+
+# 3b. the same cell on the other entry point, where curl cannot authenticate a
+#     project token and the run therefore stops at cell 1 (see the note in
+#     ci-f2-token-probe.yml). Kept for the edge-status answer, not for the write.
+gh workflow run ci-f2-token-probe.yml --ref main \
+  -f mode=mutate -f service=backend -f deploy_sha="$(git rev-parse df6676406)"
 ```
 
 Then read the run:
@@ -480,9 +540,10 @@ only way to exercise it is a real upload — which is the thing that fails.
 ## Verification
 
 `scripts/ci/test-f2-token-probe.sh` runs in the `ci.yml` hygiene job beside the
-deploy-retry test: **182/182 green** locally at 12:40Z on 2026-11-23, no network
-to Railway (it was 107/107 at 13:20Z on 2026-11-22, before the status cells and
-the transport cells below were written).
+deploy-retry test: **200/200 green** locally at the commit that adds the write
+cell (it was 182/182 on 2026-11-23 12:40Z, before the sha guard and the
+dispatch-wiring direction below were written, and 107/107 on 2026-11-22 13:20Z,
+before the status cells and the transport cells). No network to Railway.
 It covers the classifier with recorded payloads (including the measured
 HTTP-200 `Not Authorized` body — Railway does not use the status code for auth,
 so any logic keyed on HTTP alone reads a token failure as success), plus
@@ -492,13 +553,44 @@ now serves five scenarios: a green stub whose verdict must be
 undecodable-body stub in both modes, `blind-readback` (the row query after an
 accepted mutation is refused) and `no-baseline` (cell 2 refused, later rows real).
 The last two exist because both used to be able to print the green verdict.
+Every mutate stub run passes a real 40-hex commit, and three shapes that must not
+get a request out are driven through the same server: an empty sha (the dispatch
+form half-filled), a 9-character sha (the exact spelling GitHub's own UI shows,
+so this is the mistake an operator makes by copying what they see), and a
+40-character value containing a non-hex letter (which is why the check is a hex
+class and not a length). What is asserted there is *absence*: no `PROBE_CELL`, no
+`PROBE_VERDICT`, exit 2. A guard that prints a warning and then sends the
+mutation would be a release with a notice attached, and no text assertion can see
+that difference — only running it can.
+The fake edge also stopped answering documents it was not given correctly: it now
+compares each request's variable signature against the variables actually sent
+and refuses a mismatch with HTTP 400. That is what makes the mutation cell's
+shape testable rather than merely documented, and it was measured, not assumed —
+sending the `commitSha` document with a `latest` variable turned **ten** checks
+red, because `classify_read` looks at the status before the body.
 The remainder are wiring invariants read off the workflow and the script
 themselves: dispatch-only, defaults to `read-only`, repository guard, staging
 secret, `PROBE_TRANSPORT: curl`, no environment input, the one hardcoded
 environment id is staging's, the summary step cats the file the script writes,
-and every form input lands on a variable the script actually reads. It uses
-regex rather than PyYAML because the hygiene job's `python3` has no third-party
-packages.
+and every form input lands on a variable the script actually reads — and now in
+both directions, because the earlier version only checked the mapping in one
+direction and its input-name character class excluded `_`, so `deploy_sha` and
+`write_cell` were invisible to it: the checker printed "2 mappings" for a
+3-mapping file, which is the shape of a green suite that cannot see the wiring it
+exists for. A declared-but-unforwarded input is the same bug from the form's
+side, and it is what would turn "the guard refused" into an operator's surprise.
+The write cell's own guard is checked structurally rather than by banning the
+word `mutate` — the earlier assertion (`'mutate' appears nowhere`, `no inputs
+block`) could only stay green by having no write cell at all, i.e. by not
+answering the question. What must be true instead: exactly one `PROBE_MODE:
+mutate` step exists in the file; that step's block — located by line range, so a
+mention in prose cannot satisfy it — contains the checkbox gate, the staging
+secret, the cli transport, a sha that comes from the form rather than a literal
+in the YAML, and `|| true`; it contains no development or production credential;
+the form declares nothing except `write_cell` and `deploy_sha`; the checkbox
+defaults to off; nothing in the file asks for `latestCommit`; and the guard step
+tests a 40-hex shape before any token is loaded. All of it uses regex rather
+than PyYAML because the hygiene job's `python3` has no third-party packages.
 
 The token-class comparison is covered the same two ways, and this is why its
 rules live in `scripts/ci/f2-token-class-verdict.py` instead of a YAML heredoc: a
@@ -523,12 +615,14 @@ below. A missing cli cell must print neither of the two clean conclusions, and a
 cli body of `body-undecodable` — F2's own fingerprint, seen from a read — falls
 to "outside the taxonomy" rather than being folded into a credential claim.
 
-Seventeen mutants were installed on purpose and made to go red — the three #1143
+Twenty-six mutants were installed on purpose and made to go red — the three #1143
 probe-script ones, five for the comparison, five for the cell-4 blindness
-fixed here, two for the argument surface that silenced run 45024735432, and two
+fixed here, two for the argument surface that silenced run 45024735432, two
 for the 2026-11-23 measurements: the `body-undecodable` fold-in that would have
 turned a decode fault into a credential verdict, and the status cell that printed
-the version the workflow *pinned* instead of the version that ran.
+the version the workflow *pinned* instead of the version that ran — and nine for
+the write cell, each re-run after restoring the file by hash rather than by
+`git checkout`, because every one of these files was uncommitted work.
 A green suite proves nothing until the defect it names is present:
 
 | mutant installed | result |
@@ -550,8 +644,17 @@ A green suite proves nothing until the defect it names is present:
 | `--glob` back to a single value with the positional backstop gone (script still parses and runs) | 2 failures — the two spellings disagreed, i.e. a decider silently reading one file of twelve, and the backstop grep |
 | `unknown()` reverted to `v not in KNOWN`, so a cli body of `body-undecodable` counts as an answer | 2 failures — the same table that had refused to conclude in the previous paragraph resolved to "Per-credential, not per-class", i.e. a sentence telling the owner to rotate three secrets because of a decode fault |
 | the status cell printing `cli=${VERSION}` instead of the measured `CLI_ACTUAL` | 2 failures — run 45171097305's own bug: eight cells that said `cli=5.40.1` while nothing proved which binary ran |
+| cell 3 sent `DOC_DEPLOY` with a matching `$latest` variable (self-consistent, wrong spelling) | 2 failures — `cell 3 sends the commitSha document` and `latestCommit is never sent`, **and the fake edge stayed silent**: the drift check compares a document against its own variables, so it cannot see a pair that agrees on the retired shape. That is why the text guard exists beside it |
+| cell 3 sent the `commitSha` document with a `latest` variable (signature and payload disagree) | 10 failures — the stub answered HTTP 400, `classify_read` saw the status before the body, and every mutate scenario lost its `mutation=accepted` and its verdict |
+| the write step's `if: inputs.write_cell` line deleted | 2 failures — the checkbox gate, and the structural read of the step's own block |
+| `PROBE_DEPLOY_SHA` pointed at a literal sha in the YAML instead of the form | 1 failure — the write step no longer takes its commit from the operator, which is the difference between a measurement and a scheduled release |
+| a third dispatch input (`service_name`) declared | 2 failures — `no environment or service input`, and the declared-inputs set came back `deploy_sha service_name write_cell` |
+| the write step given `RAILWAY_TOKEN_PRODUCTION` | 1 failure — "the write step names a credential other than staging's", the only check in the file that inspects the step's block and not the page |
+| the script's 40-hex guard deleted | 8 failures — each of the three bad shapes lost both its silence assertion and its exit code (exit 0 instead of 2), plus the two guards that name the refusal and its reason line, so an empty `deploy_sha` became **a mutation sent with no commit named** |
+| the `PROBE_DEPLOY_SHA` mapping deleted from `ci-f2-token-probe.yml` | 1 failure — `dispatch input(s) deploy_sha are declared on the form but never forwarded` |
+| the input-name character class reverted to `[a-z-]+` (no underscore) | 1 failure — the same reverse check, reached by blinding the checker instead of the workflow: it read 2 mappings in a 3-mapping file |
 
-Three of those seventeen were invalid, and every one of those failures is worth recording
+Three of those twenty-six were invalid, and every one of those failures is worth recording
 because they are how a suite quietly lies:
 
 - the first `accepted-but-readback-blind` mutant deleted the eight leading
@@ -575,9 +678,18 @@ because they are how a suite quietly lies:
   exits 0 and still prints exactly one verdict, because it is quietly reading one
   file of twelve. Only the byte-comparison against the quoted spelling catches it.
 
-Everything restored with `cp`, re-asserted sha256-identical in every case, then
-re-run to full green — 107/107 for the first fifteen, 182/182 with the two
-2026-11-23 mutants included.
+Everything restored from a pre-mutant copy, re-asserted sha256-identical in every
+case, then re-run to full green — 107/107 for the first fifteen, 182/182 with the
+two 2026-11-23 mutants, 200/200 with the nine for the write cell.
+One of those nine nearly proved nothing: the restore was written as
+`sha256sum file | grep -q <clean-hash> && cp backup file`, so the assertion asked
+"is the file already clean?" and, finding the mutant's own hash, restored
+*nothing* — the run reported its 10 failures against a tree that still contained
+the defect. Caught because the printed hash was the mutant's, not the backup's.
+The order has to be restore-then-assert, which is the same trap as
+`git checkout -- <file>` on a dirty tree: it restores HEAD and silently deletes
+the uncommitted work you were measuring. Every file here was uncommitted, and
+none of them could have been recovered that way.
 
 Six live defects that would each have produced a confident wrong answer in CI:
 

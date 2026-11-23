@@ -23,10 +23,15 @@ and its red controls::
                   rows cell 4 sees afterwards are real — the shape that used to
                   turn an un-comparable SUCCESS row into project-token-can-deploy
 
+Every request is additionally checked for ``variable_drift`` below — the
+variable signature a document declares against the variables actually supplied
+— so a document/call-site mismatch can never be answered with a green payload.
+
 The port is printed on stdout once the socket is bound so the caller can wait
 for readiness instead of sleeping.
 """
 import json
+import re
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -45,8 +50,40 @@ NEW_ROW = {"id": "cccc1111-1111-1111-1111-111111111111",
            "createdAt": "2026-11-22T00:00:00.000Z", "status": "SUCCESS",
            "meta": {"commitHash": "cafe000"}}
 
+SIGNATURE = re.compile(r"^(?:query|mutation)\s*\(([^)]*)\)")
 
-def body_for(query: str) -> tuple[int, bytes]:
+
+def variable_drift(query: str, supplied) -> str:
+    """Name the disagreement between a document's signature and its variables.
+
+    The real edge refuses an undeclared variable, and the probe's own header says
+    each cell sends ONLY its own variables. Nothing else in this harness would
+    notice: the stubs key on the operation name, so swapping
+    ``latestCommit:$latest`` for ``commitSha:$sha`` in the document while the call
+    site still built ``{"latest": ...}`` — the exact drift this file exists to
+    prevent — would have been answered as a clean ``accepted``. Empty string means
+    the two agree.
+    """
+    m = SIGNATURE.match(query or "")
+    if not m:
+        return ""
+    declared = set(re.findall(r"\$(\w+)", m.group(1)))
+    got = set(supplied or {})
+    if declared == got:
+        return ""
+    return (f"document declares {sorted(declared)}, request supplied "
+            f"{sorted(got)}")
+
+
+def body_for(query: str, supplied=None) -> tuple[int, bytes]:
+    drift = variable_drift(query, supplied)
+    if drift:
+        # 400, because that is what a validation refusal is, and because
+        # classify_read checks the status BEFORE the body: the cell then reports
+        # edge-rejected-400 instead of a token answer, and every stub scenario
+        # that depends on the shape goes red.
+        return 400, json.dumps({"errors": [
+            {"message": f"variable drift: {drift}"}]}).encode()
     if scenario == "unauthorized":
         return 200, json.dumps(DENIAL).encode()
     if scenario == "undecodable":
@@ -104,11 +141,14 @@ def body_for(query: str) -> tuple[int, bytes]:
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802 - http.server name is fixed
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
+        query, supplied = "", None
         try:
-            query = json.loads(raw).get("query", "")
+            doc = json.loads(raw)
+            query = doc.get("query", "")
+            supplied = doc.get("variables")
         except json.JSONDecodeError:
             query = ""
-        code, payload = body_for(query)
+        code, payload = body_for(query, supplied)
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))

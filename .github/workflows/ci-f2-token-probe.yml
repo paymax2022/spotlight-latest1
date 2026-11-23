@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "read-only authenticates and snapshots; mutate also calls serviceInstanceDeploy on staging"
+        description: "read-only authenticates and snapshots; mutate also calls serviceInstanceDeploy(commitSha) on staging"
         required: true
         default: read-only
         type: choice
@@ -31,6 +31,10 @@ on:
           - frontend-web
           - frontend-admin
           - all
+      deploy_sha:
+        description: "Full 40-hex commit the mutate cell names. Required for mutate; a read-only run ignores it. Short shas are refused."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -50,7 +54,22 @@ jobs:
       # ${PROBE_SERVICE_NAME:-backend}, so the wrong name makes every dispatch
       # probe `backend` while the form says otherwise.
       PROBE_SERVICE_NAME: ${{ github.event.inputs.service }}
+      # Curl shows edge status codes, which is why F2 was invisible for eleven
+      # episodes. It is ALSO why this workflow cannot carry the write cell
+      # today: measured 2026-11-23 13:01Z (run 45179580758), raw
+      # `Authorization: Bearer` POSTs refuse all three project tokens on
+      # `project(id)` and `serviceInstance`, while `railway api` with the very
+      # same tokens resolves them. A mutate dispatch here therefore stops at
+      # `token-refused-at-read` and never reaches cell 3, and reading that line
+      # as a scope answer would be the mistake the transport cells were built to
+      # prevent. The measurable write cell lives in
+      # ci-railway-token-class.yml, which runs the identical documents with
+      # PROBE_TRANSPORT=cli behind a default-off checkbox.
       PROBE_TRANSPORT: curl
+      # Only cell 3 reads this, and only when mode=mutate; the script refuses a
+      # mutate run whose sha is absent or shorter than 40 hex, so a half-filled
+      # form is a refusal rather than an unreviewed deploy.
+      PROBE_DEPLOY_SHA: ${{ github.event.inputs.deploy_sha }}
       # Same secret the release train's staging legs use — that is the whole
       # point: the probe answers for the token that actually fails.
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
