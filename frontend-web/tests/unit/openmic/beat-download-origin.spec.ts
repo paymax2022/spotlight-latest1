@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
+import { beatObjectKey, encodeBeatFileKey } from '@/src/features/openmic/beat-storage';
 
 /**
  * Where a beat download is allowed to land.
@@ -19,13 +20,17 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
  *   • with no such variable, a dev server redirects within itself;
  *   • an absolute configured URL is the admin's own choice and passes through.
  */
-const KEY = 'b3Blbm1pYy1iZWF0cy9jN2FiODQ3OS9lZDI5ODc1YS5tcDM';
-const READER = `/api/open-mic/beats/${KEY}?download=1`;
+const CONTEST_ID = 'c7ab8479-0275-473d-a78f-b923664a3b54';
+const BEAT_UUID = '9d140ff1-d69b-4d74-a852-960f34cce9d8';
+/** Built with the production encoder, like `beat-file-route.spec.ts`, rather than
+ *  pasting an opaque base64url literal a secret scanner is right to distrust. */
+const FILE_KEY = encodeBeatFileKey(beatObjectKey(CONTEST_ID, BEAT_UUID));
+const READER = `/api/open-mic/beats/${FILE_KEY}?download=1`;
 const CONTEST = {
-  id: 'c7ab8479-0275-473d-a78f-b923664a3b54',
+  id: CONTEST_ID,
   slug: 'open-mic-dev',
   beat: {
-    id: '9d140ff1-d69b-4d74-a852-960f34cce9d8',
+    id: BEAT_UUID,
     beatTitle: 'Street Light (dev beat)',
     previewUrl: READER.replace('?download=1', ''),
     downloadUrl: READER,
