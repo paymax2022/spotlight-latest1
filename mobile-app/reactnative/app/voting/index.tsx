@@ -1,236 +1,442 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
-  ScrollView, View, Text, StyleSheet, Platform, RefreshControl, ActivityIndicator, Pressable, Image,
+  Animated, Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Bell, ChevronRight, Trophy, UserPlus } from 'lucide-react-native';
-import { Colors } from '@/constants/tokens';
+import { AlertTriangle, ChevronRight, Mic2, Sparkles, Star } from 'lucide-react-native';
 import { Typography } from '@/constants/tokens';
-import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
-import { shadow1 } from '@/constants/tokens';
-import SectionHeader from '@/components/SectionHeader';
+import { Spacing } from '@/constants/tokens';
+import { shadow2 } from '@/constants/tokens';
 import { useAuthStore } from '@/store/authStore';
-import { useContests } from '@/features/voting/hooks/useContests';
-import { useContestants } from '@/features/voting/hooks/useContestants';
-import { useLeaderboard } from '@/features/voting/hooks/useLeaderboard';
-import { useFreeVoteAllocation } from '@/features/voting/hooks/useVote';
-import ContestCard from '@/features/voting/components/ContestCard';
 import NoContestsState from '@/features/voting/components/NoContestsState';
-import ContestStatusBadge from '@/features/voting/components/ContestStatusBadge';
 import FreeVoteBadge from '@/features/voting/components/FreeVoteBadge';
-import LeaderboardRow from '@/features/voting/components/LeaderboardRow';
-import SponsorBanner from '@/features/voting/components/SponsorBanner';
-import ContestHero from '@/features/voting/components/ContestHero';
-import CountdownTimer from '@/features/voting/components/CountdownTimer';
-import { formatVoteCount } from '@/features/voting/utils/voteFormatters';
+import { useVotingLanding } from '@/features/voting/hooks/useVotingLanding';
+import { CONTEST_SECTIONS, filterContestsBySection } from '@/features/voting/utils/contestSections';
+import VotingHeader from '@/features/voting/components/landing/VotingHeader';
+import VotingHero from '@/features/voting/components/landing/VotingHero';
+import SectionLead from '@/features/voting/components/landing/SectionLead';
+import LiveContestCard from '@/features/voting/components/landing/LiveContestCard';
+import CategoryTile from '@/features/voting/components/landing/CategoryTile';
+import ContestantWatchCard from '@/features/voting/components/landing/ContestantWatchCard';
+import TrendingList from '@/features/voting/components/landing/TrendingList';
+import LeaderboardPreview from '@/features/voting/components/landing/LeaderboardPreview';
+import HowVotingWorks from '@/features/voting/components/landing/HowVotingWorks';
+import VotingCTA from '@/features/voting/components/landing/VotingCTA';
+import LandingSkeleton from '@/features/voting/components/landing/LandingSkeleton';
+import { Stage, contestLabel, CONTENT_MAX, contentColumn } from '@/features/voting/components/landing/theme';
+import type { Contest, LeaderboardEntry } from '@/features/voting/types/voting.types';
 
-
+/** The category rail's three tiles — the same sections /voting/contests knows. */
+const CATEGORY_LOOKS: Record<string, { icon: typeof Mic2; tint: string; ink: string; blurb: string }> = {
+  'open-mic':    { icon: Mic2,     tint: '#FFE9B8',              ink: '#8A5200', blurb: 'Sing. Compete. Be heard.' },
+  'talent-hunt': { icon: Star,     tint: 'rgba(244,35,123,0.12)', ink: '#B01458', blurb: 'Auditions for the next season.' },
+  'rising-star': { icon: Sparkles, tint: 'rgba(52,0,117,0.10)',  ink: '#340075', blurb: 'The names being talked about.' },
+};
 
 export default function VotingHomeScreen() {
+  const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
-  const firstName = user?.fullName?.split(' ')[0] ?? 'there';
+  const scrollY = useRef(new Animated.Value(0)).current;
+  // Wider than the page column: the rows stop pretending to be carousels. The
+  // categories fit on one line, and the card shelves become a quiet 3-up grid
+  // instead of a rail clipped by the column's edge with paper beside it.
+  // Tablets keep the phone shape.
+  const { width } = useWindowDimensions();
+  const wide = width > 800;
+  const columnInner = Math.min(width, CONTENT_MAX) - Spacing.containerMargin * 2;
+  const gridCardWidth = Math.floor((columnInner - 24) / 3);
 
-  // 'active', not 'LIVE': the Go connect handler allowlists active|closed|all
-  // and answers anything else with 400 "invalid status: use active, closed or
-  // all", which used to blank this whole screen.
-  const { data: contests, isLoading: loadingContests, refetch, isRefetching } = useContests({ status: 'active' });
+  const {
+    live, upcoming, closed,
+    featured, board, freeVotes, watch, trending, trendingHasVotes,
+    isLoading, isError, isRefreshing, refresh, retry,
+  } = useVotingLanding();
 
-  // The featured contest is whichever live contest comes first — NOT a
-  // hardcoded id. Pointing these at a fixed mock id ('c1') meant the leaderboard
-  // and free-vote lookups 404'd against real data.
-  const featuredContest = contests?.[0];
-  const featuredContestId = featuredContest?.id;
+  const initial = user?.fullName?.trim().charAt(0).toUpperCase() || undefined;
 
-  const { data: leaderboard } = useLeaderboard(featuredContestId ?? '');
-  const { data: freeVotes } = useFreeVoteAllocation(featuredContestId ?? '');
-  const liveContests    = contests ?? [];
-  const topEntries      = (leaderboard ?? []).slice(0, 3);
+  // The shelf shows what is on stage now; with an empty stage it falls back to
+  // what is next, and only then to what already ran — each with its own words,
+  // so the heading never promises a live show that is not there.
+  const shelf = live.length ? live : upcoming.length ? upcoming : closed;
+  const shelfTitle = live.length
+    ? 'LIVE COMPETITIONS'
+    : upcoming.length
+      ? 'COMING UP'
+      : 'PAST COMPETITIONS';
+  const shelfEyebrow = live.length ? 'ON STAGE NOW' : upcoming.length ? 'VOTING OPENS SOON' : 'THE ARCHIVE';
+
+  const boardEntries: LeaderboardEntry[] = React.useMemo(() => {
+    if (!board.data || board.data.hidden) return [];
+    return board.data.entries.filter((e) => e.rank > 0).slice(0, 3);
+  }, [board.data]);
+
+  const showBoard = !!featured && featured.showLeaderboard !== false && boardEntries.length > 0;
+
+  // One list of tiles, two containers: the phone scrolls them sideways, a
+  // browser fits all three across the column. The contests list opens on Active
+  // contests, so the count is what that list will actually show — counting
+  // closed editions would promise a contest the tap cannot deliver.
+  const categoryTiles = CONTEST_SECTIONS.map((section) => {
+    const look = CATEGORY_LOOKS[section.id];
+    const count = filterContestsBySection(live, section).length;
+    return (
+      <View key={section.id} style={wide ? styles.categoryFill : styles.categorySlot}>
+        <CategoryTile
+          title={section.title}
+          description={look?.blurb ?? section.title}
+          count={count}
+          icon={look?.icon ?? Sparkles}
+          tint={look?.tint ?? '#FFE9B8'}
+          ink={look?.ink ?? '#8A5200'}
+          onPress={() => router.push(`/voting/contests?section=${section.id}` as never)}
+        />
+      </View>
+    );
+  });
+
+  // The card lists are rendered into two containers: a sideways rail on phones,
+  // a wrapped 3-up grid on a browser. Width comes from the column, not the
+  // screen, so the grid's gutters stay the same as every other section's.
+  const shelfCards = shelf.map((contest) => (
+    <LiveContestCard
+      key={contest.id}
+      contest={contest}
+      width={wide ? gridCardWidth : undefined}
+      onPress={() => openContest(contest)}
+    />
+  ));
+
+  const watchCards = watch.map((slot) => {
+    const href =
+      `/voting/contestant-profile?contestantId=${slot.contestant.id}&contestId=${slot.contestId}` as never;
+    return (
+      <ContestantWatchCard
+        key={`${slot.contestId}:${slot.contestant.id}`}
+        contestant={slot.contestant}
+        contestTitle={slot.contestTitle}
+        width={wide ? gridCardWidth : undefined}
+        onPress={() => router.push(href)}
+        onVote={() => router.push(href)}
+      />
+    );
+  });
+
+  const openContest = (contest: Contest) =>
+    router.push(`/voting/contest-details?contestId=${contest.id}` as never);
+  const openContestant = (entry: LeaderboardEntry) => {
+    if (!featured) return;
+    router.push(
+      `/voting/contestant-profile?contestantId=${entry.contestant.id}&contestId=${featured.id}` as never,
+    );
+  };
+  const goContests = () => router.push('/voting/contests' as never);
+
+  const heroContest = featured ?? undefined;
+  const remainingFree = freeVotes.data?.remaining ?? 0;
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView
-        style={styles.scroll}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.greeting}>Hey {firstName} 👋</Text>
-            <Text style={styles.headerTitle}>Spotlight Contest</Text>
+    <View style={styles.root}>
+      <VotingHeader
+        scrollY={scrollY}
+        topInset={insets.top}
+        userInitial={initial}
+        pinnedSolid={isLoading || isError}
+      />
+
+      {isLoading ? (
+        <ScrollView contentContainerStyle={styles.skeletonPad} showsVerticalScrollIndicator={false}>
+          <LandingSkeleton topInset={insets.top} />
+        </ScrollView>
+      ) : isError ? (
+        <View style={[styles.state, { paddingTop: insets.top + 58 + 60 }]}>
+          <View style={styles.stateIcon}>
+            <AlertTriangle size={22} color={Stage.goldText} strokeWidth={2} />
           </View>
-          <Pressable onPress={() => router.push('/voting/notifications')} style={styles.bellBtn}>
-            <Bell size={22} color={Colors.onSurface} strokeWidth={1.8} />
+          <Text style={styles.stateTitle}>Voting could not load</Text>
+          <Text style={styles.stateCopy}>
+            We could not reach the voting service. Check your connection and try again — nothing you
+            cast has been lost.
+          </Text>
+          <Pressable
+            onPress={retry}
+            style={({ pressed }) => [styles.retry, pressed && { opacity: 0.86 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Try loading voting again"
+          >
+            <Text style={styles.retryText}>TRY AGAIN</Text>
           </Pressable>
         </View>
-
-        {/* Register / Apply to compete */}
-        <Pressable
-          onPress={() => router.push('/registration')}
-          style={({ pressed }) => [styles.registerCard, shadow1, pressed && { opacity: 0.9 }]}
-          accessibilityRole="button"
-          accessibilityLabel="Register or apply to compete in a contest"
+      ) : (
+        <Animated.ScrollView
+          style={styles.scroll}
+          contentContainerStyle={[styles.content, { paddingBottom: 100 + insets.bottom }]}
+          showsVerticalScrollIndicator={false}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+            { useNativeDriver: false },
+          )}
+          scrollEventThrottle={16}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={refresh}
+              tintColor={Stage.gold}
+              colors={[Stage.gold]}
+              progressBackgroundColor={Stage.night}
+            />
+          }
         >
-          <View style={styles.registerIcon}>
-            <UserPlus size={20} color={Colors.onPrimary} strokeWidth={2} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.registerTitle}>Register / Apply to Compete</Text>
-            <Text style={styles.registerSub}>Enter an open contest as a contestant</Text>
-          </View>
-          <ChevronRight size={18} color={Colors.onPrimary} strokeWidth={2} />
-        </Pressable>
+          <VotingHero
+            contest={heroContest}
+            topInset={insets.top}
+            onStartVoting={() => (heroContest ? openContest(heroContest) : goContests())}
+            onExplore={goContests}
+            onOpenContest={() => (heroContest ? openContest(heroContest) : goContests())}
+          />
 
-        {/* Free votes strip */}
-        {freeVotes && (
-          <Pressable
-            onPress={() => featuredContestId && router.push(`/voting/contestants?contestId=${featuredContestId}`)}
-            style={[styles.freeVoteCard, shadow1]}
-          >
-            <FreeVoteBadge remaining={freeVotes.remaining} total={freeVotes.total} />
-            <Text style={styles.freeVoteText}>
-              {freeVotes.remaining > 0
-                ? 'Cast your daily free votes now!'
-                : 'Free votes reset at midnight. Buy votes to keep supporting!'}
-            </Text>
-            <ChevronRight size={16} color={Colors.primary} strokeWidth={2} />
-          </Pressable>
-        )}
+          {/* Everything under the stage keeps the page's column, so at browser
+              widths a shelf does not thin out across a thousand pixels. */}
+          <View style={styles.column}>
 
-        {/* Featured contest hero */}
-        {loadingContests ? (
-          <View style={styles.loader}><ActivityIndicator size="large" color={Colors.primary} /></View>
-        ) : featuredContest ? (
-          <Pressable
-            onPress={() => router.push(`/voting/contest-details?contestId=${featuredContest.id}`)}
-            style={styles.heroWrap}
-          >
-            <ContestHero contest={featuredContest} height={280} />
-          </Pressable>
-        ) : null}
-
-        {/* Sponsor */}
-        {featuredContest?.sponsorName && (
-          <View style={styles.sponsorRow}>
-            <SponsorBanner sponsorName={featuredContest.sponsorName} />
-          </View>
-        )}
-
-        {/* Active contests carousel — or the island, when there are none */}
-        {loadingContests ? null : liveContests.length === 0 ? (
-          <NoContestsState />
-        ) : (
-          <>
-            <SectionHeader
-              title="Active Contests"
-              actionLabel="View All"
-              onAction={() => router.push('/voting/contests')}
-            />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.carousel}>
-              {liveContests.map((contest) => (
-                <ContestCard
-                  key={contest.id}
-                  contest={contest}
-                  onPress={() => router.push(`/voting/contest-details?contestId=${contest.id}`)}
-                  style={styles.contestCardH}
-                />
-              ))}
-            </ScrollView>
-          </>
-        )}
-
-        {/* Leaderboard preview — hidden when the organiser disables it */}
-        {featuredContest?.showLeaderboard !== false && topEntries.length > 0 && (
-          <>
-            <SectionHeader
-              title="Leaderboard Preview"
-              actionLabel="Full Board"
-              onAction={() => featuredContestId && router.push(`/voting/leaderboard?contestId=${featuredContestId}`)}
-            />
-            <View style={[styles.leaderCard, shadow1]}>
-              <View style={styles.leaderHeader}>
-                <Trophy size={16} color={Colors.primary} strokeWidth={1.8} />
-                <Text style={styles.leaderTitle}>{featuredContest?.title ?? 'Spotlight Music Talent 2026'}</Text>
-                <ContestStatusBadge status={featuredContest?.status ?? 'LIVE'} size="sm" />
-              </View>
-              {topEntries.map((entry, i) => (
-                <View key={entry.contestant.id}>
-                  <LeaderboardRow
-                    entry={entry}
-                    onPress={() => router.push(`/voting/contestant-profile?contestantId=${entry.contestant.id}&contestId=${featuredContestId}`)}
-                    onVote={() => router.push(`/voting/contestant-profile?contestantId=${entry.contestant.id}&contestId=${featuredContestId}`)}
-                  />
-                  {i < topEntries.length - 1 && <View style={styles.divider} />}
-                </View>
-              ))}
+            {/* A real allocation, not a decorative chip: it only exists once the
+                server has told us this voter has free votes left. */}
+            {featured && remainingFree > 0 && freeVotes.data ? (
               <Pressable
-                onPress={() => router.push(`/voting/leaderboard?contestId=${featuredContestId}`)}
-                style={styles.seeAllBtn}
+                onPress={() => router.push(`/voting/contestants?contestId=${featured.id}` as never)}
+                style={({ pressed }) => [styles.freeVotes, shadow2, pressed && { opacity: 0.92 }]}
+                accessibilityRole="button"
+                accessibilityLabel={`${remainingFree} free ${remainingFree === 1 ? 'vote' : 'votes'} left. Open the contestants`}
               >
-                <Text style={styles.seeAllText}>See full leaderboard</Text>
-                <ChevronRight size={14} color={Colors.primary} strokeWidth={2} />
+                <FreeVoteBadge remaining={remainingFree} total={freeVotes.data.total} size="sm" />
+                <Text style={styles.freeVotesText} numberOfLines={1}>
+                  Your free votes are ready.
+                </Text>
+                <ChevronRight size={15} color={Stage.muted} strokeWidth={2.2} />
               </Pressable>
-            </View>
-          </>
-        )}
+            ) : null}
 
-        <View style={{ height: Platform.OS === 'ios' ? 100 : 80 }} />
-      </ScrollView>
-    </SafeAreaView>
+            {/* C. LIVE COMPETITIONS */}
+            {shelf.length ? (
+              <>
+                <SectionLead
+                  eyebrow={shelfEyebrow}
+                  title={shelfTitle}
+                  supporting="Your favourite talents are competing. Be part of the moment."
+                  actionLabel="ALL CONTESTS"
+                  onAction={goContests}
+                />
+                {wide ? (
+                  <View style={[styles.rail, styles.railGrid]}>{shelfCards}</View>
+                ) : (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.rail}
+                  >
+                    {shelfCards}
+                  </ScrollView>
+                )}
+              </>
+            ) : (
+              <>
+                <SectionLead
+                  eyebrow="NO SHOW ON STAGE YET"
+                  title="THE NEXT ONE STARTS HERE"
+                  supporting="Contests appear the moment an organiser publishes them."
+                />
+                <NoContestsState compact />
+              </>
+            )}
+
+            {/* D. EXPLORE BY CATEGORY */}
+            <SectionLead
+              eyebrow="FIND YOUR STAGE"
+              title="EXPLORE BY CATEGORY"
+              supporting="Every contest belongs to a lane. Pick yours."
+            />
+            {/* The rail is the phone shape. On a browser the three lanes fit
+                side by side, so they share the column's width instead of
+                leaving most of the row empty. */}
+            {wide ? (
+              <View style={[styles.rail, styles.railRow]}>{categoryTiles}</View>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.rail}
+              >
+                {categoryTiles}
+              </ScrollView>
+            )}
+
+            {/* E. CONTESTANTS TO WATCH */}
+            {watch.length ? (
+              <>
+                <SectionLead
+                  eyebrow="ONES TO WATCH"
+                  title="CONTESTANTS TO WATCH"
+                  supporting="In the running right now — say hello with a vote."
+                />
+                {wide ? (
+                  <View style={[styles.rail, styles.railGrid]}>{watchCards}</View>
+                ) : (
+                  <ScrollView
+                    horizontal
+                    showsVerticalScrollIndicator={false}
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.rail}
+                  >
+                    {watchCards}
+                  </ScrollView>
+                )}
+              </>
+            ) : null}
+
+            {/* F. TRENDING ON SPOTLIGHT */}
+            {trending.length > 1 ? (
+              <>
+                <SectionLead
+                  eyebrow="WHAT'S HOT"
+                  title="TRENDING ON SPOTLIGHT"
+                  supporting={
+                    trendingHasVotes
+                      ? 'Where the votes are landing right now.'
+                      : 'The busiest contests on Spotlight, newest first.'
+                  }
+                />
+                <TrendingList contests={trending} onPress={openContest} />
+              </>
+            ) : null}
+
+            {/* G. WHO IS LEADING? — only while the organiser allows a public board. */}
+            {showBoard && featured ? (
+              <>
+                <SectionLead
+                  eyebrow={contestLabel(featured) ?? 'THE TALLY'}
+                  title="WHO IS LEADING?"
+                  supporting="The current top three, straight from the live board."
+                />
+                <LeaderboardPreview
+                  contest={featured}
+                  entries={boardEntries}
+                  onOpenContestant={openContestant}
+                  onViewFull={() =>
+                    router.push(`/voting/leaderboard?contestId=${featured.id}` as never)
+                  }
+                />
+              </>
+            ) : null}
+
+            {/* H. HOW VOTING WORKS */}
+            <SectionLead
+              eyebrow="THREE STEPS"
+              title="HOW VOTING WORKS"
+              supporting="Discovery to vote in under a minute."
+            />
+            <HowVotingWorks wide={wide} />
+
+            {/* I. The curtain call. */}
+            <View style={styles.ctaWrap}>
+              <VotingCTA
+                wide={wide}
+                onExplore={goContests}
+                onRegister={() => router.push('/registration' as never)}
+              />
+            </View>
+          </View>
+        </Animated.ScrollView>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe:    { flex: 1, backgroundColor: Colors.background },
-  scroll:  { flex: 1 },
-  content: { paddingBottom: Spacing.xl },
-  registerCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.primary, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.sm },
-  registerIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
-  registerTitle: { ...Typography.labelLg, color: Colors.onPrimary },
-  registerSub: { ...Typography.labelSm, color: Colors.inversePrimary },
-  header:  {
-    flexDirection:    'row',
-    alignItems:       'center',
-    justifyContent:   'space-between',
+  root: { flex: 1, backgroundColor: Stage.paper },
+  scroll: { flex: 1 },
+  content: { paddingBottom: 100 },
+  column: { ...contentColumn },
+  skeletonPad: { backgroundColor: Stage.paper },
+
+  freeVotes: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: Spacing.containerMargin,
+    marginTop: -22,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: Radius.lg,
+    backgroundColor: Stage.card,
+    borderWidth: 1,
+    borderColor: Stage.hairline,
+  },
+  freeVotesText: {
+    ...Typography.bodySm,
+    fontSize: 12,
+    lineHeight: 16,
+    color: Stage.ink,
+    flex: 1,
+  },
+
+  rail: {
     paddingHorizontal: Spacing.containerMargin,
-    paddingVertical:  Spacing.md,
+    gap: 12,
+    paddingTop: 2,
+    paddingBottom: 4,
   },
-  greeting:    { ...Typography.labelSm, color: Colors.onSurfaceVariant },
-  headerTitle: { ...Typography.headlineLgMobile, color: Colors.onSurface },
-  bellBtn:     { width: 40, height: 40, borderRadius: Radius.full, backgroundColor: Colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center' },
-  freeVoteCard: {
-    flexDirection:    'row',
-    alignItems:       'center',
-    gap:              Spacing.sm,
-    marginHorizontal: Spacing.containerMargin,
-    marginBottom:     Spacing.md,
-    backgroundColor:  Colors.surfaceContainerLowest,
-    borderRadius:     Radius.lg,
-    padding:          Spacing.md,
-    borderWidth:      1,
-    borderColor:      Colors.surfaceContainerHigh,
+  /** Desktop: the category tiles share the row instead of scrolling. */
+  railRow: { flexDirection: 'row' },
+  /** Desktop: cards wrap into a 3-up grid inside the column. */
+  railGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  categorySlot: { width: 168 },
+  categoryFill: { flex: 1 },
+
+  ctaWrap: { marginTop: Spacing.sectionGap },
+
+  state: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: Spacing.containerMargin,
   },
-  freeVoteText: { ...Typography.labelSm, color: Colors.onSurface, flex: 1 },
-  heroWrap:     { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
-  sponsorRow:   { paddingHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
-  loader:       { paddingVertical: Spacing.xl, alignItems: 'center' },
-  carousel:     { paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, paddingBottom: Spacing.sm },
-  contestCardH: { width: 240 },
-  leaderCard: {
-    backgroundColor:  Colors.surfaceContainerLowest,
-    borderRadius:     Radius.xl,
-    marginHorizontal: Spacing.containerMargin,
-    padding:          Spacing.md,
-    borderWidth:      1,
-    borderColor:      Colors.surfaceContainerHigh,
-    marginBottom:     Spacing.md,
+  stateIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: Radius.full,
+    backgroundColor: Stage.goldWash,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
   },
-  leaderHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginBottom: Spacing.sm },
-  leaderTitle:  { ...Typography.labelMd, color: Colors.onSurface, flex: 1 },
-  divider:      { height: 1, backgroundColor: Colors.surfaceContainerHigh },
-  seeAllBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingTop: Spacing.md },
-  seeAllText:   { ...Typography.labelMd, color: Colors.primary },
+  stateTitle: {
+    ...Typography.headlineMd,
+    fontSize: 19,
+    color: Stage.ink,
+    marginBottom: 6,
+  },
+  stateCopy: {
+    ...Typography.bodySm,
+    fontSize: 13,
+    lineHeight: 19,
+    color: Stage.muted,
+    textAlign: 'center',
+    maxWidth: 300,
+    marginBottom: 18,
+  },
+  retry: {
+    height: 44,
+    paddingHorizontal: 26,
+    borderRadius: Radius.full,
+    backgroundColor: Stage.gold,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  retryText: {
+    ...Typography.labelSm,
+    fontSize: 11.5,
+    fontWeight: '800' as const,
+    letterSpacing: 1,
+    color: Stage.goldInk,
+  },
 });
