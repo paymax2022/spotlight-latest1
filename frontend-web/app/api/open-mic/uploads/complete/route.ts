@@ -16,7 +16,8 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { statLocalUpload } from '@/src/lib/storage/local-uploads';
 import { assertR2ObjectExists, createR2DownloadUrl, hasR2Config } from '@/src/lib/storage/r2';
-import { getContestBySlug, recordSubmissionUploadComplete } from '@/src/server/openmic/persistence';
+import { resolveOpenMicEdition } from '@/src/server/openmic/edition-resolution';
+import { recordSubmissionUploadComplete } from '@/src/server/openmic/persistence';
 import { isSubmissionId, songObjectKeyFor } from '@/src/server/openmic/song-upload-request';
 
 export async function POST(request: Request) {
@@ -36,7 +37,9 @@ export async function POST(request: Request) {
     if (!isSubmissionId(submissionId)) return errorResponse('A valid submissionId is required', 400);
     if (!objectKey) return errorResponse('objectKey is required', 400);
 
-    const contest = await getContestBySlug(contestSlug);
+    // A caller may pass the catalog slug (`open-mic-competition`) or the edition's
+    // own; one rule maps either onto the live edition — see resolveOpenMicEdition.
+    const contest = await resolveOpenMicEdition(contestSlug);
     if (!contest) return errorResponse('Contest not found', 404);
 
     const expectedObjectKey = songObjectKeyFor({ contest, artistUserId: user.id, submissionId });

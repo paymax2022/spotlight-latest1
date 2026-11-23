@@ -17,7 +17,8 @@
 // Because each step needs its own real timestamp, a step appears only when that
 // timestamp exists — no row, no step; no `submitted_at`, no "submitted" step.
 import { getRegistrationDraft } from '@/src/server/registration/supabase-store';
-import { getContestBySlug, latestBeatDownloadAt, listSubmissions } from '@/src/server/openmic/persistence';
+import { latestBeatDownloadAt, listSubmissions } from '@/src/server/openmic/persistence';
+import { resolveOpenMicEdition } from '@/src/server/openmic/edition-resolution';
 import type { OpenMicSubmission } from '@/src/features/openmic/types';
 
 export type WorkflowStepKind =
@@ -192,7 +193,20 @@ export async function getApplicationWorkflow(
   if (!draft) return null;
 
   const slug = String(draft.contestSlug ?? '').trim();
-  const edition = slug ? await getContestBySlug(slug) : null;
+  // The draft stores the CATALOG slug (`open-mic-competition`) while the edition
+  // the admin published has its own, so an exact lookup alone found no edition and
+  // this reader answered `isOpenMic: false` for an approved Open Mic artist — no
+  // beat download, no song upload, on either plane. The identity the registration
+  // plane locked onto form_data is what says "this application IS Open Mic", and
+  // `resolveOpenMicEdition` is the one rule that turns that into an edition.
+  const form = (draft.formData ?? {}) as Record<string, unknown>;
+  const locked = (key: string): string | null =>
+    typeof form[key] === 'string' ? (form[key] as string) : null;
+  const edition = await resolveOpenMicEdition(slug, {
+    slug,
+    contestType: locked('contest.type'),
+    contestCategory: locked('contest.category'),
+  });
   if (!edition) {
     return { isOpenMic: false, edition: null, steps: [] };
   }

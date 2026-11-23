@@ -42,6 +42,11 @@ vi.mock('@/src/server/openmic/persistence', () => ({
   getContestBySlug: async () => CONTEST,
   logBeatDownload: async () => undefined,
 }));
+// The route resolves the edition through the shared rule (a caller may pass the
+// catalog slug), so this spec answers at that seam and stays about origins.
+vi.mock('@/src/server/openmic/edition-resolution', () => ({
+  resolveOpenMicEdition: async () => CONTEST,
+}));
 vi.mock('@/src/lib/auth/request', () => ({
   requireRequestUser: async () => ({ id: 'artist-1' }),
 }));
