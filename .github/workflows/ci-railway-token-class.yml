@@ -238,3 +238,83 @@ jobs:
         run: |
           python3 scripts/ci/f2-status-verdict.py \
             --glob "/tmp/status-*.txt" --out "$GITHUB_STEP_SUMMARY"
+
+      # ------------------------------------------------------------------
+      # TRANSPORT CELLS — the same documents, sent by the CLI instead of curl
+      #
+      # WHAT THIS SEPARATES
+      # The class cells above refuse `project(id)` and `serviceInstance` for
+      # every credential INCLUDING the token-less control (run 45171097305:
+      # `auth=token-rejected (http=200)` twelve times out of twelve). That is
+      # what the class verdict reads as CLASS, and one half of it is now known
+      # to be about the request rather than the token: measured 2026-11-23 on
+      # this laptop with a credential whose authority is not in question, the
+      # same document on the same endpoint arrives authenticated as
+      # `Authorization: Bearer` and comes back `Not Authorized` both with
+      # `X-Railway-Token` and with no credential at all. Meanwhile the pinned
+      # CLI, given that same document through `railway api`, resolves it —
+      # including from a directory that has never been linked, which matters
+      # because the runner reports `link_state=no-config`.
+      #
+      # So a curl-only table cannot tell "project tokens have no GraphQL
+      # surface" from "this project token cannot read that field". These four
+      # steps send the identical documents through the identical client the
+      # owner lane uses, with the identical token in the environment, and the
+      # verdict file compares the two answers per credential:
+      #   refused on both      → the class really is the variable. Nothing in a
+      #                          CI script can obtain the deployment target;
+      #                          the ask goes to Railway for a scope grant and
+      #                          owner-side sha promotion stays the staging path.
+      #   refused curl, ok cli → the sampler was the broken instrument. The
+      #                          CLASS sentence is retired and the mutation cell
+      #                          gets re-measured with PROBE_TRANSPORT=cli.
+      #   control `ok`         → CONTROL BROKEN: that field does not need a
+      #                          credential through this client, so `ok` rows
+      #                          prove nothing about tokens.
+      # Still pinned read-only: PROBE_MODE comes from the job env, and the write
+      # cell is not reachable without the dispatch form supplying the write mode,
+      # which this workflow has no inputs block for.
+      # ------------------------------------------------------------------
+      - name: 'cli transport - control (no credential)'
+        env:
+          RAILWAY_TOKEN: ''
+          CLASS_LABEL: anonymous
+          PROBE_TRANSPORT: cli
+        run: |
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/cli-${CLASS_LABEL}.txt" || true
+
+      - name: 'cli transport - development project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+          CLASS_LABEL: development
+          PROBE_TRANSPORT: cli
+        run: |
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/cli-${CLASS_LABEL}.txt" || true
+
+      - name: 'cli transport - staging project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          CLASS_LABEL: staging
+          PROBE_TRANSPORT: cli
+        run: |
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/cli-${CLASS_LABEL}.txt" || true
+
+      - name: 'cli transport - production project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          CLASS_LABEL: production
+          PROBE_TRANSPORT: cli
+        run: |
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/cli-${CLASS_LABEL}.txt" || true
+
+      - name: Transport x credential verdict
+        if: always()
+        # Two cell sets in, one line out. The rules are a file
+        # (scripts/ci/f2-transport-verdict.py) for the same reason as the other
+        # two: a comparison that only ever runs on a runner holding three live
+        # credentials ships unexecuted. Both globs QUOTED — same lesson as the
+        # class verdict step above.
+        run: |
+          python3 scripts/ci/f2-transport-verdict.py \
+            --curl-glob "/tmp/class-*.txt" --cli-glob "/tmp/cli-*.txt" \
+            --out "$GITHUB_STEP_SUMMARY"

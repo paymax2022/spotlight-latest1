@@ -1728,7 +1728,12 @@ That is F2's string, verbatim, on an endpoint that has nothing to do with upload
 things held at once, on the same runner, within an hour: `railway api` with the staging
 project token **decodes fine** and answers the GraphQL read with `Not Authorized` at HTTP
 200 (the probe's own cells, run `45027737590`), while `railway status --json` with that same
-token **cannot decode the response at all**. The decode refusal therefore tracks a request
+token **cannot decode the response at all**. **[Corrected by Episode 19: that is what these
+six dispatches did on 2026-11-22, not what a project token always does — at 12:07Z on
+2026-11-23 the same pinned CLI with the same staging token decoded the same read into
+52,349 bytes, rc=0. So the refusal is time-windowed, and the narrowing below — "at least two
+CLI requests, one of which is a plain status read" — holds as a set of requests that CAN
+refuse, not as a property of the credential.]** The decode refusal therefore tracks a request
 shape, not the upload-initiate call — which narrows the hypothesis in this file's "what is
 F2" section from "the request that obtains the upload destination" to "at least two CLI
 requests, one of which is a plain status read, and not the raw `railway api` path".
@@ -1833,9 +1838,81 @@ question itself is unchanged: staging's upload-initiate still never returns a bo
 episode removes only staging's *dependence* on it — and the episode adds one line to that
 question, because `railway status --json` with the same staging project token returns a body
 the CLI cannot decode in 0.3 s, which is the same failure string on an endpoint with no
-upload anywhere in it.
+upload anywhere in it. **[Episode 19 measures the same command succeeding with the same
+token eleven hours later on a runner, so this line is now a window, not a standing property
+of the credential — and the transport cells exist to say whether the `Not Authorized` half of
+this paragraph was ever a statement about the tokens at all.]**
 
 **What this does not fix.** No code, no secret, no workflow changed here. `release.yml`'s
 staging legs still upload with a project token and still die 9/9; production still receives
 nothing from a train; and the mutation lane is reachable only from the owner's session
 because of the credential-class answer, not because of anything episode 18 discovered.
+
+## Episode 19 — 2026-11-23 12:06-12:07Z: the same pinned CLI decoded the same read with the same staging token, and the credential answer got narrower
+
+PR #1155 put four status cells into `ci-railway-token-class.yml` to ask the
+question episode 18 could only assert: does F2 reproduce on `railway status
+--json` **with a project token in a runner**? Run `45171097305` (dispatched on
+`main` at `d56314415` at 12:06:12Z, job `compare` = `137680533814`,
+`@railway/cli@5.40.1` — the version `ops-railway-upload.yml` installs):
+
+| credential | rc | bytes | verdict | link state |
+|---|---|---|---|---|
+| `anonymous` control | 1 | 0 | `other-failure` | `no-config` |
+| `RAILWAY_TOKEN_DEVELOPMENT` | 0 | 43,753 | `decoded` | `no-config` |
+| `RAILWAY_TOKEN_STAGING` | 0 | 52,349 | `decoded` | `no-config` |
+| `RAILWAY_TOKEN_PRODUCTION` | 0 | 36,979 | `decoded` | `no-config` |
+
+That closes one line of the support question and opens another.
+
+**Closed:** the plain read is not a standing F2 path. Six staging dispatches died
+0.3 s into exactly this call on 2026-11-22 (job `137230172408`), and none of them
+reproduced here — with the same credential class, the same binary, the same
+runner image. So the decode refusal is **time-windowed** rather than a property of
+staging's environment payload, which is how episode 17 already described the
+upload path. The F2 census in this file is unchanged: staging legs still refuse
+`railway up` 9/9 per attempt.
+
+**Opened:** the credential answer. Episode 18's closing paragraph rested on
+"the mutation lane is reachable only from the owner's session because of the
+credential-class answer". The class answer was built from twelve curl samples in
+which `project(id)` and `serviceInstance` were refused identically by all three
+project tokens *and* by the token-less control. Tonight's table shows those same
+tokens decoding a 43–52 KB status body, so "project tokens cannot read the graph"
+was never supported by that data — only "project tokens are not answered by these
+two fields on this surface".
+
+Two clients, one document, is what separates them, so this PR adds the second
+client rather than a new argument: four `PROBE_TRANSPORT=cli` cells that send the
+sampler's own documents through `railway api`, plus
+`scripts/ci/f2-transport-verdict.py` to compare the answers per credential. Its
+reading table is in `docs/ops/railway-f2-token-probe.md`; the short version is
+that refused-on-both keeps the class story alive (now field-scoped), while
+refused-on-curl-and-`ok`-on-cli retires it and re-opens the mutation lane for CI.
+
+Measured before writing a word of that, because each one would have silently
+produced a false verdict:
+
+- `Authorization: Bearer` **is** the header backboard honours. Same document, same
+  endpoint, owner's CLI credential: Bearer returned `project.name =
+  spotlight-platform`, while `X-Railway-Token` and no credential at all both
+  returned `Not Authorized` at HTTP 200. (Without a curl-like `User-Agent` all
+  four variants answer `HTTP 403` with 17 non-JSON bytes — an edge refusal, not a
+  token statement. That dead end is worth recording so nobody reads it as scope.)
+  So the curl sampler is not a broken instrument for credentials that can use it,
+  and the runner's refusals are about the tokens — the open question is only which
+  kind of "about".
+- `railway api` appends a sentence to the body on non-200 responses, which makes
+  the body unparseable and would have classified a refused credential as a
+  transport fault; the cli branch now keeps only line 1 and passes
+  `--allow-errors`.
+- `f2-status-probe.sh` printed the version the workflow *pinned* rather than the
+  version it had just measured, in a block whose comment promised the opposite.
+  The cell now says `cli=<measured> pin=<requested>` and caveats a mismatch — a
+  stub run of the probe against a fake `railway 9.9.9` is part of the offline
+  suite, which is how the bug was found at all.
+
+**No deployment, secret, or workflow behaviour changed in this episode.** The
+cells are read-only (`PROBE_MODE` is a literal in the YAML, the file has no
+`inputs:` block), and the answer they will produce decides whether the next change
+belongs in `release.yml` or in a Railway support reply.

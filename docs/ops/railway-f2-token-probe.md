@@ -1,8 +1,9 @@
 # F2 project-token probe — the one cell that decides the release wall
 
 Status: **the cell is filled, and the answer is a refusal.** The follow-up
-question — class or value — is also answered, and it is the class: see "The class
-question, answered" below. Both dispatches ran
+question — class or value — was answered on 2026-11-22 as "the class", and that
+answer has since been narrowed twice: see "The class question, answered" and
+"The 12:07Z measurement: the tokens are not silent". Both dispatches ran
 from `main` on 2026-11-22 with the same `RAILWAY_TOKEN_STAGING` and the same
 `project { id name }` document, and both were refused on every cell they probed:
 
@@ -30,7 +31,12 @@ fault ledger and support evidence pack;
 [admin-console-production-errors-2026-11-20.md](./admin-console-production-errors-2026-11-20.md)
 carries the owner-run recipes.
 
-## The class question, answered: it is the CLASS
+## The class question, answered: those two fields are refused for every project token
+
+*(Read this section with the 2026-11-23 correction below it. The table is real and
+still stands; the sentence "no project token can read the deployment graph" that
+this section drew from it does not — `railway status --json` with those same
+tokens is measured a few hundred bytes below.)*
 
 Sampler run `45024735432` (`workflow_dispatch` on `main` at `d6f282f5a`, job
 `compare`, 12:55:10Z–12:56:22Z) wrote all twelve samples before anything went
@@ -43,12 +49,19 @@ wrong, and every one of them was refused:
 | `RAILWAY_TOKEN_STAGING` | `token-rejected` ×3 | `token-rejected` ×3 |
 | `RAILWAY_TOKEN_PRODUCTION` | `token-rejected` ×3 | `token-rejected` ×3 |
 
-Fed to `f2-token-class-verdict.py`, that table reads **Verdict: CLASS** — no
-project token can read the deployment graph, so hypothesis (B) ("only the staging
-secret is broken") is dead and rotating that secret could never have moved this
-wall. The discriminator is the control row's own meaning: `development`'s token is
-the credential whose `railway up` legs upload 3/3 green on every train, and it is
-refused GraphQL reads exactly like the other two. The class, not the value.
+Fed to `f2-token-class-verdict.py`, that table reads **Verdict: CLASS** — and
+what it proves on 2026-11-22 is narrower than that word: no project token can
+read `project(id)` or `serviceInstance` through a raw `POST` to
+`/graphql/v2`, so hypothesis (B) ("only the staging secret is broken") is dead
+and rotating that secret could never have moved this wall. The discriminator is
+the control row's own meaning: `development`'s token is the credential whose
+`railway up` legs upload 3/3 green on every train, and it is refused those two
+reads exactly like the other two. The class, not the value — for those fields.
+
+What the same verdict could not say, and was later read as if it did, is that a
+project token reaches *nothing* on the graph. That sentence needed a cell nobody
+had: a read that is not `project(id)`/`serviceInstance`, taken with the same
+token in the same runner. It exists now, and it came back decoded.
 
 Consequence, stated precisely: the `serviceInstanceDeploy` lane that promotes staging in
 ~3 minutes is reachable **only** with a user-scoped credential — the owner's session, or a
@@ -70,9 +83,12 @@ refusals but did not cause them: the same instance accepted an explicit sha minu
 while still reporting `false`. So the argument *shape*, not the token, decides that call
 today — and the probe's own `DOC_DEPLOY` document pins the refused shape. One cell is
 therefore still empty: the CI attempt (`45009997472`) called `latestCommit`, so no project
-token has ever been asked for `commitSha`. The verdict does not depend on filling it, because
-that same token is refused every read on the graph the mutation writes to, but if the support
-thread asks what to try next, that is the call.
+token has ever been asked for `commitSha`. The verdict did not depend on filling it
+then, because that same token was refused every read this probe knows how to make
+on the graph the mutation writes to — a sentence that stopped being true on
+2026-11-23, when `railway status --json` decoded with all three tokens (see "The
+12:07Z measurement" below), which is exactly why the transport cells were added.
+If the support thread asks what to try next, that is the call.
 
 The step that computes this died on its own spelling and is fixed here: the
 workflow passed `--glob /tmp/class-*.txt` unquoted, the runner's shell handed
@@ -90,6 +106,116 @@ reconstruction: `anonymous`, `development`, `staging` and `production` all
 `0/3 all-refused`, then **Verdict: CLASS**. Two runs, twenty-four samples, four
 credentials, no disagreement — the answer does not depend on how the reporter is
 spelled, and the reporter is now proven on a runner rather than only offline.
+
+## The 12:07Z measurement: the tokens are not silent, and F2 is not on the plain read
+
+Run `45171097305` (`ci-railway-token-class.yml`, dispatched on `main` at
+`d56314415` at 12:06:12Z, job `compare` = `137680533814`) ran the status cells on
+the pinned binary — `@railway/cli@5.40.1`, the version `ops-railway-upload.yml`
+installs, so the answer is about the right executable:
+
+| credential | `railway status --json` | bytes | verdict |
+|---|---|---|---|
+| `anonymous` (control) | `rc=1` | 0 | `other-failure` |
+| `RAILWAY_TOKEN_DEVELOPMENT` | `rc=0` | 43,753 | `decoded` |
+| `RAILWAY_TOKEN_STAGING` | `rc=0` | 52,349 | `decoded` |
+| `RAILWAY_TOKEN_PRODUCTION` | `rc=0` | 36,979 | `decoded` |
+
+Three things fell out of that table, and one of them is the headline the support
+thread has been missing since 2026-11-16:
+
+**F2 is not on the plain read.** The six staging dispatches of
+`ops-railway-upload.yml` that died 0.3 s into their own pre-flight (job
+`137230172408`) were the fault arriving on `railway status`, and here the same
+call, on the same runner class, with the same pinned binary and the same staging
+token, returns 52,349 parseable bytes. So the decode refusal is **time-windowed**,
+not a standing property of staging's environment — which retires the "staging
+payload makes every CLI read undecodable" reading that episode left open.
+
+**All three CI secrets are live project tokens.** The control failed and each
+credential succeeded, with a body sized like this workspace's real graph. Nobody
+should rotate `RAILWAY_TOKEN_STAGING` on the strength of tonight's data.
+
+**The graph-wide CLASS sentence is gone.** A token that decodes 43–52 KB of this
+project's status is not a credential that reaches nothing. What the 2026-11-22
+curl cells actually measure is narrower and still true: those two specific fields
+— `project(id)` and `serviceInstance` — are refused for every project token and
+for no token at all, identically.
+
+Two explanations survive that, and they need different fixes: the two fields are
+out of what a project token is scoped to read, whatever client asks; *or* the raw
+`POST /graphql/v2` call the sampler makes cannot carry a project token's
+authority, and the refusal is my instrument rather than the credential.
+
+The second possibility was checked on the laptop first, with a credential whose
+authority is not in question (the owner's CLI session), the same document, the
+same endpoint, and a curl-like `User-Agent` — without it every variant answers
+`HTTP 403` and 17 bytes of non-JSON, which is an edge refusing the client and says
+nothing about tokens:
+
+| how the request carried the credential | what came back |
+|---|---|
+| `Authorization: Bearer <token>` | `http=200`, `project.name = spotlight-platform` |
+| `X-Railway-Token: <token>` | `http=200`, `errors[0].message = "Not Authorized"` |
+| no credential at all | `http=200`, `errors[0].message = "Not Authorized"` |
+
+So the sampler's header is the working one, `Not Authorized` is precisely what an
+unauthenticated call looks like on that surface, and the runner's twelve refusals
+are a real statement about the credentials — just not yet the statement the word
+`CLASS` was carrying. Which of the two explanations is true needs the same token
+sent through the *other* client, and only a runner holds one.
+
+### The transport cells
+
+`ci-railway-token-class.yml` now sends the sampler's two documents a second time,
+through `railway api` instead of curl, for the control and each credential, and
+`scripts/ci/f2-transport-verdict.py` compares the two answers per credential:
+
+```bash
+gh workflow run ci-railway-token-class.yml --ref main
+gh run view <id> --log | grep -E 'PROBE_CELL|CLASS_CELL'   # raw cells
+gh run view <id>                                           # the summary tables
+```
+
+| the two answers | what it means | do |
+|---|---|---|
+| refused on curl, refused on cli | the class really is the variable, across both clients. A project token authenticates but is not scoped to resolve a deployment target. | ask Railway for that scope (or put a user token in CI); owner-side sha-pinned `serviceInstanceDeploy` stays the staging path meanwhile |
+| refused on curl, `ok` on cli | the sampler was the broken instrument for this credential class. The CLASS reading is retired. | re-measure the write cell with `PROBE_TRANSPORT=cli` — CI can probably resolve the ids and reach the mutation after all, which moves the wall |
+| `ok` for the credential-less control | CONTROL BROKEN: that field does not need a token through this client, so `ok` rows prove nothing. | fix the cell before reading the table |
+| one credential differing | not a class story at all — per-secret scope or value | act on those secrets only, not on the class |
+
+Two facts had to be measured before those cells could be trusted, and both were
+wrong in ways that would have produced a confident, false verdict:
+
+- `railway api` prints the JSON body **and** a human sentence
+  (`Railway API request failed with HTTP 400 Bad Request`) whenever the status is
+  not 200. Two lines of "body" do not parse, so `classify_read` would have
+  reported a *refused credential* as a *transport fault*. The cli branch of
+  `scripts/ci/f2-token-probe.sh` now passes `--allow-errors` and keeps only the
+  compact first line, and the transport verdict refuses to resolve a table of
+  `body-undecodable` cells into either story — `body-undecodable` is F2's own
+  fingerprint, and a credential probe that quietly swallows it is the worst place
+  for it to hide.
+- `scripts/ci/f2-status-probe.sh` computed the version of the binary that ran and
+  then printed `${VERSION}` — what the workflow *asked* for — instead of it, so
+  its own "measured, not requested" comment described code that was never
+  emitted. The cell now carries both spellings (`cli=` measured, `pin=`
+  requested), caveats when they disagree, and accumulates caveats into one line,
+  because the cell parser keeps the last value of a repeated key. Driving the
+  probe against a stub that reports `9.9.9` while the pin says `5.40.1` is part
+  of check (11) in `scripts/ci/test-f2-token-probe.sh`.
+
+Also proven here, because the transport cells depend on it: `railway api`
+resolves **both** documents from a directory that has never been linked. The
+runner reports `link_state=no-config` on every cell, so "the lane never linked a
+project" is not an available excuse for a refused read. Checked twice — with the
+installed CLI, and again at 12:45Z on 2026-11-23 through
+`npx @railway/cli@5.40.1 api … --compact --allow-errors` from `/tmp`, which is
+the version the runner installs: `project(id)` returned
+`name = spotlight-platform` and the row query returned the staging backend's
+`latestDeployment` (`faa7ff43…`, `SUCCESS`, 2026-11-22T14:03:00.891Z). That also
+confirms 5.40.1 accepts both flags the cli branch passes, so the cells cannot
+fail for want of a flag.
 
 ## The question, in one sentence
 
@@ -153,7 +279,7 @@ So the cell is fillable exactly one way: a runner that already holds the secret.
 
 | | user session (owner CLI) | project token (CI secret) |
 |---|---|---|
-| **reads** (`project`, `serviceInstance`) | works — proven 2026-11-22, and again in the probe's own `cli` transport run | **refused** — 2/2 runs: `Not Authorized` at HTTP 200 on `project` and on `serviceInstance`. *The claim this row used to make — "works, proven by every `railway up` leg that gets as far as stamping `BUILD_COMMIT`" — was wrong: `railway-deploy.sh` stamps it with `printf '%s' "$SHA" > "$BUILD_DIR/BUILD_COMMIT"`, a local file write that precedes any network call, so it says nothing about whether the token can read the API.* |
+| **reads** (`project`, `serviceInstance`) | works — proven 2026-11-22, and again in the probe's own `cli` transport run | **refused for these two fields** — 2/2 runs: `Not Authorized` at HTTP 200 on `project` and on `serviceInstance`. Not "no reads": the same tokens decode `railway status --json` in a runner (2026-11-23, run `45171097305`), so this cell is about two fields, not about the whole graph. *The claim this row used to make — "works, proven by every `railway up` leg that gets as far as stamping `BUILD_COMMIT`" — was wrong: `railway-deploy.sh` stamps it with `printf '%s' "$SHA" > "$BUILD_DIR/BUILD_COMMIT"`, a local file write that precedes any network call, so it says nothing about whether the token can read the API.* |
 | **`railway up` upload** | works — every manual deploy in the ledger | **fails with F2** — 9 retries per leg, three legs per train, reproduced on runs `44922280434`, `44927881957` and `45005535349` |
 | **`serviceInstanceDeploy(latestCommit:true)`** | worked earlier on 2026-11-22 (staging promoted to `f9309845c`, zero uploads) but was refused in all three attempts from 13:53Z in this session — the reproducible owner-side spelling is `commitSha`, which promoted staging to `b55757379` at 13:59Z (the `df6676406` rows ten minutes later came from the same lane driven by another session) | **refused on the one attempt** — run `45009997472`: `PROBE_CELL mutation=token-rejected` |
 
@@ -161,9 +287,13 @@ The swap this table was built to test is off the table: with this credential the
 mutation was refused, and so were the reads, in both runs. What is *not* settled
 is why. Two explanations are live and they need different fixes:
 
-- **(A) CLASS.** Project tokens cannot reach the deployment graph at all. Then
-  the mutation lane can never replace `railway up` in CI and the credential
-  class has to change (a user-scoped token in CI, or a scope grant from Railway).
+- **(A) CLASS.** Project tokens cannot reach the two fields that resolve a
+  deployment target. Then the mutation lane can never replace `railway up` in CI
+  and the credential class has to change (a user-scoped token in CI, or a scope
+  grant from Railway). *Wording note: this row originally read "cannot reach the
+  deployment graph at all", which the 2026-11-23 status cells refute — the tokens
+  do reach the graph the CLI queries. What survives is the narrower claim, and
+  the transport cells exist to say which of the two it is.*
 - **(B) VALUE.** The class is fine and `RAILWAY_TOKEN_STAGING` is stale,
   rotated-out or wrong. It is the only explanation that reaches F2 directly,
   because the request that obtains the upload destination carries that same
@@ -196,7 +326,7 @@ Reading its verdict — the order is the design, so read the line, not the table
 | `CONTROL BROKEN` | the no-credential row authenticated, so a token and no token were indistinguishable | fix the classifier; nothing else here is evidence |
 | `INTERMITTENT` | at least one project token is accepted sometimes and refused other times | **rotate nothing.** Ask Railway what an HTTP-200 `Not Authorized` means for a project token and why identical calls minutes apart differ |
 | `VALUE, not class` | development 3/3 ok, staging 0/3 | rotate `RAILWAY_TOKEN_STAGING` (owner action), re-dispatch this probe |
-| `CLASS` | all three tokens 0/3 | no CI script change can help; the credential class has to change |
+| `CLASS` | all three tokens 0/3 | no CI script change can help *for those two fields*. Before treating it as "the token reaches nothing", read the transport verdict below: a curl-only table cannot tell a class refusal from a refusal that only the raw-HTTP surface produces. |
 | `neither` | dev and staging both 3/3 ok | contradicts the runs above — read the raw bodies |
 | `undecided` | a credential wrote no row | a step crashed; the comparison did not run |
 
@@ -276,8 +406,9 @@ only way to exercise it is a real upload — which is the thing that fails.
 ## Verification
 
 `scripts/ci/test-f2-token-probe.sh` runs in the `ci.yml` hygiene job beside the
-deploy-retry test: **107/107 green** locally at 13:20Z on 2026-11-22, no network
-to Railway.
+deploy-retry test: **182/182 green** locally at 12:40Z on 2026-11-23, no network
+to Railway (it was 107/107 at 13:20Z on 2026-11-22, before the status cells and
+the transport cells below were written).
 It covers the classifier with recorded payloads (including the measured
 HTTP-200 `Not Authorized` body — Railway does not use the status code for auth,
 so any logic keyed on HTTP alone reads a token failure as success), plus
@@ -305,9 +436,25 @@ both-tokens-clean, and three missing-credential shapes — and each asserts not
 just its own verdict but that the wrong one is absent, which is the only way to
 test an ordering.
 
-Fifteen mutants were installed on purpose and made to go red — the three #1143
+The transport comparison (`scripts/ci/f2-transport-verdict.py`) is driven the
+same way from nine recorded cell sets, and its fixtures deliberately keep the
+two filenames the workflow really writes — `class-<label>-<n>.txt` per attempt,
+`cli-<label>.txt` per credential — because a fixture that tidied that difference
+out would test the fixture and not the reader. Thirteen of that file's checks
+are those nine sets: seven positive verdict lines and six that name the sentence
+which must stay unreachable for that shape, which is the only way to test an
+ordering. The rest of the block pins the wiring the run depends on (four cli
+steps, both quoted globs, `PROBE_TRANSPORT: cli`) and the two measurement fixes
+below. A missing cli cell must print neither of the two clean conclusions, and a
+cli body of `body-undecodable` — F2's own fingerprint, seen from a read — falls
+to "outside the taxonomy" rather than being folded into a credential claim.
+
+Seventeen mutants were installed on purpose and made to go red — the three #1143
 probe-script ones, five for the comparison, five for the cell-4 blindness
-fixed here, and two for the argument surface that silenced run 45024735432.
+fixed here, two for the argument surface that silenced run 45024735432, and two
+for the 2026-11-23 measurements: the `body-undecodable` fold-in that would have
+turned a decode fault into a credential verdict, and the status cell that printed
+the version the workflow *pinned* instead of the version that ran.
 A green suite proves nothing until the defect it names is present:
 
 | mutant installed | result |
@@ -327,8 +474,10 @@ A green suite proves nothing until the defect it names is present:
 | a row added to that table for a verdict that cannot fire | 1 failure naming the fake verdict |
 | the quotes taken off the workflow's `--glob` line, as run `45024735432` had it | 2 failures — both YAML guards — **while all thirteen classifier checks stayed green**, which is exactly how the live job could die after twelve good samples |
 | `--glob` back to a single value with the positional backstop gone (script still parses and runs) | 2 failures — the two spellings disagreed, i.e. a decider silently reading one file of twelve, and the backstop grep |
+| `unknown()` reverted to `v not in KNOWN`, so a cli body of `body-undecodable` counts as an answer | 2 failures — the same table that had refused to conclude in the previous paragraph resolved to "Per-credential, not per-class", i.e. a sentence telling the owner to rotate three secrets because of a decode fault |
+| the status cell printing `cli=${VERSION}` instead of the measured `CLI_ACTUAL` | 2 failures — run 45171097305's own bug: eight cells that said `cli=5.40.1` while nothing proved which binary ran |
 
-Three of those fifteen were invalid, and every one of those failures is worth recording
+Three of those seventeen were invalid, and every one of those failures is worth recording
 because they are how a suite quietly lies:
 
 - the first `accepted-but-readback-blind` mutant deleted the eight leading
@@ -353,7 +502,8 @@ because they are how a suite quietly lies:
   file of twelve. Only the byte-comparison against the quoted spelling catches it.
 
 Everything restored with `cp`, re-asserted sha256-identical in every case, then
-re-run to 107/107.
+re-run to full green — 107/107 for the first fifteen, 182/182 with the two
+2026-11-23 mutants included.
 
 Six live defects that would each have produced a confident wrong answer in CI:
 
