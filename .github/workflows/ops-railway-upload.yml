@@ -206,21 +206,19 @@ jobs:
       # Prove the token reaches the intended environment and service BEFORE any
       # byte leaves the runner, so a mis-set secret cannot upload to a different
       # place than the operator chose. Same check deploy-railway-action.yml uses.
+      #
+      # The call lives in scripts/ci/railway-status-guard.sh (pinned by
+      # scripts/ci/test-railway-status-guard.sh) rather than inline here because as an
+      # inline `set -e` one-shot it was the step that killed dispatch 45179114945 at
+      # ~12:53Z on Railway's `error decoding response body`, while the identical command
+      # with the same secret and the same pinned CLI decoded 52 KB eight minutes later
+      # (run 45179580758, job 137709644373, 13:01:27Z). The gate keeps refusing on a
+      # misplaced token; it no longer treats a window as one.
       - name: Confirm the token resolves the intended environment and service
         run: |
           set -euo pipefail
-          railway status --json > /tmp/railway-status.json
-          envs=$(jq -r '.environments.edges[]?.node.name' /tmp/railway-status.json | sort -u)
-          if ! printf '%s\n' "$envs" | grep -qx "$ENVIRONMENT"; then
-            echo "::error::the $ENVIRONMENT token resolves environments [$(printf '%s' "$envs" | paste -sd, -)]; refusing to deploy"
-            exit 1
-          fi
-          svcs=$(jq -r --arg env "$ENVIRONMENT" '.environments.edges[] | select(.node.name == $env) | .node.serviceInstances.edges[]?.node.serviceName' /tmp/railway-status.json | sort -u)
-          if ! printf '%s\n' "$svcs" | grep -qx "$SERVICE"; then
-            echo "::error::service $SERVICE not found in $ENVIRONMENT (found: $(printf '%s' "$svcs" | paste -sd, -))"
-            exit 1
-          fi
-          echo "  token resolves $ENVIRONMENT / $SERVICE"
+          ENVIRONMENT="$ENVIRONMENT" SERVICE="$SERVICE" STATUS_OUT=/tmp/railway-status.json \
+            bash scripts/ci/railway-status-guard.sh
 
       - name: Record what is serving now (the rollback handle)
         run: |
