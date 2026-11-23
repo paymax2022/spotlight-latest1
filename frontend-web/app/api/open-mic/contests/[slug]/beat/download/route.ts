@@ -1,14 +1,17 @@
 import { publicBeatUrl } from '@/src/features/openmic/beat-storage';
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { SITE_URL } from '@/src/lib/site-url';
-import { getContestBySlug, logBeatDownload } from '@/src/server/openmic/persistence';
+import { resolveOpenMicEdition } from '@/src/server/openmic/edition-resolution';
+import { logBeatDownload } from '@/src/server/openmic/persistence';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { NextResponse } from 'next/server';
 
 export async function GET(request: Request, context: { params: Promise<{ slug: string }> }) {
   try {
     const { slug } = await context.params;
-    const contest = await getContestBySlug(slug);
+    // A caller may pass the catalog slug (`open-mic-competition`) or the edition's
+    // own; one rule maps either onto the live edition — see resolveOpenMicEdition.
+    const contest = await resolveOpenMicEdition(slug);
     if (!contest) return errorResponse('Contest not found', 404);
     if (!contest.beat) return errorResponse('Beat is not available for this contest', 404);
     if (!contest.beat.downloadUrl) return errorResponse('Beat download URL is not configured', 404);
@@ -61,7 +64,9 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     if (!body.artistName?.trim()) return errorResponse('artistName is required', 400);
     if (!body.termsAccepted) return errorResponse('Beat usage terms must be accepted', 400);
 
-    const contest = await getContestBySlug(slug);
+    // A caller may pass the catalog slug (`open-mic-competition`) or the edition's
+    // own; one rule maps either onto the live edition — see resolveOpenMicEdition.
+    const contest = await resolveOpenMicEdition(slug);
     if (!contest) return errorResponse('Contest not found', 404);
     if (!contest.beat) return errorResponse('Beat is not available for this contest', 400);
 

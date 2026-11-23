@@ -15,7 +15,7 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { hasR2Config } from '@/src/lib/storage/r2';
 import { saveLocalUpload } from '@/src/lib/storage/local-uploads';
-import { getContestBySlug } from '@/src/server/openmic/persistence';
+import { resolveOpenMicEdition } from '@/src/server/openmic/edition-resolution';
 import { getSongSubmissionEligibility } from '@/src/server/openmic/submission-eligibility';
 import {
   eligibilityForbiddenResponse,
@@ -61,7 +61,9 @@ export async function POST(request: Request) {
     if (file.size <= 0) return errorResponse('Uploaded file is empty', 400);
     if (file.size > MAX_SONG_BYTES) return errorResponse('MP3 file must be 50MB or less', 400);
 
-    const contest = await getContestBySlug(contestSlug);
+    // A caller may pass the catalog slug (`open-mic-competition`) or the edition's
+    // own; one rule maps either onto the live edition — see resolveOpenMicEdition.
+    const contest = await resolveOpenMicEdition(contestSlug);
     if (!contest) return errorResponse('Contest not found', 404);
 
     const verdict = await getSongSubmissionEligibility(contest, user.id);
