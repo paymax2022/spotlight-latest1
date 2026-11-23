@@ -1651,3 +1651,179 @@ millisecond. And anyone re-counting attempts from a raw log should grep
 notice prints only *before* a retry and the ninth attempt ends instead with
 `still failing after 9 attempts (last exit 1)`; a bare `grep -c retry` returns 9 and
 double-counts that terminal line.
+
+## Episode 18 — 2026-11-22 13:53-14:56Z: staging left the upload fault behind, and the lane that does it needs an explicit sha
+
+F2 reproduced on the way in. Train `45027694563` (head `df6676406`, the PR #1148 squash)
+cleared its gate, deployed all three development services (`SUCCESS` rows at 14:10:58Z,
+14:11:02Z and 14:11:04Z), kept `migrate staging database / supabase db push (staging)`
+green, and then lost all three staging legs. Those logs were pulled before this paragraph
+was written, and each carries the F2 signature and none of the other two:
+
+| leg (job id) | `Failed to fetch: error decoding response body` | retry notices | `GnuTLS recv error` | `trial has expired` | `Indexing` |
+|---|---|---|---|---|---|
+| `deploy Staging (backend)` `137235706730` | 9 | 8 | 0 | 0 | 0 |
+| `deploy Staging (frontend-web)` `137235706713` | 9 | 8 | 0 | 0 | 0 |
+| `deploy Staging (frontend-admin)` `137235706716` | 9 | 8 | 0 | 0 | 0 |
+
+`smoke Staging` → `migrate production database` → `deploy Production (…)` → `smoke
+Production` were skipped, which is the usual blast radius. Nine attempts per leg, eight
+notices, nothing indexed — the request that obtains the upload destination still refuses to
+return a decodable body.
+
+**Staging, however, no longer needs the upload path.** At 13:59:00Z, 13:59:05Z and
+13:59:25Z the same three staging instances were deployed by GraphQL instead of by upload,
+and each reached `SUCCESS` inside four minutes with a `snapshotId`, `meta.branch = "main"`
+and `meta.reason = "deploy"` — the git-source signature, no archive anywhere in the request.
+The point of this section is the argument that made that work, because the obvious one does
+not:
+
+| call, same account, same three instances, minutes apart | result |
+|---|---|
+| `serviceInstanceDeploy(serviceId, environmentId, latestCommit: true)` — 13:53:24Z / 13:53:39Z / 13:53:54Z | **refused 3/3** — `{"extensions":{"code":"INTERNAL_SERVER_ERROR"},"message":"Not Authorized","path":["serviceInstanceDeploy"]}`, traceIds `7638569940617653028`, `8666048400144838034`, `245729836332584137` |
+| `serviceInstanceDeploy(serviceId, environmentId, commitSha: "b557573795e7e13540d1254901ad4bdcd42fe057")` — 13:59:00Z / 13:59:05Z / 13:59:25Z | **accepted 3/3** — `{"data":{"serviceInstanceDeploy":true}}`, rows `faa7ff43`/`032caf24`/`95ed7740` `SUCCESS` by 14:02:44Z |
+
+The bearer is the same in both rows of that table, so the difference is the argument.
+`railway whoami` printed `spec.ng@gmail.com`, and that account id (`bbb8bca4…`, matched
+against the config's own `user.id`) is also the `creator.id` recorded on the staging rows —
+this is not a token-class mix-up. Reads were healthy throughout: `project`, `environments`,
+`serviceInstance` and `deployments` all returned data in the same minute the mutation was
+refused.
+
+This is a **change on Railway's side, not a myth about the past**. This file's own positive
+control (2026-11-18 17:16-17:22Z, above) called `latestCommit: true` on these same staging
+services and got `true` three times, with rows that built from `branch: "main"` and reached
+`SUCCESS` inside two minutes. Whatever made that call work then makes it `Not Authorized`
+now, for the same user, on the same three instances. One caveat stated plainly: the
+`02:18:30Z` staging rows that promoted this environment to `f9309845c` earlier today carry
+the same git-source signature, and a deployment row does not record which of the two
+arguments produced it — so this section does not claim `latestCommit` was used then.
+
+The nearest read that tracks the refusal is `serviceInstance { isUpdatable }`, which is
+`false` on `backend` in both staging and production. It is a correlate, not a proven cause:
+`isUpdatable` was already `false` on the instance that accepted `commitSha` five minutes
+later, so the field cannot be the gate. It is reported because it is the only boolean the
+API offers next to the refusal.
+
+**Six staging dispatches reproduce F2 on a read, and that is new.** Six `workflow_dispatch`
+runs of `.github/workflows/ops-railway-upload.yml` targeting staging — `45029642480`,
+`45029655782`, `45029668211` (13:51Z) and `45030318903`, `45030322482`, `45030326422`
+(13:59Z), all at head `df6676406` — die inside thirty seconds at their own step
+`Confirm the token resolves the intended environment and service`, before any archive is
+built. The step is one command:
+
+```bash
+railway status --json > /tmp/railway-status.json
+```
+
+and job `137235706730`'s successor log shows what it printed back, 0.3 s after the step
+started (13:51:21.380Z):
+
+```
+Failed to fetch: error decoding response body
+    0: error decoding response body
+```
+
+That is F2's string, verbatim, on an endpoint that has nothing to do with uploads. So two
+things held at once, on the same runner, within an hour: `railway api` with the staging
+project token **decodes fine** and answers the GraphQL read with `Not Authorized` at HTTP
+200 (the probe's own cells, run `45027737590`), while `railway status --json` with that same
+token **cannot decode the response at all**. The decode refusal therefore tracks a request
+shape, not the upload-initiate call — which narrows the hypothesis in this file's "what is
+F2" section from "the request that obtains the upload destination" to "at least two CLI
+requests, one of which is a plain status read, and not the raw `railway api` path". The
+obvious next measurement is the same `railway status --json` run with the development token
+on the same runner: if it decodes, the response differs by environment and Railway's data is
+the variable; if it refuses too, the pinned CLI is the variable. Neither has been run.
+
+**Production `frontend-web` had a different fault, and both halves of it are now read.**
+Three `ops-railway-upload.yml` dispatches fire inside ten minutes, all three aimed at
+production `frontend-web`, and the one that worked is the one running different lane code:
+
+| run | time | branch the workflow ran from | payload sha | where it died |
+|---|---|---|---|---|
+| `45021408276` | 12:16:17Z | `main` (`1002ec24e`) | `528382b26a…` | step *Resolve the upload shape…* — `UPLOAD_PATH: unbound variable` |
+| `45021663624` | 12:19:19Z | `main` (`1002ec24e`) | `1002ec24e…` | step *Upload frontend-web to production* — `scripts/ci/railway-deploy.sh: line 66: RAILWAY_ENV: required: RAILWAY_ENV` |
+| `45022257571` | 12:26:10Z | `ops/upload-tooling-split` (`fa3146287`) | `1002ec24e…` | nothing — success |
+
+Neither failure reached the network: each exited within four seconds of its step starting,
+so F2 is not in either log and no deployment row was created for them. They are variable
+wiring. The job exported `ENVIRONMENT`, while `railway-deploy.sh` demands `RAILWAY_ENV`, and
+the inline shape-resolution step echoed `UPLOAD_PATH`/`ROOT_FLAG`/`BUILD_DIR` before
+`eval` had set them under `set -u`. PR #1147 — "fix(ops): give the upload lane a harness that
+outlives the payload" — fixes exactly those two lines: it adds `RAILWAY_ENV: ${{ inputs.environment
+}}` at job level and `${UPLOAD_PATH:-}` / `${ROOT_FLAG:-}` / `${BUILD_DIR:-}` in the echo, and
+its comments quote both error strings verbatim, so the lane now names its own failure modes.
+Its branch tip `fa3146287` merged fifty-three minutes *after* the successful dispatch (13:19:59Z,
+squash `e7b229172`), so the run that worked was executing lane code main did not yet have. The
+row it produced is `SUCCESS` at 12:26:33Z with `meta.cliMessage = 1002ec24ec6eab39…` — the
+first sha production `frontend-web` has served since `ea71b561` (2026-11-16).
+
+The row underneath it was a separate cause, and Railway names it. The `FAILED` row at
+11:00:31Z carries `meta.cliMessage = 2f51561fb0e3f329…` — PR #1068's squash — and its
+`diagnosis` is `build_error`: `npm ci` completed, `[builder 5/5] RUN npm run build` exited
+1, "Turbopack build failed with 28 errors", each `Module not found: Can't resolve
+'@vercel/turbopack-next/internal/font/google/font'`, traced through the Kumbh Sans
+`next/font/google` import in `app/layout.js`. Railway's own words: "This build ran Next.js
+16.4.0, while the last successful build (`ea71b561`) ran 16.4.3." The repository supplies the
+detail the diagnosis could not see: `2f51561fb` pins `"next": "^16.4.0"` in
+`frontend-web/package.json` and its lockfile resolves **16.4.0**, while `ce977589e` (#1010,
+"bump the npm-minor-patch group", 2026-11-18) — the commit that raises that pin to
+`^16.4.6` — is **not** an ancestor of `2f51561fb`. `1002ec24e` is a descendant, resolves
+16.4.6, and builds. So the streak was an upload lane carrying pre-#1010 trees, and it ended
+for two reasons at once: the lane got a harness that survives the payload, and the payload
+moved past the Next bump.
+
+One signature in that history belongs to neither cause. The 2026-11-21T15:58:45Z `FAILED`
+row uploaded `bd1b2aa3e` (post-#1010, Next 16.4.6) yet failed with `configErrors: ["Failed
+to create code snapshot…"]` and `cliCaller: automation:launchd:webdeploy` — a scheduled job
+on somebody's machine, a third failure mode. "Prod web wouldn't build" was never one cause,
+and PR #1142 (`528382b26`, "cut staging frontend upload archives from the commit", merged
+09:01:45Z) is not the fix either — it changes how the *staging* legs derive an archive, and
+the row it did produce is production `frontend-admin` serving `528382b26` from 10:55:27Z.
+
+**State at 14:53Z, read from `latestDeployment` per service, not from HTTP:**
+
+| environment | backend | frontend-web | frontend-admin |
+|---|---|---|---|
+| development | `df6676406` 14:11:04Z (train) | `df6676406` 14:11:02Z (train) | `df6676406` 14:10:58Z (train) |
+| staging | `df6676406` 14:03:00Z (mutation) | `df6676406` 14:03:05Z (mutation) | `df6676406` 14:03:09Z (mutation) |
+| production | `e43c64557` 2026-11-21T23:32:45Z | `1002ec24e` 12:26:33Z (ops lane) | `528382b26` 10:55:27Z |
+
+Development and staging therefore match, which they have not done since 2026-11-21. One
+honest wrinkle in that row: the staging rows above are *not* the ones this session created.
+`commitSha: b55757379…` (main's tip after PR #1150) was promoted at 13:59Z and was serving
+staging at 14:02:44Z; at 14:03:00-14:03:09Z another caller replaced all three rows with
+`df6676406`, one commit older and differing only by a documentation commit. Nothing was
+broken by that — it is the same lane pointed at the previous sha — but it is why the recipe
+below says to re-read `latestDeployment` before promoting, and it is the second time this
+week a staging row appeared that this session did not create.
+
+**The recipe, as it now works (owner-side, no upload, ~4 min per service):**
+
+```bash
+SHA=$(git rev-parse origin/main)
+DOC='mutation($s:String!,$e:String!,$sha:String){ serviceInstanceDeploy(serviceId:$s, environmentId:$e, commitSha:$sha) }'
+for s in 70de07d8-c058-4221-b645-61c4f1ac7aa5 dda6372c-0bb7-4014-a2b1-aa646c11a281 c4f1086e-0a2d-4367-b503-209c14a2ce6f; do
+  railway api "$DOC" --compact --raw-var "s=$s" \
+    --raw-var "e=6b5f27a3-a290-4574-a977-363eb21d43ad" --raw-var "sha=$SHA"
+done
+```
+
+`--raw-var` matters: `--var` tries to parse its value as JSON, and a 40-hex sha that happens
+to be all digits would arrive as a number rather than a string. Pin the sha to a commit the
+gates approved. `latestCommit` is both refused today and the wrong thing to want on a merge
+train: it deploys whatever HEAD happens to be when the call lands, which is exactly how a
+staging row ended up one documentation commit behind the one this session promoted.
+
+**The ask, amended.** Add to the support thread: why does `serviceInstanceDeploy` with
+`latestCommit: true` return `Not Authorized` (wrapped in `INTERNAL_SERVER_ERROR`, traceIds
+above) for a user session that deploys the same three services with `commitSha` five minutes
+later, when the identical call succeeded on these same instances on 2026-11-18? The F2
+question itself is unchanged: staging's upload-initiate still never returns a body, and this
+episode removes only staging's *dependence* on it.
+
+**What this does not fix.** No code, no secret, no workflow changed here. `release.yml`'s
+staging legs still upload with a project token and still die 9/9; production still receives
+nothing from a train; and the mutation lane is reachable only from the owner's session
+because of the credential-class answer, not because of anything episode 18 discovered.

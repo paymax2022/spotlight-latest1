@@ -50,14 +50,29 @@ wall. The discriminator is the control row's own meaning: `development`'s token 
 the credential whose `railway up` legs upload 3/3 green on every train, and it is
 refused GraphQL reads exactly like the other two. The class, not the value.
 
-Consequence, stated precisely: the `serviceInstanceDeploy(…, latestCommit:true)`
-lane that promotes staging in ~3 minutes is reachable **only** with a user-scoped
-credential — the owner's session, or a user token placed in CI — and never from a
-project token. `release.yml`'s staging legs therefore cannot be swapped onto the
-mutation lane, which is the change this probe was built to authorize. What the
-answer does not say: whether the refused reads are a scope grant Railway could add
-to a project token, or a hard rule on the token class. Only Railway can say, and
-that question now belongs in the support thread alongside the upload refusal.
+Consequence, stated precisely: the `serviceInstanceDeploy` lane that promotes staging in
+~3 minutes is reachable **only** with a user-scoped credential — the owner's session, or a
+user token placed in CI — and never from a project token. `release.yml`'s staging legs
+therefore cannot be swapped onto the mutation lane, which is the change this probe was built
+to authorize. What the answer does not say: whether the refused reads are a scope grant
+Railway could add to a project token, or a hard rule on the token class. Only Railway can
+say, and that question now belongs in the support thread alongside the upload refusal.
+
+A second discriminator fell out of using that lane on 2026-11-22, and it is not about
+credentials: within one logged-in user session, `serviceInstanceDeploy(…, latestCommit:
+true)` was refused `Not Authorized` wrapped in `INTERNAL_SERVER_ERROR` three times out of
+three at 13:53:24/39/54Z (traceIds `7638569940617653028`, `8666048400144838034`,
+`245729836332584137`), while `serviceInstanceDeploy(…, commitSha:"<full sha>")` returned
+`true` three times out of three at 13:59Z on the same three instances, with the same bearer
+identity (`spec.ng@gmail.com`, user `bbb8bca4-84df-483e-a227-97a971e9f4a7` — the `creator.id`
+of every resulting row, all `SUCCESS` by 14:02:44Z). `isUpdatable=false` correlated with the
+refusals but did not cause them: the same instance accepted an explicit sha minutes later
+while still reporting `false`. So the argument *shape*, not the token, decides that call
+today — and the probe's own `DOC_DEPLOY` document pins the refused shape. One cell is
+therefore still empty: the CI attempt (`45009997472`) called `latestCommit`, so no project
+token has ever been asked for `commitSha`. The verdict does not depend on filling it, because
+that same token is refused every read on the graph the mutation writes to, but if the support
+thread asks what to try next, that is the call.
 
 The step that computes this died on its own spelling and is fixed here: the
 workflow passed `--glob /tmp/class-*.txt` unquoted, the runner's shell handed
@@ -82,8 +97,10 @@ Every `deploy Staging (…)` leg of every release train since 2026-11-16 dies on
 `Failed to fetch: error decoding response body` (F2), which skips `smoke Staging`
 → `migrate production` → `deploy Production` → `smoke Production`, so `main`
 never reaches staging or production on its own — while the GraphQL mutation
-`serviceInstanceDeploy(serviceId, environmentId, latestCommit: true)` promotes
-the same three staging services with no upload at all, in about three minutes.
+`serviceInstanceDeploy(serviceId, environmentId, commitSha:"<full sha>")` promotes the same
+three staging services with no upload at all, in about three minutes. (The `latestCommit:
+true` spelling did the same job until 2026-11-22T13:53Z and is refused since; see Episode 18
+of `docs/devops/railway-upload-fault-report.md`.)
 
 What is not known is whether that mutation works with the credential a runner
 holds. `RAILWAY_TOKEN_STAGING` is a **project token**; the working calls above
@@ -138,7 +155,7 @@ So the cell is fillable exactly one way: a runner that already holds the secret.
 |---|---|---|
 | **reads** (`project`, `serviceInstance`) | works — proven 2026-11-22, and again in the probe's own `cli` transport run | **refused** — 2/2 runs: `Not Authorized` at HTTP 200 on `project` and on `serviceInstance`. *The claim this row used to make — "works, proven by every `railway up` leg that gets as far as stamping `BUILD_COMMIT`" — was wrong: `railway-deploy.sh` stamps it with `printf '%s' "$SHA" > "$BUILD_DIR/BUILD_COMMIT"`, a local file write that precedes any network call, so it says nothing about whether the token can read the API.* |
 | **`railway up` upload** | works — every manual deploy in the ledger | **fails with F2** — 9 retries per leg, three legs per train, reproduced on runs `44922280434`, `44927881957` and `45005535349` |
-| **`serviceInstanceDeploy(latestCommit:true)`** | works — staging promoted to `f9309845c` on 2026-11-22 with zero uploads | **refused on the one attempt** — run `45009997472`: `PROBE_CELL mutation=token-rejected` |
+| **`serviceInstanceDeploy(latestCommit:true)`** | worked earlier on 2026-11-22 (staging promoted to `f9309845c`, zero uploads) but was refused in all three attempts from 13:53Z in this session — the reproducible owner-side spelling is `commitSha`, which promoted staging to `b55757379` at 13:59Z (the `df6676406` rows ten minutes later came from the same lane driven by another session) | **refused on the one attempt** — run `45009997472`: `PROBE_CELL mutation=token-rejected` |
 
 The swap this table was built to test is off the table: with this credential the
 mutation was refused, and so were the reads, in both runs. What is *not* settled
