@@ -2,7 +2,11 @@ import { AdminUsersRequestError, adminApiBase, authHeaders, readOrThrow } from '
 
 /** Read-only referral data for the admin user profile. */
 
-export type ReferralCode = { code: string; source: string };
+/**
+ * `source` is the table the code lives in; `original` is set only once an admin has
+ * overwritten the code the account was issued, so the page can show both.
+ */
+export type ReferralCode = { code: string; source: string; original?: string };
 
 export type Referral360 = {
   referrer_id: string | null;
@@ -38,7 +42,12 @@ export async function getUserReferralCode(id: string): Promise<ReferralCode | nu
   const p = await readOrThrow(res, 'Loading referral code');
   const code = typeof p.code === 'string' ? p.code.trim() : '';
   if (!code) return null;
-  return { code, source: String(p.source ?? '') };
+  // An absent or blank original_code means the account was never customised, and the
+  // key must stay off the object so the page renders one row rather than an empty one.
+  const original = typeof p.original_code === 'string' ? p.original_code.trim() : '';
+  return original
+    ? { code, source: String(p.source ?? ''), original }
+    : { code, source: String(p.source ?? '') };
 }
 
 /** GET /api/referral/admin/users/:id/referral-360 (referral.users.view); payload is {user: {...}}. */

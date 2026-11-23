@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
 import { getOpenMicLgaOptions, OPEN_MIC_COUNTRIES, OPEN_MIC_STATES } from '@/src/features/openmic/location-options';
-import { handinFieldsOnRecord, type HandinInheritance } from '@/src/features/openmic/handin-record';
+import { handinFieldSeeds, handinFieldsOnRecord, type HandinInheritance } from '@/src/features/openmic/handin-record';
 
 type Props = {
   contestSlug: string;
@@ -40,23 +40,24 @@ export default function OpenMicEntryForm({
   // Tapping "Change" puts the question back on screen for the rest of the visit:
   // an artist who spots a typo in the email their entry will be matched on should
   // fix it before submitting, not after.
-  const [correcting, setCorrecting] = useState({ email: false, location: false });
+  const [correcting, setCorrecting] = useState({ email: false, location: false, socials: false });
 
-  // The record decides what the form opens with, so the confirmed rows can never
-  // disagree with the body `submitSong` sends.
+  // The record decides what the form opens with AND what its rows display, from one
+  // call: a confirmed row can never advertise an answer the submitted body lacks.
   const onRecord = handinFieldsOnRecord(inheritance, accountEmail);
+  const seeds = handinFieldSeeds(inheritance);
   const recordEmail = (inheritance?.email || accountEmail || '').trim();
+  // One row for the pair, because the endpoint asks for at least one handle, not both.
+  const recordSocials = [seeds.instagramHandle, seeds.tiktokHandle].filter(Boolean).join(' · ');
 
-  const [form, setForm] = useState(() => {
-    const record = handinFieldsOnRecord(inheritance, accountEmail);
-    return {
+  const [form, setForm] = useState(() => ({
       artistName: '',
       email: (inheritance?.email || accountEmail || '').trim(),
       country: 'Nigeria',
-      state: record.location ? String(inheritance?.state ?? '').trim() : '',
-      lga: record.location ? String(inheritance?.lga ?? '').trim() : '',
-      instagramHandle: '',
-      tiktokHandle: '',
+      state: seeds.state,
+      lga: seeds.lga,
+      instagramHandle: seeds.instagramHandle,
+      tiktokHandle: seeds.tiktokHandle,
       youtubeHandle: '',
       facebookHandle: '',
       xHandle: '',
@@ -69,8 +70,7 @@ export default function OpenMicEntryForm({
       noUnauthorizedSamplesConfirmed: false,
       termsAccepted: false,
       paidAccessConfirmed: !beatRequiresPaidEntry,
-    };
-  });
+  }));
 
   function setField<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({
@@ -399,14 +399,28 @@ export default function OpenMicEntryForm({
                 </div>
               </>
             )}
-            <div>
-              <label className="form-label">Instagram</label>
-              <input className="form-input h-[44px]" value={form.instagramHandle} onChange={(e) => setField('instagramHandle', e.target.value)} />
-            </div>
-            <div>
-              <label className="form-label">TikTok</label>
-              <input className="form-input h-[44px]" value={form.tiktokHandle} onChange={(e) => setField('tiktokHandle', e.target.value)} />
-            </div>
+            {onRecord.socials && !correcting.socials ? (
+              <div className="md:col-span-2">
+                <ConfirmedRow
+                  label="Social handles"
+                  value={recordSocials}
+                  note="From your entry. Change it if either handle moved."
+                  onChange={() => setCorrecting((previous) => ({ ...previous, socials: true }))}
+                  disabled={busy || uploadingSong}
+                />
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="form-label">Instagram</label>
+                  <input className="form-input h-[44px]" value={form.instagramHandle} onChange={(e) => setField('instagramHandle', e.target.value)} />
+                </div>
+                <div>
+                  <label className="form-label">TikTok</label>
+                  <input className="form-input h-[44px]" value={form.tiktokHandle} onChange={(e) => setField('tiktokHandle', e.target.value)} />
+                </div>
+              </>
+            )}
             <div>
               <label className="form-label">YouTube</label>
               <input className="form-input h-[44px]" value={form.youtubeHandle} onChange={(e) => setField('youtubeHandle', e.target.value)} />

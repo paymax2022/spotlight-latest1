@@ -23,6 +23,19 @@ package handlers
 // renders as "—". It must never render as 0: "nothing to do" and "we could not
 // look" are opposite messages, and collapsing them is how an operations console
 // starts lying.
+// THE INCLUSION RULE — this registry is the whole standard. Anything an admin can
+// be asked to DECIDE lives here, and nowhere else:
+//   - IN:  a human must approve, reject, verify, publish, settle or moderate, and
+//          a state machine is holding an item until they do.
+//   - OUT: states waiting on the END USER ('needs_more_info', 'correction_requested',
+//          'CHANGES_REQUESTED'), drafts never submitted, and pure volume metrics.
+//   - A queue with no working screen is still registered, with AttnNote instead of
+//     AttnHref — hiding it is how "not reported" becomes "assumed clear".
+// Adding a review screen, a new approve endpoint, or a new module with a decision
+// state therefore REQUIRES a row here; admin_overview_test.go pins the ledger so
+// the omission fails CI rather than landing as a silent blind spot. The dashboard
+// renders this list and adds nothing to "Needs attention" of its own.
+// See docs/ops/admin-needs-attention-standard.md.
 
 import (
 	"context"
@@ -291,6 +304,60 @@ var overviewSpecs = []moduleSpec{
 		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.academy_question_items WHERE status='approved'`,
 		Attn: "Awaiting review", AttnSQL: `SELECT count(*) FROM public.academy_question_items WHERE status='review'`,
 		AttnHref: "/admin/academy/question-bank", Severity: "warn"},
+
+	// ---- The programme queues that used to be invisible. -----------------------
+	// Before these rows, the Programs group reported how many CONTESTANTS existed
+	// while the decisions sitting in its own tables — songs handed in for review,
+	// applications to approve, results waiting on a second admin — were counted by
+	// nothing. The old dashboard papered over that by hardcoding the attention value
+	// to 0 client-side, which is the one thing a queue may never be fed.
+
+	// An Open Mic edition is identified the way the app identifies one
+	// (frontend-web/src/features/openmic/edition-identity.ts): contest_type, or the
+	// registration category, or a known slug. The attention predicate is a
+	// BLACKLIST on purpose: an unrecognised status is assumed to still need an
+	// admin, because a whitelist would silently drop a status added next quarter
+	// and the queue would read zero forever. `approved` stays in the queue — an
+	// accepted song is heard by nobody until it is published for voting, so
+	// treating approval as done is how a track gets accepted and never reaches
+	// voters (see frontend-admin/src/features/openmic/submission-queue.ts).
+	{Key: "open-mic-submissions", Label: "Open Mic songs", Group: "Programs", Href: "/admin/open-mic",
+		Volume: "Songs handed in", VolSQL: `SELECT count(*) FROM public.competition_entries WHERE status <> 'draft' AND competition_id IN (SELECT id FROM public.contests WHERE contest_type='one_beat_one_verse' OR category='open_mic' OR slug IN ('open-mic-competition','open-mic','open-mic-2026'))`,
+		Attn: "Awaiting a decision", AttnSQL: `SELECT count(*) FROM public.competition_entries WHERE status NOT IN ('draft','awaiting_payment','correction_requested','clean_version_requested','published_for_voting','rejected','disqualified','winner') AND competition_id IN (SELECT id FROM public.contests WHERE contest_type='one_beat_one_verse' OR category='open_mic' OR slug IN ('open-mic-competition','open-mic','open-mic-2026'))`,
+		AttnHref: "/admin/open-mic", Severity: "warn"},
+	// Applications are the step BEFORE a song exists: an artist is enrolled, their
+	// eligibility and payment are on the row, and nothing moves until an admin
+	// approves. Vocabulary is 'pending'|'approved'|'rejected' — the review endpoint
+	// (frontend-web/app/api/admin/open-mic/applications/[id]/review) is the source.
+	{Key: "open-mic-applications", Label: "Open Mic applications", Group: "Programs", Href: "/admin/open-mic",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.competition_enrollments WHERE status='approved' AND competition_id IN (SELECT id FROM public.contests WHERE contest_type='one_beat_one_verse' OR category='open_mic' OR slug IN ('open-mic-competition','open-mic','open-mic-2026'))`,
+		Attn: "Applications to review", AttnSQL: `SELECT count(*) FROM public.competition_enrollments WHERE status='pending' AND competition_id IN (SELECT id FROM public.contests WHERE contest_type='one_beat_one_verse' OR category='open_mic' OR slug IN ('open-mic-competition','open-mic','open-mic-2026'))`,
+		AttnHref: "/admin/open-mic", Severity: "warn"},
+	// academy_applications carries both the Academy and the Film Academy (TMFA)
+	// intake — talent_category='film_production' separates the film cohort, which
+	// is how GetMenuCounts already counts it. Approval is not a label: the PATCH
+	// route creates the instalment plan and enrolls the learner.
+	{Key: "academy-applications", Label: "Academy applications", Group: "Programs", Href: "/admin/academy/film",
+		Volume: "Approved", VolSQL: `SELECT count(*) FROM public.academy_applications WHERE status='approved'`,
+		Attn: "Awaiting review", AttnSQL: `SELECT count(*) FROM public.academy_applications WHERE status='pending'`,
+		AttnHref: "/admin/academy/film", Severity: "warn"},
+	// Audition registrations DO need a human (the enum is
+	// 'pending'|'confirmed'|'cancelled'|'attended') and nothing in the console reads
+	// that table. Registered with a note, not hidden: an admin must be able to see
+	// the backlog exists even where there is no screen to clear it from.
+	{Key: "auditions", Label: "Audition registrations", Group: "Programs", Href: "/admin/competitions",
+		Volume: "Confirmed", VolSQL: `SELECT count(*) FROM public.audition_registrations WHERE status='confirmed'`,
+		Attn: "Registrations awaiting confirmation", AttnSQL: `SELECT count(*) FROM public.audition_registrations WHERE status='pending'`,
+		Severity: "warn",
+		AttnNote: "No review screen yet — the console has no page that reads audition_registrations, so these cannot be actioned from the dashboard"},
+	// Maker-checker: a results publish, vote reversal or vote adjustment is held
+	// until a SECOND admin signs it (contest_admin_approvals refuses checker_id =
+	// initiator_id). Until then the published result is exactly what one person
+	// decided — which is why this is critical, not a warn.
+	{Key: "contest-approvals", Label: "Contest decision approvals", Group: "Programs", Href: "/admin/voting/approvals",
+		Volume: "Decisions executed", VolSQL: `SELECT count(*) FROM public.contest_admin_approvals WHERE status='executed'`,
+		Attn: "Awaiting a second admin", AttnSQL: `SELECT count(*) FROM public.contest_admin_approvals WHERE status='pending_approval'`,
+		AttnHref: "/admin/voting/approvals", Severity: "critical"},
 }
 
 type overviewValue struct {

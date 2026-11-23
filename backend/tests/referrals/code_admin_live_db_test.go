@@ -22,6 +22,12 @@ import (
 	"spotlight/backend/internal/testsupport"
 )
 
+// codeAdmin stands in for "the admin who clicked save", which SetLinkCode records
+// in the audit event next to the code it replaced. The write does not validate it
+// (the guard is the route's permission), so a fixed id keeps every case here
+// readable; the id never becomes a user or a code.
+var codeAdmin = uuid.NewString()
+
 func poolOrSkip(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -167,7 +173,7 @@ func TestLiveDB_ReferralCode_AdminCanSetACustomCode(t *testing.T) {
 	user := newUser(t, ctx, pool)
 	code := freshCode(t, ctx, pool)
 
-	link, err := s.SetLinkCode(ctx, user, strings.ToLower(code)) // lowercase on purpose
+	link, err := s.SetLinkCode(ctx, user, strings.ToLower(code), codeAdmin) // lowercase on purpose
 	if err != nil {
 		t.Fatalf("SetLinkCode: %v", err)
 	}
@@ -193,10 +199,10 @@ func TestLiveDB_ReferralCode_RefusesACodeAnotherUserHolds(t *testing.T) {
 	first, second := newUser(t, ctx, pool), newUser(t, ctx, pool)
 	code := freshCode(t, ctx, pool)
 
-	if _, err := s.SetLinkCode(ctx, first, code); err != nil {
+	if _, err := s.SetLinkCode(ctx, first, code, codeAdmin); err != nil {
 		t.Fatalf("seed first code: %v", err)
 	}
-	_, err := s.SetLinkCode(ctx, second, code)
+	_, err := s.SetLinkCode(ctx, second, code, codeAdmin)
 	if !errors.Is(err, referrals.ErrCodeTaken) {
 		t.Fatalf("second user got %v, want ErrCodeTaken — two people would share one code", err)
 	}
@@ -216,10 +222,10 @@ func TestLiveDB_ReferralCode_DuplicateCheckIgnoresCase(t *testing.T) {
 	first, second := newUser(t, ctx, pool), newUser(t, ctx, pool)
 	code := freshCode(t, ctx, pool)
 
-	if _, err := s.SetLinkCode(ctx, first, code); err != nil {
+	if _, err := s.SetLinkCode(ctx, first, code, codeAdmin); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, err := s.SetLinkCode(ctx, second, strings.ToLower(code)); !errors.Is(err, referrals.ErrCodeTaken) {
+	if _, err := s.SetLinkCode(ctx, second, strings.ToLower(code), codeAdmin); !errors.Is(err, referrals.ErrCodeTaken) {
 		t.Fatalf("lowercase variant got %v, want ErrCodeTaken", err)
 	}
 }
@@ -240,7 +246,7 @@ func TestLiveDB_ReferralCode_RefusesACodeHeldInTheLegacyTable(t *testing.T) {
 		t.Fatalf("seed legacy code: %v", err)
 	}
 
-	_, err := s.SetLinkCode(ctx, newcomer, code)
+	_, err := s.SetLinkCode(ctx, newcomer, code, codeAdmin)
 	if !errors.Is(err, referrals.ErrCodeTaken) {
 		t.Fatalf("got %v, want ErrCodeTaken — this would hijack the legacy owner's attribution", err)
 	}
@@ -255,10 +261,10 @@ func TestLiveDB_ReferralCode_ReassigningYourOwnCodeSucceeds(t *testing.T) {
 	user := newUser(t, ctx, pool)
 	code := freshCode(t, ctx, pool)
 
-	if _, err := s.SetLinkCode(ctx, user, code); err != nil {
+	if _, err := s.SetLinkCode(ctx, user, code, codeAdmin); err != nil {
 		t.Fatalf("first set: %v", err)
 	}
-	link, err := s.SetLinkCode(ctx, user, code)
+	link, err := s.SetLinkCode(ctx, user, code, codeAdmin)
 	if err != nil {
 		t.Fatalf("re-setting the same code errored: %v", err)
 	}
@@ -274,7 +280,7 @@ func TestLiveDB_ReferralCode_RejectsBadShapesBeforeTouchingTheDatabase(t *testin
 	user := newUser(t, ctx, pool)
 
 	for _, bad := range []string{"", "AB", "TOOLONG", "R3F9A2B1C4D", "AB CD", "AB-CD"} {
-		if _, err := s.SetLinkCode(ctx, user, bad); err == nil {
+		if _, err := s.SetLinkCode(ctx, user, bad, codeAdmin); err == nil {
 			t.Errorf("SetLinkCode accepted %q", bad)
 		} else if errors.Is(err, referrals.ErrCodeTaken) {
 			t.Errorf("SetLinkCode(%q) reported a duplicate; want a validation error", bad)
@@ -299,7 +305,7 @@ func TestLiveDB_ReferralCode_FixtureCleanupDeletesWhatItSeeded(t *testing.T) {
 	var user string
 	t.Run("seed", func(st *testing.T) {
 		user = newUser(st, st.Context(), pool)
-		if _, err := s.SetLinkCode(st.Context(), user, code); err != nil {
+		if _, err := s.SetLinkCode(st.Context(), user, code, codeAdmin); err != nil {
 			st.Fatalf("SetLinkCode: %v", err)
 		}
 		if _, err := pool.Exec(st.Context(),
@@ -345,7 +351,7 @@ func TestLiveDB_ReferralCode_RefusesACodeHeldByAnotherUserInPlatformUsers(t *tes
 	// The holder has never opened a referral screen: no link row, no legacy row.
 	platformUserRow(t, ctx, pool, holder, "PUSER")
 
-	if _, err := s.SetLinkCode(ctx, newcomer, "PUSER"); !errors.Is(err, referrals.ErrCodeTaken) {
+	if _, err := s.SetLinkCode(ctx, newcomer, "PUSER", codeAdmin); !errors.Is(err, referrals.ErrCodeTaken) {
 		t.Fatalf("got %v, want ErrCodeTaken — the console would show PUSER on two user records", err)
 	}
 	// The refused write must not have handed the code to the newcomer either.
@@ -370,7 +376,7 @@ func TestLiveDB_ReferralCode_DuplicateCheckIgnoresCaseInTheLegacyTable(t *testin
 		t.Fatalf("seed lowercase legacy code: %v", err)
 	}
 
-	if _, err := s.SetLinkCode(ctx, newcomer, "LEGcy"); !errors.Is(err, referrals.ErrCodeTaken) {
+	if _, err := s.SetLinkCode(ctx, newcomer, "LEGcy", codeAdmin); !errors.Is(err, referrals.ErrCodeTaken) {
 		t.Fatalf("got %v, want ErrCodeTaken — referral_links would resolve first and the "+
 			"legacy owner would silently stop being credited", err)
 	}
@@ -404,7 +410,7 @@ func TestLiveDB_ReferralCode_EditSetsTheCodeEverySurfaceThenShows(t *testing.T) 
 	platformUserRow(t, ctx, pool, user, old)
 
 	const code = "JIDE1"
-	link, err := s.SetLinkCode(ctx, user, code)
+	link, err := s.SetLinkCode(ctx, user, code, codeAdmin)
 	if err != nil {
 		t.Fatalf("SetLinkCode: %v", err)
 	}
@@ -444,7 +450,7 @@ func TestLiveDB_ReferralCode_EditSetsTheCodeEverySurfaceThenShows(t *testing.T) 
 		t.Errorf("freed code %q is still claimed by %v", old, claims)
 	}
 	next := newUser(t, ctx, pool)
-	if _, err := s.SetLinkCode(ctx, next, old); err != nil {
+	if _, err := s.SetLinkCode(ctx, next, old, codeAdmin); err != nil {
 		t.Errorf("a released code cannot be reassigned: %v", err)
 	}
 }
@@ -461,7 +467,7 @@ func TestLiveDB_ReferralCode_EditReplacesAPlatformUsersOnlyCode(t *testing.T) {
 	platformUserRow(t, ctx, pool, user, old)
 
 	const code = "FLYER"
-	if _, err := s.SetLinkCode(ctx, user, code); err != nil {
+	if _, err := s.SetLinkCode(ctx, user, code, codeAdmin); err != nil {
 		t.Fatalf("SetLinkCode: %v", err)
 	}
 
@@ -492,7 +498,7 @@ func TestLiveDB_ReferralCode_ReassigningYourOwnPlatformUsersCodeSucceeds(t *test
 	user := newUser(t, ctx, pool)
 	platformUserRow(t, ctx, pool, user, "OWNCO")
 
-	link, err := s.SetLinkCode(ctx, user, "OWNCO")
+	link, err := s.SetLinkCode(ctx, user, "OWNCO", codeAdmin)
 	if err != nil {
 		t.Fatalf("re-setting the user's own platform_users code errored: %v", err)
 	}

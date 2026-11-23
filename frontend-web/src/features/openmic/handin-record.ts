@@ -17,8 +17,11 @@
 // Pure module — no `next/headers`, no Supabase — so vitest can cover it in node.
 import { getOpenMicLgaOptions } from './location-options';
 
-/** The three answers a hand-in form can inherit, as the application recorded them. */
-export type HandinAnswers = Pick<HandinInheritance, 'email' | 'state' | 'lga'>;
+/** The five answers a hand-in form can inherit, as the application recorded them. */
+export type HandinAnswers = Pick<
+  HandinInheritance,
+  'email' | 'state' | 'lga' | 'instagram' | 'tiktok'
+>;
 
 /** The four Open Mic slug aliases plus a `spotlight-open-mic` prefix. */
 const OPEN_MIC_SLUG_PREFIX = 'spotlight-open-mic';
@@ -49,12 +52,19 @@ export interface HandinInheritance {
   email: string;
   state: string;
   lga: string;
+  /**
+   * The handles the registration collected. Both are optional there, while
+   * `POST /api/open-mic/submissions` refuses a hand-in with no handle at all — so
+   * the pair can only be treated as answered when the entry actually holds one.
+   */
+  instagram: string;
+  tiktok: string;
   /** Which application the answers came from, so a screen can say where they came from. */
   source: 'exact' | 'open-mic' | 'none';
 }
 
 export const EMPTY_INHERITANCE: HandinInheritance = {
-  email: '', state: '', lga: '', source: 'none',
+  email: '', state: '', lga: '', instagram: '', tiktok: '', source: 'none',
 };
 
 function text(value: unknown): string {
@@ -91,16 +101,21 @@ function isOpenMicApplicationSlug(value: string): boolean {
  * stored as `personal.city` and is fed from the same LGA list, while the generic
  * field catalog also allows `personal.lga`. Either is worth a look — the pairing
  * rule in `handinFieldsOnRecord` is what decides whether it may be shown as
- * confirmed.
+ * confirmed. The handle keys carry the same history: the form writes
+ * `social.instagram`, older rows say `social.instagramHandle`.
  */
 export function inheritanceFromFormData(
   form: Record<string, unknown> | null | undefined,
 ): HandinAnswers {
-  if (!form || typeof form !== 'object') return { email: '', state: '', lga: '' };
+  if (!form || typeof form !== 'object') {
+    return { email: '', state: '', lga: '', instagram: '', tiktok: '' };
+  }
   return {
     email: text(form['contact.email']) || text(form['personal.email']),
     state: text(form['personal.stateOfResidence']),
     lga: text(form['personal.lga']) || text(form['personal.city']),
+    instagram: text(form['social.instagram']) || text(form['social.instagramHandle']),
+    tiktok: text(form['social.tiktok']) || text(form['social.tiktokHandle']),
   };
 }
 
@@ -156,10 +171,18 @@ export function resolveHandinInheritance(
  * otherwise lock the artist out of an answer they are allowed to correct — the
  * registration's city question and this form's LGA question share a list but not a
  * label. Anything that cannot be shown as confirmed stays an ordinary field.
+ *
+ * The handle pair is inherited on a different test: it needs no pairing check, only
+ * that the entry actually answered. `POST /api/open-mic/submissions` refuses a
+ * hand-in carrying no handle, while the registration asks for both and requires
+ * neither, so an entry can legitimately reach here empty — and hiding the fields in
+ * that case would block a song the artist has already recorded. One handle is all
+ * the endpoint asks for, so one handle is all this rule needs to call it answered.
  */
 export interface HandinFieldsOnRecord {
   email: boolean;
   location: boolean;
+  socials: boolean;
 }
 
 export function handinFieldsOnRecord(
@@ -172,5 +195,37 @@ export function handinFieldsOnRecord(
   return {
     email: !!email,
     location: !!state && !!lga && getOpenMicLgaOptions(state).includes(lga),
+    socials: !!(text(inheritance?.instagram) || text(inheritance?.tiktok)),
+  };
+}
+
+/**
+ * The values a hand-in form opens with, for the answers `handinFieldsOnRecord`
+ * says are on record.
+ *
+ * WHY THIS IS A FUNCTION AND NOT A LITERAL IN THE COMPONENT
+ * A confirmed row is only honest if the body `submitSong` sends carries the same
+ * answer. Mobile learned that the hard way (#1134): its row advertised a recorded
+ * handle while a seeding bug left the field empty, so the artist saw an answered
+ * question and an endpoint that refused it. Keeping the pairing here means the rule
+ * has one home and one test: `socials` confirmed ⇒ the handle fields are seeded,
+ * `location` refused ⇒ the selects stay blank and the artist chooses.
+ */
+export interface HandinSeeds {
+  state: string;
+  lga: string;
+  instagramHandle: string;
+  tiktokHandle: string;
+}
+
+export function handinFieldSeeds(
+  inheritance: Partial<HandinAnswers> | null | undefined,
+): HandinSeeds {
+  const record = handinFieldsOnRecord(inheritance);
+  return {
+    state: record.location ? text(inheritance?.state) : '',
+    lga: record.location ? text(inheritance?.lga) : '',
+    instagramHandle: record.socials ? text(inheritance?.instagram) : '',
+    tiktokHandle: record.socials ? text(inheritance?.tiktok) : '',
   };
 }
