@@ -198,6 +198,26 @@ bash "$probe" --check-documents > /tmp/f2-probe-docs.txt
 want "auth document declares \$p" 'query\(\$p:String!\)' /tmp/f2-probe-docs.txt present
 want "row document declares \$s and \$e" 'query\(\$s:String!,\$e:String!\)' /tmp/f2-probe-docs.txt present
 want "deploy document declares \$latest" 'mutation\(\$s:String!,\$e:String!,\$latest:Boolean\)' /tmp/f2-probe-docs.txt present
+want "sha deploy document declares \$s, \$e and \$sha" 'mutation\(\$s:String!,\$e:String!,\$sha:String!\)' /tmp/f2-probe-docs.txt present
+# 3b. The spelling the mutation cell ACTUALLY sends is the sha one, and the
+#     latestCommit document is kept only as a measured exclusion (owner-side
+#     refusals since 2026-11-22T13:53Z make it unable to separate scope from
+#     shape). The [^_] is what makes the exclusion mean something: without it the
+#     pattern also matches the DOC_DEPLOY_SHA call site, and the absent check
+#     would go red for a file that sends only the right document.
+want "cell 3 sends the commitSha document" 'gql "\$DOC_DEPLOY_SHA"' "$probe" present
+want "latestCommit is never sent" 'gql "\$DOC_DEPLOY"[^_]' "$probe" absent
+want "the probe refuses mutate without a 40-hex sha" 'PROBE_REFUSED mutate-without-explicit-sha' "$probe" present
+# 3c. A stub that answered any document would let a mismatched variable name pass
+#     as a clean `accepted`: the cell-3 payload keys are proved here, not by a
+#     text grep, because the fake edge compares each document's variable
+#     signature against the variables the probe actually sent.
+checks=$((checks + 1))
+if grep -q 'def variable_drift' scripts/ci/f2-probe-stub.py; then
+  echo "ok   the fake edge validates documents against their variables"
+else
+  echo "FAIL the fake edge answers documents without checking their variables"; fails=$((fails + 1))
+fi
 # 4. Dispatch-only: pushing this file must not be able to reach Railway.
 #    Line-anchored — an input's name and its default sit on different YAML
 #    lines, so a one-line regex there would pass for the wrong reason.
@@ -225,7 +245,9 @@ fi
 # subshell one is not hypothetical: the first local run printed
 # "auth=transport-error-no-response (http=)" under a body that parsed fine.
 stub_out=/tmp/f2-probe-stub.out
-run_stub() { # <scenario> <mode>
+run_stub() { # <scenario> <mode> [sha]  — pass "" as <sha> to test the refusal
+  local sha=df667640637bdc7da783ecf3e15e35a59cbcee32
+  [[ $# -ge 3 ]] && sha="$3"
   python3 scripts/ci/f2-probe-stub.py "$1" 0 > "$stub_out" 2>/dev/null &
   local pid=$! port="" i
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
@@ -237,6 +259,7 @@ run_stub() { # <scenario> <mode>
   RAILWAY_API_URL="http://127.0.0.1:${port}/graphql" \
   RAILWAY_TOKEN="STUB-SECRET-NOT-A-TOKEN" \
   PROBE_MODE="$2" PROBE_SERVICE_NAME=backend \
+  PROBE_DEPLOY_SHA="$sha" \
   PROBE_POLL_BUDGET_S=3 PROBE_POLL_INTERVAL_S=1 \
   PROBE_VERDICT_FILE=/tmp/f2-probe-verdict.test \
     bash "$probe" > /tmp/f2-probe-stub-run.out 2>&1
@@ -330,13 +353,49 @@ else
   echo "ok   a faulting read-only run does not report 'read-only-ran'"
 fi
 
+# 5b. The sha guard, proven by running it instead of reading it. GitHub shows
+#     every sha shortened to 9 in its own UI, so "paste what you see in the
+#     Actions list" is the operator mistake this guard exists for; and an absent
+#     sha is the dispatch form left half-filled. All three bad shapes must
+#     refuse BEFORE the first query: a probe that could deploy "whatever main is
+#     doing right now" is a probe that releases an unreviewed tree.
+#     The forbidden evidence is cell output. The guard fires ahead of every
+#     request, so any PROBE_CELL line here means a deploy mutation went out from
+#     a run that had no commit to name — which is a release, not a measurement.
+for bad_sha in '' df6676406 deadz000000000000000000000000000000000000; do
+  run_stub ok mutate "$bad_sha"
+  checks=$((checks + 1))
+  if grep -qE 'PROBE_CELL|PROBE_VERDICT' /tmp/f2-probe-stub-run.out; then
+    echo "FAIL sha='${bad_sha:0:12}' sent cells from a mutate run with no pinned commit"
+    fails=$((fails + 1))
+  else
+    echo "ok   sha='${bad_sha:0:12}…' refused before the first query"
+  fi
+  checks=$((checks + 1))
+  if [[ "$STUB_RC" == 2 ]]; then
+    echo "ok   sha='${bad_sha:0:12}…' exits 2 (a refusal, not a silent pass)"
+  else
+    echo "FAIL sha='${bad_sha:0:12}…' exit=$STUB_RC, expected 2"; fails=$((fails + 1))
+  fi
+done
+checks=$((checks + 1))
+if grep -qE 'PROBE_REFUSED mutate-without-explicit-sha' /tmp/f2-probe-stub-run.out; then
+  echo "ok   the refusal prints its own reason line"
+else
+  echo "FAIL the refusal was silent about why it refused"; fails=$((fails + 1))
+fi
+
 # 6. The dispatch form must actually reach the script. A job env key the script
 #    never reads is silently ignored, so `service=frontend-web` would probe
 #    backend and print a confident answer to a question nobody asked. This was
 #    a real bug in the first version: the workflow exported SERVICE_NAME while
 #    the script reads PROBE_SERVICE_NAME.
 #    Regex, not PyYAML: this job's python3 has no third-party packages.
-maps=$(sed -nE 's/^[[:space:]]+([A-Z_]+):[[:space:]]*\$\{\{ github\.event\.inputs\.([a-z-]+) \}\}[[:space:]]*$/\1 \2/p' "$wf")
+#    The input-name class includes "_" and that is load-bearing: `deploy_sha`
+#    and `write_cell` are underscored, so the earlier `[a-z-]` silently matched
+#    nothing on them — the wiring a reviewer most needs to see was invisible to
+#    the checker, and the count printed 2 mappings for a 3-mapping file.
+maps=$(sed -nE 's/^[[:space:]]+([A-Z_]+):[[:space:]]*\$\{\{ github\.event\.inputs\.([a-z_-]+) \}\}[[:space:]]*$/\1 \2/p' "$wf")
 checks=$((checks + 1))
 if [[ -z "$maps" ]]; then
   echo "FAIL no input->env mappings found in $wf (parser or file changed)"; fails=$((fails + 1))
@@ -353,6 +412,26 @@ else
   done <<< "$maps"
   [[ $wiring_ok == 1 ]] && echo "ok   every dispatch input lands on a key the script reads ($(printf '%s\n' "$maps" | grep -c .) mappings)"
   [[ $wiring_ok == 1 ]] || fails=$((fails + 1))
+fi
+# One more, in the other direction: an input the form offers but nothing
+# forwards is a field the operator can fill and GitHub can silently ignore. This
+# is the same class of bug as the SERVICE_NAME one above, seen from the form
+# instead of from the script — and `deploy_sha` is precisely the field where an
+# ignored value would turn "no commit named" into "the guard fired", which a
+# reader could mistake for a token answer.
+map_inputs=$(printf '%s\n' "$maps" | awk '{print $2}' | sort -u)
+decl_inputs=$(awk 'BEGIN{f=0} /^    inputs:/{f=1;next} /^permissions:/{f=0}
+  f && /^      [a-z_-]+:$/ {k=$1; sub(/:$/,"",k); print k}' "$wf" | sort -u)
+unused=""
+while read -r d; do
+  [[ -z "$d" ]] && continue
+  grep -qx -- "$d" <<<"$map_inputs" || unused="$unused $d"
+done <<<"$decl_inputs"
+checks=$((checks + 1))
+if [[ -n "$unused" ]]; then
+  echo "FAIL dispatch input(s)$unused are declared on the form but never forwarded"; fails=$((fails + 1))
+else
+  echo "ok   every declared dispatch input is forwarded to the script ($(printf '%s\n' "$decl_inputs" | grep -c .) inputs)"
 fi
 
 # 6b. The "Verdict" step cats a hardcoded path; the script writes
@@ -390,17 +469,67 @@ for f in "$tc" "$tcs"; do
   if [[ -f "$f" ]]; then echo "ok   $f exists"; else echo "FAIL $f missing"; fails=$((fails + 1)); fi
 done
 
-# --- safety invariants of the sampler: nothing here may reach the deployment graph
+# --- safety invariants of the sampler: the reads cannot write, and the one step
+#     that can is gated three ways at once — a default-off checkbox, an exact
+#     commit, and a hardcoded staging target.
 want "token-class: dispatch-only, nothing can reach it by pushing" \
   '^[[:space:]]*(push|schedule|pull_request|release):' "$tc" absent
 want "token-class: entry point is workflow_dispatch" 'workflow_dispatch' "$tc" present
 want "token-class: repository guard present" 'if: github.repository ==' "$tc" present
-# The load-bearing one: PROBE_MODE is the only thing keeping the probe out of its
-# write cell, so it must be a literal in the YAML and never an input mapping.
-want "token-class: mode is the literal read-only, not an input" \
+# The load-bearing default: PROBE_MODE at job level must stay the literal
+# read-only, so every step that does not override it is a read. The override is
+# what this section is now about, and it is checked structurally below rather
+# than by banning the word — the earlier version of this file asserted
+# "the word 'mutate' appears nowhere", which a green suite could keep satisfying
+# only by having no write cell at all, i.e. by not answering the question.
+want "token-class: job default mode is the literal read-only" \
   '^[[:space:]]+PROBE_MODE: read-only[[:space:]]*$' "$tc" present
-want "token-class: the word 'mutate' appears nowhere in the sampler" 'mutate' "$tc" absent
-want "token-class: no inputs block to steer it" '^[[:space:]]+inputs:' "$tc" absent
+# The dispatch form may steer exactly two things, and neither names a target.
+want "token-class: no environment or service input" \
+  '^[[:space:]]+(environment|environment_id|service|service_name|target):' "$tc" absent
+want "token-class: the write cell needs a full 40-hex sha" '\^\[0-9a-f\]\{40\}\$' "$tc" present
+want "token-class: the write cell is not reachable without the checkbox" \
+  '^[[:space:]]+if: inputs\.write_cell[[:space:]]*$' "$tc" present
+want "token-class: the checkbox is default off" \
+  '^[[:space:]]+default: false[[:space:]]*$' "$tc" present
+# latestCommit is the shape that cannot separate scope from shape (three owner
+# refusals before a commitSha `true` minutes later), so no CI step may use it.
+want "token-class: nothing asks for latestCommit" 'latestCommit|latest_commit|LATEST_COMMIT' "$tc" absent
+# One write step, bounded: gated, staging credential only, cli transport, sha
+# from the form. Extracted as a line range so "the staging token appears in the
+# file" cannot satisfy it — that is true of the read cells too.
+wc_start=$(grep -nE "^[[:space:]]+- name: 'write cell - staging" "$tc" | head -1 | cut -d: -f1)
+wc_next=$(awk -v s="${wc_start:-0}" 'NR>s && /^[[:space:]]+- name:/ && !/write cell - staging/ {print NR; exit}' "$tc")
+wc_block=$(awk -v a="${wc_start:-0}" -v b="${wc_next:-0}" \
+  'NR>=a && (b==0 || NR<b)' "$tc")
+wc_n=$(grep -cE '^[[:space:]]+PROBE_MODE: mutate[[:space:]]*$' "$tc")
+checks=$((checks + 1))
+if [[ -z "$wc_start" || "$wc_n" != 1 ]]; then
+  echo "FAIL token-class: expected exactly one PROBE_MODE: mutate step, found $wc_n"; fails=$((fails + 1))
+else
+  wc_ok=1; wc_why=""
+  for needle in 'if: inputs.write_cell' 'RAILWAY_TOKEN_STAGING' 'PROBE_MODE: mutate' \
+                'PROBE_TRANSPORT: cli' 'PROBE_DEPLOY_SHA: ${{ inputs.deploy_sha }}' '|| true'; do
+    grep -qF -- "$needle" <<<"$wc_block" || { wc_ok=0; wc_why="is missing '$needle'"; }
+  done
+  if grep -qE 'RAILWAY_TOKEN_(DEVELOPMENT|PRODUCTION)' <<<"$wc_block"; then
+    wc_ok=0; wc_why="names a credential other than staging's"
+  fi
+  if [[ "$wc_ok" == 1 ]]; then
+    echo "ok   token-class: the single write step is gated, staging-only, cli, sha-from-form, failure-tolerant"
+  else
+    echo "FAIL token-class: the write step $wc_why"; fails=$((fails + 1))
+  fi
+fi
+# And the form itself may offer nothing else: an undeclared input is silently
+# ignored, a declared-but-unread one is a lie on the dispatch page.
+decl=$(awk '/^    inputs:/{f=1;next} /^permissions:/{f=0} f && /^      [a-z_-]+:$/ {sub(/:$/,"",$1); print $1}' "$tc" | sort | tr '\n' ' ')
+checks=$((checks + 1))
+if [[ "$decl" == "deploy_sha write_cell " ]]; then
+  echo "ok   token-class: the dispatch form declares only write_cell and deploy_sha"
+else
+  echo "FAIL token-class: declared inputs are '$decl'"; fails=$((fails + 1))
+fi
 for s in RAILWAY_TOKEN_DEVELOPMENT RAILWAY_TOKEN_STAGING RAILWAY_TOKEN_PRODUCTION; do
   want "token-class: uses $s" "$s" "$tc" present
 done

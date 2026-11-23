@@ -48,18 +48,42 @@ name: Railway token class probe (read-only)
 #   all three 0/3              → (A) CLASS: no CI script change can help.
 #   dev 3/3 ok + staging 3/3 ok→ neither: re-read the raw bodies, something new.
 #
-# SAFETY: there is no `inputs:` block at all — nothing a dispatch can type turns
-# this into a deploy — and `PROBE_MODE` is pinned to the literal `read-only`, so
-# scripts/ci/f2-token-probe.sh never reaches its mutation cell. Every credential
-# step ends in `|| true` on purpose: a refused read is a RESULT here, not a
-# failure, and the job that stops at the first refusal answers nothing.
+# SAFETY: every read step is unconditional and ends in `|| true` on purpose — a
+# refused read is a RESULT here, not a failure, and the job that stops at the
+# first refusal answers nothing. The job env pins `PROBE_MODE: read-only`, and
+# the ONLY way to reach the mutation cell is the dispatch form's `write_cell`
+# checkbox, which is default-off and is checked by no automated caller. That one
+# box is therefore the whole deploy surface of this workflow, and it is bounded
+# three ways: the environment id is hardcoded to staging inside the script (there
+# is no production id in it), `PROBE_SERVICE_NAME: backend` limits it to one
+# service, and `deploy_sha` must be a full 40-hex commit or both the guard step
+# and the script refuse before any credential is loaded. A short sha, an absent
+# sha, or an unchecked box all leave the write cell unmeasured.
 #
 # How to run:
 #   gh workflow run ci-railway-token-class.yml --ref main
 #   gh run view <id> --log | grep -E 'CLASS_CELL|PROBE_CELL'
+#
+#   ...and to measure the write cell (this redeploys staging backend to the sha
+#   you name — see docs/ops/railway-f2-token-probe.md before doing it):
+#   gh workflow run ci-railway-token-class.yml --ref main \
+#     -f write_cell=true -f deploy_sha=<40-hex>
+#   gh run view <id> --log | grep -E 'PROBE_CELL mutation|PROBE_CELL readback'
 
 on:
   workflow_dispatch:
+    inputs:
+      # Opt-in, default off, and double-checked: this one turns a read-only probe
+      # into a staging redeploy, so it needs both the box and an exact commit.
+      write_cell:
+        description: 'Send the write cell — serviceInstanceDeploy(commitSha:) with the STAGING project token. This redeploys staging backend.'
+        type: boolean
+        default: false
+      deploy_sha:
+        description: 'Full 40-hex commit the write cell names. Required when write_cell is checked; a short sha is refused.'
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -77,8 +101,9 @@ jobs:
     env:
       PROBE_MODE: read-only
       PROBE_TRANSPORT: curl
-      # Cell 2's row query needs a service; backend is the smallest and this
-      # workflow only ever reads, so the choice cannot deploy anything.
+      # Cell 2's row query needs a service; backend is the smallest, and it is
+      # also the only service the opt-in write cell can name, so nothing here
+      # can touch a frontend.
       PROBE_SERVICE_NAME: backend
       # Attempts per credential. Three is enough to tell "always refused" from
       # "refused sometimes" without turning a read-only probe into a load test.
@@ -92,6 +117,27 @@ jobs:
       PROBE_RAILWAY_VERSION: 5.40.1
     steps:
       - uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # Write-cell guard. The probe script refuses this too, and this step
+      # exists so the refusal is visible before any credential is loaded
+      # rather than as an error line inside a cell file: a deploy that was
+      # asked for with a short or absent sha must not get as far as a token.
+      # ------------------------------------------------------------------
+      - name: 'write cell guard'
+        env:
+          WRITE_CELL: ${{ inputs.write_cell }}
+          CANDIDATE_SHA: ${{ inputs.deploy_sha }}
+        run: |
+          if [[ "$WRITE_CELL" != "true" ]]; then
+            echo "read-only run: the write cell stays unmeasured, no deploy is possible from this run"
+            exit 0
+          fi
+          if [[ ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::write_cell needs deploy_sha as a full 40-hex commit; nothing was sent"
+            exit 1
+          fi
+          echo "write cell armed for ${CANDIDATE_SHA:0:9} (staging backend, staging project token, cli transport)"
 
       # Installed once for four probes. The class probe above never needed a CLI
       # — it speaks GraphQL with curl — but the status question is specifically
@@ -267,13 +313,16 @@ jobs:
       #                          owner-side sha promotion stays the staging path.
       #   refused curl, ok cli → the sampler was the broken instrument. The
       #                          CLASS sentence is retired and the mutation cell
-      #                          gets re-measured with PROBE_TRANSPORT=cli.
+      #                          gets re-measured with PROBE_TRANSPORT=cli —
+      #                          which is exactly what the write cell below does.
       #   control `ok`         → CONTROL BROKEN: that field does not need a
       #                          credential through this client, so `ok` rows
       #                          prove nothing about tokens.
-      # Still pinned read-only: PROBE_MODE comes from the job env, and the write
-      # cell is not reachable without the dispatch form supplying the write mode,
-      # which this workflow has no inputs block for.
+      # Measured 2026-11-23 13:00:04Z→13:01:36Z (run 45179580758): the third
+      # branch won — curl refused all four credentials, the CLI resolved
+      # `project(id)` for all three tokens. These steps stay read-only —
+      # `PROBE_MODE` comes from the job env — and only the opt-in step beneath
+      # them can write.
       # ------------------------------------------------------------------
       - name: 'cli transport - control (no credential)'
         env:
@@ -306,6 +355,27 @@ jobs:
           PROBE_TRANSPORT: cli
         run: |
           bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/cli-${CLASS_LABEL}.txt" || true
+
+      # ------------------------------------------------------------------
+      # The write cell, opt-in. Why cli transport: the transport cells proved
+      # curl does not authenticate a project-token bearer at all, so a curl
+      # refusal here could never be read as a scope answer. Why the staging
+      # token: it is the only credential in CI that resolves a staging
+      # serviceInstance, which is the target the mutation names. Why one
+      # service: `PROBE_SERVICE_NAME: backend` comes from the job env, so an
+      # authorized run redeploys staging backend and nothing else.
+      # A refusal here is the answer, so the step keeps `|| true`.
+      # ------------------------------------------------------------------
+      - name: 'write cell - staging project token x serviceInstanceDeploy(commitSha)'
+        if: inputs.write_cell
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          CLASS_LABEL: staging
+          PROBE_MODE: mutate
+          PROBE_TRANSPORT: cli
+          PROBE_DEPLOY_SHA: ${{ inputs.deploy_sha }}
+        run: |
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/mutate-${CLASS_LABEL}.txt" || true
 
       - name: Transport x credential verdict
         if: always()

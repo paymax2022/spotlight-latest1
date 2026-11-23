@@ -266,12 +266,18 @@ jobs:
       - name: Test the upload shape resolver
         run: bash scripts/ci/test-railway-root-shape.sh
       # The same fault's probe. F2 kills every `deploy Staging` leg, and the one
-      # lane that works — serviceInstanceDeploy(latestCommit:true) — has never
-      # been tried with the token CI holds, which exists only inside a runner.
-      # So its verdict function is driven here against recorded payloads and a
-      # local stub edge: 55 checks including the measured HTTP-200 "Not
-      # Authorized" body and a red control that must NOT read as deployable.
-      # Sub-second, no network to Railway.
+      # lane that works — serviceInstanceDeploy(commitSha:"<full sha>"); the
+      # latestCommit spelling has been refused owner-side three of three — has
+      # never been tried with the token CI holds, which exists only inside a
+      # runner. So its verdict function is driven here against recorded payloads
+      # and a local stub edge: 200 checks, including the measured HTTP-200 "Not
+      # Authorized" body, a red control that must NOT read as deployable, three
+      # commit-sha shapes that must send nothing at all, and a structural read of
+      # the opt-in write step in ci-railway-token-class.yml.
+      # No network to Railway. NOT sub-second: measured 37 s on a laptop as of
+      # 2026-11-23 — each stub scenario binds a local server and polls it, and
+      # the sha-refusal loop added three more runs. The label was written at 55
+      # checks and never updated.
       - name: Test the F2 token probe
         run: bash scripts/ci/test-f2-token-probe.sh
       # RN-PLANE-001: a store build bakes mobile-app/reactnative/.env.production,
