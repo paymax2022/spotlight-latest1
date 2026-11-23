@@ -40,11 +40,49 @@ function toSlug(raw: string) {
     .replace(/-+/g, '-');
 }
 
+/**
+ * Is this contest type writable on this contest?
+ *
+ * public.contests.contest_type is a plain TEXT column shared by two vocabularies.
+ * `allowedTypes` is the registration catalog. The unified contest engine writes
+ * its own values into the same column: the DEFAULT is 'general'
+ * (20260410190000_one_beat_one_verse_foundation.sql:9, re-added by
+ * 20260412153000_contests_schema_compat_repair.sql:11, whose :65 CASE files the
+ * pre-existing categories under 'multi_skill'), 20260507113000 consolidates to
+ * 'reality_tv_show', the STEM plane writes 'STEM'
+ * (src/server/stem/persistence.ts:432), and
+ * backend/internal/repositories/competition_supabase_repository.go:42-49 counts
+ * 'reality_tv_show', 'one_beat_one_verse' and 'multi_skill' for the admin
+ * overview. On the local dev database only 1 row in 160 holds a catalog type.
+ *
+ * A PATCH carries the whole definition, and the read path hands back the stored
+ * value verbatim (listPersistedContests has to — normalising it there would
+ * rewrite the engine's type and the overview counts on the next save). So an edit
+ * that never touched the Type field sent a catalog-invalid value straight back,
+ * and the contest could not be saved at all: every banner, prize or deadline edit
+ * on such a row answered 'Invalid contest type.'.
+ *
+ * So the value already on THIS row is accepted, because rejecting it asks the
+ * admin to change a field they did not change and silently move the contest onto
+ * a different engine. It is deliberately not a second allow-list: 'multi_skill'
+ * stored on one contest does not license writing it onto another, and anything
+ * the admin actually picks from the dropdown is still checked against the catalog.
+ */
+function isContestTypeAllowed(value: string, storedType?: string): boolean {
+  if (allowedTypes.includes(value as ContestType)) return true;
+  const tolerated = (storedType ?? '').trim();
+  return tolerated.length > 0 && value === tolerated;
+}
+
 // allowedCategories is passed in rather than read here so this stays a pure
 // sync normalizer; the DB read happens once in the handler.
+//
+// storedType is the contest_type this very row already carries, and it is the
+// one exception to the catalog: see isContestTypeAllowed.
 function normalizeContestPayload(
   body: Record<string, unknown>,
   allowedCategories: string[],
+  storedType?: string,
 ): Partial<ContestRegistrationDefinition> {
   const title = String(body.title || '').trim();
   const slug = toSlug(String(body.slug || title));
@@ -58,7 +96,7 @@ function normalizeContestPayload(
   if (!title) throw new Error('Contest title is required.');
   if (!slug) throw new Error('Contest slug is required.');
   if (!allowedCategories.includes(contestCategory)) throw new Error('Invalid contest category.');
-  if (!allowedTypes.includes(contestType)) throw new Error('Invalid contest type.');
+  if (!isContestTypeAllowed(contestType, storedType)) throw new Error('Invalid contest type.');
   if (!seasonOrEdition) throw new Error('Season / edition is required.');
   if (isPaid && (!Number.isFinite(registrationFeeNgn) || registrationFeeNgn < 0)) {
     throw new Error('Registration fee must be a valid number for paid contests.');
@@ -148,7 +186,15 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ slug: str
   try {
     await assertAdminPermission(request, 'programs:manage');
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const patch = normalizeContestPayload(body, await allowedCategorySlugs());
+
+    // What this contest is right now, same precedence as GET above (Postgres
+    // first, the legacy catalog as fallback). Read before validating, because a
+    // field the caller did not change is judged against the row itself rather
+    // than against the catalog alone — see isContestTypeAllowed. It is also the
+    // definition a Postgres-only PATCH merges onto, so this costs no extra read.
+    const stored =
+      (await getPersistedContestBySlug(params.slug)) ?? getRegistrationContestBySlug(params.slug);
+    const patch = normalizeContestPayload(body, await allowedCategorySlugs(), stored?.contestType);
 
     let memoryResult: ContestRegistrationDefinition | null = null;
     try {
@@ -160,7 +206,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ slug: str
     // The Postgres row needs a complete definition, not a partial patch — the
     // memory update above already merged the patch onto the prior record when
     // that record existed there; otherwise fall back to whatever Postgres has.
-    const base = memoryResult ?? (await getPersistedContestBySlug(params.slug));
+    const base = memoryResult ?? stored;
     if (!base) return errorResponse('Contest not found', 404);
     const full: ContestRegistrationDefinition = { ...base, ...patch } as ContestRegistrationDefinition;
 
