@@ -83,8 +83,12 @@
 # And `true` alone is never read as success. That mutation answers `true` for a
 # git-less service instance while creating no row at all (measured on production
 # frontend-admin, reason=redeploy), so the row-watch below decides from a NEW
-# Deployment row that names THIS sha — scripts/ci/staging-deploy-watch.py, whose
-# verdict table is pinned by scripts/ci/test-staging-deploy-watch.sh.
+# Deployment row that names THIS sha and was created after this leg fired its
+# mutation (STARTED_AT) — scripts/ci/staging-deploy-watch.py, whose verdict
+# table is pinned by scripts/ci/test-staging-deploy-watch.sh. The cutoff is what
+# stops a concurrent train's row for the same commit reading as our deploy;
+# release.yml has no workflow-level concurrency, so two ladders on one sha are
+# possible and were seen.
 #
 # THE UPLOAD RULE (read before changing UPLOAD_PATH or ROOT_FLAG):
 #   The shape follows the service instance's Railway `rootDirectory`, which is NOT
@@ -345,6 +349,16 @@ if [ "$DEPLOY_METHOD" = mutation ]; then
   BASELINE_ROW="$(baseline_row_id)"
   [ -n "$BASELINE_ROW" ] || { echo "::error::could not read the pre-mutation $SERVICE/$RAILWAY_ENV deployment row; refusing to guess at 'new row'"; exit 1; }
   echo "baseline row before the mutation: $BASELINE_ROW"
+  # The cutoff is taken AFTER the baseline read and BEFORE the mutation, so it
+  # sits inside the window this leg owns: a row Railway minted for us is not
+  # older than it, and anything from an earlier second — another train on the
+  # same sha, a re-run, a console deploy — is scenery the classifier must not
+  # credit. UTC, because the platform stamps createdAt in UTC and the compare is
+  # lexicographic. Second resolution, and the cutoff's own second counts as
+  # ours: a fast edge can mint our row in the same second this line runs, and
+  # reading that as a no-op would blame Railway for our own clock.
+  STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "mutation fired at: $STARTED_AT"
   MUTATE_OUT=""
   MUTATE_RC=0
   MUTATE_OUT="$(mutate_deploy 2>&1)" || MUTATE_RC=$?
@@ -417,9 +431,9 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     rows_page="$(railway deployment list --service "$SERVICE" --environment "$RAILWAY_ENV" \
                   --project "$RAILWAY_PROJECT" --limit 10 --json)"
     watch_verdict="$(python3 "$SCRIPT_DIR/staging-deploy-watch.py" watch \
-                      "$rows_page" "$BASELINE_ROW" "$SHA")"
+                      "$rows_page" "$BASELINE_ROW" "$SHA" "${STARTED_AT:-}")"
     echo "  row under watch (id / status / commit / which): $(
-      python3 "$SCRIPT_DIR/staging-deploy-watch.py" describe "$rows_page" "$BASELINE_ROW" "$SHA" | tr '\t' ' ')"
+      python3 "$SCRIPT_DIR/staging-deploy-watch.py" describe "$rows_page" "$BASELINE_ROW" "$SHA" "${STARTED_AT:-}" | tr '\t' ' ')"
     case "$watch_verdict" in
       deployed)
         echo "=== $SERVICE/$RAILWAY_ENV deployed $SHA (mutation) ==="

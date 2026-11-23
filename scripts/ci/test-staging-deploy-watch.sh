@@ -28,16 +28,18 @@
 # scenario per failure mode. Every scenario asserts the exit code AND what the
 # leg called: the `up` counter is checked in all of them, because if a mutation
 # leg ever packs an archive again the wall comes back and this test should say
-# so instead of a release discovering it. The `noop`, `other-commit`,
-# `console-row` and `refused` scenarios are the red controls — a suite that goes
-# green whatever the script does would prove nothing, and this is exactly the
-# suite that must be able to see a silent no-op.
+# so instead of a release discovering it. The `noop`, `stale-green`,
+# `other-commit`, `console-row`, `build-failed`, `refused` and `no-baseline`
+# scenarios are the red controls — a suite that goes green whatever the script
+# does would prove nothing, and this is exactly the suite that must be able to
+# see a silent no-op and another train's row alike.
 #
 # Run:  bash scripts/ci/test-staging-deploy-watch.sh
-# No network. Measured 75 checks in 66 s on a laptop on 2026-11-23 — 13 stubbed
-# legs and ~30 classifier cells, each a process, and `sleep` is stubbed so none
-# of it is waiting on a clock. It shares the secret-hygiene runner with the
-# other deploy tests rather than getting a lane of its own.
+# No network. Measured 98 checks in 57 s on a laptop on 2026-11-23 — 12 stubbed
+# legs, the classifier cells including the STARTED_AT cutoff matrix, the argument
+# guards and the wiring pins. `sleep` is stubbed so none of it waits on a clock.
+# It shares the secret-hygiene runner with the other deploy tests rather than
+# getting a lane of its own.
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -55,6 +57,9 @@ SHA_STUB="1111111111111111111111111111111111111111"
 OTHER_SHA="2222222222222222222222222222222222222222"
 BASE_ID="00000000-0000-0000-0000-00000000000b"
 NEW_ID="00000000-0000-0000-0000-00000000000n"
+# A row that already existed when this leg fired — the shape a second train on
+# the same commit leaves behind.
+STALE_ID="00000000-0000-0000-0000-00000000000s"
 STAGING_ENV_ID="6b5f27a3-a290-4574-a977-363eb21d43ad"
 BACKEND_ID="70de07d8-c058-4221-b645-61c4f1ac7aa5"
 # Real ids on this project that must never appear on a staging leg. Re-read
@@ -62,7 +67,7 @@ BACKEND_ID="70de07d8-c058-4221-b645-61c4f1ac7aa5"
 # "is it the staging one" is a question with two plausible-looking answers.
 PROD_ENV_ID="f84c4558-8cbf-43e5-8e1b-f19ee3677133"
 OLD_STAGING_ENV_ID="acf4b4fe-d3bf-4498-87d2-7a7623c2ab34"
-export SHA_STUB OTHER_SHA BASE_ID NEW_ID STAGING_ENV_ID BACKEND_ID
+export SHA_STUB OTHER_SHA BASE_ID NEW_ID STALE_ID STAGING_ENV_ID BACKEND_ID
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -139,6 +144,15 @@ case "$cmd" in
       # Both spellings must read as this leg's deploy.
       upload-spelling)
         printf '[%s,%s]' "$(row SUCCESS "{\"cliMessage\":\"$SHA_STUB\"}")" "$base" ;;
+      # stale-green: a SUCCESS row naming THIS commit, created long before this
+      # leg fired its mutation. That is what a second train on the same sha
+      # leaves behind (release.yml has no workflow-level concurrency, and a
+      # Release re-run does it to one commit). Crediting it is the false green
+      # the STARTED_AT cutoff exists to stop.
+      stale-green)
+        printf '[%s,%s]' \
+          "{\"id\":\"$STALE_ID\",\"status\":\"SUCCESS\",\"createdAt\":\"2020-01-01T00:00:00.000Z\",\"meta\":{\"commitHash\":\"$SHA_STUB\"}}" \
+          "$base" ;;
       *)             printf '[%s,%s]' "$(row SUCCESS "{\"commitHash\":\"$SHA_STUB\"}")" "$base" ;;
     esac
     exit 0
@@ -247,6 +261,18 @@ check "noop: never ran railway up"                    "0" "$2"
 check "noop: the leg names the no-op, not a bare timeout" "yes" \
   "$(grep -q 'mutation-is-noop' "$work/out.noop" && echo yes || echo no)"
 
+# The same commit already deployed by someone else, before this leg fired: the
+# row is real, it names the sha, and it is not ours. Without the STARTED_AT
+# cutoff this scenario exits 0, which is the false green this whole guard
+# exists to refuse — hence it sits with the red controls, not the green ones.
+out="$(run_leg stale-green)"; set -- $out
+check "stale-green: a row predating the mutation is NOT our deploy" "1" "$1"
+check "stale-green: never ran railway up"                           "0" "$2"
+check "stale-green: reported as the no-op it was, not a bare timeout" "yes" \
+  "$(grep -q 'mutation-is-noop' "$work/out.stale-green" && echo yes || echo no)"
+check "stale-green: the log still shows the row it dismissed" "yes" \
+  "$(grep -q "$STALE_ID" "$work/out.stale-green" && echo yes || echo no)"
+
 out="$(run_leg other-commit)"; set -- $out
 check "a new row naming ANOTHER commit is RED" "1" "$1"
 check "other-commit: verdict names the mismatch" "yes" \
@@ -339,11 +365,54 @@ check "watch: a 7-char stored hash matches"          "deployed"       "$(cell wa
 check "watch: null meta is never a match"            "other-commit"   "$(cell watch "[$R_NULL_META]" "$BASE_ID" "$SHA_STUB")"
 check "watch: a CRASHED row naming the sha is terminal-bad" "build-failed" "$(cell watch "[$R_CRASHED]" "$BASE_ID" "$SHA_STUB")"
 check "watch: a REMOVED row naming the sha is terminal-bad" "build-failed" "$(cell watch "[$R_REMOVED]" "$BASE_ID" "$SHA_STUB")"
+
+# ---- the cutoff. Same pages, one extra argument: the instant the leg fired.
+# Nothing above names a createdAt, which is the point of the first of these: an
+# absent or unrecognised time must NOT filter, or a platform that changes its
+# timestamp spelling silently turns every green leg red.
+rowd() { printf '{"id":"%s","status":"%s","createdAt":"%s","meta":%s}' "$1" "$2" "$3" "$4"; }
+CUTOFF="2026-11-23T14:00:00Z"
+STALE_OK="$(rowd "$STALE_ID" SUCCESS "2026-11-23T13:59:59.900Z" "{\"commitHash\":\"$SHA_STUB\"}")"
+STALE_BAD="$(rowd "$STALE_ID" REMOVED "2026-11-23T13:59:59.900Z" "{\"commitHash\":\"$SHA_STUB\"}")"
+SAME_SEC="$(rowd "$NEW_ID" SUCCESS "2026-11-23T14:00:00.500Z" "{\"commitHash\":\"$SHA_STUB\"}")"
+FRESH_OK="$(rowd "$NEW_ID" SUCCESS "2026-11-23T14:03:12.000Z" "{\"commitHash\":\"$SHA_STUB\"}")"
+NO_TIME_OK="$(printf '{"id":"%s","status":"SUCCESS","createdAt":"sometime","meta":{"commitHash":"%s"}}' "$NEW_ID" "$SHA_STUB")"
+check "watch: a SUCCESS row predating the cutoff is scenery, not our deploy" \
+  "no-new-row" "$(cell watch "[$STALE_OK]" "$BASE_ID" "$SHA_STUB" "$CUTOFF")"
+check "watch: without a cutoff the same page is credited (old behaviour intact)" \
+  "deployed" "$(cell watch "[$STALE_OK]" "$BASE_ID" "$SHA_STUB")"
+check "watch: a REMOVED row predating the cutoff is not this leg's build failure" \
+  "no-new-row" "$(cell watch "[$STALE_BAD]" "$BASE_ID" "$SHA_STUB" "$CUTOFF")"
+check "watch: a row created after the cutoff counts" \
+  "deployed" "$(cell watch "[$FRESH_OK]" "$BASE_ID" "$SHA_STUB" "$CUTOFF")"
+check "watch: a row in the cutoff's own second counts (ms truncated, not compared)" \
+  "deployed" "$(cell watch "[$SAME_SEC]" "$BASE_ID" "$SHA_STUB" "$CUTOFF")"
+check "watch: an unrecognised row time never filters a real deploy out" \
+  "deployed" "$(cell watch "[$NO_TIME_OK]" "$BASE_ID" "$SHA_STUB" "$CUTOFF")"
+check "watch: the baseline is excluded by id even when it is newer than the cutoff" \
+  "no-new-row" "$(cell watch "[$(rowd "$BASE_ID" SUCCESS "2026-11-23T14:05:00.000Z" "{\"commitHash\":\"$SHA_STUB\"}")]" "$BASE_ID" "$SHA_STUB" "$CUTOFF")"
+check "watch: a scenery-only page is a no-op, not another train's commit" \
+  "no-new-row" "$(cell watch "[$STALE_OK,$BASE_ROW]" "$BASE_ID" "$SHA_STUB" "$CUTOFF")"
+check "stale: a row a second before the cutoff is stale" "stale" \
+  "$(cell stale "{\"createdAt\":\"2026-11-23T13:59:59.900Z\"}" "2026-11-23T14:00:00Z")"
+check "stale: the cutoff's own second belongs to this attempt, not to the previous train" "new" \
+  "$(cell stale "{\"createdAt\":\"2026-11-23T14:00:00.500Z\"}" "2026-11-23T14:00:00Z")"
+check "stale: a later row is new" "new" \
+  "$(cell stale "{\"createdAt\":\"2026-11-23T14:00:01.000Z\"}" "2026-11-23T14:00:00Z")"
+check "stale: no createdAt is never stale" "new" \
+  "$(cell stale "{\"id\":\"x\"}" "2026-11-23T14:00:00Z")"
+check "stale: no cutoff means nothing is stale" "new" \
+  "$(cell stale "{\"createdAt\":\"2020-01-01T00:00:00.000Z\"}" "")"
 check "describe: reports the row under watch, tab-separated" \
   "$(printf '%s\t%s\t%s\t%s' "$NEW_ID" SUCCESS "$SHA_STUB" mine)" \
   "$(cell describe "[$NEW_OK,$BASE_ROW]" "$BASE_ID" "$SHA_STUB")"
 check "describe: an empty page says so instead of inventing a row" \
   "-	-	-	other" "$(cell describe "[]" "$BASE_ID" "$SHA_STUB")"
+# A leg that goes red on the cutoff must print the row it refused to trust, or
+# the next person re-runs the train instead of reading the race.
+check "describe: shows the stale row the cutoff dismissed, marked as not ours" \
+  "$(printf '%s\t%s\t%s\t%s' "$STALE_ID" SUCCESS "$SHA_STUB" other)" \
+  "$(cell describe "[$STALE_OK,$BASE_ROW]" "$BASE_ID" "$SHA_STUB" "$CUTOFF")"
 
 check "final: accepted + deployed"                   "deployed"    "$(cell final accepted deployed)"
 check "final: accepted + no row"                     "mutation-is-noop" "$(cell final accepted no-new-row)"
@@ -384,6 +453,21 @@ check "the upload path still identifies its row by meta.cliMessage" "1" \
 # too, and a comment edit is not a change to what the leg executes.
 check "the leg executes the classifier three times (watch + describe + final)" "3" \
   "$(grep -c 'SCRIPT_DIR/staging-deploy-watch.py' "$deploy")"
+# The cutoff is only a guard if it is taken INSIDE the window it guards: after
+# the baseline read (so a row that predates the leg can never be the baseline
+# AND predates the cutoff — one of the two must catch it) and before the
+# mutation (so a row the mutation minted in the same second is never dismissed).
+baseline_pos="$(printf '%s' "$mutate_branch" | grep -n 'BASELINE_ROW="$(baseline_row_id)"' | cut -d: -f1)"
+cutoff_pos="$(printf '%s' "$mutate_branch" | grep -n 'STARTED_AT="$(date -u' | cut -d: -f1)"
+fire_pos="$(printf '%s' "$mutate_branch" | grep -n 'mutate_deploy 2>&1' | cut -d: -f1)"
+check "the cutoff is taken after the baseline read" "yes" \
+  "$([ -n "$baseline_pos" ] && [ -n "$cutoff_pos" ] && [ "$cutoff_pos" -gt "$baseline_pos" ] && echo yes || echo no)"
+check "the cutoff is taken before the mutation fires" "yes" \
+  "$([ -n "$cutoff_pos" ] && [ -n "$fire_pos" ] && [ "$cutoff_pos" -lt "$fire_pos" ] && echo yes || echo no)"
+check "both classifier reads of the page carry the cutoff" "2" \
+  "$(grep -c 'STARTED_AT:-}' "$deploy")"
+check "the cutoff is UTC, because createdAt is UTC and the compare is textual" "1" \
+  "$(grep -c 'date -u +%Y-%m-%dT%H:%M:%SZ' "$deploy")"
 check "the token is never echoed" "0" \
   "$(grep -cE '^[[:space:]]*echo [^#]*\$\{?RAILWAY_TOKEN' "$deploy")"
 

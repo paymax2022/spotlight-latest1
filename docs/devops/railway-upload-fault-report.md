@@ -2031,10 +2031,21 @@ services against environment `6b5f27a3-a290-4574-a977-363eb21d43ad`, and the leg
 `deployed` / `build-failed` / `no-new-row` / `other-commit` / `rows-unparseable`
 from the row list, because Episode 18 measured a `true` that created nothing on a
 git-less service, and a short sha created a `FAILED` row for a commit that does not
-exist. `deploy Development (…)` and `deploy Production (…)` still upload; production
+exist. A row is only credited when it was **created after this leg fired** (the leg
+stamps `STARTED_AT` between the baseline read and the mutation): `release.yml` has
+no workflow-level concurrency and two trains on one sha have been seen, so another
+train's — or a re-run's — SUCCESS row names this very commit, is not the baseline,
+and would read `deployed` for a mutation that minted nothing. The cutoff's own
+second counts as ours, because a fast edge can create our row inside it; a row with
+an unrecognised timestamp is never filtered, and over-filtering lands on
+`mutation-is-noop` — a loud red, never a green.
+`deploy Development (…)` and `deploy Production (…)` still upload; production
 is untouched by this and its `frontend-admin` remains a git-less service where the
 mutation is a silent no-op. The behaviour is pinned offline by
-`scripts/ci/test-staging-deploy-watch.sh` (76 checks) wired into `ci.yml`.
+`scripts/ci/test-staging-deploy-watch.sh` (98 checks, and mutation-proven: deleting
+the filter in the classifier turns 7 of them red, deleting the argument in the leg
+turns 3 red — including the leg scenario that would otherwise exit 0 on another
+train's row) wired into `ci.yml`.
 
 **Served state read back after all of it** (`serviceInstance.latestDeployment`,
 not inferred from a run conclusion): development `backend`, `frontend-web` and
