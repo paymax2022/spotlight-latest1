@@ -510,6 +510,17 @@ function CreateCompetitionContent() {
     }
   }, [isEdit, editSlug, form.title, router]);
 
+  // contest_type is shared with the unified engine, so a stored row can hold a
+  // value the registration catalog never offered ('general', 'multi_skill',
+  // 'reality_tv_show', 'STEM'). TYPES has no option for it, and a <select> with a
+  // value matching no option displays the FIRST option while the form keeps the
+  // real one — the editor showed "online_contest", sent "multi_skill", and the
+  // save was refused for a field nobody touched. Offer the stored value, labelled
+  // for what it is, so what the admin sees is what gets written.
+  const typeOptions: string[] = TYPES.includes(form.contestType)
+    ? TYPES
+    : [...TYPES, form.contestType];
+
   if (loading) return <Page><p style={{ color: colors.muted }}>Loading contest…</p></Page>;
 
   return (
@@ -719,8 +730,17 @@ function CreateCompetitionContent() {
           </div>
           <div>
             <label style={labelStyle}>Type</label>
-            <select style={selectStyle} value={form.contestType} onChange={(e) => setForm((f) => ({ ...f, contestType: e.target.value as ContestType }))}>
-              {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            <select
+              aria-label="Contest type"
+              style={selectStyle}
+              value={form.contestType}
+              onChange={(e) => setForm((f) => ({ ...f, contestType: e.target.value as ContestType }))}
+            >
+              {typeOptions.map((t) => (
+                <option key={t} value={t}>
+                  {TYPES.includes(t as ContestType) ? t : `${t} — stored on this contest, not a standard type`}
+                </option>
+              ))}
             </select>
           </div>
           <div>
