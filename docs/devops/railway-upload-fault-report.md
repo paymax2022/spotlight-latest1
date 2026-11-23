@@ -1716,8 +1716,8 @@ built. The step is one command:
 railway status --json > /tmp/railway-status.json
 ```
 
-and job `137235706730`'s successor log shows what it printed back, 0.3 s after the step
-started (13:51:21.380Z):
+and job `137230172408` (run `45029642480`) shows what that command printed back, 0.3 s after
+it started (13:51:21.380Z):
 
 ```
 Failed to fetch: error decoding response body
