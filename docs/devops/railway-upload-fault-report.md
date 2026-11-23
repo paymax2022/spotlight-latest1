@@ -1731,10 +1731,19 @@ project token **decodes fine** and answers the GraphQL read with `Not Authorized
 token **cannot decode the response at all**. The decode refusal therefore tracks a request
 shape, not the upload-initiate call — which narrows the hypothesis in this file's "what is
 F2" section from "the request that obtains the upload destination" to "at least two CLI
-requests, one of which is a plain status read, and not the raw `railway api` path". The
-obvious next measurement is the same `railway status --json` run with the development token
-on the same runner: if it decodes, the response differs by environment and Railway's data is
-the variable; if it refuses too, the pinned CLI is the variable. Neither has been run.
+requests, one of which is a plain status read, and not the raw `railway api` path".
+
+One confound was controlled here rather than assumed. That runner installs
+`@railway/cli@5.40.1` (`ops-railway-upload.yml`, step *Install the pinned Railway CLI*), and
+this laptop runs 5.71.0, so "the CLI is too old for the response" was a live alternative. It
+is not the whole story: `npx @railway/cli@5.40.1 status --json` against this workspace with
+the owner's user token exits 0 and writes 213,691 bytes of parseable JSON. The pinned version
+decodes this project's status when a *user* credential asks for it. What has never been
+measured is the same pinned binary running `railway status --json` on a runner holding the
+development project token: if that decodes, the staging response differs by environment and
+the variable is Railway's data; if it refuses too, the variable is the credential class, and
+the support thread gets a two-line repro — `railway api` decodes a refusal, `railway status`
+cannot decode anything.
 
 **Production `frontend-web` had a different fault, and both halves of it are now read.**
 Three `ops-railway-upload.yml` dispatches fire inside ten minutes, all three aimed at
@@ -1821,7 +1830,10 @@ staging row ended up one documentation commit behind the one this session promot
 above) for a user session that deploys the same three services with `commitSha` five minutes
 later, when the identical call succeeded on these same instances on 2026-11-18? The F2
 question itself is unchanged: staging's upload-initiate still never returns a body, and this
-episode removes only staging's *dependence* on it.
+episode removes only staging's *dependence* on it — and the episode adds one line to that
+question, because `railway status --json` with the same staging project token returns a body
+the CLI cannot decode in 0.3 s, which is the same failure string on an endpoint with no
+upload anywhere in it.
 
 **What this does not fix.** No code, no secret, no workflow changed here. `release.yml`'s
 staging legs still upload with a project token and still die 9/9; production still receives
