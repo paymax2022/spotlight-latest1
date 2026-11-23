@@ -62,7 +62,7 @@ test.describe('Cluster A · Customer Accounts', () => {
       data: { email: 'nobody-uat-a@example.invalid', password: 'Wrong-pass-1' },
     });
     expect(res.status()).toBe(401);
-    // ADR-PR802: the answer carries the machine-readable cause. The blanket
+    // ADR-PR1163: the answer carries the machine-readable cause. The blanket
     // `invalid credentials` is now only the UNCLASSIFIED fallback, so an unknown
     // address must arrive as account_not_found and not as a password verdict.
     const body = await res.json();
@@ -85,13 +85,13 @@ test.describe('Cluster A · Customer Accounts', () => {
     const body = await reset.json();
     expect(String(body.message)).toMatch(/if your email exists/i);
     expect(JSON.stringify(body)).not.toMatch(/not found|no account|does not exist/i);
-    // CONTRACT CHANGED BY ADR-PR802, at the product owner's explicit choice.
+    // CONTRACT CHANGED BY ADR-PR1163, at the product owner's explicit choice.
     // Login used to answer every refusal with 401 `invalid credentials` so that
     // this endpoint could not be used to test whether an address is registered.
     // That generality is what made a locked, suspended, closed or mistyped
     // sign-in unreadable, so login now names the cause instead — which does make
     // it a bounded existence oracle, and that trade is recorded in
-    // docs/adr/ADR-PR802-login-names-the-failure-cause.md. What stays pinned here
+    // docs/adr/ADR-PR1163-login-names-the-failure-cause.md. What stays pinned here
     // is that the two surfaces are no longer the same rule: the reset request is
     // still generic, and the OTP path is unchanged.
     const login = await request.post(`${API}/api/auth/login`, {

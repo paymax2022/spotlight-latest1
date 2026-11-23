@@ -64,7 +64,7 @@ describe('requestSignIn', () => {
   });
 
   it('throws Go\'s error message on a rejected login, unmodified', async () => {
-    // ADR-PR802: Go names the cause, so the sentence that reaches the page has to
+    // ADR-PR1163: Go names the cause, so the sentence that reaches the page has to
     // be the server's, not a client-side re-guess of it. The historic example
     // here was 'invalid credentials', which is now only the unclassified
     // fallback — the named causes are what the user reads.

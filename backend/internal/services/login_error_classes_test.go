@@ -30,7 +30,7 @@ import (
 // attempts remaining); the handler owns the wording and the status code
 // (auth_login_error_classes_test.go).
 //
-// Consequences recorded in docs/adr/ADR-PR802: login becomes a bounded
+// Consequences recorded in docs/adr/ADR-PR1163: login becomes a bounded
 // account-existence oracle, which supersedes the anti-enumeration posture of
 // #788's login leg and amends RST-UAT-0011. That tradeoff is the user's
 // deliberate choice, not an oversight — do not "fix" these back to generic.
@@ -159,7 +159,7 @@ func strPtr(s string) *string { return &s }
 // ── 1. The address simply is not registered ────────────────────────────────
 
 // An email with no platform_users row whose password is rejected by GoTrue is
-// "no account found", not "wrong password". This is the disclosure ADR-PR802
+// "no account found", not "wrong password". This is the disclosure ADR-PR1163
 // accepts in exchange for telling people the truth.
 func TestLoginClass_UnknownEmailIsAccountNotFound(t *testing.T) {
 	st := &loginClassStub{platformRows: `[]`}

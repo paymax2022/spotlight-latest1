@@ -25,8 +25,8 @@ const FRIENDLY: Record<string, string> = {
   REFUND_PROCESSED:     'Transaction failed. Your wallet has been refunded.',
 };
 
-// The login refusal codes Go sends since ADR-PR802 (see
-// backend/internal/handlers/auth_handler.go and docs/adr/ADR-PR802-*.md). Each one
+// The login refusal codes Go sends since ADR-PR1163 (see
+// backend/internal/handlers/auth_handler.go and docs/adr/ADR-PR1163-*.md). Each one
 // already arrives with a sentence naming the cause, and THAT sentence is the whole
 // point of the change: a locked, suspended, closed, unregistered or mistyped
 // sign-in must not be reported as "wrong password". So these codes are rendered
@@ -109,7 +109,7 @@ export function getErrorMessage(error: unknown, opts?: ErrorMessageOptions): str
   if (opts?.authAttempt && normalized.status === 401 && !(normalized.code && LOGIN_CAUSE_CODES.includes(normalized.code))) {
     // Only the UNNAMED 401 needs the generic credentials copy. Once Go names the
     // cause, replacing its sentence with "incorrect email/phone number or
-    // password" is the generalisation ADR-PR802 removes.
+    // password" is the generalisation ADR-PR1163 removes.
     return FRIENDLY.INVALID_CREDENTIALS;
   }
   return normalized.message;

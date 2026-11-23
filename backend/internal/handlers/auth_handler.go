@@ -388,7 +388,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			})
 			return
 		}
-		// Everything below is ADR-PR802: one status, one code and one plain
+		// Everything below is ADR-PR1163: one status, one code and one plain
 		// sentence per cause. Each sentence names the thing that is actually
 		// wrong, because "invalid credentials" told a locked, suspended,
 		// unregistered or mistyped user that their password was wrong — and they

@@ -32,7 +32,7 @@ test('the sign-in 401 names the way out', () => {
   assert.match(msg, /forgot password/i, 'a rejected sign-in must point at the reset path');
 });
 
-// ADR-PR802: Go now names WHY a sign-in was refused, in the response body. The
+// ADR-PR1163: Go now names WHY a sign-in was refused, in the response body. The
 // mapper's job stops being to invent that sentence. Each cause must reach the
 // screen in the server's own words — this is the whole point of the change, and
 // the locked/suspended/unregistered cases are exactly what the generic copy used

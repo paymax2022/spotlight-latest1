@@ -377,7 +377,7 @@ func TestLoginUser_MissingPlatformUsersRowRefusesLogin(t *testing.T) {
 	// consulted for classification only, and a 2xx answer is thrown away (see
 	// TestLoginClass_GoTrueAcceptsWithoutPlatformRowRefuses).
 	//
-	// What ADR-PR802 changed is the WORDING: the refusal no longer claims the
+	// What ADR-PR1163 changed is the WORDING: the refusal no longer claims the
 	// password was wrong. GoTrue rejecting an address with no local row means
 	// the address is not registered, and that is what the user is told.
 	srv := authServerNoPlatformRow(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

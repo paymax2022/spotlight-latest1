@@ -154,7 +154,7 @@ func TestLoginUser_GoTrueUndecodable2xxIsUnavailable(t *testing.T) {
 // password during a healthy window is the only thing the lockout budget exists
 // for.
 //
-// What changed (ADR-PR802) is only the WORDING: the strike now reports
+// What changed (ADR-PR1163) is only the WORDING: the strike now reports
 // ErrIncorrectPassword with the budget left, instead of the blanket
 // "invalid credentials" that also covered locked, suspended and unregistered
 // accounts.

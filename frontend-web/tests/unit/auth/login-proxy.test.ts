@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 //
 // It used to document the opposite — "It answers 401 with a DELIBERATELY generic
 // message so a wrong password and an unknown account are indistinguishable; do
-// not enrich it here." Since ADR-PR802 Go names the cause (locked / suspended /
+// not enrich it here." Since ADR-PR1163 Go names the cause (locked / suspended /
 // closed / wrong password / no such account / unusable or ambiguous identifier),
 // each with its own status, `code` and sentence. These tests pin the seam so a
 // future edit cannot re-flatten them on the way to the browser.

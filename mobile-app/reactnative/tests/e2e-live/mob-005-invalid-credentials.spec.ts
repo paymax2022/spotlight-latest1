@@ -11,7 +11,7 @@ import {
 /**
  * MOB-005 — invalid credentials produce the error state.
  *
- * The live proxy answers 401 for a bad password. Since ADR-PR802 that 401 also
+ * The live proxy answers 401 for a bad password. Since ADR-PR1163 that 401 also
  * NAMES the cause (`code: incorrect_password` plus a sentence carrying the
  * attempts left), and errorMapper passes the server's words through instead of
  * substituting the generic INVALID_CREDENTIALS copy — which is now only the

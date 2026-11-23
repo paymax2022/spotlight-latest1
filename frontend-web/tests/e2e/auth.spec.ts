@@ -54,7 +54,7 @@ test.describe('AUTH-001: login → protected route → logout', () => {
 
         // This lane hits whatever backend is deployed, so BAD_CREDENTIALS_TEXT is
         // deliberately a union: an unregistered address is now "No account found
-        // for …" (ADR-PR802) but a pre-PR802 Go still answers "invalid credentials"
+        // for …" (ADR-PR1163) but a pre-PR802 Go still answers "invalid credentials"
         // → "Invalid email or password." What must never happen either way is
         // silence, and the exact per-cause sentences are pinned where they can be
         // controlled — tests/unit/auth/login-proxy.test.ts and login-flow.test.ts.

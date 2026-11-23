@@ -94,7 +94,7 @@ UI shows exactly `Incorrect email/phone number or password. Please try again.`;
 stays on `/login`, no session persisted.
 
 > **Contract note (2026-11-24).** The sentence above is what that run rendered. Since
-> [ADR-PR802](../../adr/ADR-PR802-login-names-the-failure-cause.md) a wrong password on a known
+> [ADR-PR1163](../../adr/ADR-PR1163-login-names-the-failure-cause.md) a wrong password on a known
 > account arrives as `401 incorrect_password` and `errorMapper` now passes the server's sentence
 > through — `Incorrect password for <what you typed>. N attempts left before the account locks.
 > Use Forgot password to reset it.` The generic copy remains only for an **unnamed** 401. The

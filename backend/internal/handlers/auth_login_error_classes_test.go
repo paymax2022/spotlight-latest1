@@ -25,7 +25,7 @@ import (
 // clear and say it .. do not generalize the issues".
 //
 // So: one status + one code + one human sentence per cause, and each sentence
-// must name the actual cause. Recorded in docs/adr/ADR-PR802; the
+// must name the actual cause. Recorded in docs/adr/ADR-PR1163; the
 // anti-enumeration leg of #788 and RST-UAT-0011 are amended accordingly.
 
 type loginClass struct {

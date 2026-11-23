@@ -32,7 +32,7 @@ function toReadableAuthError(err: unknown, fallback: string): string {
   // name a cause", so they still read the same.
   //
   // Everything Go names now arrives as a finished sentence — locked, suspended,
-  // closed, wrong password with the attempts left, no such account (ADR-PR802) —
+  // closed, wrong password with the attempts left, no such account (ADR-PR1163) —
   // and it must reach the user unchanged through the final `return message`. Do
   // not add branches that re-generalise those; that is the bug being fixed.
   if (lowered.includes('invalid login credentials') || lowered.includes('invalid credentials')) {

@@ -27,7 +27,7 @@ Spec: `mobile-app/reactnative/tests/e2e/food-uat/cluster-a-identity-rbac.spec.ts
 | RST-UAT-0008 | Protect session on token expiry | P0 | Core | In-Scope | Blocked | Needs real session with controllable expiry | — |
 | RST-UAT-0009 | Update customer profile | P1 | Core | In-Scope | Blocked | Needs real session + R2 | — |
 | RST-UAT-0010 | Manage saved addresses | P1 | Core | In-Scope | Blocked | Needs real session, two devices | — |
-| RST-UAT-0011 | Prevent insecure account enumeration (login side superseded by ADR-PR802) | P1 | Core | In-Scope | Pass (amended) | Spec test passed live: `POST /api/auth/request-password-reset` unknown email -> 200 "If your email exists, reset instructions were sent."; login unknown -> 401 generic. (Only the unknown-identifier side was probed; existing-account parity not compared.) **The generic-login half of this requirement was deliberately retired by** [ADR-PR802](../../adr/ADR-PR802-login-names-the-failure-cause.md) **— login now answers 401 `account_not_found` with a sentence naming the address, so this row passes only for the reset and OTP surfaces. See "Contract amendment (ADR-PR802)" below** | — |
+| RST-UAT-0011 | Prevent insecure account enumeration (login side superseded by ADR-PR1163) | P1 | Core | In-Scope | Pass (amended) | Spec test passed live: `POST /api/auth/request-password-reset` unknown email -> 200 "If your email exists, reset instructions were sent."; login unknown -> 401 generic. (Only the unknown-identifier side was probed; existing-account parity not compared.) **The generic-login half of this requirement was deliberately retired by** [ADR-PR1163](../../adr/ADR-PR1163-login-names-the-failure-cause.md) **— login now answers 401 `account_not_found` with a sentence naming the address, so this row passes only for the reset and OTP surfaces. See "Contract amendment (ADR-PR1163)" below** | — |
 | RST-UAT-0012 | Handle revoked second device session | P0 | Core | In-Scope | Blocked | Needs two live sessions + global sign-out | — |
 | RST-UAT-0013 | Find merchant upgrade from customer profile | P0 | Core | In-Scope | Blocked | Harness. Code: `app/food/index.tsx:413-430` label "Sell food on Paymax — set up your restaurant" -> `/food/restaurant`, same session, no separate sign-up | — |
 | RST-UAT-0014 | Preserve identity and history after upgrade | P0 | Core | In-Scope | Blocked | Needs seeded history. By construction `restaurants.owner_id` = auth user id | — |
@@ -249,7 +249,7 @@ Method note: no test in this spec was skipped because of the harness itself. The
 | RST-UAT-0013 | Blocked (harness) | **Pass** (DISSOLVED) | Live: `/food` shows "Sell food on Paymax — set up your restaurant"; click -> `/food/restaurant`, same session, URL not signup/register |
 | RST-UAT-0052 | Blocked (harness) | **Pass** (DISSOLVED) | Live: "Restaurant owner dashboard" -> `/food/restaurant`; back to `/food` shows "Food & Delivery" and "My orders" with the same session |
 | RST-UAT-0053 | Blocked (harness) | **Pass** (DISSOLVED) | Live: `/food/rider` renders "Rider · Offers", "Available offers", empty state on a customer session (no role gate on the client); `/food` reachable again. One cold-compile timeout on the first run, green on re-run and final run |
-| RST-UAT-0005 | Blocked | Blocked (unchanged) | Invalid-credential leg passes (401 `invalid credentials`); valid-login leg needs a fixture credential — **the sentence in this cell was true when recorded; see "Contract amendment (ADR-PR802)" below** |
+| RST-UAT-0005 | Blocked | Blocked (unchanged) | Invalid-credential leg passes (401 `invalid credentials`); valid-login leg needs a fixture credential — **the sentence in this cell was true when recorded; see "Contract amendment (ADR-PR1163)" below** |
 | RST-UAT-0011 | Pass | Pass (unchanged) | Re-confirmed live |
 | RST-UAT-0056 / 0057 / 0059 / 0062 | Blocked | Blocked (unchanged; unauth+forged legs re-confirmed passing) | Customer/merchant/rider/admin-token legs still need seeded multi-actor fixtures |
 | RST-UAT-0001-0004, 0006-0010, 0012 | Blocked | Blocked (unchanged) | OTP gateway / disabled-account / expiring-session / two-device fixtures absent |
@@ -261,7 +261,7 @@ Method note: no test in this spec was skipped because of the harness itself. The
 
 Net for Cluster A: **3 statuses changed (Blocked -> Pass, all DISSOLVED), 0 dissolved Fail -> Pass, 13 Fail remain, 3 of 37 Blocked resolved (34 still Blocked on missing fixtures, not harness).** Revised totals: Pass 4, Fail 13, Blocked 34, N/A 12.
 
-## Contract amendment (ADR-PR802): login names the cause
+## Contract amendment (ADR-PR1163): login names the cause
 
 Recorded 2026-11-24, against `main` after PR #1160. This section does not restate the
 Phase 3 / Phase 5 results above — those were true of the backend at the time they were
@@ -301,7 +301,7 @@ unregistered one, and the 423/403 causes reveal account state. The mitigation is
 rate-limited and self-limiting (5 strikes → 30-minute lock), the resolved email behind a phone
 identifier is never echoed (only what the caller typed), and the reset and OTP surfaces stay
 generic. The full trade-off and the revisit options are in
-[ADR-PR802](../../adr/ADR-PR802-login-names-the-failure-cause.md).
+[ADR-PR1163](../../adr/ADR-PR1163-login-names-the-failure-cause.md).
 
 **Known gap found while writing this, not fixed here.** A successful password reset does not
 clear `failed_login_attempts` or `locked_until`, so the "Incorrect password … Use Forgot

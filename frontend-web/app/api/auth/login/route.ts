@@ -77,7 +77,7 @@ export async function POST(request: Request) {
       //
       // Go used to answer every refusal with a deliberately generic 401
       // "invalid credentials", and this route documented that as something not to
-      // enrich. It no longer does that (ADR-PR802): each cause now has its own
+      // enrich. It no longer does that (ADR-PR1163): each cause now has its own
       // status, `code`, and a sentence that names the problem — locked, suspended,
       // closed, wrong password, no such account, unusable/ambiguous identifier.
       // Nothing here may rewrite or re-generalise them; the client renders `error`

@@ -358,7 +358,7 @@ var ErrAuthUnavailable = errors.New("authentication service unavailable")
 
 // LOGIN FAILURE CAUSES — one per thing that can actually be wrong.
 //
-// Until ADR-PR802 every refusal below collapsed into errors.New("invalid
+// Until ADR-PR1163 every refusal below collapsed into errors.New("invalid
 // credentials"), which the handler answered as a bare 401. That was a
 // deliberate anti-enumeration choice (#788), and in practice it told a user
 // whose account was LOCKED, whose account was SUSPENDED, whose address was
@@ -367,7 +367,7 @@ var ErrAuthUnavailable = errors.New("authentication service unavailable")
 // password they remembered correctly, each retry another strike against the
 // lockout budget. A real user lost an afternoon to exactly that.
 //
-// The product decision is now to tell the truth (docs/adr/ADR-PR802). These
+// The product decision is now to tell the truth (docs/adr/ADR-PR1163). These
 // are the causes; the handler owns wording and status, this layer owns
 // classification and the data a sentence needs (unlock time, strikes left).
 //
@@ -450,7 +450,7 @@ func (s *authService) LoginUser(ctx context.Context, in domain.LoginRequest) (ma
 	if idErr != nil {
 		// A cause, not a guess: unparseable input, an unknown number, a number on
 		// two accounts, and an unreadable lookup are four different things and the
-		// user's next step differs for each. Before ADR-PR802 all four answered
+		// user's next step differs for each. Before ADR-PR1163 all four answered
 		// "invalid credentials".
 		return nil, idErr
 	}
@@ -479,7 +479,7 @@ func (s *authService) LoginUser(ctx context.Context, in domain.LoginRequest) (ma
 			// creation — so a normal account always has a row by the time it can
 			// log in at all. A missing row is still anomalous and still must not
 			// produce a session: skipping the gate silently was the original bug.
-			// What changed (ADR-PR802) is the ANSWER — GoTrue decides whether this
+			// What changed (ADR-PR1163) is the ANSWER — GoTrue decides whether this
 			// is "no such account" or "your account record is broken", instead of
 			// both claiming the password was wrong.
 			rowMissing = true
@@ -548,7 +548,7 @@ func (s *authService) LoginUser(ctx context.Context, in domain.LoginRequest) (ma
 		// A definitive 4xx credential rejection. With no platform_users row there
 		// is nothing to strike and no account to sign in: GoTrue just confirmed
 		// the address is not registered (or not with that password) — the truth
-		// is "no account found", which is ADR-PR802's disclosure.
+		// is "no account found", which is ADR-PR1163's disclosure.
 		if rowMissing {
 			return nil, fail(ErrAccountNotFound)
 		}
@@ -590,7 +590,7 @@ func (s *authService) LoginUser(ctx context.Context, in domain.LoginRequest) (ma
 	// credential problem the user can fix. No address in the line: an access log
 	// of addresses is a user list.
 	if rowMissing {
-		log.Printf("[auth] LOGIN: GoTrue accepted a password with no platform_users row — session withheld (identity-bridge drift, ADR-PR802)")
+		log.Printf("[auth] LOGIN: GoTrue accepted a password with no platform_users row — session withheld (identity-bridge drift, ADR-PR1163)")
 		return nil, fail(ErrIdentityRecordMissing)
 	}
 	// The ACCOUNT email, which is not the same as what the caller sent — login

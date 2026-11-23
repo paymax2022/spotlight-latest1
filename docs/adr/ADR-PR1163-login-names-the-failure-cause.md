@@ -1,4 +1,4 @@
-# ADR-PR802: Login names the cause; locked, wrong-password and unknown-account stop sharing one message
+# ADR-PR1163: Login names the cause; locked, wrong-password and unknown-account stop sharing one message
 
 ## Status
 Proposed
