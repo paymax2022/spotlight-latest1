@@ -129,6 +129,23 @@ cat > "$work/bin/railway" <<'STUB'
 # release.
 cmd="${1:-}"; shift || true
 
+# Which command shape reached this stub. The release job's env sets BOTH
+# `RAILWAY_PROJECT` and `RAILWAY_HTTP_TIMEOUT`; the probe job whose identical call
+# ANSWERS sets neither — run 45319901941 at 2026-11-24T03:31:15Z resolved
+# `serviceInstance{latestDeployment}` with the same token, the same CLI and the
+# same document six minutes after train 45315222075 was refused it three times
+# per leg. A leg that changes shape between attempts has to show that in the log,
+# so every call records the env it arrived under.
+if [ -n "${RAILWAY_PROJECT:-}" ] || [ -n "${RAILWAY_HTTP_TIMEOUT:-}" ]; then
+  api_shape=inherited
+else
+  api_shape=stripped
+fi
+record_api() {
+  printf 'api-call kind=%s shape=%s timeout=%s\n' "$1" "$api_shape" \
+    "${RAILWAY_HTTP_TIMEOUT:-none}" >> "$STUB_SHAPE_LOG"
+}
+
 base="$(printf '{"id":"%s","status":"SUCCESS","meta":{"commitHash":"%s"}}' "$BASE_ID" "$OTHER_SHA")"
 row() { printf '{"id":"%s","status":"%s","meta":%s}' "$NEW_ID" "$1" "$2"; }
 
@@ -212,6 +229,7 @@ case "$cmd" in
         # shape reason.
         printf 'connection-doc\n' >> "$STUB_ROWS_LOG"
         printf 'api-rows %s\n' "$*" >> "$STUB_ROWS_LOG"
+        record_api connection
         # `n=1` is the baseline read; anything bigger is the watch looking again.
         first=10
         for a in "$@"; do
@@ -250,6 +268,17 @@ case "$cmd" in
         kind=lookup
         [ "$mutated" = 0 ] && kind=baseline
         printf 'latest-%s %s\n' "$kind" "$*" >> "$STUB_ROWS_LOG"
+        record_api "$kind"
+        # `env-shape`: the measured discriminator stated as a stub rule. The
+        # identical read answers when the CLI is called without the release job's
+        # two env vars and is refused with the real 503 sentence when they are
+        # present. So a leg that never changes command shape cannot get past its
+        # first attempt, and a leg that changes shape but cannot remember which
+        # shape answered gets refused again on every poll.
+        if [ "${STUB_MODE}" = env-shape ] && [ "$api_shape" = inherited ]; then
+          echo "Error: Railway API request failed with HTTP 503 Service Unavailable (unconditional drop overload)" >&2
+          exit 1
+        fi
         if [ "$kind" = baseline ]; then
           printf 'rows1\n' >> "$STUB_ROWS_LOG"
           n=0; [ -f "$STUB_BASELINE_COUNT" ] && n="$(cat "$STUB_BASELINE_COUNT")"
@@ -300,6 +329,7 @@ case "$cmd" in
         ;;
     esac
     printf 'api %s\n' "$*" >> "$STUB_API_LOG"
+    record_api mutation
     n=0; [ -f "$STUB_API_COUNT" ] && n="$(cat "$STUB_API_COUNT")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_API_COUNT"
     case "${STUB_MODE}" in
@@ -319,6 +349,7 @@ case "$cmd" in
   deployment)
     sub="${1:-}"; shift || true
     [ "$sub" = list ] || { echo "STUB: unexpected deployment subcommand: $sub" >&2; exit 1; }
+    record_api list
     # The shape train 45234100845 hit on every staging leg at 18:33:15Z: the
     # name-resolved list call refuses with a non-zero exit and its sentence on
     # stderr only. The leg that swallowed it died 1.1 s after printing its
@@ -394,10 +425,15 @@ check() { # <label> <expected> <actual>
 # the three: the `deployments(input:)` connection is the read that train
 # 45302515868 was refused on with HTTP 503, so a leg that returns to it is
 # visible as a non-zero count here even though the stub still answers it.
+# Fields 7 and 8 split the MUTATION by command shape, because the two jobs that
+# reach this endpoint disagree on nothing else the leg controls: the release job
+# exports RAILWAY_PROJECT and RAILWAY_HTTP_TIMEOUT and the probe job, whose call
+# answers, exports neither. A leg that writes under the job's own env counts 1/0;
+# one that falls back after a refusal counts 1/1.
 run_leg() {
   local mode="$1" rc
   : > "$work/up.$mode"; : > "$work/api.$mode"; : > "$work/list.$mode"
-  : > "$work/rows.$mode"
+  : > "$work/rows.$mode"; : > "$work/shape.$mode"
   : > "$work/api_count.$mode"; : > "$work/poll_count.$mode"
   : > "$work/baseline_count.$mode"
   (
@@ -405,6 +441,7 @@ run_leg() {
     STUB_MODE="$mode" \
       STUB_UP_LOG="$work/up.$mode" STUB_API_LOG="$work/api.$mode" \
       STUB_LIST_LOG="$work/list.$mode" STUB_ROWS_LOG="$work/rows.$mode" \
+      STUB_SHAPE_LOG="$work/shape.$mode" \
       STUB_API_COUNT="$work/api_count.$mode" \
       STUB_POLL_COUNT="$work/poll_count.$mode" \
       STUB_BASELINE_COUNT="$work/baseline_count.$mode" \
@@ -412,18 +449,21 @@ run_leg() {
       SERVICE=backend RAILWAY_ENV=staging SHA="$SHA_STUB" \
       RAILWAY_TOKEN=rlwy_stub_value_never_printed \
       RAILWAY_PROJECT=00000000-0000-0000-0000-000000000000 \
+      RAILWAY_HTTP_TIMEOUT=600 \
       DEPLOY_METHOD=mutation SERVICE_ID="$BACKEND_ID" \
       RAILWAY_ENVIRONMENT_ID="$STAGING_ENV_ID" \
       ATTEMPTS=4 MUT_RETRY_ATTEMPTS=1 MUT_RETRY_BASE_DELAY_S=0 \
       bash "$deploy" >"$work/out.$mode" 2>&1
   )
   rc=$?
-  printf '%s %s %s %s %s %s' "$rc" \
+  printf '%s %s %s %s %s %s %s %s' "$rc" \
     "$(count "$work/up.$mode" '^railway up')" \
     "$(num "$work/api_count.$mode")" \
     "$(( $(count "$work/list.$mode" '^list10$') + $(count "$work/rows.$mode" '^rows10$') ))" \
     "$(count "$work/list.$mode" '^list')" \
-    "$(count "$work/rows.$mode" '^connection-doc$')"
+    "$(count "$work/rows.$mode" '^connection-doc$')" \
+    "$(count "$work/shape.$mode" '^api-call kind=mutation shape=inherited timeout=')" \
+    "$(count "$work/shape.$mode" '^api-call kind=mutation shape=stripped timeout=')"
 }
 
 echo "=== the leg, green: the two shapes a real deploy row arrives in"
@@ -492,9 +532,19 @@ check "list-refused: the token appears in no recorded argv" "0" \
 # Without this cell the fix could be reduced to `printf 'null'; return 0` (an
 # honest-looking empty page) and the suite would still pass, while a real CI leg
 # went back to dying 1.1 s in with no reason in the log.
+#
+# What changed on 2026-11-24 is the OUTCOME, not the loudness. A refused
+# baseline read used to end the leg before it asked for a deploy; that made the
+# release red while leaving the only unmeasured cell in the dark — no staging
+# mutation has ever been sent from a release job, because every leg died at the
+# read in front of it. The leg now asks twice more under the other command shape
+# and, if nothing answers, fires the mutation with no baseline and says exactly
+# that. The evidence then is the cutoff plus the commit the row names, which is
+# what `stale-green` already pins, and the read after the mutation gets its own
+# named failure instead of borrowing `mutation-is-noop` from the decision rule.
 out="$(run_leg rows-refused)"; set -- $out
-check "rows-refused: the leg is RED (no baseline, no verdict)" "1" "$1"
-check "rows-refused: sends NO mutation (it refuses to guess at 'new row')" "0" "$3"
+check "rows-refused: the leg is still RED (it cannot confirm what it did)" "1" "$1"
+check "rows-refused: it fired the mutation anyway instead of dying at the read" "1" "$3"
 check "rows-refused: the log says the row read failed" "yes" \
   "$(grep -q 'row read failed (rc=1)' "$work/out.rows-refused" && echo yes || echo no)"
 check "rows-refused: the log names WHICH read failed" "yes" \
@@ -503,31 +553,69 @@ check "rows-refused: the log keeps the CLI's reason, not just a bare rc" "yes" \
   "$(grep -q 'Not Authorized' "$work/out.rows-refused" && echo yes || echo no)"
 check "rows-refused: the log names the ids the read was aimed at" "yes" \
   "$(grep -q "service=$BACKEND_ID env=$STAGING_ENV_ID" "$work/out.rows-refused" && echo yes || echo no)"
-check "rows-refused: the named guard still fires" "yes" \
-  "$(grep -q 'could not read the pre-mutation' "$work/out.rows-refused" && echo yes || echo no)"
+check "rows-refused: the degraded start is announced, not silently trusted" "yes" \
+  "$(grep -q 'continuing without a baseline id' "$work/out.rows-refused" && echo yes || echo no)"
+check "rows-refused: the old pre-mutation guard is gone" "0" \
+  "$(count "$work/out.rows-refused" 'could not read the pre-mutation')"
+check "rows-refused: the post-mutation read failure has its own name" "yes" \
+  "$(grep -q 'could not read the deployment row after the mutation' "$work/out.rows-refused" && echo yes || echo no)"
+check "rows-refused: a blind watch is NOT reported as a no-op" "0" \
+  "$(count "$work/out.rows-refused" 'mutation-is-noop')"
 check "rows-refused: never ran railway up" "0" "$2"
-# The retry ladder is bounded, and this is where that is measured: three
-# attempts and no fourth. An unbounded ladder on the pre-mutation read is a leg
-# that hangs a release instead of failing it, and a leg that gives up after one
-# try is a leg that reds a release over one dropped connection.
-check "rows-refused: retried the baseline read EXACTLY three times, no more" "3" \
+# Three attempts, in two command shapes, and no fourth: bounded like the
+# mutation's own ladder, because a permanent refusal must reach the log while
+# the job is still interesting.
+check "rows-refused: tried the baseline read EXACTLY three times, no more" "3" \
   "$(count "$work/rows.rows-refused" '^rows1$')"
+check "rows-refused: attempt 1 kept the job's env, attempts 2-3 dropped it" "1" \
+  "$(count "$work/shape.rows-refused" '^api-call kind=baseline shape=inherited timeout=')"
+check "rows-refused: the two fallback attempts were the stripped shape" "2" \
+  "$(count "$work/shape.rows-refused" '^api-call kind=baseline shape=stripped timeout=')"
 check "rows-refused: never fell back to the connection or the name lookup" "0" \
   "$(( $5 + $6 ))"
 
 # A refusal shaped as HTTP 200 carrying errors[] rather than a non-zero exit —
 # the shape this API uses for `Not Authorized`, and the one that a leg which
 # parses "did the CLI succeed" instead of "did Railway answer" reads as a clean
-# empty environment. Same required outcome as rows-refused, different mechanism:
-# a missing `.data` must never become a blank slate to diff against.
+# empty environment. Here only the PRE-mutation read is refused; every lookup
+# after the mutation answers. That makes this the clearest statement of the new
+# rule: an unreadable baseline is no longer a reason not to deploy, because the
+# row the leg then finds either names this commit after STARTED_AT or it does
+# not, and the green below is that judgement working with no baseline at all.
 out="$(run_leg latest-errors)"; set -- $out
-check "latest-errors: an errors[] body is RED, not an empty environment" "1" "$1"
-check "latest-errors: sends NO mutation" "0" "$3"
+check "latest-errors: a refused baseline read does not block the deploy" "0" "$1"
+check "latest-errors: sent exactly one mutation" "1" "$3"
 check "latest-errors: the log keeps the CLI's reason" "yes" \
   "$(grep -q 'Not Authorized' "$work/out.latest-errors" && echo yes || echo no)"
-check "latest-errors: the named guard fires" "yes" \
-  "$(grep -q 'could not read the pre-mutation' "$work/out.latest-errors" && echo yes || echo no)"
+check "latest-errors: the degraded start is announced" "yes" \
+  "$(grep -q 'continuing without a baseline id' "$work/out.latest-errors" && echo yes || echo no)"
+check "latest-errors: it still reached a deployed verdict" "yes" \
+  "$(grep -q 'deployed 1111111111.* (mutation)' "$work/out.latest-errors" && echo yes || echo no)"
+check "latest-errors: tried the read a bounded 3 times before degrading" "3" \
+  "$(count "$work/rows.latest-errors" '^rows1$')"
 check "latest-errors: never ran railway up" "0" "$2"
+
+# The discriminator as measured, stated as a scenario: the identical read is
+# refused while the job's two env vars are present and answered once they are
+# not (release job 03:24:32Z vs probe job 03:31:15Z, same token, same CLI, same
+# document, same runner image). A leg that never changes shape dies here; a leg
+# that changes shape but cannot REMEMBER which shape answered gets refused again
+# on every poll, which the last check is for.
+out="$(run_leg env-shape)"; set -- $out
+check "env-shape: the leg goes GREEN by dropping the two env vars" "0" "$1"
+check "env-shape: gave up on the job's own env after one attempt" "1" \
+  "$(count "$work/rows.env-shape" '^rows1$')"
+check "env-shape: the log records the shape the reads ended up using" "yes" \
+  "$(grep -q 'row reads run under command shape: stripped' "$work/out.env-shape" && echo yes || echo no)"
+check "env-shape: exactly one read failure, then silence" "1" \
+  "$(count "$work/out.env-shape" 'row read failed')"
+check "env-shape: every poll reused the shape that answered" "0" \
+  "$(count "$work/shape.env-shape" '^api-call kind=lookup shape=inherited timeout=')"
+check "env-shape: the mutation still ran under the job's own env first" "1" "$7"
+check "env-shape: sent exactly one mutation" "1" "$3"
+check "env-shape: reached the deployed verdict" "yes" \
+  "$(grep -q 'deployed 1111111111.* (mutation)' "$work/out.env-shape" && echo yes || echo no)"
+check "env-shape: never ran railway up" "0" "$2"
 
 # One dropped connection on the pre-mutation read must not be a red release: the
 # same read made again answers, and the leg deploys.
@@ -586,21 +674,40 @@ check "build-failed: still never ran railway up" "0" "$2"
 
 out="$(run_leg refused)"; set -- $out
 check "a refused mutation is RED" "1" "$1"
-check "a refused mutation tried the mutation once" "1" "$3"
+# A mutation refused under the job's own env is asked once more with the two
+# variables the answer-in-CI probe job does not export, because that pair is the
+# only thing that separates a call Railway answers (run 45319901941,
+# 2026-11-24T03:31:15Z) from one it drops (train 45315222075, 03:24:32Z). The
+# first attempt still runs under the release job's env: the write cell in a
+# release job has never been measured, and 1/0 vs 1/1 is how the job log says
+# which shape it was measured under.
+check "a refused mutation asked the job's own env first, then the stripped shape" "1" "$7"
+check "a refused mutation re-asked under the stripped shape" "1" "$8"
+check "a refused mutation tried the mutation twice in total" "2" "$3"
 check "a refused mutation polls ZERO times (fails at once, not after 10 min)" "0" "$4"
+check "a refused mutation logs both verdicts, not just the last" "2" \
+  "$(count "$work/out.refused" '^mutation verdict:')"
 check "the HTTP-200 errors[] body reads as a token refusal" "yes" \
   "$(grep -q 'token-rejected' "$work/out.refused" && echo yes || echo no)"
 
+# The pre-mutation read answered cleanly and there was no row: the environment
+# has never deployed. That is a READABLE answer, not a refusal, and the two must
+# not be treated alike — retrying it three times spends three requests on a fact
+# that will not change, and refusing to deploy turns a first deploy into a red
+# release. With no baseline to exclude, the STARTED_AT cutoff and the commit the
+# row names carry the whole decision, which is what the last two checks here are
+# for: the row the leg then sees names ANOTHER commit, and the leg says so rather
+# than calling it new.
 out="$(run_leg no-baseline)"; set -- $out
-check "an unreadable baseline is RED" "1" "$1"
-check "an unreadable baseline sends NO mutation (it refuses to guess at 'new row')" "0" "$3"
-# `latestDeployment: null` is a READABLE answer that names no row. Retrying it
-# three times is the ladder working as designed; treating it as a blank slate
-# would be the false green, and crediting the first row that appears after the
-# mutation — whoever minted it — is exactly what the guard above exists to stop.
-check "an unreadable baseline still retries the read a bounded 3 times" "3" \
+check "an empty-but-readable baseline DEPLOYS anyway" "1" "$1"
+check "an empty-but-readable baseline sent its mutation" "1" "$3"
+check "a readable 'no rows' answer is not retried (1 read, not 3)" "1" \
   "$(count "$work/rows.no-baseline" '^rows1$')"
-check "an unreadable baseline never ran railway up" "0" "$2"
+check "an empty baseline still judges the page it can see" "yes" \
+  "$(grep -q 'row-naming-another-commit' "$work/out.no-baseline" && echo yes || echo no)"
+check "an empty baseline: the log says there was no pre-existing row" "yes" \
+  "$(grep -q 'no pre-existing deployment row' "$work/out.no-baseline" && echo yes || echo no)"
+check "an empty baseline never ran railway up" "0" "$2"
 
 echo "=== the guards: a leg that cannot be aimed says so before asking Railway"
 guards="$(
@@ -697,6 +804,14 @@ check "watch: the baseline is excluded by id even when it is newer than the cuto
   "no-new-row" "$(cell watch "[$(rowd "$BASE_ID" SUCCESS "2026-11-23T14:05:00.000Z" "{\"commitHash\":\"$SHA_STUB\"}")]" "$BASE_ID" "$SHA_STUB" "$CUTOFF")"
 check "watch: a scenery-only page is a no-op, not another train's commit" \
   "no-new-row" "$(cell watch "[$STALE_OK,$BASE_ROW]" "$BASE_ID" "$SHA_STUB" "$CUTOFF")"
+# The degraded leg — a baseline read that never answered — has no id to exclude,
+# so the cutoff must do the whole job alone. These two cells are what make
+# "continuing without a baseline id" safe rather than a green that can be bought
+# by a previous train's row.
+check "watch: no baseline id + a pre-cutoff row is still scenery" \
+  "no-new-row" "$(cell watch "[$STALE_OK]" "" "$SHA_STUB" "$CUTOFF")"
+check "watch: no baseline id + a post-cutoff row naming the sha is deployed" \
+  "deployed" "$(cell watch "[$FRESH_OK]" "" "$SHA_STUB" "$CUTOFF")"
 check "stale: a row a second before the cutoff is stale" "stale" \
   "$(cell stale "{\"createdAt\":\"2026-11-23T13:59:59.900Z\"}" "2026-11-23T14:00:00Z")"
 check "stale: the cutoff's own second belongs to this attempt, not to the previous train" "new" \
@@ -754,6 +869,21 @@ check "no leg anywhere in this suite used the name-resolved list reader" "0" \
   "$(cat "$work"/list.* 2>/dev/null | grep -c '^list')"
 check "the document is never the latestCommit spelling" "0" \
   "$(grep -c 'latestCommit:' "$deploy")"
+# The two command shapes, pinned in the source as well as behaved above: the
+# release job's own env (RAILWAY_PROJECT + RAILWAY_HTTP_TIMEOUT) and the probe
+# job's (neither). `env` with `-u` is the only way to ask the same binary the
+# same question without those two, so a revert to "one shape, forever" has to
+# trip here as well as in the `env-shape` scenario.
+check "railway-deploy.sh can drop the release job's two env vars" "yes" \
+  "$([ "$(grep -c 'env -u RAILWAY_PROJECT -u RAILWAY_HTTP_TIMEOUT' "$deploy")" -ge 2 ] && echo yes || echo no)"
+# ... and the strip must stay off the upload path: RAILWAY_HTTP_TIMEOUT=600 is
+# why a 110 MB frontend-web upload survives at all (the CLI default is 90 s), so
+# a leg that stripped it for `railway up` would bring F2's cousin back as a
+# truncated upload on dev and production, which this suite does not cover.
+check "the stripped shape never wraps railway up" "0" \
+  "$(grep -c 'env -u RAILWAY_PROJECT -u RAILWAY_HTTP_TIMEOUT railway up' "$deploy")"
+check "every row read is given a command shape" "2" \
+  "$(grep -cE 'latest_row_api (baseline|lookup) "\$' "$deploy")"
 # The mutation branch, read off the script's own structure: it must contain no
 # upload call. `railway up` also appears in this file's PROSE (the fault
 # description), so grepping the whole script would count comments — and the
@@ -784,20 +914,26 @@ check "the leg executes the classifier three times (watch + describe + final)" "
 # a different path than the deploy it is judging is a second way for a verdict
 # and its evidence to disagree — and it is what this leg has done twice now.
 check "the poll reads the newest row through the measured reader" "1" \
-  "$(grep -c 'rows_page="$(latest_row_api lookup)"' "$deploy")"
+  "$(grep -c 'rows_page="$(latest_row_api lookup' "$deploy")"
 check "exactly one place in the leg sends the row document" "1" \
-  "$(grep -c 'railway api "\$DOC_ROW"' "$deploy")"
+  "$(grep -c 'api "\$DOC_ROW"' "$deploy")"
 # The cutoff is only a guard if it is taken INSIDE the window it guards: after
 # the baseline read (so a row that predates the leg can never be the baseline
 # AND predates the cutoff — one of the two must catch it) and before the
 # mutation (so a row the mutation minted in the same second is never dismissed).
-baseline_pos="$(printf '%s' "$mutate_branch" | grep -n 'BASELINE_ROW="$(baseline_row_id)"' | cut -d: -f1)"
+baseline_pos="$(printf '%s' "$mutate_branch" | grep -n 'baseline_row_id' | cut -d: -f1)"
 cutoff_pos="$(printf '%s' "$mutate_branch" | grep -n 'STARTED_AT="$(date -u' | cut -d: -f1)"
-fire_pos="$(printf '%s' "$mutate_branch" | grep -n 'mutate_deploy 2>&1' | cut -d: -f1)"
+fire_pos="$(printf '%s' "$mutate_branch" | grep -n 'mutate_deploy inherited 2>&1' | cut -d: -f1)"
 check "the cutoff is taken after the baseline read" "yes" \
   "$([ -n "$baseline_pos" ] && [ -n "$cutoff_pos" ] && [ "$cutoff_pos" -gt "$baseline_pos" ] && echo yes || echo no)"
 check "the cutoff is taken before the mutation fires" "yes" \
   "$([ -n "$cutoff_pos" ] && [ -n "$fire_pos" ] && [ "$cutoff_pos" -lt "$fire_pos" ] && echo yes || echo no)"
+# A refused WRITE must be re-asked in the shape the probe measured as answering,
+# for the same reason as the read and for a louder one: the write cell is the
+# only part of this story no job has ever gotten an answer for, and a leg that
+# dies on its first inherited-shape refusal leaves it unmeasured forever.
+check "the mutation branch re-asks a refusal under the stripped shape" "1" \
+  "$(printf '%s' "$mutate_branch" | grep -c 'mutate_deploy stripped 2>&1')"
 check "both classifier reads of the page carry the cutoff" "2" \
   "$(grep -c 'STARTED_AT:-}' "$deploy")"
 check "the cutoff is UTC, because createdAt is UTC and the compare is textual" "1" \
@@ -825,6 +961,14 @@ check "release.yml staging leg ships no upload shape" "0" \
   "$(printf '%s' "$staging_job" | grep -cE 'upload_path|archive_subdir|root_flag|build_dir')"
 check "release.yml staging leg keeps the staging secret on its env line" "1" \
   "$(printf '%s' "$staging_job" | grep -c -- 'RAILWAY_TOKEN: \${{ secrets.RAILWAY_TOKEN_STAGING }}')"
+# One staging mutation at a time, 2026-11-24. Three legs in one train each asked
+# the same endpoint three times inside ~30 s from three runners and all three
+# were refused, while the same read made serially in the probe job answered six
+# minutes later. Concurrency is one of the two variables left between those two
+# observations, so the legs stop mixing it into the measurement of the other
+# (the job's env), and asking Railway in series is the smaller footprint.
+check "release.yml staging legs run one service at a time" "1" \
+  "$(printf '%s' "$staging_job" | grep -c 'max-parallel: 1')"
 # Dev and production must still upload: this change is staging-only, and a leg
 # that silently became a mutation would deploy a commit Railway's connection
 # picks rather than the tree the runner checked out.
