@@ -28,7 +28,7 @@ import { SubmissionReviewCard } from '@/features/openmic/submission-review-card'
 import {
   QUEUE_SCOPES,
   QUEUE_SCOPE_LABELS,
-  isAwaitingDecision,
+  needsOperator,
   orderQueue,
   queueCounts,
   type QueueScope,
@@ -97,7 +97,7 @@ export default function OpenMicSubmissionReviewPanel({
   const handleDecided = useCallback((id: string, newStatus: string) => {
     const merged = { ...decidedHere, [id]: newStatus };
     setDecidedHere(merged);
-    const next = queue.find((row) => row.id !== id && isAwaitingDecision(merged[row.id] ?? row.status));
+    const next = queue.find((row) => row.id !== id && needsOperator({ ...row, status: merged[row.id] ?? row.status }));
     if (next) setFocusTarget(next.id);
     onRefresh();
   }, [decidedHere, queue, onRefresh]);

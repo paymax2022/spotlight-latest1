@@ -16,6 +16,7 @@
 // mapping is unit-testable.
 
 import { api } from '@/api/client';
+import { bodyOf, fieldErrors, messageOf } from './error-body';
 import { parseEligibility, type EligibilityReason, type OpenMicEligibility } from './types';
 
 /** Which failure the caller ran into, so the screen can name the fix. */
@@ -51,30 +52,6 @@ export class OpenMicError extends Error {
     this.deadline = extra.deadline ?? null;
     this.fields = extra.fields ?? {};
   }
-}
-
-function bodyOf(error: unknown): Record<string, unknown> | null {
-  const data = (error as { response?: { data?: unknown } })?.response?.data;
-  return data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
-}
-
-function messageOf(error: unknown, fallback: string): string {
-  const body = bodyOf(error);
-  const fromBody = body?.error ?? body?.message;
-  if (typeof fromBody === 'string' && fromBody.trim()) return fromBody.trim();
-  const fromError = (error as { message?: unknown })?.message;
-  if (typeof fromError === 'string' && fromError.trim()) return fromError.trim();
-  return fallback;
-}
-
-function fieldErrors(body: Record<string, unknown> | null): Record<string, string> {
-  const raw = body?.errors;
-  if (!raw || typeof raw !== 'object') return {};
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof value === 'string' && value.trim()) out[key] = value.trim();
-  }
-  return out;
 }
 
 /** Turn anything thrown by axios (or us) into an `OpenMicError`. */

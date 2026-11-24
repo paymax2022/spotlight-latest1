@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { defaultPrizePackages, defaultVotingConfig } from '@/src/features/openmic/constants';
 import { applyReview, projectReview } from '@/src/server/openmic/review-rules';
+import { planSubmissionReplacement, SUPERSEDED_STATUS } from '@/src/server/openmic/submission-replacement';
 import type {
   OpenMicApplication,
   OpenMicApplicationStatus,
@@ -649,20 +650,27 @@ export function createSubmission(
     };
   }
 
-  const stageNameKey = String(payload.stageName || '').trim().toLowerCase();
-  const emailKey = String(payload.email || '').trim().toLowerCase();
   const submissionId = payload.submissionId || randomUUID();
-  const duplicate = [...store.submissions.values()].find((item) => {
-    if (item.id === submissionId) return false;
-    if (item.contestId !== contest.id) return false;
-    if (['rejected', 'disqualified'].includes(item.status)) return false;
-    const existingStage = String(item.stageName || '').trim().toLowerCase();
-    const existingEmail = String(item.email || '').trim().toLowerCase();
-    const sameStage = stageNameKey.length > 0 && existingStage === stageNameKey;
-    const sameEmail = emailKey.length > 0 && existingEmail === emailKey;
-    return sameStage || sameEmail;
+  // The same rule `persistence.ts` applies, from the same module: an identity
+  // match on another account is a collision, an identity match on this account
+  // is the artist replacing their own take. Keeping two copies of that decision
+  // is how the DB plane got it wrong while memory mode looked correct.
+  const replacement = planSubmissionReplacement({
+    submissionId,
+    artistUserId: payload.artistUserId,
+    stageName: payload.stageName,
+    email: payload.email,
+    rows: [...store.submissions.values()]
+      .filter((item) => item.contestId === contest.id)
+      .map((item) => ({
+        id: item.id,
+        userId: item.artistUserId ?? null,
+        status: item.status,
+        stageName: item.stageName,
+        email: item.email,
+      })),
   });
-  if (duplicate) {
+  if (replacement.conflict) {
     return {
       success: false as const,
       errors: { duplicateApplication: 'You already have an active submission for this contest.' },
@@ -729,6 +737,25 @@ export function createSubmission(
   };
 
   store.submissions.set(submission.id, submission);
+  // The rows this hand-in takes the place of leave the active set — the same
+  // retirement `persistence.ts` performs, so memory mode and Postgres agree on
+  // how many entries one artist has.
+  for (const previousId of replacement.supersede) {
+    const previous = store.submissions.get(previousId);
+    if (!previous) continue;
+    store.submissions.set(previousId, {
+      ...previous,
+      status: SUPERSEDED_STATUS,
+      submittedAt: undefined,
+      // `publishedAt` is the mapped `competition_entries.live_at`. A retired take
+      // goes back to exactly the state the upload route books before a hand-in:
+      // draft, nothing submitted, nothing live.
+      publishedAt: undefined,
+      replacedByEntryId: submission.id,
+      replacedAt: now,
+      updatedAt: now,
+    });
+  }
   queueNotification({
     contestId: contest.id,
     submissionId: submission.id,
