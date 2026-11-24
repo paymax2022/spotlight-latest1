@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { withSentryConfig } from '@sentry/nextjs/config';
 import { imageHosts } from './image-hosts.config.mjs';
+import { MAX_MULTIPART_BODY_SIZE } from './upload-limits.config.mjs';
 import { buildSecurityHeaders } from './security-headers.config.mjs';
 
 // Anchors the standalone trace to this app. Next otherwise infers the workspace
@@ -45,6 +46,12 @@ const nextConfig = {
     // 2 GB Render instance. Serialize the pool so peak memory is one heap.
     cpus: 1,
     workerThreads: false,
+    // Next truncates every request body to this size when it clones it for the
+    // middleware layer, and a truncated multipart body fails to parse rather
+    // than being refused. The default is 10 MiB, which silently capped the
+    // 100 MiB the registration upload route promises; the number, and why it
+    // has to clear the largest route cap, live in upload-limits.config.mjs.
+    proxyClientMaxBodySize: MAX_MULTIPART_BODY_SIZE,
   },
 
   images: {
