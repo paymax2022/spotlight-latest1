@@ -316,15 +316,72 @@ upload() {
 # deploys "whatever the connection points at" rather than the reviewed SHA.
 DOC_DEPLOY_SHA='mutation($s:String!,$e:String!,$sha:String!){ serviceInstanceDeploy(serviceId:$s, environmentId:$e, commitSha:$sha) }'
 
+# The same address the mutation is aimed at, used for the reads too.
+#
+# `railway deployment list --service <name> --environment <name>` is what this
+# file used to ask with, and on 2026-11-23T18:33:15Z it refused all three
+# staging legs of train 45234100845: each printed its `=== deploying … ===`
+# header and exited 1 about a second later with nothing else in the job log —
+# no baseline line, no `waiting for`, no reason. The dev legs of the same commit
+# polled the identical command line for twelve attempts and read
+# INITIALIZING/BUILDING/DEPLOYING/SUCCESS, so the flags, the pinned 5.40.1 binary
+# and jq were all fine; the call that died was the name-resolved one, in a
+# mutation job, holding RAILWAY_TOKEN_STAGING.
+#
+# That is not a mystery to argue with. A leg that aims itself with ids must READ
+# with ids, which is also the only transport this token is measured against:
+# ci-railway-token-class.yml run 45179580758 resolved a staging `serviceInstance`
+# through `railway api` with RAILWAY_TOKEN_STAGING from an unlinked runner, and
+# run 45194092365's write cell got the deploy mutation accepted with the same
+# credential. `deployments(input:)` is the list side of the same surface
+# (introspected on 5.40.1: `DeploymentListInput` takes projectId, serviceId and
+# environmentId; the connection's nodes carry id, status, createdAt and `meta`,
+# newest-first — the four fields staging-deploy-watch.py decides on).
+#
+# It also removes the second thing that made the death silent: `2>/dev/null` plus
+# `set -e` meant the refusal never reached the log and the guard written for an
+# unreadable baseline could not run. This function never aborts — it prints what
+# happened and hands back an empty page, and the caller's existing
+# `[ -n "$BASELINE_ROW" ]` refusal is what ends the leg.
+DOC_ROWS='query($in:DeploymentListInput!,$n:Int){ deployments(input:$in, first:$n){ edges{ node{ id status createdAt meta } } } }'
+
+rows_page_api() {
+  # $1 = how many rows to ask for. Prints a JSON ARRAY shaped exactly like
+  # `railway deployment list --json`, so one decision rule (and one set of
+  # fixtures) covers both readers and switching transport cannot change a verdict.
+  local limit="$1" out body rest rc=0
+  # `railway api` prints the body on line 1 and its own commentary after it, and
+  # appends that sentence on a non-200 — so line 1 is the only thing parsed and
+  # the remainder is kept as the diagnosis (see scripts/ci/f2-token-probe.sh).
+  out="$(railway api "$DOC_ROWS" --compact --allow-errors \
+          --var "in={\"serviceId\":\"$SERVICE_ID\",\"environmentId\":\"$RAILWAY_ENVIRONMENT_ID\",\"projectId\":\"$RAILWAY_PROJECT\"}" \
+          --var "n=$limit" 2>&1)" || rc=$?
+  body="$(printf '%s\n' "$out" | sed -n '1p')"
+  rest="$(printf '%s\n' "$out" | tail -n +2 | tr '\n' ' ')"
+  if [ "$rc" -ne 0 ] || ! printf '%s' "$body" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    # >&2 on purpose: the caller captures stdout as the JSON page, and a
+    # diagnostic written there becomes the first line of the page (jq then dies
+    # on "row page read failed…" as if Railway had answered it, which is the
+    # silent-death bug wearing a new hat). The job log still gets it, because a
+    # leg runs with stderr merged.
+    echo "  row page read failed (rc=$rc) service=$SERVICE_ID env=$RAILWAY_ENVIRONMENT_ID :: $(printf '%s' "${body:-<empty>} ${rest}" | cut -c1-300)" | redact >&2
+    printf '[]'
+    return 0
+  fi
+  # An errors[] envelope has no `.data`, so `// []` turns a refusal into the same
+  # empty page as a genuinely row-less environment — which is the safe direction:
+  # the baseline guard refuses, and the watch says `no-new-row`. Neither reads
+  # green.
+  printf '%s' "$body" | jq -c '[ (.data.deployments.edges // [])[] | .node ]'
+}
+
 baseline_row_id() {
   # The row that exists BEFORE the mutation. Everything the watch below learns
   # comes from comparing against this id, so a failure to read it is not a
   # blank-slate condition: an empty baseline would make the pre-existing
   # deployment look like the new one and report a leg green that deployed
   # nothing. The caller stops on empty.
-  railway deployment list --service "$SERVICE" --environment "$RAILWAY_ENV" \
-    --project "$RAILWAY_PROJECT" --limit 1 --json 2>/dev/null \
-    | jq -r 'if type=="array" then (.[0].id // empty) else empty end'
+  rows_page_api 1 | jq -r 'if type=="array" then (.[0].id // empty) else empty end'
 }
 
 mutate_deploy() {
@@ -428,8 +485,12 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
   if [ "$DEPLOY_METHOD" = mutation ]; then
     # One page, both calls: the verdict and the row behind it come from the same
     # snapshot, so the log line cannot describe a page the verdict never saw.
-    rows_page="$(railway deployment list --service "$SERVICE" --environment "$RAILWAY_ENV" \
-                  --project "$RAILWAY_PROJECT" --limit 10 --json)"
+    #
+    # Id-addressed, like the mutation and the baseline: the leg that name-resolved
+    # this page died before it could say so (see DOC_ROWS above), and a watch that
+    # reads through a different transport than the deploy it is judging is a second
+    # way for the verdict and the evidence to disagree.
+    rows_page="$(rows_page_api 10)"
     watch_verdict="$(python3 "$SCRIPT_DIR/staging-deploy-watch.py" watch \
                       "$rows_page" "$BASELINE_ROW" "$SHA" "${STARTED_AT:-}")"
     echo "  row under watch (id / status / commit / which): $(
