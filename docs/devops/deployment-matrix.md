@@ -519,6 +519,37 @@ never yet been executed — `RAILWAY_TOKEN_PRODUCTION` is validated *read-only* 
 production upload itself has never run from CI. Read the probe contract below before
 believing either deployment.
 
+## The staging leg's row reads go by id, since 2026-11-24
+
+The swap to `serviceInstanceDeploy(commitSha:)` changed the staging *trigger*; the
+train that followed showed the trigger was only half of it. Both staging legs of
+trains `45234100845` and `45289639755` died 13–22 s after their own header with
+nothing else in the log, because the leg still **read** — its pre-mutation baseline
+row and every watch page — through `railway deployment list --service <name>
+--environment <name>`, the one call in the job that asks the CLI to resolve names.
+Wrapped as `BASELINE_ROW="$(… 2>/dev/null | jq …)"` under `set -euo pipefail`, a
+non-zero exit ends the script on that line, so the guard written for an unreadable
+baseline never ran and Railway's own sentence died in the `2>/dev/null`. Full
+measurement, the controls (including the development legs of the same commits
+polling the same reader 13 and 11 times successfully) and the fix are Episode 22 of
+`docs/devops/railway-upload-fault-report.md`.
+
+The rule this leaves, and the reason it belongs in the matrix rather than only in
+the fault report: **a leg that aims itself with ids must read with ids.**
+`scripts/ci/railway-deploy.sh` `rows_page_api` is now the only row reader in
+mutation mode, it sends `deployments(input:{projectId,serviceId,environmentId})`
+through `railway api` — the transport `RAILWAY_TOKEN_STAGING` is measured against —
+and it emits the same bare JSON array the CLI printed, so
+`scripts/ci/staging-deploy-watch.py` decides verdicts from one shape and one set of
+fixtures. A failed read is loud (stderr, redacted) and ends the leg red.
+Development and production keep the name-resolved reader: that path works, it is
+what `railway up` needs, and this rule is scoped to mutation mode.
+
+Reading consequence for the next operator: a red `deploy Staging` leg shorter than
+about a minute, with zero `Failed to fetch` lines and zero new staging rows, is
+this defect — not F2, which spans ~1,050 s and nine refusals. Check the leg's last
+line before blaming Railway's status page.
+
 ## Railway project tokens: scope, minting, inventory — measured 2026-11-16
 
 **A project token is scoped to exactly one environment.** Each recoverable CI token
