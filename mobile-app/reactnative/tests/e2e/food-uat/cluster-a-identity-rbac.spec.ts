@@ -57,11 +57,18 @@ test.describe('Cluster A · Customer Accounts', () => {
   blocked('RST-UAT-0003', 'Reject invalid or expired OTP', 'needs a live OTP issued by the gateway (app/(auth)/verify-otp.tsx; internal/otp attempt ceiling)');
   blocked('RST-UAT-0004', 'Enforce OTP resend controls', 'needs OTP gateway; limiter present at backend/internal/app/router.go loginLimiter/resetLimiter');
 
-  test('RST-UAT-0005 — Login via password or configured method (generic invalid-credential response; valid-login leg needs a fixture)', async ({ request }) => {
+  test('RST-UAT-0005 — Login via password or configured method (refusal names its cause; valid-login leg needs a fixture)', async ({ request }) => {
     const res = await request.post(`${API}/api/auth/login`, {
       data: { email: 'nobody-uat-a@example.invalid', password: 'Wrong-pass-1' },
     });
     expect(res.status()).toBe(401);
+    // ADR-PR1163: the answer carries the machine-readable cause. The blanket
+    // `invalid credentials` is now only the UNCLASSIFIED fallback, so an unknown
+    // address must arrive as account_not_found and not as a password verdict.
+    const body = await res.json();
+    expect(String(body.code)).toBe('account_not_found');
+    expect(String(body.error)).toMatch(/no account found for nobody-uat-a@example\.invalid/i);
+    expect(String(body.error)).not.toMatch(/incorrect password/i);
   });
 
   blocked('RST-UAT-0006', 'Reject disabled account login', 'needs admin-disabled fixture account (platform_users.status gate in auth_service.go LoginUser)');
@@ -70,7 +77,7 @@ test.describe('Cluster A · Customer Accounts', () => {
   blocked('RST-UAT-0009', 'Update customer profile', 'needs real session + R2 upload for photo');
   blocked('RST-UAT-0010', 'Manage saved addresses', 'needs real session + two devices for the default-address persistence leg');
 
-  test('RST-UAT-0011 — Prevent insecure account enumeration (unknown identifier gets generic responses)', async ({ request }) => {
+  test('RST-UAT-0011 — Enumeration is bounded by surface: reset stays generic, login names the cause', async ({ request }) => {
     const reset = await request.post(`${API}/api/auth/request-password-reset`, {
       data: { email: 'nobody-uat-a@example.invalid' },
     });
@@ -78,11 +85,23 @@ test.describe('Cluster A · Customer Accounts', () => {
     const body = await reset.json();
     expect(String(body.message)).toMatch(/if your email exists/i);
     expect(JSON.stringify(body)).not.toMatch(/not found|no account|does not exist/i);
+    // CONTRACT CHANGED BY ADR-PR1163, at the product owner's explicit choice.
+    // Login used to answer every refusal with 401 `invalid credentials` so that
+    // this endpoint could not be used to test whether an address is registered.
+    // That generality is what made a locked, suspended, closed or mistyped
+    // sign-in unreadable, so login now names the cause instead — which does make
+    // it a bounded existence oracle, and that trade is recorded in
+    // docs/adr/ADR-PR1163-login-names-the-failure-cause.md. What stays pinned here
+    // is that the two surfaces are no longer the same rule: the reset request is
+    // still generic, and the OTP path is unchanged.
     const login = await request.post(`${API}/api/auth/login`, {
       data: { email: 'nobody-uat-a@example.invalid', password: 'Wrong-pass-1' },
     });
     expect(login.status()).toBe(401);
-    expect(String((await login.json()).error)).toBe('invalid credentials');
+    const loginBody = await login.json();
+    expect(String(loginBody.code)).toBe('account_not_found');
+    expect(String(loginBody.error)).toMatch(/no account found for/i);
+    expect(String(loginBody.error)).not.toBe('invalid credentials');
   });
 
   blocked('RST-UAT-0012', 'Handle revoked second device session', 'needs two live sessions for one fixture user and a global sign-out');

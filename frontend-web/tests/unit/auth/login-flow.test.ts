@@ -64,11 +64,30 @@ describe('requestSignIn', () => {
   });
 
   it('throws Go\'s error message on a rejected login, unmodified', async () => {
-    const fetchImpl = fakeFetch(401, { error: 'invalid credentials' });
-    await expect(requestSignIn(fetchImpl, 'ada@example.test', 'wrong')).rejects.toMatchObject({
-      message: 'invalid credentials',
-      status: 401,
-    });
+    // ADR-PR1163: Go names the cause, so the sentence that reaches the page has to
+    // be the server's, not a client-side re-guess of it. The historic example
+    // here was 'invalid credentials', which is now only the unclassified
+    // fallback — the named causes are what the user reads.
+    const cases: Array<[number, string]> = [
+      [423, 'Account locked for 08035550111 after too many failed sign-in attempts. Try again in 12 minutes.'],
+      [401, 'No account found for 08035550111. Check you typed it correctly, or create an account.'],
+      [401, 'Incorrect password for 08035550111. 3 attempts left before the account locks. Use Forgot password to reset it.'],
+      [403, 'This account is suspended. Contact support to have it reviewed.'],
+      [503, 'Sign-in is temporarily unavailable. Please try again shortly.'],
+      [401, 'invalid credentials'],
+    ];
+    for (const [status, error] of cases) {
+      const fetchImpl = fakeFetch(status, { error });
+      // Captured, not expect().then(): vitest's Assertion has no `then`, so the
+      // promise-then form silently never ran its assertions.
+      const err = await requestSignIn(fetchImpl, '08035550111', 'wrong').then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err, `status ${status} must reject`).toBeInstanceOf(AuthRequestError);
+      expect((err as AuthRequestError).message, `status ${status}`).toBe(error);
+      expect((err as AuthRequestError).status).toBe(status);
+    }
   });
 
   it('throws when the response has no session and no mfaRequired/emailNotConfirmed signal', async () => {
