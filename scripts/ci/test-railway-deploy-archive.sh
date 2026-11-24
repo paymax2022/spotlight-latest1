@@ -112,7 +112,7 @@ run_deploy() { # <label> <extra-env...>  -> "<rc> <up-count>"
   : > "$counter"
   (
     cd "$work/repo" || exit 99
-    env SERVICE=frontend-admin RAILWAY_ENV=staging SHA="$FIXTURE_SHA" \
+    env SERVICE=frontend-admin RAILWAY_ENV_NAME=staging SHA="$FIXTURE_SHA" \
         RAILWAY_TOKEN=stub-token RAILWAY_PROJECT=stub-project \
         UPLOAD_PATH='' ROOT_FLAG='' BUILD_DIR='' ATTEMPTS=2 \
         RETRY_ATTEMPTS=1 RETRY_BASE_DELAY_S=0 \

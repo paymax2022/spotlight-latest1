@@ -446,7 +446,7 @@ run_leg() {
       STUB_POLL_COUNT="$work/poll_count.$mode" \
       STUB_BASELINE_COUNT="$work/baseline_count.$mode" \
       PATH="$work/bin:$PATH" \
-      SERVICE=backend RAILWAY_ENV=staging SHA="$SHA_STUB" \
+      SERVICE=backend RAILWAY_ENV_NAME=staging SHA="$SHA_STUB" \
       RAILWAY_TOKEN=rlwy_stub_value_never_printed \
       RAILWAY_PROJECT=00000000-0000-0000-0000-000000000000 \
       RAILWAY_HTTP_TIMEOUT=600 \
@@ -712,7 +712,7 @@ check "an empty baseline never ran railway up" "0" "$2"
 echo "=== the guards: a leg that cannot be aimed says so before asking Railway"
 guards="$(
   cd "$work/tree" || exit 99
-  PATH="$work/bin:$PATH" SERVICE=backend RAILWAY_ENV=staging SHA="$SHA_STUB" \
+  PATH="$work/bin:$PATH" SERVICE=backend RAILWAY_ENV_NAME=staging SHA="$SHA_STUB" \
     RAILWAY_TOKEN=t RAILWAY_PROJECT=p DEPLOY_METHOD=mutation \
     RAILWAY_ENVIRONMENT_ID="$STAGING_ENV_ID" \
     bash "$deploy" 2>&1; printf 'rc=%s' "$?"
@@ -723,7 +723,7 @@ check "missing SERVICE_ID: the refusal is named" "yes" \
 
 short="$(
   cd "$work/tree" || exit 99
-  PATH="$work/bin:$PATH" SERVICE=backend RAILWAY_ENV=staging SHA=d563144 \
+  PATH="$work/bin:$PATH" SERVICE=backend RAILWAY_ENV_NAME=staging SHA=d563144 \
     RAILWAY_TOKEN=t RAILWAY_PROJECT=p DEPLOY_METHOD=mutation \
     SERVICE_ID="$BACKEND_ID" RAILWAY_ENVIRONMENT_ID="$STAGING_ENV_ID" \
     bash "$deploy" 2>&1; printf 'rc=%s' "$?"
@@ -733,7 +733,7 @@ check "a short SHA refuses (it mints a FAILED row for a commit that does not exi
 
 badenv="$(
   cd "$work/tree" || exit 99
-  PATH="$work/bin:$PATH" SERVICE=backend RAILWAY_ENV=staging SHA="$SHA_STUB" \
+  PATH="$work/bin:$PATH" SERVICE=backend RAILWAY_ENV_NAME=staging SHA="$SHA_STUB" \
     RAILWAY_TOKEN=t RAILWAY_PROJECT=p DEPLOY_METHOD=mutation \
     SERVICE_ID="$BACKEND_ID" \
     bash "$deploy" 2>&1; printf 'rc=%s' "$?"
@@ -742,7 +742,7 @@ check "missing RAILWAY_ENVIRONMENT_ID refuses" "rc=2" "$(printf '%s' "$badenv" |
 
 badmethod="$(
   cd "$work/tree" || exit 99
-  PATH="$work/bin:$PATH" SERVICE=backend RAILWAY_ENV=staging SHA="$SHA_STUB" \
+  PATH="$work/bin:$PATH" SERVICE=backend RAILWAY_ENV_NAME=staging SHA="$SHA_STUB" \
     RAILWAY_TOKEN=t RAILWAY_PROJECT=p DEPLOY_METHOD=teleport \
     bash "$deploy" 2>&1; printf 'rc=%s' "$?"
 )"

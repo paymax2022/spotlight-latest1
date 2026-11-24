@@ -10,7 +10,7 @@
 #
 # Required env:
 #   SERVICE          Railway service name (backend | frontend-web | frontend-admin)
-#   RAILWAY_ENV      Railway environment (development | staging | production)
+#   RAILWAY_ENV_NAME      Railway environment (development | staging | production)
 #   SHA              the commit being deployed; used as the deployment --message so
 #                    the poll below can find THIS deployment among the last ten
 #   RAILWAY_TOKEN    per-environment token
@@ -123,7 +123,26 @@
 set -euo pipefail
 
 : "${SERVICE:?required: SERVICE}"
-: "${RAILWAY_ENV:?required: RAILWAY_ENV}"
+: "${RAILWAY_ENV_NAME:?required: RAILWAY_ENV_NAME}"
+# WHY THIS VARIABLE IS NOT CALLED RAILWAY_ENV ANY MORE (2026-11-24, Episode 25).
+# `RAILWAY_ENV` is a name the Railway CLI already owns, and it does not mean
+# "deploy to my environment called X": it selects Railway's OWN internal API
+# stage and moves the GraphQL host. Measured locally against 5.40.1 with a dead
+# proxy so the chosen URL prints without sending —
+#   RAILWAY_ENV=staging|STAGING|dev -> https://backboard.railway-staging.com/graphql/v2
+#   unset, development, production, preview, zzz -> https://backboard.railway.com/graphql/v2
+# and the staging host answers a non-JSON `unconditional drop overload` HTTP 503,
+# which the CLI reports as exactly the sentence every `deploy Staging` leg has
+# printed since 2026-11-16: `Failed to fetch: error decoding response body`.
+# That is F2 — a variable name, not a network window. release.yml exported
+# `RAILWAY_ENV: staging` into the leg; the probe workflows never exported it and
+# answered the same document forty seconds later.
+#
+# So the environment is addressed by FLAG below (`--environment
+# "$RAILWAY_ENV_NAME"`), and the name arrives in a variable the CLI ignores. The
+# unset is the belt: a caller that still exports RAILWAY_ENV cannot reach the
+# CLI through this leg. Pinned by scripts/ci/test-railway-env-name.sh.
+unset RAILWAY_ENV
 : "${SHA:?required: SHA}"
 : "${RAILWAY_TOKEN:?required: RAILWAY_TOKEN}"
 : "${RAILWAY_PROJECT:?required: RAILWAY_PROJECT}"
@@ -142,8 +161,8 @@ case "$DEPLOY_METHOD" in
     # Refuse a misconfigured leg before it asks Railway for anything: an
     # id-less mutation cannot be aimed at this service, and a short sha is the
     # exact shape that mints a FAILED row for a commit that does not exist.
-    [ -n "$SERVICE_ID" ] || { echo "::error::DEPLOY_METHOD=mutation needs SERVICE_ID for $SERVICE/$RAILWAY_ENV" >&2; exit 2; }
-    [ -n "$RAILWAY_ENVIRONMENT_ID" ] || { echo "::error::DEPLOY_METHOD=mutation needs RAILWAY_ENVIRONMENT_ID for $SERVICE/$RAILWAY_ENV" >&2; exit 2; }
+    [ -n "$SERVICE_ID" ] || { echo "::error::DEPLOY_METHOD=mutation needs SERVICE_ID for $SERVICE/$RAILWAY_ENV_NAME" >&2; exit 2; }
+    [ -n "$RAILWAY_ENVIRONMENT_ID" ] || { echo "::error::DEPLOY_METHOD=mutation needs RAILWAY_ENVIRONMENT_ID for $SERVICE/$RAILWAY_ENV_NAME" >&2; exit 2; }
     printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$' \
       || { echo "::error::DEPLOY_METHOD=mutation needs SHA to be a full 40-hex commit (got: $SHA)" >&2; exit 2; }
     ;;
@@ -152,7 +171,7 @@ esac
 
 # Never printed, never logged. Referenced only so a missing token fails here with
 # a clear name rather than deep inside the CLI.
-[ -n "$RAILWAY_TOKEN" ] || { echo "::error::RAILWAY_TOKEN is empty for $RAILWAY_ENV/$SERVICE"; exit 1; }
+[ -n "$RAILWAY_TOKEN" ] || { echo "::error::RAILWAY_TOKEN is empty for $RAILWAY_ENV_NAME/$SERVICE"; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARCHIVE_TMP=""
@@ -193,7 +212,7 @@ redact() {
   sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g'
 }
 
-echo "=== deploying $SERVICE to $RAILWAY_ENV ($SHA) ==="
+echo "=== deploying $SERVICE to $RAILWAY_ENV_NAME ($SHA) ==="
 
 # Railway builds backend/Dockerfile itself from the uploaded directory, so a
 # --build-arg cannot reach it. Writing the SHA into the build context is the way
@@ -301,7 +320,7 @@ upload() {
   # shellcheck disable=SC2086
   bash "$SCRIPT_DIR/with-retry.sh" railway up $UPLOAD_PATH $ROOT_FLAG --no-gitignore \
     --service "$SERVICE" \
-    --environment "$RAILWAY_ENV" \
+    --environment "$RAILWAY_ENV_NAME" \
     --project "$RAILWAY_PROJECT" \
     --detach \
     --verbose \
@@ -371,15 +390,22 @@ latest_row_api() {
   # says WHICH read failed instead of making a reader guess from the timestamp.
   # $2 = command shape: `inherited` (the CLI as the release job exports it) or
   # `stripped` (the same binary with release.yml's two CLI-visible env vars
-  # removed). They are not cosmetic. Refused: train 45315222075's staging legs,
-  # 2026-11-24T03:24:32Z, three per leg, HTTP 503 `unconditional drop overload`.
-  # Answered: run 45319901941's probe job, 03:31:15Z — `baseline=ok
-  # row=2df11e51` — with the same project token, the same pinned CLI 5.40.1, the
-  # same document, the same ids and the same runner image. The release job
-  # exports RAILWAY_PROJECT and RAILWAY_HTTP_TIMEOUT to the CLI and the probe job
-  # exports neither, and that is the only difference between the two answers
-  # that a leg can control, so the leg must be able to ask both ways and say
-  # which one it asked.
+  # removed). Written 2026-11-24 against the belief that those vars were the last
+  # difference a leg controls between these two measured answers — refused here,
+  # 45315222075's staging legs at 03:24:32Z with HTTP 503 `unconditional drop
+  # overload` three times a leg, and answered forty seconds later by run
+  # 45319901941's probe job, 03:31:15Z, `baseline=ok row=2df11e51`, same token,
+  # same pinned CLI 5.40.1, same document, same ids, same runner image.
+  #
+  # Episode 25 of docs/devops/railway-upload-fault-report.md falsified that: the
+  # difference was `RAILWAY_ENV: staging`, which the Railway CLI reads as its OWN
+  # internal API-stage selector and routes to
+  # backboard.railway-staging.com (non-JSON HTTP 503). The vars never mattered —
+  # train 45328377363 asked in both shapes, alone, and both refused — and the
+  # redirect is gone because this script takes the name as RAILWAY_ENV_NAME and
+  # unsets RAILWAY_ENV above. The alternation stays as a cheap fallback: it costs
+  # one extra read on a refusal and it is what the leg's tests were written
+  # against. Do not read `shape=` in the log as evidence about a fault again.
   #
   # Prints a JSON ARRAY of zero or one row, shaped exactly like the elements of
   # `railway deployment list --json`, so one decision rule (and one set of
@@ -442,9 +468,11 @@ baseline_row_id() {
   # The row that exists BEFORE the mutation, plus the shape it was read in.
   # Everything the watch learns comes from comparing against this id, so the
   # read is asked three times in two command shapes: the release job's own env
-  # first (attempt 1), then the probe job's (attempts 2-3) — the only two
-  # settings this leg can control that separate the measured refusal at
-  # 03:24:32Z from the measured answer at 03:31:15Z.
+  # first (attempt 1), then the probe job's (attempts 2-3). Those two shapes were
+  # written as the only settings this leg controls that separate the measured
+  # refusal at 03:24:32Z from the measured answer at 03:31:15Z; Episode 25 showed
+  # the real separator was `RAILWAY_ENV`, which this script no longer passes to
+  # the CLI at all, so the second shape is a fallback and not a hypothesis.
   #
   # Prints three space-separated fields and never aborts:
   #
@@ -537,7 +565,7 @@ if [ "$DEPLOY_METHOD" = mutation ]; then
     echo "  continuing without a baseline id — the row must name $SHA and postdate the cutoff below"
     BASELINE_ROW=""
   elif [ "$BASELINE_ROW" = NONE ]; then
-    echo "  no pre-existing deployment row for $SERVICE/$RAILWAY_ENV (the environment has never deployed)"
+    echo "  no pre-existing deployment row for $SERVICE/$RAILWAY_ENV_NAME (the environment has never deployed)"
     BASELINE_ROW=""
   else
     echo "baseline row before the mutation: $BASELINE_ROW"
@@ -594,7 +622,7 @@ if [ "$DEPLOY_METHOD" = mutation ]; then
   # our own 401. Both shapes had their answer printed above, so this line is
   # about which one to try next, not about hiding the first.
   [ "$MUT_VERDICT" = accepted ] || {
-    echo "::error::$SERVICE/$RAILWAY_ENV mutation was not accepted ($MUT_VERDICT) under either command shape"
+    echo "::error::$SERVICE/$RAILWAY_ENV_NAME mutation was not accepted ($MUT_VERDICT) under either command shape"
     exit 1
   }
 elif [ -n "$ARCHIVE_TMP" ]; then
@@ -625,7 +653,7 @@ dump_crash_log() {
   # identical to "zero log lines exist" otherwise, and those are very different
   # problems to chase.
   railway logs --deployment --latest --service "$SERVICE" \
-    --environment "$RAILWAY_ENV" --project "$RAILWAY_PROJECT" \
+    --environment "$RAILWAY_ENV_NAME" --project "$RAILWAY_PROJECT" \
     --lines 300 > dep.log 2>&1 || true
   echo "  fetched $(wc -l < dep.log) log lines for this deployment"
   SIG='panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT'
@@ -660,7 +688,7 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
       # when the truth is that this leg cannot see the rows. Say the true thing
       # and stop judging.
       watch_verdict=read-refused
-      echo "  waiting for $SERVICE/$RAILWAY_ENV (attempt $attempt/$ATTEMPTS; row read refused under command shape: $ROW_SHAPE)"
+      echo "  waiting for $SERVICE/$RAILWAY_ENV_NAME (attempt $attempt/$ATTEMPTS; row read refused under command shape: $ROW_SHAPE)"
       sleep 15
       continue
     fi
@@ -670,11 +698,11 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
       python3 "$SCRIPT_DIR/staging-deploy-watch.py" describe "$rows_page" "$BASELINE_ROW" "$SHA" "${STARTED_AT:-}" | tr '\t' ' ')"
     case "$watch_verdict" in
       deployed)
-        echo "=== $SERVICE/$RAILWAY_ENV deployed $SHA (mutation) ==="
+        echo "=== $SERVICE/$RAILWAY_ENV_NAME deployed $SHA (mutation) ==="
         exit 0
         ;;
       build-failed)
-        echo "::error::$SERVICE/$RAILWAY_ENV deployment ended FAILED (mutation built $SHA)"
+        echo "::error::$SERVICE/$RAILWAY_ENV_NAME deployment ended FAILED (mutation built $SHA)"
         dump_crash_log
         exit 1
         ;;
@@ -683,7 +711,7 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
         # waiting: only a row naming THIS commit with a terminal status ends
         # this leg, and a budget that runs out on `no-new-row` is the no-op the
         # mutation-mode header says must never be reported green.
-        echo "  waiting for $SERVICE/$RAILWAY_ENV (attempt $attempt/$ATTEMPTS; watch: $watch_verdict)"
+        echo "  waiting for $SERVICE/$RAILWAY_ENV_NAME (attempt $attempt/$ATTEMPTS; watch: $watch_verdict)"
         sleep 15
         ;;
     esac
@@ -691,22 +719,22 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
   fi
   # --limit 10 because the deployment may not be first in the list yet, and
   # `first // {}` so an absent row reads as an empty object rather than null.
-  row="$(railway deployment list --service "$SERVICE" --environment "$RAILWAY_ENV" \
+  row="$(railway deployment list --service "$SERVICE" --environment "$RAILWAY_ENV_NAME" \
           --project "$RAILWAY_PROJECT" --limit 10 --json \
         | jq -c --arg m "$SHA" '[.[] | select(.meta.cliMessage == $m)] | first // {}')"
   status="$(printf '%s' "$row" | jq -r '.status // empty')"
   case "$status" in
     SUCCESS)
-      echo "=== $SERVICE/$RAILWAY_ENV deployed $SHA ==="
+      echo "=== $SERVICE/$RAILWAY_ENV_NAME deployed $SHA ==="
       exit 0
       ;;
     FAILED|CRASHED|REMOVED)
-      echo "::error::$SERVICE/$RAILWAY_ENV deployment ended with $status"
+      echo "::error::$SERVICE/$RAILWAY_ENV_NAME deployment ended with $status"
       dump_crash_log
       exit 1
       ;;
     *)
-      echo "  waiting for $SERVICE/$RAILWAY_ENV (attempt $attempt/$ATTEMPTS; status: ${status:-not-found})"
+      echo "  waiting for $SERVICE/$RAILWAY_ENV_NAME (attempt $attempt/$ATTEMPTS; status: ${status:-not-found})"
       sleep 15
       ;;
   esac
@@ -720,16 +748,16 @@ if [ "$DEPLOY_METHOD" = mutation ]; then
     # deploy). Saying `mutation-is-noop` here would blame Railway for making no
     # row when the truth is that this leg cannot see the rows, and the last
     # thing a reader needs is a verdict that points at the wrong component.
-    echo "::error::$SERVICE/$RAILWAY_ENV could not read the deployment row after the mutation (command shape: $ROW_SHAPE); the mutation was accepted and this leg cannot say what it did"
+    echo "::error::$SERVICE/$RAILWAY_ENV_NAME could not read the deployment row after the mutation (command shape: $ROW_SHAPE); the mutation was accepted and this leg cannot say what it did"
     exit 1
   fi
   # The one line that says what the leg concluded, from BOTH cells: the
   # mutation's answer and the watch's last verdict. `mutation-is-noop` here is
   # the honest reading of "Railway said true and made no row", and it is a red
   # leg, not a timeout.
-  echo "::error::$SERVICE/$RAILWAY_ENV $(python3 "$SCRIPT_DIR/staging-deploy-watch.py" final "$MUT_VERDICT" "$watch_verdict") after $((ATTEMPTS * 15))s"
+  echo "::error::$SERVICE/$RAILWAY_ENV_NAME $(python3 "$SCRIPT_DIR/staging-deploy-watch.py" final "$MUT_VERDICT" "$watch_verdict") after $((ATTEMPTS * 15))s"
   exit 1
 fi
 
-echo "::error::timed out waiting for the $SERVICE/$RAILWAY_ENV deployment after $((ATTEMPTS * 15))s"
+echo "::error::timed out waiting for the $SERVICE/$RAILWAY_ENV_NAME deployment after $((ATTEMPTS * 15))s"
 exit 1
