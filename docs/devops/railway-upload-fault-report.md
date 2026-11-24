@@ -2073,3 +2073,144 @@ Episode 15 narrowed it to — **the status and body of the request that obtains 
 upload destination for this environment** — and Episode 21 adds the strongest form
 of the control: the environment is deployable, the services are deployable, the
 token is authorized to deploy them, and only the upload-destination call refuses.
+
+## Episode 22 — 2026-11-23 18:33Z and 2026-11-24 00:10Z: the swap's own first two trains died in 13-22 s, and the refusal was our read
+
+The fast leg is not F2. Two trains after Episode 21's swap reproduce a signature
+that has never appeared in this file, and it is worth putting beside the F2
+signature precisely because from the run page the two look alike — three red
+staging legs and a skipped production:
+
+| run | head | leg | job | window | length | `Failed to fetch` | decode lines | rows minted |
+|---|---|---|---|---|---|---|---|---|
+| `45234100845` | `dda9d2569…` (the swap) | `frontend-web` | `137920169670` | 18:32:56 → 18:33:13Z | 17 s | 0 | 0 | 0 |
+| `45234100845` | `dda9d2569…` | `frontend-admin` | `137920169677` | 18:32:56 → 18:33:14Z | 18 s | 0 | 0 | 0 |
+| `45234100845` | `dda9d2569…` | `backend` | `137920170069` | 18:32:57 → 18:33:19Z | 22 s | 0 | 0 | 0 |
+| `45289639755` | `b215276b5…` | `frontend-web` | `138107532949` | 00:10:28 → 00:10:41Z | 13 s | 0 | 0 | 0 |
+| `45289639755` | `b215276b5…` | `frontend-admin` | `138107533062` | 00:10:28 → 00:10:41Z | 13 s | 0 | 0 | 0 |
+| `45289639755` | `b215276b5…` | `backend` | `138107533199` | 00:10:29 → 00:10:46Z | 17 s | 0 | 0 | 0 |
+
+F2 is ~1,050 s, nine refusals, eighteen decode lines, eight retry notices. These
+legs are 13-22 s, and the whole `deploy Staging (backend)` log of the first train
+is 14,745 bytes whose last two content lines are
+
+```
+2026-11-23T18:33:15.5987956Z === deploying backend to staging (dda9d2569d5cae25b6fd4e2cb5014330af00dfc3) ===
+2026-11-23T18:33:16.7078078Z ##[error]Process completed with exit code 1.
+```
+
+One point one one seconds, and nothing between them. No `baseline row before the
+mutation:`, no `mutation fired at:`, no `waiting for`, no `::error::` — not one of
+the three sentences the mutation branch writes. The gate verdict was `proceed`
+(both trains' `deploy Development (…)` and `smoke Development (…)` legs ran and
+passed), so this is a release chain stopped by a leg that could not explain
+itself.
+
+**Root cause, and it is ours.** The swap aimed the *deploy* with ids
+(`serviceId` / `environmentId`) but left both *reads* — the pre-mutation baseline
+row and every watch page — on `railway deployment list --service <name>
+--environment <name>`, the one CLI call in the leg that asks Railway to resolve
+names. That call was written as `… 2>/dev/null | jq …` inside
+`BASELINE_ROW="$(…)"`. With `set -euo pipefail`, a non-zero CLI exit travels
+through `pipefail`, the command substitution returns non-zero, and `set -e` ends
+the script at that line — so the guard two lines below it,
+`[ -n "$BASELINE_ROW" ] || { echo "::error::could not read the pre-mutation …"; exit 1; }`
+which exists for exactly this condition, was unreachable. The `2>/dev/null` was
+what Railway's own sentence died in. That is why the log stops at the header: the
+leg was not refusing, it was aborting before it could refuse.
+
+**What was checked before concluding that**, because "the read is broken" is the
+same shape as "the token is broken" and this file has already been fooled once by
+reading one transport as another's answer:
+
+- The development legs of the *same commit* in the *same train* read their rows
+  with the same name-resolved command — upload mode's poll is
+  `railway deployment list --service <name> --environment <name> --project <id>
+  --limit 10 --json`, which differs from the staging baseline call only in the
+  limit and in the `2>/dev/null` — and it worked there: job `137919832426`
+  (backend, train `45234100845`) polled **13** times, 18:32:41 → 18:36:01Z, and
+  ended `=== backend/development deployed dda9d2569d… ===`; job `138112622097`
+  (backend, train `45289639755`) polled **11** times, 00:10:12 → 00:13:02Z, and
+  ended `=== backend/development deployed b215276b5… ===`. The statuses those
+  polls saw are `INITIALIZING` then `BUILDING` — the leg's own terminal line is
+  the `deployed` sentence, so this file should not claim a `DEPLOYING` row it did
+  not read. Either way: the flags, the pinned `@railway/cli@5.40.1`, `jq` and the
+  polling budget were all fine on that runner class, in that train.
+- The same command line, run locally against the real project, exits 0 on both
+  5.40.1 and 5.71.0 and returns row `2df11e51` — so it is not a usage error either,
+  and the difference left is the credential and the call path, not the syntax.
+- The environment name is unambiguous: the project has exactly one `staging`
+  (`6b5f27a3…`), and `staging-Old` (`acf4b4fe…`) is a separate name, so no prefix
+  collision explains it. (Checked because a two-answer question is what the decoy
+  id exists to make dangerous.)
+- `railway api` — the transport the mutation itself uses, and the one Episode 21
+  measured against `RAILWAY_TOKEN_STAGING` in a runner — answers
+  `deployments(input:{projectId,serviceId,environmentId})` with the same rows,
+  newest-first, carrying `id`, `status`, `createdAt` and a flat `meta`.
+
+**Why the name-resolved call refuses in that job is deliberately not settled
+here.** The leg no longer depends on the answer, and inventing one (token scope,
+link context, the `staging-Old` decoy) would put an unmeasured claim in the place
+where the measured defect lives. What is recorded is the shape: with this
+credential, in a mutation job, that call exits non-zero, and the code that
+surrounded it turned a loud condition into a silent one.
+
+**What changed.** Mutation mode now reads with ids, through the same document
+family as the mutation: `rows_page_api <limit>` sends
+`query($in:DeploymentListInput!,$n:Int){ deployments(input:$in, first:$n){ edges{
+node{ id status createdAt meta } } } }` and converts the connection to a bare JSON
+array, so `scripts/ci/staging-deploy-watch.py` — the decision rule, its 98 pinned
+classifier checks, and every fixture — is untouched by the transport change. Both
+the baseline and the watch page come from it, and the pin is now explicit: a
+mutation leg must not ask the CLI to resolve a name at all. A failed read prints
+`row page read failed (rc=N) service=… env=… :: <the CLI's own sentence>` **on
+stderr**, redacted, and hands back `[]` so the pre-existing guard ends the leg —
+the reader can no longer abort the script, and the reason can no longer vanish.
+Upload mode is unchanged: development and production still name-resolve, because
+that is the path that works and this episode must not disturb it.
+
+**The stderr detail is a defect we found with the test, not before it.** The first
+version printed that diagnostic to stdout. `baseline_row_id` pipes its reader into
+`jq`, so the sentence became the page, jq died on
+`parse error: Invalid numeric literal at line 1, column 6`, and the leg exited 5 —
+the silent death, just wearing a different number. Reversed, the suite says so.
+
+**Verification.** `scripts/ci/test-staging-deploy-watch.sh` grows from 98 checks
+over 11 legs to **115 checks over 13 legs** (measured 112 s on a laptop
+2026-11-24), and the two new legs are the two failure modes above: `list-refused`
+makes the name-resolved reader fail and requires the leg to deploy anyway and to
+never have called that reader; `rows-refused` removes the id-addressed reader too
+and requires a red leg that names the failure, never a bare exit. Both were
+written red against the unpatched script first (9 checks failing, every pre-existing
+check passing). Two mutants prove the pins: putting the baseline read back on
+`railway deployment list` reddens 8 checks; printing the diagnostic to stdout
+instead of stderr reddens 4. Each mutant was applied by `cp` to a /tmp copy, then
+restored and the restore asserted by sha256 against that pre-mutation copy — so
+the proof is the equality, not a hash worth quoting after the file changes. (The
+first draft of this episode pinned the restore to a literal sha256, `eb6855ff…`;
+a comment-only edit to that same script later moved it to `4ff4a2e3…`, which is
+exactly why a restore assertion belongs in this file as an assertion and not as a
+permanent file hash.)
+The five sibling Railway suites — `test-railway-deploy-retry`,
+`test-railway-deploy-archive`, `test-railway-root-shape`,
+`test-railway-status-guard`, `test-f2-token-probe` — all still pass, which is how
+this change is not allowed to touch upload mode.
+
+**Served state when this was written** (`serviceInstance.latestDeployment`, read at
+2026-11-24 ~00:20Z, not inferred from a run conclusion): development `backend`
+`430b717d`, `frontend-web` `e28b1757`, `frontend-admin` `fb21b7d4`, all `SUCCESS`
+at 00:10:09-00:10:12Z naming `b215276b5…` (`meta.cliMessage` set — an upload).
+Staging is **unchanged since Episode 21**: `2df11e51` / `d7abcc2e` / `6e39f119`,
+all still `0329a903a…` at 14:29Z on 2026-11-23 — neither post-swap commit ever
+reached it, because both trains died in the read. Production is untouched:
+`d4bf7af7` `e43c64557…` (backend, 11-21), `531cfcdc` `f3407986d…` (frontend-web,
+11-23 12:51Z), `33254f63` `528382b26…` (frontend-admin, 11-22 10:55Z).
+
+**Consequence for the next reader.** A `deploy Staging` leg under half a minute is
+now a third signature to sort out, and it is separable from F2 on the spot: F2
+prints nine `Failed to fetch` lines and mints no row; ours printed *nothing* and
+minted no row either. The cheap live tell still works — zero staging rows in the
+leg window — and the new tell is the log's last line: if the leg ends one second
+after its own `=== deploying … ===` header, read `railway-deploy.sh`, not
+Railway's status page. The fix only bites from the train whose gate sha contains
+it, so the first train to prove it is the one that follows this commit.

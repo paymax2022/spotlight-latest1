@@ -29,14 +29,25 @@
 # leg called: the `up` counter is checked in all of them, because if a mutation
 # leg ever packs an archive again the wall comes back and this test should say
 # so instead of a release discovering it. The `noop`, `stale-green`,
-# `other-commit`, `console-row`, `build-failed`, `refused` and `no-baseline`
-# scenarios are the red controls — a suite that goes green whatever the script
-# does would prove nothing, and this is exactly the suite that must be able to
-# see a silent no-op and another train's row alike.
+# `other-commit`, `console-row`, `build-failed`, `refused`, `no-baseline` and
+# `rows-refused` scenarios are the red controls — a suite that goes green
+# whatever the script does would prove nothing, and this is exactly the suite
+# that must be able to see a silent no-op and another train's row alike.
+#
+# Two of the scenarios are about the READERS rather than the rows, because the
+# leg's first red after the swap was a reader problem, not a Railway problem
+# (train 45234100845, 2026-11-23T18:33:15Z: 1.1 s from the leg's header to
+# `exit code 1` with nothing in between). `list-refused` makes the name-resolved
+# `railway deployment list` refuse and requires the leg to deploy anyway — a
+# mutation leg is aimed by ids, so it must READ by ids — and `green` pins that
+# the CLI is never asked to resolve a service or environment name at all.
+# `rows-refused` takes the id-addressed reader away too and requires the leg to
+# say so out loud: an empty page plus the existing "could not read the
+# pre-mutation row" guard, not a bare exit.
 #
 # Run:  bash scripts/ci/test-staging-deploy-watch.sh
-# No network. Measured 98 checks in 57 s on a laptop on 2026-11-23 — 11 stubbed
-# legs (4 green shapes, 7 red controls), the classifier cells including the
+# No network. Measured 115 checks in 112 s on a laptop on 2026-11-24 — 13 stubbed
+# legs (5 green shapes, 8 red controls), the classifier cells including the
 # STARTED_AT cutoff matrix, the argument guards and the wiring pins. `sleep` is
 # stubbed so none of it waits on a clock.
 # It shares the secret-hygiene runner with the other deploy tests rather than
@@ -76,10 +87,72 @@ mkdir -p "$work/bin" "$work/tree/fake"
 
 cat > "$work/bin/railway" <<'STUB'
 #!/usr/bin/env bash
-# Enough of the railway CLI for railway-deploy.sh's mutation mode: `api` (the
-# mutation), `deployment list` (the baseline read and the watch), `logs` (the
-# crash dump) and `up`, which records that it happened and fails loudly.
+# Enough of the railway CLI for railway-deploy.sh's mutation mode: `api` (both
+# the mutation and the id-addressed row page), `deployment list` (the name-
+# resolved row page, which is what upload mode uses and what a staging leg must
+# NOT depend on any more), `logs` (the crash dump) and `up`, which records that
+# it happened and fails loudly.
+#
+# Both row readers answer from the SAME builder, so a scenario is a statement
+# about the rows and not about the transport: switching the leg from one reader
+# to the other must not change any verdict. `deployment list` emits a bare JSON
+# array; `api` wraps the same array in the GraphQL connection envelope, because
+# that is the difference the leg's jq has to absorb.
 cmd="${1:-}"; shift || true
+
+base="$(printf '{"id":"%s","status":"SUCCESS","meta":{"commitHash":"%s"}}' "$BASE_ID" "$OTHER_SHA")"
+row() { printf '{"id":"%s","status":"%s","meta":%s}' "$NEW_ID" "$1" "$2"; }
+
+# rows_page <lookup|baseline>: the page content for one call. `n` is the shared
+# watch-lookup counter, so pending-first alternates whichever reader asks.
+rows_page() {
+  local kind="$1" n=0
+  if [ "$kind" = baseline ]; then
+    # The pre-mutation baseline read. `no-baseline` answers with a page that
+    # names no row at all, which the leg must refuse instead of treating
+    # every later row as "new".
+    if [ "${STUB_MODE}" = no-baseline ]; then printf '[]'; else printf '[%s]' "$base"; fi
+    return 0
+  fi
+  [ -f "$STUB_POLL_COUNT" ] && n="$(cat "$STUB_POLL_COUNT")"
+  n=$((n + 1)); printf '%s' "$n" > "$STUB_POLL_COUNT"
+  case "${STUB_MODE}" in
+    noop)          printf '[%s]' "$base" ;;
+    no-baseline)   printf '[%s]' "$base" ;;
+    other-commit)  printf '[%s,%s]' "$(row SUCCESS "{\"commitHash\":\"$OTHER_SHA\"}")" "$base" ;;
+    build-failed)  printf '[%s,%s]' "$(row FAILED "{\"commitHash\":\"$SHA_STUB\"}")" "$base" ;;
+    console-row)   printf '[%s,%s]' "$(row SUCCESS 'null')" "$base" ;;
+    pending-first)
+      if [ "$n" -le 1 ]; then
+        printf '[%s,%s]' "$(row BUILDING "{\"commitHash\":\"$SHA_STUB\"}")" "$base"
+      else
+        printf '[%s,%s]' "$(row SUCCESS "{\"commitHash\":\"$SHA_STUB\"}")" "$base"
+      fi ;;
+    # green-string-meta: meta as a JSON STRING, the shape a flattened `meta`
+    # selection returns. A parser that assumes a dict reads it as "no commit".
+    green-string-meta)
+      printf '[%s,%s]' "$(row SUCCESS "\"{\\\"commitHash\\\":\\\"$SHA_STUB\\\"}\"")" "$base" ;;
+    # upload-spelling: the commit in meta.cliMessage, where an upload puts it.
+    # Both spellings must read as this leg's deploy.
+    upload-spelling)
+      printf '[%s,%s]' "$(row SUCCESS "{\"cliMessage\":\"$SHA_STUB\"}")" "$base" ;;
+    # stale-green: a SUCCESS row naming THIS commit, created long before this
+    # leg fired its mutation. That is what a second train on the same sha
+    # leaves behind (release.yml has no workflow-level concurrency, and a
+    # Release re-run does it to one commit). Crediting it is the false green
+    # the STARTED_AT cutoff exists to stop.
+    stale-green)
+      printf '[%s,%s]' \
+        "{\"id\":\"$STALE_ID\",\"status\":\"SUCCESS\",\"createdAt\":\"2020-01-01T00:00:00.000Z\",\"meta\":{\"commitHash\":\"$SHA_STUB\"}}" \
+        "$base" ;;
+    *)             printf '[%s,%s]' "$(row SUCCESS "{\"commitHash\":\"$SHA_STUB\"}")" "$base" ;;
+  esac
+}
+
+# edges_from <array-json>: wrap rows in the GraphQL connection shape.
+edges_from() {
+  printf '%s' "$1" | jq -c '{data:{deployments:{edges:(map({node:.}))}}}'
+}
 case "$cmd" in
   up)
     printf 'railway up %s\n' "$*" >> "$STUB_UP_LOG"
@@ -87,6 +160,44 @@ case "$cmd" in
     exit 77
     ;;
   api)
+    # One endpoint, two documents. The row page is a query selecting
+    # `deployments(input:)`; the deploy is the serviceInstanceDeploy mutation.
+    # Dispatch on the document text, because that is the only thing that
+    # distinguishes them, and keep the mutation's counters exactly as they were
+    # so every pre-existing assertion still means what it said.
+    doc="${1:-}"
+    case "$doc" in
+      *deployments\(input:*)
+        printf 'api-rows %s\n' "$*" >> "$STUB_ROWS_LOG"
+        # `n=1` is the baseline read; anything bigger is the watch looking again.
+        first=10
+        for a in "$@"; do
+          case "$a" in n=*) first="${a#n=}" ;; esac
+        done
+        if [ "$first" = 1 ]; then
+          printf 'rows1\n' >> "$STUB_ROWS_LOG"
+          # The reader's own failure shape: a non-zero exit with its sentence on
+          # stderr. This is the cell that pins the leg must not go back to being
+          # silent about it — with both readers gone there is no page to judge,
+          # and the only acceptable output is a red leg that says what failed.
+          if [ "${STUB_MODE}" = rows-refused ]; then
+            echo "Error: Not Authorized (token scope)" >&2
+            exit 1
+          fi
+          edges_from "$(rows_page baseline)"
+          echo "Railway API request completed" >&2
+          exit 0
+        fi
+        printf 'rows10\n' >> "$STUB_ROWS_LOG"
+        if [ "${STUB_MODE}" = rows-refused ]; then
+          echo "Error: Not Authorized (token scope)" >&2
+          exit 1
+        fi
+        edges_from "$(rows_page lookup)"
+        echo "Railway API request completed" >&2
+        exit 0
+        ;;
+    esac
     printf 'api %s\n' "$*" >> "$STUB_API_LOG"
     n=0; [ -f "$STUB_API_COUNT" ] && n="$(cat "$STUB_API_COUNT")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_API_COUNT"
@@ -107,55 +218,29 @@ case "$cmd" in
   deployment)
     sub="${1:-}"; shift || true
     [ "$sub" = list ] || { echo "STUB: unexpected deployment subcommand: $sub" >&2; exit 1; }
+    # The shape train 45234100845 hit on every staging leg at 18:33:15Z: the
+    # name-resolved list call refuses with a non-zero exit and its sentence on
+    # stderr only. The leg that swallowed it died 1.1 s after printing its
+    # header, with nothing in the log to say why.
+    if [ "${STUB_MODE}" = list-refused ]; then
+      printf 'list-refused\n' >> "$STUB_LIST_LOG"
+      echo "Error: No project linked. Run `railway link` first." >&2
+      exit 1
+    fi
     limit=10
     while [ $# -gt 0 ]; do
       if [ "$1" = --limit ]; then limit="${2:-10}"; shift 2; continue; fi
       shift
     done
-    base="$(printf '{"id":"%s","status":"SUCCESS","meta":{"commitHash":"%s"}}' "$BASE_ID" "$OTHER_SHA")"
-    row() { printf '{"id":"%s","status":"%s","meta":%s}' "$NEW_ID" "$1" "$2"; }
     if [ "$limit" = 1 ]; then
-      # The pre-mutation baseline read. `no-baseline` answers with a page that
-      # names no row at all, which the leg must refuse instead of treating
-      # every later row as "new".
-      if [ "${STUB_MODE}" = no-baseline ]; then printf '[]'; else printf '[%s]' "$base"; fi
       printf 'list1\n' >> "$STUB_LIST_LOG"
+      rows_page baseline
+      printf '\n'
       exit 0
     fi
-    n=0; [ -f "$STUB_POLL_COUNT" ] && n="$(cat "$STUB_POLL_COUNT")"
-    n=$((n + 1)); printf '%s' "$n" > "$STUB_POLL_COUNT"
     printf 'list10\n' >> "$STUB_LIST_LOG"
-    case "${STUB_MODE}" in
-      noop)          printf '[%s]' "$base" ;;
-      no-baseline)   printf '[%s]' "$base" ;;
-      other-commit)  printf '[%s,%s]' "$(row SUCCESS "{\"commitHash\":\"$OTHER_SHA\"}")" "$base" ;;
-      build-failed)  printf '[%s,%s]' "$(row FAILED "{\"commitHash\":\"$SHA_STUB\"}")" "$base" ;;
-      console-row)   printf '[%s,%s]' "$(row SUCCESS 'null')" "$base" ;;
-      pending-first)
-        if [ "$n" -le 1 ]; then
-          printf '[%s,%s]' "$(row BUILDING "{\"commitHash\":\"$SHA_STUB\"}")" "$base"
-        else
-          printf '[%s,%s]' "$(row SUCCESS "{\"commitHash\":\"$SHA_STUB\"}")" "$base"
-        fi ;;
-      # green-string-meta: meta as a JSON STRING, the shape a flattened `meta`
-      # selection returns. A parser that assumes a dict reads it as "no commit".
-      green-string-meta)
-        printf '[%s,%s]' "$(row SUCCESS "\"{\\\"commitHash\\\":\\\"$SHA_STUB\\\"}\"")" "$base" ;;
-      # upload-spelling: the commit in meta.cliMessage, where an upload puts it.
-      # Both spellings must read as this leg's deploy.
-      upload-spelling)
-        printf '[%s,%s]' "$(row SUCCESS "{\"cliMessage\":\"$SHA_STUB\"}")" "$base" ;;
-      # stale-green: a SUCCESS row naming THIS commit, created long before this
-      # leg fired its mutation. That is what a second train on the same sha
-      # leaves behind (release.yml has no workflow-level concurrency, and a
-      # Release re-run does it to one commit). Crediting it is the false green
-      # the STARTED_AT cutoff exists to stop.
-      stale-green)
-        printf '[%s,%s]' \
-          "{\"id\":\"$STALE_ID\",\"status\":\"SUCCESS\",\"createdAt\":\"2020-01-01T00:00:00.000Z\",\"meta\":{\"commitHash\":\"$SHA_STUB\"}}" \
-          "$base" ;;
-      *)             printf '[%s,%s]' "$(row SUCCESS "{\"commitHash\":\"$SHA_STUB\"}")" "$base" ;;
-    esac
+    rows_page lookup
+    printf '\n'
     exit 0
     ;;
   logs)
@@ -197,16 +282,25 @@ check() { # <label> <expected> <actual>
   fi
 }
 
-# run_leg <stub-mode> -> "<rc> <up-calls> <api-calls> <poll-calls>"
+# run_leg <stub-mode> -> "<rc> <up-calls> <mutation-calls> <watch-lookups> <name-resolved-list-calls>"
+#
+# Field 4 counts a watch lookup however it was fetched — `list10` from the
+# name-resolved reader or `rows10` from the id-addressed one — because "how many
+# times did the leg look at the page" is a statement about the verdict, not about
+# the transport. Field 5 exists to pin the other half: a mutation leg that goes
+# back to `railway deployment list` is the leg that died silently on 2026-11-23,
+# so it must be visible here as a non-zero count.
 run_leg() {
   local mode="$1" rc
   : > "$work/up.$mode"; : > "$work/api.$mode"; : > "$work/list.$mode"
+  : > "$work/rows.$mode"
   : > "$work/api_count.$mode"; : > "$work/poll_count.$mode"
   (
     cd "$work/tree" || exit 99
     STUB_MODE="$mode" \
       STUB_UP_LOG="$work/up.$mode" STUB_API_LOG="$work/api.$mode" \
-      STUB_LIST_LOG="$work/list.$mode" STUB_API_COUNT="$work/api_count.$mode" \
+      STUB_LIST_LOG="$work/list.$mode" STUB_ROWS_LOG="$work/rows.$mode" \
+      STUB_API_COUNT="$work/api_count.$mode" \
       STUB_POLL_COUNT="$work/poll_count.$mode" \
       PATH="$work/bin:$PATH" \
       SERVICE=backend RAILWAY_ENV=staging SHA="$SHA_STUB" \
@@ -218,10 +312,11 @@ run_leg() {
       bash "$deploy" >"$work/out.$mode" 2>&1
   )
   rc=$?
-  printf '%s %s %s %s' "$rc" \
+  printf '%s %s %s %s %s' "$rc" \
     "$(count "$work/up.$mode" '^railway up')" \
     "$(num "$work/api_count.$mode")" \
-    "$(count "$work/list.$mode" '^list10$')"
+    "$(( $(count "$work/list.$mode" '^list10$') + $(count "$work/rows.$mode" '^rows10$') ))" \
+    "$(count "$work/list.$mode" '^list')"
 }
 
 echo "=== the leg, green: the two shapes a real deploy row arrives in"
@@ -246,6 +341,50 @@ check "green: the token appears in no recorded argv" "0" \
   "$(count "$work/api.green" 'rlwy_stub_value_never_printed')"
 check "green: the token appears nowhere in the leg log" "0" \
   "$(count "$work/out.green" 'rlwy_stub_value_never_printed')"
+check "green: no name-resolved list call at all (a mutation leg is id-addressed)" "0" "$5"
+
+# The 2026-11-23 18:33Z staging legs. All three printed
+#     === deploying backend to staging (dda9d256…) ===
+# and then exited 1 one second later with no other line in the entire log, which
+# is why the lane looked like a Railway fault for an hour before anyone noticed
+# the refusal was ours: the baseline read went through `railway deployment list`,
+# that call refused, its stderr went to /dev/null, and `set -e` killed the leg
+# before the guard written to catch exactly this could run. The leg that
+# survives the same refusal is the point of this cell.
+echo "=== the row read: a refused name-resolved list must not be a silent death"
+out="$(run_leg list-refused)"; set -- $out
+check "list-refused: the leg still deploys (exits 0)" "0" "$1"
+check "list-refused: never ran railway up"            "0" "$2"
+check "list-refused: sent exactly one mutation"       "1" "$3"
+check "list-refused: never asked the CLI to resolve a name" "0" "$5"
+check "list-refused: the log names the baseline row it read" "yes" \
+  "$(grep -q "^baseline row before the mutation: $BASE_ID$" "$work/out.list-refused" && echo yes || echo no)"
+check "list-refused: the log names the commit it deployed" "yes" \
+  "$(grep -q 'deployed 1111111111.* (mutation)' "$work/out.list-refused" && echo yes || echo no)"
+check "list-refused: the row page came through the api" "yes" \
+  "$(grep -q 'rows10' "$work/rows.list-refused" && echo yes || echo no)"
+check "list-refused: the id-addressed read carries the service id, not the name" "yes" \
+  "$(grep -q "serviceId\":\"$BACKEND_ID" "$work/rows.list-refused" && echo yes || echo no)"
+check "list-refused: the id-addressed read carries the staging environment id" "yes" \
+  "$(grep -q "environmentId\":\"$STAGING_ENV_ID" "$work/rows.list-refused" && echo yes || echo no)"
+check "list-refused: the token appears in no recorded argv" "0" \
+  "$(count "$work/rows.list-refused" 'rlwy_stub_value_never_printed')"
+
+# The other half of the same lesson: when the row read itself is what refuses,
+# the leg is allowed to be red — it just is not allowed to be quiet about it.
+# Without this cell the fix could be reduced to `printf '[]'; return 0` (an
+# honest-looking empty page) and the suite would still pass, while a real CI leg
+# went back to dying 1.1 s in with no reason in the log.
+out="$(run_leg rows-refused)"; set -- $out
+check "rows-refused: the leg is RED (no baseline, no verdict)" "1" "$1"
+check "rows-refused: sends NO mutation (it refuses to guess at 'new row')" "0" "$3"
+check "rows-refused: the log says the row page read failed" "yes" \
+  "$(grep -q 'row page read failed (rc=1)' "$work/out.rows-refused" && echo yes || echo no)"
+check "rows-refused: the log keeps the CLI's reason, not just a bare rc" "yes" \
+  "$(grep -q 'Not Authorized' "$work/out.rows-refused" && echo yes || echo no)"
+check "rows-refused: the named guard still fires" "yes" \
+  "$(grep -q 'could not read the pre-mutation' "$work/out.rows-refused" && echo yes || echo no)"
+check "rows-refused: never ran railway up" "0" "$2"
 
 out="$(run_leg green-string-meta)"; set -- $out
 check "green via a stringified meta: exits 0" "0" "$1"
@@ -512,4 +651,4 @@ if [ "$failures" -ne 0 ]; then
   echo "FAIL  $failures of $checks check(s) failed"
   exit 1
 fi
-echo "ok — staging mutation leg pinned ($checks checks: 4 green legs, 7 red controls, the cutoff matrix, guards and wiring)"
+echo "ok — staging mutation leg pinned ($checks checks: 5 green legs, 8 red controls, the cutoff matrix, the readers, guards and wiring)"
