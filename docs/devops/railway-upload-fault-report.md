@@ -2730,6 +2730,7 @@ page), a mutation that is accepted, and a new row that names the commit. If a de
 refusal survives with the variable gone, this episode's claim is falsified by the train
 that carries it — which is how Episodes 23 and 24 were settled, and the gate above is
 what makes the difference measurable instead of arguable.
+**Answered: it did not survive. See Episode 26 immediately below.**
 
 **Served as I write this** (05:49:16Z, `serviceInstance.latestDeployment`, read-only):
 development all three at `85f91969b5` (rows `48f35cfb`/`a66ae88a`/`96381462`, 05:25:19-20Z,
@@ -2749,3 +2750,100 @@ the deployment row after the mutation`: the write was accepted and only the read
 ~1,050 s with nine `Failed to fetch: error decoding response body`: the same internal
 host, caught by the CLI's JSON parser instead of its status line — F2. `Your trial has
 expired`: account state, and it hits the dev legs, not staging.
+
+## Episode 26 — 2026-11-24 06:15-07:00Z: the train that carries Episode 25 is the first train in the retained history to reach production
+
+**Cost to us:** none — this is the settlement. Twenty-five episodes of staging
+refusals ended, and the release chain ran end to end: the only such run in the 100
+most recent trains of this workflow, which is the whole retained history at the time
+of writing.
+
+**Run `45339054031`**, push-triggered on `e078dc00b9…` (the squash that landed #1167),
+gate verdict `proceed` at 06:48:11Z with `at_main_tip: true`. **Every job succeeded.**
+
+**Control, because a green Release has fooled this arc before.** Census over all **100
+retained runs** of this workflow, judged from each run's job list rather than its
+status: exactly one run has a `success` `smoke Staging` or `deploy Production` job,
+and it is this one.
+
+| shape | runs | `smoke Staging` / `deploy Production` |
+|---|---|---|
+| `45339054031` (`e078dc00b9`) | **1** | both `success` |
+| earlier runs whose workflow has those jobs | **83** | present, never `success` |
+| older runs predating that workflow shape | **16** | the jobs do not exist |
+
+Four runs in the recent window do conclude `success` at the run level —
+`45302407317`, `45193856472`, `45184035823`, `45176930855` — and each of those four is
+exactly `1 success (the gate) + 8 skipped`, because their verdict was
+`noop_docs_only`. So "the release is green" has never been evidence of a deploy, and
+this time it is: **21 jobs, 21 success, 0 skipped**, six staging legs and six
+production legs among them. GitHub retains 100 runs of this workflow, so never in
+this episode means never in the retained history, not never since the file was first
+written.
+
+| step | evidence |
+|---|---|
+| `deploy Development` x3 | rows `4f073a73`/`cc10c8f2`/`e33861e8`, `SUCCESS` 06:48:39-40Z, `meta.cliMessage=e078dc00b9…` |
+| `migrate staging database` | success |
+| `deploy Staging (backend)` | row `34936e97-83f9-45fd-9fd7-8b8244ee9cab` `SUCCESS` **06:49:18Z**, `meta.commitHash=e078dc00b9699f396a89d9b58a3524d6a7a3ed3e`, `meta.branch=main`, `meta.reason=deploy` — the first staging row CI has ever written |
+| `deploy Staging (frontend-web)` | row `840bfcc6` `SUCCESS` 06:52:31Z, same `commitHash` |
+| `deploy Staging (frontend-admin)` | row `b45c7635` `SUCCESS` 06:54:23Z, same `commitHash` |
+| `smoke Staging` x3 | success — in the 83 earlier runs that have the job it is never `success` |
+| `migrate production database` | success; job log 06:55:44Z `SKIP_APPLY: false`, `DRY_RUN: false` and `production apply is enabled; dry_run=false.`, 06:56:00Z `supabase db push --linked`, 06:56:02Z `Remote database is up to date.` — so the apply really ran against production and found nothing pending (`include_all: false`; every migration in this tree had already been applied by the scoped lanes) |
+| `deploy Production` x3 | rows `8ae9763d`/`93e61331`/`1202badf` `SUCCESS` 06:56:20-26Z, `meta.cliMessage=e078dc00b9…` |
+| `smoke Production` | success |
+
+Each staging leg took 2-3 minutes, with zero decode refusals, zero retries, zero
+`Failed to fetch`, zero `HTTP 503`, zero `unconditional drop overload` and zero
+`Your trial has expired` lines in all three logs. Every leg read its baseline, and the
+lines are identical in shape across the three — the inherited command answered on the
+first attempt, so Episode 24's env-stripped fallback never fired:
+
+```
+deploy Staging (backend)         baseline row before the mutation: 2df11e51-6300-4107-80de-1722a50e24ef
+                                 row reads run under command shape: inherited
+                                 mutation verdict: accepted (exit 0) under command shape: inherited
+deploy Staging (frontend-web)    baseline row before the mutation: d7abcc2e-bd8f-462a-bdb9-9980d57804a8
+                                 row reads run under command shape: inherited
+                                 mutation verdict: accepted (exit 0) under command shape: inherited
+deploy Staging (frontend-admin)  baseline row before the mutation: 6e39f119-567c-481c-9b8b-9a9af6e1922e
+                                 row reads run under command shape: inherited
+                                 mutation verdict: accepted (exit 0) under command shape: inherited
+```
+
+Those three baseline ids are the 2026-11-23 14:29Z promotion rows — the last thing
+staging had before this train — so the reads that returned them are reads that used to
+refuse nine times in a row. That is the cleanest statement of the fix available: the
+same inherited command that used to die now succeeds untouched, because the only thing
+removed from its environment was the key the CLI owns. The mutation path (`DEPLOY_METHOD=mutation` judged by
+`scripts/ci/staging-deploy-watch.py` on the row that names the commit) did exactly what
+its 171 checks say it does.
+
+**Outcome read-back, not pipeline read-out.** `GET /api/v1/public/build` on the three
+backends — hostnames from `docs/CLAUDE_CODE_DEVELOPMENT_HANDOFF.md:122` and this pack,
+never guessed (`api.spotlightng.com` and `staging-api.spotlightng.com` do not resolve):
+
+```
+backend-development-502c.up.railway.app  {"commit":"e078dc00b9…","source":"ldflags","started_at":"2026-11-24T06:51:21Z"}
+backend-staging-new.up.railway.app       {"commit":"e078dc00b9…","source":"env",   "started_at":"2026-11-24T06:51:56Z"}
+backend-production-1b33d.up.railway.app  {"commit":"e078dc00b9…","source":"ldflags","started_at":"2026-11-24T06:59:00Z"}
+```
+
+**Reproduction clause.** The claim is falsifiable the same way: re-run a push to `main`
+and read the staging rows; if `RAILWAY_ENV` ever comes back into a leg's environment,
+`scripts/ci/test-railway-env-name.sh` reddens before the deploy step can reach it, and
+the refusal reappears as `HTTP 503 unconditional drop overload` on
+`backboard.railway-staging.com`.
+
+**New blast radius for the next operator.** Staging no longer gates production by
+accident. Merging to `main` is now a production release: `release.yml` triggers on every
+push to `main` and the chain runs to `smoke Production` unless a leg genuinely fails.
+A docs-only push still launches a run, but the gate verdict is `noop_docs_only` and every
+leg skips, so documentation merges remain harmless — which is why this episode lands as
+docs rather than as a cleanup PR that would redeploy three production services to
+byte-identical app code.
+
+**Scaffolding still standing, deliberately.** `deploy-staging.strategy.max-parallel: 1`
+and the shape-alternating fallback reader in `scripts/ci/railway-deploy.sh` are both
+provably unnecessary now, and neither is harmful. They ride the next code-bearing PR
+instead of costing a production deploy on their own.
