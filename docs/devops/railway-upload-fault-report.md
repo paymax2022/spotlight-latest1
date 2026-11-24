@@ -2123,10 +2123,19 @@ leg was not refusing, it was aborting before it could refuse.
 same shape as "the token is broken" and this file has already been fooled once by
 reading one transport as another's answer:
 
-- The dev legs of the *same commit* in the *same train* polled the byte-identical
-  `railway deployment list … --json` thirteen times and read
-  INITIALIZING → BUILDING → DEPLOYING → SUCCESS. So the flags, the pinned
-  `@railway/cli@5.40.1`, `jq` and the polling budget were all fine on that runner.
+- The development legs of the *same commit* in the *same train* read their rows
+  with the same name-resolved command — upload mode's poll is
+  `railway deployment list --service <name> --environment <name> --project <id>
+  --limit 10 --json`, which differs from the staging baseline call only in the
+  limit and in the `2>/dev/null` — and it worked there: job `137919832426`
+  (backend, train `45234100845`) polled **13** times, 18:32:41 → 18:36:01Z, and
+  ended `=== backend/development deployed dda9d2569d… ===`; job `138112622097`
+  (backend, train `45289639755`) polled **11** times, 00:10:12 → 00:13:02Z, and
+  ended `=== backend/development deployed b215276b5… ===`. The statuses those
+  polls saw are `INITIALIZING` then `BUILDING` — the leg's own terminal line is
+  the `deployed` sentence, so this file should not claim a `DEPLOYING` row it did
+  not read. Either way: the flags, the pinned `@railway/cli@5.40.1`, `jq` and the
+  polling budget were all fine on that runner class, in that train.
 - The same command line, run locally against the real project, exits 0 on both
   5.40.1 and 5.71.0 and returns row `2df11e51` — so it is not a usage error either,
   and the difference left is the credential and the call path, not the syntax.
@@ -2175,8 +2184,13 @@ and requires a red leg that names the failure, never a bare exit. Both were
 written red against the unpatched script first (9 checks failing, every pre-existing
 check passing). Two mutants prove the pins: putting the baseline read back on
 `railway deployment list` reddens 8 checks; printing the diagnostic to stdout
-instead of stderr reddens 4. `scripts/ci/railway-deploy.sh` was restored
-byte-identical after each (sha256 `eb6855ff5e6b957812b4c66c1bda6c3a179973dd13369eba72ba1a02d39cdc04`).
+instead of stderr reddens 4. Each mutant was applied by `cp` to a /tmp copy, then
+restored and the restore asserted by sha256 against that pre-mutation copy — so
+the proof is the equality, not a hash worth quoting after the file changes. (The
+first draft of this episode pinned the restore to a literal sha256, `eb6855ff…`;
+a comment-only edit to that same script later moved it to `4ff4a2e3…`, which is
+exactly why a restore assertion belongs in this file as an assertion and not as a
+permanent file hash.)
 The five sibling Railway suites — `test-railway-deploy-retry`,
 `test-railway-deploy-archive`, `test-railway-root-shape`,
 `test-railway-status-guard`, `test-f2-token-probe` — all still pass, which is how

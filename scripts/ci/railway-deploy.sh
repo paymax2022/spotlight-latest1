@@ -322,9 +322,11 @@ DOC_DEPLOY_SHA='mutation($s:String!,$e:String!,$sha:String!){ serviceInstanceDep
 # file used to ask with, and on 2026-11-23T18:33:15Z it refused all three
 # staging legs of train 45234100845: each printed its `=== deploying … ===`
 # header and exited 1 about a second later with nothing else in the job log —
-# no baseline line, no `waiting for`, no reason. The dev legs of the same commit
-# polled the identical command line for twelve attempts and read
-# INITIALIZING/BUILDING/DEPLOYING/SUCCESS, so the flags, the pinned 5.40.1 binary
+# no baseline line, no `waiting for`, no reason. The development legs of the
+# same commit read their rows with the same name-resolved command (upload mode's
+# poll, below, differs only in --limit and in the 2>/dev/null) and it worked:
+# job 137919832426 polled 13 times, job 138112622097 polled 11, each ending with
+# its own `deployed` line, so the flags, the pinned 5.40.1 binary
 # and jq were all fine; the call that died was the name-resolved one, in a
 # mutation job, holding RAILWAY_TOKEN_STAGING.
 #
