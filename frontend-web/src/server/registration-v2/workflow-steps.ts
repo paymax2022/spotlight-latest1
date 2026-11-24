@@ -112,7 +112,15 @@ export function buildOpenMicWorkflowSteps(input: {
       steps.push({
         id: 'song-submitted',
         kind: 'song_submitted',
-        label: 'Song submitted for review',
+        // Open Mic hand-ins are auto-approved: `createSubmission` writes
+        // submitted_at and live_at in the same statement (persistence.ts
+        // `submitted_at: submission.submittedAt, live_at: submission.submittedAt`),
+        // so this step and the decision step carry the identical timestamp.
+        // "…for review" promised a human gate that no Open Mic edition has, and sat
+        // directly above "Song approved for voting" from the same second — the
+        // artist read a wait that is not coming. The button they pressed says
+        // "Submit your song", so the milestone says "Song submitted".
+        label: 'Song submitted',
         at: song.submittedAt,
       });
     }

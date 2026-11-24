@@ -71,6 +71,24 @@ describe('buildOpenMicWorkflowSteps', () => {
     expect(steps.map((step) => step.at)).toEqual([BEAT_AT, UPLOADED_AT, SUBMITTED_AT, REVIEWED_AT]);
   });
 
+  it('keeps the hand-in above the auto-approval it triggered in the same second', () => {
+    // This is the live Open Mic shape, not a hypothetical: `createSubmission`
+    // writes submitted_at and live_at from one Date, so the artist's row has ONE
+    // timestamp for both steps. The decision must never sort above the submission
+    // that caused it, and neither line may claim a wait.
+    const SAME = '2026-11-24T13:03:28.618+00:00';
+    const steps = buildOpenMicWorkflowSteps({
+      beatDownloadedAt: BEAT_AT,
+      song: song({ status: 'published_for_voting', submittedAt: SAME, reviewedAt: null, publishedAt: SAME }),
+    });
+    expect(steps.map((step) => step.label)).toEqual([
+      'Beat downloaded',
+      'Song uploaded',
+      'Song submitted',
+      'Song approved for voting',
+    ]);
+  });
+
   it('puts the steps in time order even when the beat came last', () => {
     const steps = buildOpenMicWorkflowSteps({
       beatDownloadedAt: '2026-11-21T09:00:00.000Z',
@@ -84,7 +102,7 @@ describe('buildOpenMicWorkflowSteps', () => {
       ['published_for_voting', 'Song approved for voting'],
       ['live_for_voting', 'Song approved for voting'],
       ['approved', 'Song approved for voting'],
-      ['submitted', 'Song submitted for review'],
+      ['submitted', 'Song submitted'],
       ['correction_requested', 'Correction requested'],
       ['clean_version_requested', 'Clean version requested'],
       ['rejected', 'Song rejected'],
@@ -99,8 +117,12 @@ describe('buildOpenMicWorkflowSteps', () => {
       });
       const kinds = steps.map((step) => step.kind);
       if (status === 'submitted') {
-        // A submitted row has no decision on it; the submission step says it all.
+        // A submitted row has no decision on it; the submission step says it all —
+        // and it must not promise a review, because Open Mic hand-ins are
+        // auto-approved and the very next step is the live-for-voting timestamp
+        // written in the same statement.
         expect(kinds).toEqual(['song_uploaded', 'song_submitted']);
+        expect(steps.find((step) => step.kind === 'song_submitted')?.label).toBe(label);
       } else {
         expect(kinds).toContain('song_reviewed');
         expect(steps.find((step) => step.kind === 'song_reviewed')?.label).toBe(label);
