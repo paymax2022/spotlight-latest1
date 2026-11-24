@@ -5,7 +5,7 @@
 #
 # Required env:
 #   SERVICE       backend | frontend-web | frontend-admin
-#   RAILWAY_ENV   development | staging | production
+#   RAILWAY_ENV_NAME   development | staging | production
 #   SHA           the commit that should now be served
 # Optional env:
 #   REQUIRE_READYZ       'true' (default) makes a non-200 /readyz a FAILURE.
@@ -23,7 +23,7 @@
 set -uo pipefail
 
 : "${SERVICE:?required: SERVICE}"
-: "${RAILWAY_ENV:?required: RAILWAY_ENV}"
+: "${RAILWAY_ENV_NAME:?required: RAILWAY_ENV_NAME}"
 : "${SHA:?required: SHA}"
 REQUIRE_READYZ="${REQUIRE_READYZ:-true}"
 EXPECT_FINGERPRINT="${EXPECT_FINGERPRINT:-}"
@@ -35,9 +35,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # fingerprint and this post-deploy probe cannot disagree about the host.
 . "$HERE/railway-urls.sh"
 
-BASE="$(railway_url "$RAILWAY_ENV" "$SERVICE")"
+BASE="$(railway_url "$RAILWAY_ENV_NAME" "$SERVICE")"
 if [ -z "$BASE" ]; then
-  echo "::error::no URL recorded for $RAILWAY_ENV/$SERVICE in railway-urls.sh"
+  echo "::error::no URL recorded for $RAILWAY_ENV_NAME/$SERVICE in railway-urls.sh"
   exit 1
 fi
 
@@ -45,13 +45,13 @@ note() { printf '%s\n' "$*" >> "$SUMMARY"; }
 
 fail() {
   echo "::error::$*"
-  note "- **$SERVICE / $RAILWAY_ENV** — FAILED: $*"
+  note "- **$SERVICE / $RAILWAY_ENV_NAME** — FAILED: $*"
   exit 1
 }
 
 code() { curl -s -o /dev/null -w '%{http_code}' -m 30 -L "$1" || echo 000; }
 
-note "### smoke: $SERVICE / $RAILWAY_ENV"
+note "### smoke: $SERVICE / $RAILWAY_ENV_NAME"
 note "- host: $BASE"
 
 case "$SERVICE" in
@@ -86,8 +86,8 @@ case "$SERVICE" in
       fail "/readyz answered $ready"
     else
       # Recorded, not failed. development's DB pool is unreachable today.
-      echo "::warning::$RAILWAY_ENV backend /readyz answered $ready (not required in $RAILWAY_ENV)"
-      note "- /readyz: $ready — warning only, not required in $RAILWAY_ENV"
+      echo "::warning::$RAILWAY_ENV_NAME backend /readyz answered $ready (not required in $RAILWAY_ENV_NAME)"
+      note "- /readyz: $ready — warning only, not required in $RAILWAY_ENV_NAME"
     fi
     ;;
 
@@ -109,7 +109,7 @@ case "$SERVICE" in
       # "released" and "still serving October's bytes" — and a mobile store build
       # bakes EXPO_PUBLIC_API_BASE_URL at submission time (eas.json:65), so it
       # cannot be re-pointed without a new submission.
-      echo "::warning::$RAILWAY_ENV/$SERVICE still serves the SAME chunks as before this deploy (fingerprint $now). This commit touched $SERVICE's files, so the bytes should have changed."
+      echo "::warning::$RAILWAY_ENV_NAME/$SERVICE still serves the SAME chunks as before this deploy (fingerprint $now). This commit touched $SERVICE's files, so the bytes should have changed."
       note "- **WARNING: the served chunks did not change** even though this commit touched \`$SERVICE\`."
     fi
     ;;
@@ -120,4 +120,4 @@ case "$SERVICE" in
 esac
 
 note "- result: PASS"
-echo "=== smoke PASS: $SERVICE/$RAILWAY_ENV ==="
+echo "=== smoke PASS: $SERVICE/$RAILWAY_ENV_NAME ==="

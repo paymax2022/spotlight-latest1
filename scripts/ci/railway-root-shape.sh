@@ -37,14 +37,21 @@
 #
 # Required env:
 #   SERVICE          the Railway service name (also the repo directory when unset)
-#   RAILWAY_ENV      development | staging | production
+#   RAILWAY_ENV_NAME      development | staging | production
 #   RAILWAY_PROJECT  project id
 # Run from the repository root.
 set -euo pipefail
 
 : "${SERVICE:?required: SERVICE}"
-: "${RAILWAY_ENV:?required: RAILWAY_ENV}"
+: "${RAILWAY_ENV_NAME:?required: RAILWAY_ENV_NAME}"
 : "${RAILWAY_PROJECT:?required: RAILWAY_PROJECT}"
+# Same reason as scripts/ci/railway-deploy.sh's header note, and this script
+# needs it even more: it calls `railway api` WITHOUT `--environment`, so an
+# inherited RAILWAY_ENV=staging is the only thing routing that call — to
+# backboard.railway-staging.com, which answers a non-JSON 503. That is how this
+# resolver reads as "did not answer" inside a staging leg while answering
+# instantly outside one.
+unset RAILWAY_ENV
 
 command -v railway >/dev/null || { echo "railway-root-shape: the railway CLI is not on PATH" >&2; exit 1; }
 command -v jq >/dev/null || { echo "railway-root-shape: jq is required" >&2; exit 1; }
@@ -58,7 +65,7 @@ if ! json="$(railway api "$QUERY" --var "p=$RAILWAY_PROJECT" --compact 2>/dev/nu
 fi
 
 root="$(printf '%s' "$json" \
-  | jq -r --arg env "$RAILWAY_ENV" --arg svc "$SERVICE" '
+  | jq -r --arg env "$RAILWAY_ENV_NAME" --arg svc "$SERVICE" '
       [ .data.project.environments.edges[]?
         | select(.node.name == $env)
         | .node.serviceInstances.edges[]?
@@ -68,7 +75,7 @@ root="$(printf '%s' "$json" \
 
 case "$root" in
   __ABSENT__)
-    echo "railway-root-shape: no service instance named $SERVICE in environment $RAILWAY_ENV - refusing to invent a shape" >&2
+    echo "railway-root-shape: no service instance named $SERVICE in environment $RAILWAY_ENV_NAME - refusing to invent a shape" >&2
     exit 1
     ;;
   __BAD_JSON__)
@@ -83,14 +90,14 @@ BUILD_DIR=''
 if [ -z "$root" ]; then
   # Unset rootDirectory: the archive root has to BE the app folder.
   [ -d "$SERVICE" ] || { echo "railway-root-shape: $SERVICE has no rootDirectory and no $SERVICE/ directory exists in this tree" >&2; exit 1; }
-  echo "railway-root-shape: $RAILWAY_ENV/$SERVICE rootDirectory unset -> shipping $SERVICE/ as the archive root (--path-as-root)" >&2
+  echo "railway-root-shape: $RAILWAY_ENV_NAME/$SERVICE rootDirectory unset -> shipping $SERVICE/ as the archive root (--path-as-root)" >&2
   printf "UPLOAD_PATH='%s'\n" "$SERVICE"
   printf "ROOT_FLAG='%s'\n" '--path-as-root'
 else
   # rootDirectory set: Railway resolves that path INSIDE the archive, so the
   # archive must be the repo root.
-  [ -d "$root" ] || { echo "railway-root-shape: $RAILWAY_ENV/$SERVICE rootDirectory is '$root' but this repo has no '$root' directory - refusing (Railway would build an empty context and report SUCCESS)" >&2; exit 1; }
-  echo "railway-root-shape: $RAILWAY_ENV/$SERVICE rootDirectory '$root' -> shipping the repo root (no --path-as-root)" >&2
+  [ -d "$root" ] || { echo "railway-root-shape: $RAILWAY_ENV_NAME/$SERVICE rootDirectory is '$root' but this repo has no '$root' directory - refusing (Railway would build an empty context and report SUCCESS)" >&2; exit 1; }
+  echo "railway-root-shape: $RAILWAY_ENV_NAME/$SERVICE rootDirectory '$root' -> shipping the repo root (no --path-as-root)" >&2
   printf "UPLOAD_PATH='%s'\n" ''
   printf "ROOT_FLAG='%s'\n" ''
 fi

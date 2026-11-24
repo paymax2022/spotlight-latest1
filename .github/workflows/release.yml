@@ -209,7 +209,7 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
           SERVICE: ${{ matrix.service }}
-          RAILWAY_ENV: development
+          RAILWAY_ENV_NAME: development
           SHA: ${{ needs.gates.outputs.sha }}
           UPLOAD_PATH: ${{ matrix.upload_path }}
           ROOT_FLAG: ${{ matrix.root_flag }}
@@ -267,7 +267,7 @@ jobs:
       - name: Probe ${{ matrix.service }}
         env:
           SERVICE: ${{ matrix.service }}
-          RAILWAY_ENV: development
+          RAILWAY_ENV_NAME: development
           SHA: ${{ needs.gates.outputs.sha }}
           REQUIRE_READYZ: ${{ matrix.require_readyz }}
           EXPECT_FINGERPRINT: ${{ matrix.fingerprint }}
@@ -400,7 +400,7 @@ jobs:
           DEPLOY_METHOD: mutation
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
           SERVICE: ${{ matrix.service }}
-          RAILWAY_ENV: staging
+          RAILWAY_ENV_NAME: staging
           SHA: ${{ needs.gates.outputs.sha }}
           SERVICE_ID: ${{ matrix.service_id }}
           # staging's Environment.id, re-read with `railway api` on 2026-11-23.
@@ -455,7 +455,7 @@ jobs:
       - name: Probe ${{ matrix.service }}
         env:
           SERVICE: ${{ matrix.service }}
-          RAILWAY_ENV: staging
+          RAILWAY_ENV_NAME: staging
           SHA: ${{ needs.gates.outputs.sha }}
           REQUIRE_READYZ: ${{ matrix.require_readyz }}
           EXPECT_FINGERPRINT: ${{ matrix.fingerprint }}
@@ -532,7 +532,7 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
           SERVICE: ${{ matrix.service }}
-          RAILWAY_ENV: production
+          RAILWAY_ENV_NAME: production
           SHA: ${{ needs.gates.outputs.sha }}
           UPLOAD_PATH: ${{ matrix.upload_path }}
           ROOT_FLAG: ${{ matrix.root_flag }}
@@ -579,7 +579,7 @@ jobs:
       - name: Probe ${{ matrix.service }}
         env:
           SERVICE: ${{ matrix.service }}
-          RAILWAY_ENV: production
+          RAILWAY_ENV_NAME: production
           SHA: ${{ needs.gates.outputs.sha }}
           REQUIRE_READYZ: ${{ matrix.require_readyz }}
           EXPECT_FINGERPRINT: ${{ matrix.fingerprint }}

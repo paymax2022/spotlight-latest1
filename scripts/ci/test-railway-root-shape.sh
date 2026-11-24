@@ -106,13 +106,13 @@ check() { # <label> <expected> <actual>
   fi
 }
 
-# Run the resolver. $1 = json file, $2 = SERVICE, $3 = RAILWAY_ENV.
+# Run the resolver. $1 = json file, $2 = SERVICE, $3 = RAILWAY_ENV_NAME.
 # Echoes "exit|UPLOAD_PATH|ROOT_FLAG|BUILD_DIR|called".
 run_shape() {
   local out rc called up flag bd
   rm -f "$work/called"
   out="$(cd "$repo_root" && STUB_JSON="$1" STUB_CALLED="$work/called" \
-          SERVICE="$2" RAILWAY_ENV="$3" RAILWAY_PROJECT=stub-project \
+          SERVICE="$2" RAILWAY_ENV_NAME="$3" RAILWAY_PROJECT=stub-project \
           PATH="$work/bin:$PATH" bash "$script" 2>"$work/err")"
   rc=$?
   called=no; [ -f "$work/called" ] && called=yes

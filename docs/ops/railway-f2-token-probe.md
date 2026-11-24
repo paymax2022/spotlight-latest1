@@ -789,3 +789,41 @@ exists: `auth=ok`, `baseline=ok row=005ab765 status=SUCCESS`, so the query
 shapes and every id in the script are confirmed live without a project token
 ever being handled locally.
 
+
+## Corrected 2026-11-24: the refusals this probe was built to explain were ours, not Railway's
+
+Full measurement in `docs/devops/railway-upload-fault-report.md`, Episode 25. In one
+line: **`release.yml` and `ops-railway-upload.yml` exported `RAILWAY_ENV: staging`, and
+the Railway CLI reads `RAILWAY_ENV` as its own internal API-stage selector** — that
+value moves every request to `https://backboard.railway-staging.com/graphql/v2`, which
+answers a non-JSON `unconditional drop overload` HTTP 503. `development`, `production`,
+`preview`, `zzz`, `staging-Old` and unset all stay on `backboard.railway.com`.
+
+What that retires from this file:
+
+- *"the decode refusal is time-windowed"* (the 12:07Z measurement section). It is not a
+  window on the production API; it is a second backend whose availability nobody on
+  this side can see or affect. The 900 s ladder was always spanning the wrong wall.
+- *"no project token can read the deployment graph" (Verdict: CLASS)* as an explanation
+  for the release legs. The CLASS samples measured the sampler, this file already says
+  that twice, and the leg-vs-probe asymmetry that motivated the whole probe is the env
+  var: this workflow has never set `RAILWAY_ENV`, which is why it answers in forty
+  seconds.
+- *"the refusal follows the staging credential"* in
+  `docs/ops/admin-console-production-errors-2026-11-20.md` §2026-11-22 (afternoon). That
+  lane derived `RAILWAY_ENV` from `inputs.environment`, so `production` passed the same
+  pre-flight and `staging` refused it six times — same runner image, same CLI, same
+  document.
+
+What stands untouched, because it was measured with the variable absent: the write cell
+(`project-token-can-deploy`, 14:27:14Z), the token-scope inventory and the minting
+refusals, the transport cells, and "the sampler, not the credential" conclusion.
+
+One correction to "Why this cannot be answered from a laptop", for the next reader: that
+section is about the **credential** — no local stand-in for `RAILWAY_TOKEN_STAGING`
+exists, and it still does not. The **host selection** turned out to need no credential at
+all: `RAILWAY_TOKEN= RAILWAY_ENV=staging railway api …` refuses identically on a laptop
+with an empty token, and a dead `HTTPS_PROXY` prints the URL the CLI chose without
+sending a byte. Two of the twenty-three episodes' worth of runner dispatches were
+purchasable locally in under a minute; the asymmetry that made them look like a Railway
+secret was one key in an `env:` block.

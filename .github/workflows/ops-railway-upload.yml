@@ -106,13 +106,18 @@ jobs:
     timeout-minutes: 45
     env:
       ENVIRONMENT: ${{ inputs.environment }}
-      # The two scripts this job calls take RAILWAY_ENV, not ENVIRONMENT.
+      # The two scripts this job calls take RAILWAY_ENV_NAME, not ENVIRONMENT.
       # Measured 2026-11-22, run 45021663624: with only ENVIRONMENT defined the
       # upload step died in half a second on
       #   scripts/ci/railway-deploy.sh: line 66: RAILWAY_ENV: required: RAILWAY_ENV
-      # — a name mismatch, not a Railway refusal. Keep both names in sync here
+      # — a name mismatch, not a Railway refusal. Keep the names in sync here
       # rather than translating per step, so a future step cannot forget it.
-      RAILWAY_ENV: ${{ inputs.environment }}
+      #
+      # The name changed on 2026-11-24 and the reason is not cosmetic: the
+      # Railway CLI reads RAILWAY_ENV as an INTERNAL API-STAGE selector and sends
+      # every request to backboard.railway-staging.com when it is `staging` — the
+      # non-JSON 503 behind F2. See scripts/ci/test-railway-env-name.sh.
+      RAILWAY_ENV_NAME: ${{ inputs.environment }}
       SERVICE: ${{ inputs.service }}
       SHA: ${{ inputs.sha }}
       RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2

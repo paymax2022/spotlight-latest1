@@ -559,30 +559,54 @@ simply be deleted job-wide: `scripts/ci/railway-root-shape.sh:47,55` requires
 `RAILWAY_PROJECT`, and the 600 s timeout is what lets the 110 MB `frontend-web`
 archive upload at all.
 
-The rule this leaves, and the reason it belongs in the matrix rather than only in
-the fault report: **a leg that aims itself with ids must read with ids, and a document
-measured answering in a *probe* job is not thereby licensed for a *release* leg — the
-measurement has to be taken in the same command shape the leg will use.**
-`scripts/ci/railway-deploy.sh` `latest_row_api` is now the only row reader in mutation
+The rule this left on 2026-11-24 morning — *a document measured answering in a probe
+job is not thereby licensed for a release leg; the measurement has to be taken in the
+same command shape the leg will use* — kept the observation and lost the explanation,
+and **Episode 25 of `docs/devops/railway-upload-fault-report.md`, the same afternoon,
+falsified the explanation.** What differs between a release leg and a probe job is not
+`RAILWAY_PROJECT` or `RAILWAY_HTTP_TIMEOUT`: `release.yml:403,458` and
+`ops-railway-upload.yml:115` export `RAILWAY_ENV`, and the Railway CLI owns that name.
+It is the CLI's internal API-stage selector, and the value `staging` (also `STAGING`,
+`dev`) moves every request to `https://backboard.railway-staging.com/graphql/v2` —
+Railway's own pre-production backboard, which answers a non-JSON
+`unconditional drop overload` HTTP 503. `development`, `production`, `preview`, `zzz`,
+`""` and unset all keep `backboard.railway.com`. That one line is why every staging
+`railway up` leg has died since 2026-11-16, why the same document answers forty seconds
+later in a probe workflow that never sets the variable, why
+`scripts/ci/railway-root-shape.sh` — which passes no `--environment` at all — could not
+read the project from inside a staging leg, and why the manual lane's production
+dispatch passed its pre-flight while its six staging dispatches refused.
+
+The rule that replaces it: **no `railway` call in this repo may inherit
+`RAILWAY_ENV`.** The environment name travels as `RAILWAY_ENV_NAME` and reaches the CLI
+only as the `--environment` flag; the two scripts that call the CLI `unset RAILWAY_ENV`
+themselves; a leg configured only the old way refuses with `required: RAILWAY_ENV_NAME`
+rather than quietly addressing the internal stage; and
+`scripts/ci/test-railway-env-name.sh` (17 checks, wired into `ci.yml`'s Railway test
+lane) fails on inheritance — its stub CLI records whether the variable was present in
+the environment of every call.
+`scripts/ci/railway-deploy.sh` `latest_row_api` is still the only row reader in mutation
 mode; it sends the probe's `DOC_ROW` verbatim — the same string
 `scripts/ci/f2-token-probe.sh` uses, pinned equal by a check that diffs the two
 `^DOC_ROW=` lines — through `railway api`, the transport `RAILWAY_TOKEN_STAGING` is
 measured against. It maps the one `latestDeployment` object to a bare JSON array
 (`[]` on failure), so `scripts/ci/staging-deploy-watch.py` decides verdicts from one
-shape and one set of fixtures. Because the *job shape* is now the open question, the
-reader takes one: baseline attempt 1 uses the release job's own environment
+shape and one set of fixtures. It still alternates shapes, because Episode 24 could not
+yet rule the vars out: baseline attempt 1 uses the release job's own environment
 (`inherited`), attempts 2 and 3 drop the two vars (`env -u RAILWAY_PROJECT
 -u RAILWAY_HTTP_TIMEOUT railway`, `stripped`), and every later `lookup` poll runs in
-whichever shape answered — the leg prints `row reads run under command shape: X`, so
-the train log says which shape Railway's edge accepts. A refused baseline read is no
+whichever shape answered — the leg prints `row reads run under command shape: X`. After
+Episode 25 that printing is a fallback and a cost check, not an experiment: neither
+shape says anything about the fault any more. A refused baseline read is no
 longer fatal: the mutation still fires, because the frozen decision rule cannot guess
 without a baseline id (`mine()` skips a row only `if baseline_id and r.get("id") ==
 baseline_id`) and the post-mutation cutoff still refuses a row that predates the
 mutation (`_predates()` returns False only when `since_sec` is empty, and the leg
 always supplies one). What *is* fatal now is blindness after the mutation: if the
 post-mutation read is refused the leg ends `read-refused` red.
-`deploy-staging.strategy.max-parallel` is `1`, so the shapes and the write cell are
-measured one call at a time. Development and production keep the name-resolved
+`deploy-staging.strategy.max-parallel` is `1`, a hold-over from that same experiment —
+keep it until one train lands a staging commit from CI, then let the three legs run
+together again. Development and production keep the name-resolved
 reader: that path works, it is what `railway up` needs, and this rule is scoped to
 mutation mode.
 
@@ -590,11 +614,13 @@ Reading consequence for the next operator: a red `deploy Staging` leg shorter th
 about a minute, with zero `Failed to fetch` lines and zero new staging rows, is one of
 these defects and its own last line separates them — no HTTP line at all was Episode
 22's name-resolved abort, `could not read the pre-mutation … deployment row` with the
-`HTTP 503 … unconditional drop overload` diagnostic above it is a refused id-resolved
-read (Episodes 23 and 24, in that job shape), and `could not read the deployment row
+`HTTP 503 … unconditional drop overload` diagnostic above it meant the leg was talking
+to Railway's internal staging backboard, which an exported `RAILWAY_ENV=staging` causes
+and the rename above removes, and `could not read the deployment row
 after the mutation` means the write was accepted and only the read died. Neither is
-F2, which spans ~1,050 s and nine `error decoding response body` refusals. Check the
-leg's last line before blaming Railway's status page.
+F2 — and F2 (`~1,050 s`, nine `error decoding response body` refusals) is now the same
+fault as the 503 above, caught one layer higher in the CLI instead of at the status
+line. Check the leg's last line before blaming Railway's status page.
 
 ## Railway project tokens: scope, minting, inventory — measured 2026-11-16
 

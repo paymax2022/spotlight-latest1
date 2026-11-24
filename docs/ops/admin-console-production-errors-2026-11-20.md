@@ -589,7 +589,7 @@ machinery, and it would still deploy a branch whose `frontend-web` does not buil
 
 ```bash
 git worktree add /tmp/web-deploy <merged-main-sha> && cd /tmp/web-deploy
-SERVICE=frontend-web RAILWAY_ENV=production SHA=<merged-main-sha> \
+SERVICE=frontend-web RAILWAY_ENV_NAME=production SHA=<merged-main-sha> \
 UPLOAD_PATH=frontend-web ROOT_FLAG=--path-as-root BUILD_DIR='' \
 RAILWAY_PROJECT=e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
 RAILWAY_HTTP_TIMEOUT=600 RAILWAY_TOKEN=<the Production token> \
@@ -761,7 +761,9 @@ untouched. That separation is the whole reason this workflow exists instead of r
 
 Two dispatches of the lane failed before this one, and neither failure came from Railway: the job
 used to run its harness out of the very tree it uploads, and its env called the variable
-`ENVIRONMENT` while `scripts/ci/railway-deploy.sh` demands `RAILWAY_ENV`. Both verbatim errors are
+`ENVIRONMENT` while `scripts/ci/railway-deploy.sh` demanded `RAILWAY_ENV` (that input is
+`RAILWAY_ENV_NAME` since 2026-11-24 — see Episode 25 of
+`docs/devops/railway-upload-fault-report.md` for why the old name was never safe). Both verbatim errors are
 quoted in the workflow's own comments, so the next reader finds the reason where the fix lives.
 
 ## 2026-11-22 (afternoon) — the same lane cannot be run for **staging**, and staging moved anyway
@@ -831,6 +833,18 @@ with it the inference that the staging wall is a class rule Railway imposes on e
 experiments that would settle it are cheap and both belong in the support thread: state which token
 kind each of the three secrets holds, and ask whether a project token can be granted the deployment
 read.
+
+**Corrected 2026-11-24: the variable this section was circling is in the workflow itself, not in the
+secret.** `.github/workflows/ops-railway-upload.yml` exported `RAILWAY_ENV: ${{ inputs.environment }}`,
+and the Railway CLI reads `RAILWAY_ENV` as an *internal API-stage selector*: `staging` (also `STAGING`,
+`dev`) moves every request to `https://backboard.railway-staging.com/graphql/v2`, which answers a
+non-JSON `unconditional drop overload` HTTP 503 — the `Failed to fetch: error decoding response body`
+above. `production` and `development` do not redirect, which is precisely why "only production legs of
+this lane have ever worked", why the same step passed at 12:26:29Z, and why control 2 (a local
+`railway status` with no `RAILWAY_ENV`) answered in seconds. The credential/class reading, and the
+"re-dispatching for staging is not a recovery path" conclusion drawn from it, are retired: staging is
+recoverable from CI now that the name is `RAILWAY_ENV_NAME` and the scripts `unset RAILWAY_ENV`. Full
+measurement in `docs/devops/railway-upload-fault-report.md`, Episode 25.
 
 ### What moved staging: the mutation, not the upload
 

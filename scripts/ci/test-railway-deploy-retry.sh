@@ -118,7 +118,7 @@ run_deploy() {
   : > "$counter"
   (
     cd "$work/tree" || exit 99
-    SERVICE=backend RAILWAY_ENV=staging SHA="$SHA_STUB" RAILWAY_TOKEN=stub-token \
+    SERVICE=backend RAILWAY_ENV_NAME=staging SHA="$SHA_STUB" RAILWAY_TOKEN=stub-token \
     RAILWAY_PROJECT=stub-project UPLOAD_PATH="$up" ROOT_FLAG="$flag" \
     BUILD_DIR=fake ATTEMPTS=3 RETRY_ATTEMPTS=4 RETRY_BASE_DELAY_S=0 \
     STUB_MODE="$mode" STUB_UP_COUNT="$counter" STUB_ARGV="$work/argv" \

@@ -2567,3 +2567,185 @@ non-zero; under 25 s printing `HTTP 503 … unconditional drop overload` = the e
 dropping the read **in this job shape** (Episodes 23 and 24); under 25 s printing
 `could not read the deployment row after the mutation` = the write was accepted and
 the leg is blind afterwards — this episode's `read-refused`.
+
+## Episode 25 — 2026-11-24 05:10-05:50Z: F2 was a variable name — the CLI reads `RAILWAY_ENV` as its OWN internal API stage
+
+**What this episode establishes.** Twenty-three episodes asked what makes
+`railway up`, `railway api` and `railway status` refuse inside a `deploy Staging` leg
+and answer outside it. The answer is one environment variable that this repo exported
+into those legs and nowhere else:
+
+```
+RAILWAY_ENV: staging            # release.yml:403 (deploy-staging), :458 (smoke-staging)
+RAILWAY_ENV: ${{ inputs.environment }}   # ops-railway-upload.yml:115, the manual lane
+```
+
+`RAILWAY_ENV` is **not** "my environment is called staging" to the Railway CLI. It is
+the CLI's own internal API-stage selector, and one value of it moves the GraphQL host.
+Measured 2026-11-24 against the pinned `@railway/cli@5.40.1` with a dead proxy, so the
+CLI prints the URL it chose without a request ever leaving the machine:
+
+```
+$ env HTTPS_PROXY=http://127.0.0.1:9 RAILWAY_ENV=staging railway api 'query($p:String!){ project(id:$p){ id } }' --var p=…
+error sending request for url (https://backboard.railway-staging.com/graphql/v2)
+
+$ env HTTPS_PROXY=http://127.0.0.1:9 railway api 'query($p:String!){ project(id:$p){ id } }' --var p=…
+error sending request for url (https://backboard.railway.com/graphql/v2)
+```
+
+Without the proxy the redirected host answers, and its answer is not JSON:
+
+```
+unconditional drop overloadRailway API request failed with HTTP 503 Service Unavailable
+```
+
+which is the sentence Episode 23 and Episode 24 recorded from the legs, verbatim
+(`… :: unconditional drop overloadRailway API request failed with HTTP 503 Service
+Unavailable`). And a command whose whole job is to *fetch and decode* a body from that
+host, given the same variable, prints the F2 sentence itself:
+
+```
+$ env RAILWAY_ENV=staging railway whoami
+Failed to fetch: error decoding response body          <-- F2, from a command with no document,
+                                                          no ids, no archive, no upload
+$ env railway whoami
+Unauthorized. Please check that your RAILWAY_TOKEN is valid …   <-- the real API, answering
+```
+
+So the two signatures that this file spent eight episodes separating — F2's
+`error decoding response body` and the legs' `HTTP 503 unconditional drop overload` —
+are the **same fault at two layers**: the 503 is what `backboard.railway-staging.com`
+sends, and "expected value at line 1 column 1" is what the CLI says when it tries to
+JSON-parse that body. Nine ladder attempts against an internal Railway stage is nine
+attempts that were never going to reach the API the credential belongs to.
+
+**The value sweep, and what it exonerates.** Same document (`project(id:)`), same
+binary, no credential at all (`RAILWAY_TOKEN=`), only `RAILWAY_ENV` varying — the
+marker of every row below is whether the *real* API answered (`Not Authorized` is an
+answer; the internal stage produces a 503 instead):
+
+| `RAILWAY_ENV` | result |
+| --- | --- |
+| unset | GraphQL answer (real API) |
+| `development` | GraphQL answer |
+| `production` | GraphQL answer |
+| `preview`, `dev`→see note, `prod`, `test`, `zzz`, `staging-Old`, `production-staging`, `""` | GraphQL answer |
+| **`staging`** | **`unconditional drop overload` / HTTP 503** |
+| **`STAGING`** | **same refusal — the match is case-insensitive** |
+
+Note: `dev` is redirected too (with the proxy dead it printed no request URL because
+the CLI short-circuits on that stage before the transport), and `staging-Old` — the
+decoy environment in this very project — is *not* redirected, which is the proof that
+this is not the CLI resolving my environment name. Three further controls, all
+measured rather than assumed:
+
+1. **The document is irrelevant.** `project(id:)`, the leg's
+   `serviceInstance(serviceId, environmentId){ latestDeployment }`, and `whoami`'s own
+   call all refuse identically under the var. Episode 23's "the edge drops *that*
+   document" is retired.
+2. **The ids are irrelevant.** Setting `RAILWAY_ENVIRONMENT_ID` to staging's real id,
+   or aiming `--var p=` at an all-zero project id, changes nothing.
+3. **`RAILWAY_API_URL` is not the lever.** Overriding it does not rescue the call —
+   and the override cell is void anyway: with a dead `RAILWAY_API_URL` and the var
+   unset the CLI still answered like the default host, so 5.40.1 does not read that
+   variable. Do not "fix" this by pointing the CLI somewhere.
+
+**Which readings this retires, in order.**
+
+- *F2 is a time window on Railway's edge* (Episodes 9-21). Replaced: it is a host
+  choice, and the window that made the sentence come and go is the availability of
+  Railway's internal staging backboard, which no amount of client-side backoff spans.
+  The retry ladder of Episode 17 is therefore not wrong, just aimed at the wrong wall —
+  and it must stay for the dev legs' genuinely transient refusals.
+- *The staging credential / token class cannot read the deployment graph*
+  (Episode 21's controls, `docs/ops/railway-f2-token-probe.md`'s CLASS detour, and
+  `docs/ops/admin-console-production-errors-2026-11-20.md`'s "the refusal follows the
+  staging credential"). Replaced by the workflow line above: that lane derived
+  `RAILWAY_ENV` from `inputs.environment`, so `environment=production` passed the
+  pre-flight at 12:26:29Z and `environment=staging` refused it six times at 13:51Z and
+  13:59Z **with the same CLI, same runner image, same document** — the asymmetry the
+  file documented as "only production legs of this lane have ever worked" is exactly
+  the one value that redirects. Corrected in place in that file.
+- *The two remaining candidates are command shape (`RAILWAY_PROJECT` +
+  `RAILWAY_HTTP_TIMEOUT`) and leg parallelism* (Episode 24). Both falsified by the
+  train that carried that episode's experiment, `45328377363` (head `85f91969b5`): the
+  leg ran alone under `max-parallel: 1`, asked in **both** shapes, and all three
+  refused — `inherited` once, `stripped` twice — and then the mutation fired and was
+  refused the same way (`mutation verdict: body-undecodable (exit 1) under command
+  shape: stripped`). Locally the redirect happens with neither var set, which is why
+  shape could never have mattered.
+- *A document measured answering in a probe job is not licensed for a release leg
+  because of the job shape* (Episode 24's closing rule, restated in the matrix). The
+  observation stood; the explanation did not. What differs between the release legs and
+  the probe jobs is that the probe workflows never export `RAILWAY_ENV` at all — which
+  is also why `ci-railway-token-class.yml`'s write cell could deploy staging at 14:27Z
+  on 2026-11-23 while no release leg ever could.
+
+**The fix — the name was the bug, so the name is the fix.** One change, applied where
+the CLI is reached:
+
+1. **`RAILWAY_ENV` → `RAILWAY_ENV_NAME`** for this repo's own variable, in
+   `scripts/ci/railway-deploy.sh`, `railway-root-shape.sh`, `railway-smoke.sh`, the six
+   `env:` blocks of `release.yml`, the manual lane `ops-railway-upload.yml`, and every
+   test that feeds the leg. The environment is addressed by **flag**
+   (`--environment "$RAILWAY_ENV_NAME"`), which is where the CLI actually reads it.
+2. **`unset RAILWAY_ENV`** in the two scripts that call `railway api`/`railway up`, as
+   the belt: a caller that still exports the old name cannot route the leg.
+   `railway-root-shape.sh` needs it most — it calls `railway api` with **no**
+   `--environment`, so an inherited `RAILWAY_ENV` was the only thing deciding its host.
+3. **A leg configured only the old way refuses loudly** (`required:
+   RAILWAY_ENV_NAME`) instead of silently talking to Railway's internal stage. This is
+   the property that makes the rename safe to land: no workflow can regress by
+   forgetting one line.
+4. **`scripts/ci/test-railway-env-name.sh`, wired into `ci.yml`'s Railway test lane** —
+   17 checks: the stub CLI records for every call whether `RAILWAY_ENV` was in its
+   environment (never the token), so the gate fails on *inheritance*, plus argv checks
+   that `--environment staging` still reaches `railway up`, the refuse-without-the-name
+   cells for both CLI-calling scripts, and two repo-wide scans that no workflow exports
+   the poisoned key. Comment lines are exempt from the scans on purpose: the verbatim
+   old error in `ops-railway-upload.yml:112` is evidence, and a gate that punishes
+   quoting history gets its history deleted to go green.
+
+Kept, with its purpose corrected: the shape-alternating reader and the fire-anyway
+mutation from Episode 24 stay in `railway-deploy.sh`. The alternation is now a cheap
+fallback rather than the experiment, and the mutation-fires-anyway plus
+`read-refused` are what let the next train say something true about staging either way.
+`deploy-staging` stays `max-parallel: 1` until one train proves the landing, then it can
+go back to three at a time.
+
+**Verification.** The gate was red first — 12/17 checks failing on main `85f91969b5`,
+including both inheritance cells — and 17/17 green after. Four mutants, each restored
+byte-identical by sha256: deleting `unset RAILWAY_ENV` from the deploy leg reddens 2
+checks (mutation and upload inheritance), deleting it from the shape resolver reddens 1,
+putting `RAILWAY_ENV: staging` back into `release.yml` reddens 2, and restoring the old
+required-variable name reddens 1. Four sibling suites pass untouched: the staging leg
+(171 checks), the archive shapes, the retry ladder, the root-shape resolver, the ops
+status guard (16 checks) and the token probe (203 checks). `actionlint` is not
+installed on this machine, so the workflow lint lane runs unverified locally and is
+CI's to judge.
+
+**What the next train can say.** Staging legs now address the API the credential
+belongs to, so the expected outcome is a baseline read that answers (or an honest empty
+page), a mutation that is accepted, and a new row that names the commit. If a decode
+refusal survives with the variable gone, this episode's claim is falsified by the train
+that carries it — which is how Episodes 23 and 24 were settled, and the gate above is
+what makes the difference measurable instead of arguable.
+
+**Served as I write this** (05:49:16Z, `serviceInstance.latestDeployment`, read-only):
+development all three at `85f91969b5` (rows `48f35cfb`/`a66ae88a`/`96381462`, 05:25:19-20Z,
+from train `45328377363`); **staging all three still `0329a903a5`** — rows
+`2df11e51`/`d7abcc2e`/`6e39f119` from the 2026-11-23 14:29Z promotion, i.e. no CI train
+has ever replaced a staging row; production `e43c64557b` backend (row `d4bf7af7`,
+11-21 23:32Z), `f3407986d0` frontend-web (row `531cfcdc`, 11-23 12:51Z), `528382b26a`
+frontend-admin (row `33254f63`, 11-22 10:55Z).
+
+**The signature ladder, current count: six, and one of them is now explained to the
+bottom.** Under ~25 s, printing nothing: Episode 22's name-resolved silent abort.
+Under ~25 s printing `could not read the pre-mutation … row` with no HTTP line: a
+reader that exits non-zero on its own refusal. `HTTP 503 … unconditional drop
+overload`: **the leg exported `RAILWAY_ENV=staging` and is talking to
+backboard.railway-staging.com** (Episodes 23, 24 — and this episode). `could not read
+the deployment row after the mutation`: the write was accepted and only the read died.
+~1,050 s with nine `Failed to fetch: error decoding response body`: the same internal
+host, caught by the CLI's JSON parser instead of its status line — F2. `Your trial has
+expired`: account state, and it hits the dev legs, not staging.
