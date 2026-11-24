@@ -732,6 +732,9 @@ export async function updateContest(contestId: string, patch: Partial<OpenMicCon
         finalePlaylistLocked: current?.finalePlaylistLocked === true,
         selectionModel: current?.selectionModel || 'hybrid',
         finalistsTarget: current?.finalistsTarget ?? 10,
+        submissionStartAt: current?.submissionStartAt,
+        submissionEndAt: current?.submissionEndAt,
+        reviewEndAt: current?.reviewEndAt,
       });
       const { data, error } = await supabase
         .from('contests')
@@ -793,6 +796,9 @@ export async function updateContest(contestId: string, patch: Partial<OpenMicCon
       finalePlaylistLocked: updated.finalePlaylistLocked === true,
       selectionModel: updated.selectionModel,
       finalistsTarget: updated.finalistsTarget,
+      submissionStartAt: updated.submissionStartAt,
+      submissionEndAt: updated.submissionEndAt,
+      reviewEndAt: updated.reviewEndAt,
     });
 
     const dbPatch: Record<string, unknown> = {};
