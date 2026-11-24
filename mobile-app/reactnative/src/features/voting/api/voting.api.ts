@@ -19,8 +19,10 @@ import {
   mapContest,
   mapContestant,
   mapLeaderboardEntry,
+  mapVotePackage,
   type BackendContest,
   type BackendRosterEntry,
+  type BackendVotePackage,
 } from './connectVoting.mapper';
 import {
   MOCK_CONTESTS,
@@ -324,10 +326,12 @@ function movementFromTrend(
  * on every call. Nothing noticed because the mock branch above short-circuited
  * before the request was ever made — the endpoint had never actually run.
  *
- * The real route returns { id, votes, bonusVotes, priceKobo, label, popular },
- * which is not the client's VotePackage shape, so it is mapped here rather than
- * cast. `amount` is KOBO on this side: payment-method.tsx passes it straight to
- * the gateway as amountKobo.
+ * The real route answers with the BFF's server DTO — camelCase, one row per
+ * active package, and `amount` in NAIRA — so it is mapped here rather than cast:
+ * see BackendVotePackage and mapVotePackage in connectVoting.mapper.ts, which
+ * carry the naira→kobo rule. `amount` is KOBO on this side: payment-method.tsx
+ * passes it straight to the gateway as amountKobo and to formatAmount, which
+ * divides by 100.
  *
  * No packages is a legitimate answer — a contest with paid voting off has none —
  * so an empty array is returned rather than treated as an error.
@@ -337,24 +341,9 @@ export async function getVotePackages(contestId?: string): Promise<VotePackage[]
   if (!contestId) return [];
 
   const res = await api.get(`/api/v1/contests/${contestId}/vote-packages`);
-  const rows = (res.data?.data ?? res.data ?? []) as Array<{
-    id: string;
-    votes: number;
-    bonusVotes?: number;
-    priceKobo: number;
-    label?: string;
-    popular?: boolean;
-  }>;
+  const rows = (res.data?.data ?? res.data ?? []) as BackendVotePackage[];
 
-  return rows.map((r) => ({
-    id: r.id,
-    votes: Number(r.votes ?? 0),
-    amount: Number(r.priceKobo ?? 0),
-    currency: 'NGN' as const,
-    label: r.label,
-    bonusVotes: r.bonusVotes ? Number(r.bonusVotes) : undefined,
-    isPopular: Boolean(r.popular),
-  }));
+  return rows.map(mapVotePackage);
 }
 
 // Each voter gets 1 free vote per day for EACH contestant (admin-configurable).

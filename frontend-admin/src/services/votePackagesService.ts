@@ -11,9 +11,11 @@
  * "custom quantity" path derives the rate from the first active one).
  *
  * ⚠️ UNITS: `amount` here is NAIRA, matching the vote_packages column and the
- * admin API. The mobile endpoint converts to kobo at the edge
- * (/api/v1/contests/[id]/vote-packages does Math.round(amount * 100)). Do not
- * "fix" this to kobo — that would publish every package at 100x its price.
+ * admin API. The mobile app converts at its own edge — the route answers with
+ * this DTO unchanged, and `mapVotePackage` (mobile-app/.../connectVoting.mapper.ts)
+ * multiplies by 100 into the kobo it charges. Do not "fix" this to kobo — that
+ * would publish every package at 100x its price, and then the app would sell it
+ * at 10,000x.
  */
 import { webProxyBase } from '@/config/env';
 
