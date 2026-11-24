@@ -604,9 +604,12 @@ baseline_id`) and the post-mutation cutoff still refuses a row that predates the
 mutation (`_predates()` returns False only when `since_sec` is empty, and the leg
 always supplies one). What *is* fatal now is blindness after the mutation: if the
 post-mutation read is refused the leg ends `read-refused` red.
-`deploy-staging.strategy.max-parallel` is `1`, a hold-over from that same experiment —
-keep it until one train lands a staging commit from CI, then let the three legs run
-together again. Development and production keep the name-resolved
+`deploy-staging.strategy.max-parallel` is `1`, a hold-over from that same experiment.
+**The condition it was waiting for is met**: train `45339054031` landed staging rows
+naming `e078dc00b9` on all three services at 06:49-06:54Z on 2026-11-24, so the three
+legs can run together again — on the next code-bearing PR, because a
+`release.yml` change alone now costs a real production deploy for identical app code
+(Episode 26). Development and production keep the name-resolved
 reader: that path works, it is what `railway up` needs, and this rule is scoped to
 mutation mode.
 
