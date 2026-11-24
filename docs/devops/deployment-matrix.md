@@ -534,40 +534,67 @@ measurement, the controls (including the development legs of the same commits
 polling the same reader 13 and 11 times successfully) and the fix are Episode 22 of
 `docs/devops/railway-upload-fault-report.md`.
 
-The reader Episode 22 put in its place is itself refused, and that is Episode 23:
-train `45302515868` at 01:51Z on 2026-11-24 died all three staging legs about half a
-second after their headers, printing `row page read failed (rc=1) … HTTP 503 Service
-Unavailable` and the now-loud guard. `deployments(input:{projectId,serviceId,
-environmentId})` — the `DeploymentListInput` connection — is dropped by the edge for
-the **staging** project token in a runner, even though it exits 0 locally and even
-though the production token has been measured reading it from a runner. Three minutes
-later run `45308408960` read the newest staging deployment row on the runner with
-that same staging token: `PROBE_CELL baseline=ok row=2df11e51 status=SUCCESS` at
-01:55:21Z, through `serviceInstance(serviceId, environmentId){ latestDeployment{…} }`.
-One sample per leg cannot separate "this credential cannot read this document" from
-"the edge dropped it briefly", which is why the fix changes the document **and**
-retries.
+The reader Episode 22 put in its place is itself refused, and Episode 23 blamed the
+document: train `45302515868` at 01:51Z on 2026-11-24 died all three staging legs
+about half a second after their headers, printing `row page read failed (rc=1) …
+HTTP 503 Service Unavailable` and the now-loud guard, while run `45308408960` read the
+newest staging row on a runner three minutes later with the same staging token through
+`serviceInstance(serviceId, environmentId){ latestDeployment{…} }`. That episode's
+conclusion — *the `DeploymentListInput` connection is what the edge drops; swap the
+document and the leg reads* — **was falsified by the very train that carried the
+swap.** PR #1165 landed it as `342cf106d`, train `45315222075` ran that head (the legs
+print `HEAD is now at 342cf10 … (#1165)`), and the replacement document was refused
+nine times in ~36 s with the identical `HTTP 503 … unconditional drop overload`, once
+per leg attempt; the legs died at `could not read the pre-mutation … row`. Forty
+seconds later run `45319901941` job `138195671108` printed
+`PROBE_CELL baseline=ok row=2df11e51 status=SUCCESS` at 03:31:15Z — same document
+string, same flags (`api … --compact --allow-errors --var`), same CLI `5.40.1`, same
+`secrets.RAILWAY_TOKEN_STAGING`, same service and environment ids, same
+`ubuntu-latest` image. Episode 24 has the table. So the variable is not the query; the
+two differences still standing are the release job's workflow env
+(`RAILWAY_PROJECT` + `RAILWAY_HTTP_TIMEOUT: 600`, `release.yml:63,67` — printed in the
+legs' action env blocks and appearing nowhere in the probe log) and the fact that the
+train issues three identical calls at once while the probe issues one. Neither var can
+simply be deleted job-wide: `scripts/ci/railway-root-shape.sh:47,55` requires
+`RAILWAY_PROJECT`, and the 600 s timeout is what lets the 110 MB `frontend-web`
+archive upload at all.
 
 The rule this leaves, and the reason it belongs in the matrix rather than only in
-the fault report: **a leg that aims itself with ids must read with ids, and it may
-only read through a document measured answering in a runner with the credential
-that leg uses.** `scripts/ci/railway-deploy.sh` `latest_row_api` is now the only row
-reader in mutation mode; it sends the probe's `DOC_ROW` verbatim — the same string
+the fault report: **a leg that aims itself with ids must read with ids, and a document
+measured answering in a *probe* job is not thereby licensed for a *release* leg — the
+measurement has to be taken in the same command shape the leg will use.**
+`scripts/ci/railway-deploy.sh` `latest_row_api` is now the only row reader in mutation
+mode; it sends the probe's `DOC_ROW` verbatim — the same string
 `scripts/ci/f2-token-probe.sh` uses, pinned equal by a check that diffs the two
 `^DOC_ROW=` lines — through `railway api`, the transport `RAILWAY_TOKEN_STAGING` is
 measured against. It maps the one `latestDeployment` object to a bare JSON array
 (`[]` on failure), so `scripts/ci/staging-deploy-watch.py` decides verdicts from one
-shape and one set of fixtures. Baseline reads retry a bounded three times, 15 s
-apart, because a 503 is a drop. A failed read is loud (stderr, redacted) and ends
-the leg red. Development and production keep the name-resolved reader: that path
-works, it is what `railway up` needs, and this rule is scoped to mutation mode.
+shape and one set of fixtures. Because the *job shape* is now the open question, the
+reader takes one: baseline attempt 1 uses the release job's own environment
+(`inherited`), attempts 2 and 3 drop the two vars (`env -u RAILWAY_PROJECT
+-u RAILWAY_HTTP_TIMEOUT railway`, `stripped`), and every later `lookup` poll runs in
+whichever shape answered — the leg prints `row reads run under command shape: X`, so
+the train log says which shape Railway's edge accepts. A refused baseline read is no
+longer fatal: the mutation still fires, because the frozen decision rule cannot guess
+without a baseline id (`mine()` skips a row only `if baseline_id and r.get("id") ==
+baseline_id`) and the post-mutation cutoff still refuses a row that predates the
+mutation (`_predates()` returns False only when `since_sec` is empty, and the leg
+always supplies one). What *is* fatal now is blindness after the mutation: if the
+post-mutation read is refused the leg ends `read-refused` red.
+`deploy-staging.strategy.max-parallel` is `1`, so the shapes and the write cell are
+measured one call at a time. Development and production keep the name-resolved
+reader: that path works, it is what `railway up` needs, and this rule is scoped to
+mutation mode.
 
 Reading consequence for the next operator: a red `deploy Staging` leg shorter than
-about a minute, with zero `Failed to fetch` lines and zero new staging rows, is one
-of these two defects and its own last line separates them — no HTTP line at all was
-Episode 22's name-resolved abort, `HTTP 503 … unconditional drop overload` is
-Episode 23's dropped document. Neither is F2, which spans ~1,050 s and nine
-refusals. Check the leg's last line before blaming Railway's status page.
+about a minute, with zero `Failed to fetch` lines and zero new staging rows, is one of
+these defects and its own last line separates them — no HTTP line at all was Episode
+22's name-resolved abort, `could not read the pre-mutation … deployment row` with the
+`HTTP 503 … unconditional drop overload` diagnostic above it is a refused id-resolved
+read (Episodes 23 and 24, in that job shape), and `could not read the deployment row
+after the mutation` means the write was accepted and only the read died. Neither is
+F2, which spans ~1,050 s and nine `error decoding response body` refusals. Check the
+leg's last line before blaming Railway's status page.
 
 ## Railway project tokens: scope, minting, inventory — measured 2026-11-16
 

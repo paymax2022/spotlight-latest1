@@ -360,6 +360,16 @@ jobs:
     # Development and production legs keep uploading, unchanged: they succeed,
     # and they are what an owner re-measures F2 with.
     strategy:
+      # One service at a time, 2026-11-24. Three legs in one train each asked
+      # the same staging endpoint three times inside ~30 s from three runners,
+      # and all three were refused; the identical read made serially in a probe
+      # job answered six minutes later (train 45315222075 at 03:24:32Z vs run
+      # 45319901941 at 03:31:15Z — same token, CLI, document, ids). Concurrency
+      # is one of the two remaining differences between those two observations,
+      # so the legs stop mixing it into the measurement of the other (the job's
+      # env) and asking Railway in series is the smaller footprint. `ci.yml`'s
+      # dev legs already run this way for the same reason.
+      max-parallel: 1
       # Unlike development, fail-fast is acceptable here — but it is still set false
       # so one red service produces a complete picture instead of two cancelled
       # legs and a guess about which one actually broke.

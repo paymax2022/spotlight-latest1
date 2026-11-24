@@ -369,14 +369,36 @@ DOC_ROW='query($s:String!,$e:String!){ serviceInstance(serviceId:$s, environment
 latest_row_api() {
   # $1 = which read this is (`baseline` or `lookup`), so a refusal in the job log
   # says WHICH read failed instead of making a reader guess from the timestamp.
+  # $2 = command shape: `inherited` (the CLI as the release job exports it) or
+  # `stripped` (the same binary with release.yml's two CLI-visible env vars
+  # removed). They are not cosmetic. Refused: train 45315222075's staging legs,
+  # 2026-11-24T03:24:32Z, three per leg, HTTP 503 `unconditional drop overload`.
+  # Answered: run 45319901941's probe job, 03:31:15Z — `baseline=ok
+  # row=2df11e51` — with the same project token, the same pinned CLI 5.40.1, the
+  # same document, the same ids and the same runner image. The release job
+  # exports RAILWAY_PROJECT and RAILWAY_HTTP_TIMEOUT to the CLI and the probe job
+  # exports neither, and that is the only difference between the two answers
+  # that a leg can control, so the leg must be able to ask both ways and say
+  # which one it asked.
+  #
   # Prints a JSON ARRAY of zero or one row, shaped exactly like the elements of
   # `railway deployment list --json`, so one decision rule (and one set of
   # fixtures) covers every reader and switching transport cannot change a verdict.
-  local kind="${1:-row}" out body rest row rc=0
+  #
+  # The exit status is part of the contract: 0 = Railway ANSWERED (the array may
+  # be empty — "this environment has no deployment rows" is a real answer),
+  # 3 = the read REFUSED. Conflating them is what forced the old leg to die on
+  # an unreadable read: it could not tell a blank environment from a wall, and
+  # guessing wrong in either direction is a verdict nobody can defend.
+  local kind="${1:-row}" shape="${2:-inherited}" out body rest row rc=0
+  local cmd=(railway)
+  if [ "$shape" = stripped ]; then
+    cmd=(env -u RAILWAY_PROJECT -u RAILWAY_HTTP_TIMEOUT railway)
+  fi
   # `railway api` prints the body on line 1 and its own commentary after it, and
   # appends that sentence on a non-200 — so line 1 is the only thing parsed and
   # the remainder is kept as the diagnosis (see scripts/ci/f2-token-probe.sh).
-  out="$(railway api "$DOC_ROW" --compact --allow-errors \
+  out="$("${cmd[@]}" api "$DOC_ROW" --compact --allow-errors \
           --var "s=$SERVICE_ID" --var "e=$RAILWAY_ENVIRONMENT_ID" 2>&1)" || rc=$?
   body="$(printf '%s\n' "$out" | sed -n '1p')"
   rest="$(printf '%s\n' "$out" | tail -n +2 | tr '\n' ' ')"
@@ -401,46 +423,75 @@ latest_row_api() {
     # "row read failed…" as if Railway had answered it, which is the silent
     # death wearing a different number. The job log still gets it, because a
     # leg runs with stderr merged.
-    echo "  $kind row read failed (rc=$rc) service=$SERVICE_ID env=$RAILWAY_ENVIRONMENT_ID :: $(printf '%s' "${body:-<empty>} ${rest}" | cut -c1-300)" | redact >&2
+    #
+    # `shape=` is in the line because the refusal is now a measurement: two
+    # attempts in different shapes that print the same sentence are two data
+    # points about WHICH env the endpoint objects to, and a log that cannot tell
+    # them apart cannot answer that question afterwards.
+    echo "  $kind row read failed (rc=$rc) shape=$shape service=$SERVICE_ID env=$RAILWAY_ENVIRONMENT_ID :: $(printf '%s' "${body:-<empty>} ${rest}" | cut -c1-300)" | redact >&2
+    # `[]` on stdout keeps every existing caller's `jq` read of the page valid —
+    # nothing parses this output before checking the status — and the status is
+    # what separates it from a real empty page.
     printf '[]'
-    return 0
+    return 3
   fi
   printf '%s' "$row"
 }
 
 baseline_row_id() {
-  # The row that exists BEFORE the mutation. Everything the watch below learns
-  # comes from comparing against this id, so a failure to read it is not a
-  # blank-slate condition: an empty baseline would make the pre-existing
-  # deployment look like the new one and report a leg green that deployed
-  # nothing. The caller stops on empty.
+  # The row that exists BEFORE the mutation, plus the shape it was read in.
+  # Everything the watch learns comes from comparing against this id, so the
+  # read is asked three times in two command shapes: the release job's own env
+  # first (attempt 1), then the probe job's (attempts 2-3) — the only two
+  # settings this leg can control that separate the measured refusal at
+  # 03:24:32Z from the measured answer at 03:31:15Z.
   #
-  # Asked again on failure, a bounded number of times, because the pre-mutation
-  # read is the one call that can end a release without deploying anything: the
-  # measured CI-side failures were a name-resolution refusal and an edge drop,
-  # and neither says anything about the next attempt. Three tries, 15 s apart,
-  # matching the mutation's own ladder — enough for a transient, short enough
-  # that a permanent refusal reaches the log while the job is still interesting.
+  # Prints three space-separated fields and never aborts:
+  #
+  #   <row id | NONE>  <shape>  <answered | refused>
+  #
+  # `answered` means Railway replied, whether or not there was a row — an
+  # environment with no deployments has no baseline, which is a fact, not a
+  # blindness. `refused` means no read replied at all. Both arrive with the shape
+  # the last attempt used, so the caller can keep asking that way.
+  #
+  # Bounded, because the pre-mutation read is the one call that can end a
+  # release without deploying anything: the measured failures were a
+  # name-resolution refusal, an edge drop, and an endpoint that refuses while the
+  # job's env is set. None of them says anything about the next attempt, and a
+  # permanent refusal must reach the log while the job is still interesting.
   # `ROW_RETRY_*` exist for the suite, not for operators.
-  local attempt row id
+  local attempt shape row id out_rc
   for attempt in $(seq 1 "${ROW_RETRY_ATTEMPTS:-3}"); do
     if [ "$attempt" -gt 1 ]; then
       sleep "${ROW_RETRY_BASE_DELAY_S:-15}"
     fi
-    row="$(latest_row_api baseline)"
-    id="$(printf '%s' "$row" | jq -r 'if type=="array" then (.[0].id // empty) else empty end')"
-    if [ -n "$id" ]; then
-      printf '%s' "$id"
+    # Attempt 1 keeps the job's own env; every later attempt drops the two vars.
+    shape=inherited
+    [ "$attempt" -eq 1 ] || shape=stripped
+    row="$(latest_row_api baseline "$shape")" && out_rc=0 || out_rc=$?
+    if [ "$out_rc" -eq 0 ]; then
+      # An ANSWER ends the ladder, empty page included: retrying a reply that
+      # said "no rows" buys nothing, and in a real blank environment it would
+      # turn one honest read into three.
+      id="$(printf '%s' "$row" | jq -r 'if type=="array" then (.[0].id // empty) else empty end')"
+      printf '%s %s answered' "${id:-NONE}" "$shape"
       return 0
     fi
   done
-  # No baseline after the ladder. Prints nothing on purpose: `latest_row_api`
-  # already said what failed, and the caller's guard names the service and the
-  # environment as it ends the leg.
-  return 0
+  # No answer after the ladder. `latest_row_api` has already said what failed,
+  # three times, with the CLI's own sentence and the ids it was aimed at.
+  printf 'NONE %s refused' "$shape"
 }
 
 mutate_deploy() {
+  # $1 = command shape, same meaning and same measurement as in latest_row_api:
+  # `inherited` asks as the release job exports the env, `stripped` asks without
+  # release.yml's two CLI-visible vars. The caller tries inherited once and
+  # stripped once, because the write cell has never been measured at all — no
+  # staging mutation has ever been sent from a release job, since every leg died
+  # at the read in front of it.
+  #
   # The retry ladder here is NOT the 900 s upload budget: that exists to ride
   # out F2 on the upload-initiate endpoint, and a leg that retries a GraphQL
   # call for 15 minutes would just be a slow way of asking for a row that may
@@ -452,16 +503,51 @@ mutate_deploy() {
   # `--allow-errors` keeps a GraphQL errors[] envelope on stdout instead of the
   # CLI exiting before printing it: `Not Authorized` arrives as HTTP 200 with an
   # errors[] body, and a leg that keys on the exit code reads that as success.
+  local shape="${1:-inherited}" cmd=(railway)
+  if [ "$shape" = stripped ]; then
+    cmd=(env -u RAILWAY_PROJECT -u RAILWAY_HTTP_TIMEOUT railway)
+  fi
   export RETRY_ATTEMPTS="${MUT_RETRY_ATTEMPTS:-3}"
   export RETRY_BASE_DELAY_S="${MUT_RETRY_BASE_DELAY_S:-15}"
-  bash "$SCRIPT_DIR/with-retry.sh" railway api "$DOC_DEPLOY_SHA" --compact --allow-errors \
+  bash "$SCRIPT_DIR/with-retry.sh" "${cmd[@]}" api "$DOC_DEPLOY_SHA" --compact --allow-errors \
     --var "s=$SERVICE_ID" --var "e=$RAILWAY_ENVIRONMENT_ID" --var "sha=$SHA"
 }
 
 if [ "$DEPLOY_METHOD" = mutation ]; then
-  BASELINE_ROW="$(baseline_row_id)"
-  [ -n "$BASELINE_ROW" ] || { echo "::error::could not read the pre-mutation $SERVICE/$RAILWAY_ENV deployment row; refusing to guess at 'new row'"; exit 1; }
-  echo "baseline row before the mutation: $BASELINE_ROW"
+  # The baseline read is EVIDENCE, not a gate. It used to be a gate — "refuse to
+  # guess at 'new row'" — and that is why the write cell of this story has never
+  # been measured: every staging leg in every train died at the read in front of
+  # the mutation, so Railway was never asked. Since the decision rule already
+  # excludes a row by id AND by the STARTED_AT cutoff AND requires the row to
+  # name this commit, a leg with no baseline id is not blind: the cutoff and the
+  # commit do the judging, which is exactly what the `stale-green` scenario
+  # already pins. So a read that answers, or one that finally refuses after both
+  # shapes, lets the leg go on and deploy.
+  BASELINE_LINE="$(baseline_row_id)"
+  BASELINE_ROW=""
+  ROW_SHAPE=inherited
+  BASELINE_READ=refused
+  # `|| { … }` because a `read` that gets nothing returns non-zero, and under
+  # `set -e` that would end the leg at the very call written to stop the leg
+  # ending — the silent death this file already documents twice.
+  read -r BASELINE_ROW ROW_SHAPE BASELINE_READ <<< "$BASELINE_LINE" ||
+    { BASELINE_ROW=""; ROW_SHAPE=inherited; BASELINE_READ=refused; }
+  if [ "$BASELINE_READ" != answered ]; then
+    echo "  pre-mutation row read refused under both command shapes;"
+    echo "  continuing without a baseline id — the row must name $SHA and postdate the cutoff below"
+    BASELINE_ROW=""
+  elif [ "$BASELINE_ROW" = NONE ]; then
+    echo "  no pre-existing deployment row for $SERVICE/$RAILWAY_ENV (the environment has never deployed)"
+    BASELINE_ROW=""
+  else
+    echo "baseline row before the mutation: $BASELINE_ROW"
+  fi
+  # The shape is the leg's address book for every later read: the poll must ask
+  # the same way the baseline got an answer, or a leg that found the working
+  # shape on attempt 2 goes back to the refusing one 15 seconds later and reads
+  # three refusals as "no new row".
+  echo "row reads run under command shape: ${ROW_SHAPE:-inherited}"
+  ROW_SHAPE="${ROW_SHAPE:-inherited}"
   # The cutoff is taken AFTER the baseline read and BEFORE the mutation, so it
   # sits inside the window this leg owns: a row Railway minted for us is not
   # older than it, and anything from an earlier second — another train on the
@@ -472,23 +558,43 @@ if [ "$DEPLOY_METHOD" = mutation ]; then
   # reading that as a no-op would blame Railway for our own clock.
   STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "mutation fired at: $STARTED_AT"
-  MUTATE_OUT=""
-  MUTATE_RC=0
-  MUTATE_OUT="$(mutate_deploy 2>&1)" || MUTATE_RC=$?
-  # Line 1 is the answer; the CLI's own commentary follows it. The verdict
-  # helper is the one the probe uses, so a leg and a probe describe the same
-  # refusal with the same word, and the sentinel http value is theirs too:
-  # `railway api` hides the edge status, so this cell reads the BODY and nothing
-  # keys on a status code here.
-  printf '%s\n' "$MUTATE_OUT" | sed -n '1p' | cut -c1-400
-  MUT_VERDICT="$(python3 "$SCRIPT_DIR/f2-probe-verdict.py" mutation \
-    "$(printf '%s\n' "$MUTATE_OUT" | sed -n '1p')" cli-transport)"
-  echo "mutation verdict: $MUT_VERDICT (exit $MUTATE_RC)"
+  # Two shapes of the same write, in the same order as the reads. The second is
+  # reached only when the first is refused, and it is the point of this leg's
+  # rewrite: the write cell is the last part of the staging story nobody has an
+  # answer for, and a leg that dies on its first refusal keeps it unmeasured.
+  MUT_VERDICT=not-run
+  for MUT_SHAPE in inherited stripped; do
+    MUTATE_OUT=""
+    MUTATE_RC=0
+    if [ "$MUT_SHAPE" = inherited ]; then
+      MUTATE_OUT="$(mutate_deploy inherited 2>&1)" || MUTATE_RC=$?
+    else
+      # `if … break`, not `[ … ] && break`: a failing test as the last command of
+      # a line is a non-zero status, and `set -e` would end the leg on the exact
+      # path where the first shape was refused and the second has not been asked.
+      if [ "$MUT_VERDICT" = accepted ]; then
+        break
+      fi
+      echo "  mutation not accepted under the job's own env ($MUT_VERDICT);"
+      echo "  re-asking the same document with RAILWAY_PROJECT and RAILWAY_HTTP_TIMEOUT removed"
+      MUTATE_OUT="$(mutate_deploy stripped 2>&1)" || MUTATE_RC=$?
+    fi
+    # Line 1 is the answer; the CLI's own commentary follows it. The verdict
+    # helper is the one the probe uses, so a leg and a probe describe the same
+    # refusal with the same word, and the sentinel http value is theirs too:
+    # `railway api` hides the edge status, so this cell reads the BODY and nothing
+    # keys on a status code here.
+    printf '%s\n' "$MUTATE_OUT" | sed -n '1p' | cut -c1-400
+    MUT_VERDICT="$(python3 "$SCRIPT_DIR/f2-probe-verdict.py" mutation \
+      "$(printf '%s\n' "$MUTATE_OUT" | sed -n '1p')" cli-transport)"
+    echo "mutation verdict: $MUT_VERDICT (exit $MUTATE_RC) under command shape: $MUT_SHAPE"
+  done
   # A refused or unparseable mutation is a red leg NOW, not a poll timeout 10
   # minutes from now: the poll would report `no-new-row` and blame Railway for
-  # our own 401.
+  # our own 401. Both shapes had their answer printed above, so this line is
+  # about which one to try next, not about hiding the first.
   [ "$MUT_VERDICT" = accepted ] || {
-    echo "::error::$SERVICE/$RAILWAY_ENV mutation was not accepted ($MUT_VERDICT)"
+    echo "::error::$SERVICE/$RAILWAY_ENV mutation was not accepted ($MUT_VERDICT) under either command shape"
     exit 1
   }
 elif [ -n "$ARCHIVE_TMP" ]; then
@@ -546,7 +652,18 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     # address as the mutation: a watch that reads through a different transport
     # than the deploy it is judging is a second way for the verdict and the
     # evidence to disagree, and this leg has now had two such disagreements.
-    rows_page="$(latest_row_api lookup)"
+    rows_page="$(latest_row_api lookup "$ROW_SHAPE")" && lookup_rc=0 || lookup_rc=$?
+    if [ "$lookup_rc" -ne 0 ]; then
+      # A refused read is not an empty page. Feeding the fallback `[]` to the
+      # classifier would print `no-new-row`, which `final()` spells
+      # `mutation-is-noop` — a sentence that blames Railway for making no row
+      # when the truth is that this leg cannot see the rows. Say the true thing
+      # and stop judging.
+      watch_verdict=read-refused
+      echo "  waiting for $SERVICE/$RAILWAY_ENV (attempt $attempt/$ATTEMPTS; row read refused under command shape: $ROW_SHAPE)"
+      sleep 15
+      continue
+    fi
     watch_verdict="$(python3 "$SCRIPT_DIR/staging-deploy-watch.py" watch \
                       "$rows_page" "$BASELINE_ROW" "$SHA" "${STARTED_AT:-}")"
     echo "  row under watch (id / status / commit / which): $(
@@ -596,6 +713,16 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
 done
 
 if [ "$DEPLOY_METHOD" = mutation ]; then
+  if [ "$watch_verdict" = read-refused ]; then
+    # The one red that must not borrow the decision rule's vocabulary. The
+    # mutation was accepted; what this leg lost is the ability to see the
+    # result — a different fault with a different owner (the row read, not the
+    # deploy). Saying `mutation-is-noop` here would blame Railway for making no
+    # row when the truth is that this leg cannot see the rows, and the last
+    # thing a reader needs is a verdict that points at the wrong component.
+    echo "::error::$SERVICE/$RAILWAY_ENV could not read the deployment row after the mutation (command shape: $ROW_SHAPE); the mutation was accepted and this leg cannot say what it did"
+    exit 1
+  fi
   # The one line that says what the leg concluded, from BOTH cells: the
   # mutation's answer and the watch's last verdict. `mutation-is-noop` here is
   # the honest reading of "Railway said true and made no row", and it is a red
