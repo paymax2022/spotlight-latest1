@@ -2214,3 +2214,200 @@ leg window — and the new tell is the log's last line: if the leg ends one seco
 after its own `=== deploying … ===` header, read `railway-deploy.sh`, not
 Railway's status page. The fix only bites from the train whose gate sha contains
 it, so the first train to prove it is the one that follows this commit.
+
+## Episode 23 — 2026-11-24 01:51Z: that first train proves the loud guard, and the new reader is itself refused — HTTP 503
+
+The train that follows Episode 22 is `45302515868`, head
+`8bdc29b9cbf8069aa611297861b94bd11c3649ee` (PR #1163), `push`, created 01:06:42Z,
+completed `failure` at 01:53:38Z. Its gate sha contains `368e4028f`, so this is
+the first run in which the id-addressed reader actually decides what staging does:
+
+| job | leg | conclusion | window / terminal evidence |
+|---|---|---|---|
+| `138138489455` | `release gate (CI green for this commit)` | success | 01:07:53 → 01:50:05Z, verdict `proceed` |
+| `138156270449` | `deploy Development (backend)` | success | `=== backend/development deployed 8bdc29b9c… ===` at 01:53:15.093442Z |
+| `138156270463` | `deploy Development (frontend-admin)` | success | `=== frontend-admin/development deployed 8bdc29b9c… ===` at 01:50:56.091663Z |
+| `138156270599` | `deploy Development (frontend-web)` | success | `=== frontend-web/development deployed 8bdc29b9c… ===` at 01:52:29.237060Z |
+| — | `smoke Development (…)` ×3 | success | all three, after their legs |
+| `138156270776` | `migrate staging database / supabase db push (staging)` | success | 01:50:09 → 01:50:52Z |
+| `138156575365` | `deploy Staging (backend)` | **failure** | 01:51:14.136781Z header → 01:51:14.678153Z exit 1 (0.54 s) |
+| `138156575373` | `deploy Staging (frontend-admin)` | **failure** | 01:51:07.276338Z → 01:51:08.069273Z (0.79 s) |
+| `138156575394` | `deploy Staging (frontend-web)` | **failure** | 01:51:06.840444Z → 01:51:07.664818Z (0.82 s) |
+| `138156746680` / `138156746118` / `138156747315` / `138156747204` | `smoke Staging`, `migrate production`, `deploy Production`, `smoke Production` | skipped | the chain Episode 18 documented |
+
+**Episode 22's fix is proven by this table, and it is not the episode's news.** The
+silent 13–22 s abort is gone. Each staging leg now ends with the platform's own
+sentence on stderr, redacted, followed by the guard that Episode 22 said was
+unreachable — verbatim, backend, job `138156575365`:
+
+```
+2026-11-24T01:51:14.1367816Z === deploying backend to staging (8bdc29b9cbf8069aa611297861b94bd11c3649ee) ===
+2026-11-24T01:51:14.6751910Z   row page read failed (rc=1) service=70de07d8-c058-4221-b645-61c4f1ac7aa5 env=6b5f27a3-a290-4574-a977-363eb21d43ad :: unconditional drop overloadRailway API request failed with HTTP 503 Service Unavailable 
+2026-11-24T01:51:14.6774490Z ##[error]could not read the pre-mutation backend/staging deployment row; refusing to guess at 'new row'
+2026-11-24T01:51:14.6781537Z ##[error]Process completed with exit code 1.
+```
+
+The two sentences are glued because the diagnostic prints the response body and the
+CLI's trailing lines in one field; nothing was lost. The three service ids the legs
+aimed are all in the three logs — backend `70de07d8-c058-4221-b645-61c4f1ac7aa5`,
+frontend-admin `c4f1086e-0a2d-4367-b503-209c14a2ce6f` (refused 01:51:08.065320Z),
+frontend-web `dda6372c-0bb7-4014-a2b1-aa646c11a281` (01:51:07.655981Z) — one
+environment id `6b5f27a3…`, one refusal per leg, zero retries, zero mutations
+fired, and **zero new staging rows**, which remains the cheapest live tell.
+
+**Root cause, and it is still ours.** The document Episode 22 chose —
+`deployments(input:{projectId,serviceId,environmentId})`, i.e.
+`DeploymentListInput` — was refused by the edge with HTTP 503 `unconditional drop
+overload` for the staging project token in a runner, in all three legs. It is
+refused the same way for all three service ids, so the variable is not which
+service was asked. Episode 22 adopted it on two measurements: locally it exits 0 and
+returns the rows, and `railway api` answers it *in general*. Neither measurement was
+this-credential-in-a-CI-runner, which is the one place the leg lives. The file
+already had the rule — read the transport your credential is measured against —
+and the mistake was applying it to the transport while leaving the *document*
+unproven.
+
+**What this evidence does *not* establish, stated before the fix rather than
+after.** Two things, and both survive the paragraph above:
+
+- The connection is not universally refused from CI. `docs/ops/
+  admin-console-production-errors-2026-11-20.md` ("Reconciling with #1150's CLASS
+  verdict") records the **production** project token reading
+  `deployments(input:{serviceId,environmentId})` from a runner at 12:26:29Z. So the
+  honest claim is about this document **with this credential**, not about the
+  document.
+- One sample per leg separates "the staging token cannot read this document" from
+  "the edge dropped it for eight seconds" — it does not choose between them. There
+  was no retry in the pre-fix code, so the legs took the first drop as terminal.
+  The 01:55:21Z cell below proves the *replacement* document answers minutes later,
+  which is why it is the right thing to read; it does not prove the connection is
+  permanently closed to this token.
+
+That ambiguity is the second half of the fix: the leg now reads the document that
+has been measured answering with this credential **and** it retries a bounded
+number of times, so a next train can tell the two readings apart instead of
+guessing from one refusal.
+
+**Consequence beyond this lane, noted not fixed.** `ops-railway-upload.yml`'s
+"Record what is serving now (the rollback handle)" step is the same document under
+`set -euo pipefail`, with no retry and no fallback: a 503 there aborts the manual
+upload before it records the rollback handle. It uses whichever
+`RAILWAY_TOKEN_{DEVELOPMENT,STAGING,PRODUCTION}` the operator picked, so the
+production leg is measured fine and the staging leg is where this refusal would
+land. Changing it is outside this task, and the next person who dispatches a
+staging upload should expect that step to be the one that fails.
+
+**The discriminator ran four minutes later, on the same runner class, with the same
+three secrets.** Run `45308408960`, job `138157787978`
+(`ci-railway-token-class.yml`, `transport=cli`, steps in the file's order: control,
+development, staging, production). Its `serviceInstance(serviceId, environmentId){
+latestDeployment }` cell:
+
+| step | cell 1 (`project` class read) | cell 2 (the staging row) |
+|---|---|---|
+| control, no credential | `auth=token-rejected (http=cli-transport)` 01:55:19.955001Z | `baseline=token-rejected row= status=` 01:55:20.436847Z |
+| development token | `auth=ok (http=cli-transport)` 01:55:20.818617Z | `baseline=token-rejected row= status=` 01:55:21.193680Z |
+| **staging token** | `auth=ok (http=cli-transport)` 01:55:21.566801Z | **`baseline=ok row=2df11e51 status=SUCCESS`** 01:55:21.927746Z |
+| production token | `auth=ok (http=cli-transport)` 01:55:22.307711Z | `baseline=token-rejected row= status=` 01:55:22.673901Z |
+
+Row `2df11e51` is the staging backend row this file has named since Episode 21, so
+the cell says the staging credential resolves the newest staging deployment row at
+01:55:21Z — 247 s after the backend leg was refused that same row list with 503.
+The other two refusals are the environment diagonal, not a fault. So: the
+credential, the ids, the pinned CLI and the transport are all sound; the
+`deployments(input:)` connection is what the edge drops for this token in CI.
+
+**Read the same run's own `Verdict: CLASS` line with care.** At 01:55:16.360138Z the
+step summary of this very job asserts *"No project token reads the deployment
+graph, so `serviceInstanceDeploy` is unreachable from CI whatever the secret value
+says"* — from twelve curl samples, every one `PROBE_CELL baseline=token-rejected
+(http=200)` between 01:54:12 and 01:55:11Z. That reading was retired in Episode 21
+(run `45179580758`) for exactly this reason: it measures the sampler, not the
+credential. Five seconds later the same job's cli-transport table answers the same
+document `ok`. Both lines are in one log; only one of them is evidence, and the
+cheap way to tell which is to look at `PROBE_TRANSPORT` in the step's env block.
+
+**What changed.** Mutation mode reads rows through that measured document and
+nothing else. `scripts/ci/railway-deploy.sh` now carries the probe's `DOC_ROW` —
+the `serviceInstance(serviceId:$s, environmentId:$e){ latestDeployment{ id
+createdAt status meta } }` query — and `latest_row_api` maps its single object to a
+bare one-element JSON array (`[]` when the read fails), so
+`scripts/ci/staging-deploy-watch.py`, its classifier checks and every fixture stay
+untouched. Both the baseline and every watch page come from it; the name-resolved
+CLI reader and the connection document are gone from mutation mode, pinned as
+absent. The row document is byte-pinned against `scripts/ci/f2-token-probe.sh`'s
+own `DOC_ROW` (a check diffs the two `^DOC_ROW=` lines), so the leg cannot drift
+from the thing that was measured. Baseline reads get a bounded ladder —
+`ROW_RETRY_ATTEMPTS=3`, `ROW_RETRY_BASE_DELAY_S=15` — because a 503 is a *drop*, and
+the failure the ladder protects against is a leg that gives up on one transient
+edge refusal before the mutation is ever aimed. Upload mode is untouched again, for
+the same reason as Episode 22: development's uploads worked in this train.
+
+**What the single-row page costs, said plainly.** The watch used to be handed ten
+rows and now gets the newest one. Classification survives, because `mine()` only
+ever acts on a row that names this sha and `newest_other()` only runs when nothing
+does. What is lost: if another train's row becomes newest while ours is building —
+`release.yml` still has no workflow-level concurrency — our leg reads
+`row-naming-another-commit` and goes red on a deploy that did happen. That is the
+safe direction (it cannot read green for a deploy that did not happen) and the
+`row under watch (id / status / commit / which)` line prints the row it dismissed,
+so the other train is visible in the log rather than inferred later. A read that
+fails during the watch is not fatal either: `no-new-row` falls in the keep-waiting
+arm, so each refused page costs one 15 s slot; only a budget that expires on
+`no-new-row` prints `mutation-is-noop`, and that word then describes our blind read
+rather than Railway's no-op — the leg is red either way, and the refusal lines
+above it say which.
+
+**Not yet measured, and deliberately not claimed.** The staging cell that came back
+`ok` was for `PROBE_SERVICE_NAME: backend`, i.e. service id `70de07d8…`. The
+frontend-admin and frontend-web ids ride the same document with a different `$s`.
+The 503 was identical across all three on the connection, which is why the
+difference is expected to be the document rather than the service — but the honest
+statement is that two of the three ids are read on an extrapolation, and the loud
+stderr line names the id so the next train can say which case it is.
+
+**Verification.** `scripts/ci/test-staging-deploy-watch.sh` grows to **143 checks
+over 15 legs** (measured 11 s on a laptop on 2026-11-24, three runs: 10, 11, 11 s —
+Episode 22's "112 s for 115 checks" was never re-measured, and the honest
+re-measurement of the enlarged suite is what that line should have said). Written
+red first: 21 of the 143 failed against the unpatched script, including every
+transport pin. One pre-fix green is worth recording as a defect in the *old* test,
+not the old code: the new `latest-errors` leg — an HTTP 200 body carrying `errors[]`
+— passed before the fix, which is how a refused read used to become an empty page
+and then a blank slate. Added legs and pins: `latest-errors`, `baseline-5xx` (green
+after two attempts, `rows1` counted twice, the refusal still in the log, and the
+baseline printed as the pre-existing row id), `rows-refused` rewritten to require
+exactly three baseline attempts and no fallback to either retired reader, "no
+`deployments(input:)` connection call at all" for the leg and for every leg in the
+suite, "the row read carried the service id, not the name", "the row read asked for
+no service NAME", one-and-only-one `railway api "$DOC_ROW"` call site, and the poll
+reading the newest row through the measured reader. Three mutants, each applied by
+`cp` to a /tmp copy and restored with the restore asserted by sha256 against that
+pre-mutation copy: dropping the `errors[]` shape check reddens **1** check, removing
+the retry ladder reddens **7**, sending the diagnostic to stdout instead of stderr
+reddens **6** (the Episode 22 failure mode, still caught). Final pristine sha256 of
+the script at the time of writing:
+`d88afb4332c730490d3668333d501f8bbc5f4ff7f3c0732869909738d0e9eab5` — quoted as a
+checkpoint, not as a landing test; six sibling Railway suites pass.
+
+**Served state when this was written.** Development serves `8bdc29b9c` on all three
+services, read from the train's own terminal lines above — those lines are the
+leg's measured evidence, and per Episode 22 this file does not dress a `DEPLOYING`
+row as a served one. Staging is **unchanged for a third train running**:
+`2df11e51` / `d7abcc2e` / `6e39f119`, all still `0329a903a…` since 2026-11-23T14:29Z
+(the 01:55:21Z cell above re-reads `2df11e51` live, so this is an observation, not a
+carry-over). Production is untouched: `e43c64557…` (backend), `f3407986d…`
+(frontend-web), `528382b26…` (frontend-admin).
+
+**Consequence for the next reader.** There are now four things that can kill a
+`deploy Staging` leg, and the log says which in its own words: ~1,050 s with nine
+`Failed to fetch` = F2; under 25 s and *nothing* printed = the Episode 22 silent
+abort; under 25 s printing `could not read the pre-mutation … row` with no HTTP
+line = a reader that exits non-zero; **under 25 s printing `HTTP 503 … unconditional
+drop overload` = the edge dropping the document, which is this episode.** The rule
+this arc converges on, stated once for whoever edits this leg next: *a mutation leg
+may read only through a document that has been measured answering in a runner, with
+the credential that leg uses. A local exit 0 is not that measurement, and a verdict
+line from a sampler is not either.* The fix bites from the train whose gate sha
+contains it; the train after that one is the first that can prove staging receives
+a commit.

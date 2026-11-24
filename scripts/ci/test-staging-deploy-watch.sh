@@ -34,22 +34,48 @@
 # whatever the script does would prove nothing, and this is exactly the suite
 # that must be able to see a silent no-op and another train's row alike.
 #
-# Two of the scenarios are about the READERS rather than the rows, because the
-# leg's first red after the swap was a reader problem, not a Railway problem
-# (train 45234100845, 2026-11-23T18:33:15Z: 1.1 s from the leg's header to
-# `exit code 1` with nothing in between). `list-refused` makes the name-resolved
-# `railway deployment list` refuse and requires the leg to deploy anyway — a
-# mutation leg is aimed by ids, so it must READ by ids — and `green` pins that
-# the CLI is never asked to resolve a service or environment name at all.
-# `rows-refused` takes the id-addressed reader away too and requires the leg to
-# say so out loud: an empty page plus the existing "could not read the
-# pre-mutation row" guard, not a bare exit.
+# Several of the scenarios are about the READERS rather than the rows, because
+# every red this leg has had since the swap has been a reader problem, not a
+# Railway problem (train 45234100845, 2026-11-23T18:33:15Z: 1.1 s from the leg's
+# header to `exit code 1` with nothing in between). `list-refused` makes the
+# name-resolved `railway deployment list` refuse and requires the leg to deploy
+# anyway — a mutation leg is aimed by ids, so it must READ by ids — and `green`
+# pins that the CLI is never asked to resolve a service or environment name at
+# all. `rows-refused` takes the leg's own reader away and requires the leg to
+# say so out loud: a failed read plus the "could not read the pre-mutation row"
+# guard, not a bare exit.
+#
+# The reader that `rows-refused` pins is the third one this leg has had, and the
+# second refusal measured live. Fix #1 (PR #1160) read rows with the
+# name-resolved CLI call and died silently; fix #2 (PR #1164) sent
+# `deployments(input:)` through `railway api` and train 45302515868 was refused
+# by the edge — loudly, as this suite demands — with HTTP 503 "unconditional drop
+# overload" on all three staging legs at 01:51Z. Four minutes later, run
+# 45308408960 sent `serviceInstance(serviceId, environmentId){ latestDeployment
+# {…} }` through the SAME pinned CLI, from the SAME runner class, with the SAME
+# RAILWAY_TOKEN_STAGING, and got row 2df11e51 back SUCCESS. So the rule the suite
+# now enforces is stronger than "read by id": a leg must read through the
+# document its credential is MEASURED against, and the only measured readable is
+# f2-token-probe.sh's DOC_ROW. The leg sends that text verbatim, pinned
+# byte-for-byte in the wiring section below, which is also why one document
+# serves both the baseline and the watch: a second row document would be a
+# second unmeasured claim.
+#
+# That document returns one row — the newest — instead of a page of ten. The
+# suite therefore models the environment by WHEN the leg asks: before this leg's
+# mutation the newest row is the pre-existing one, after it the newest row is
+# whatever the scenario says the mutation produced. The stub reads that off the
+# leg's own mutation call, so a leg that read its baseline AFTER mutating (or
+# that re-read it between polls) would see its own deploy as the baseline and go
+# red — which is the honest direction for a test to fail in.
 #
 # Run:  bash scripts/ci/test-staging-deploy-watch.sh
-# No network. Measured 115 checks in 112 s on a laptop on 2026-11-24 — 13 stubbed
-# legs (5 green shapes, 8 red controls), the classifier cells including the
-# STARTED_AT cutoff matrix, the argument guards and the wiring pins. `sleep` is
-# stubbed so none of it waits on a clock.
+# No network. Measured 143 checks in 11 s on a laptop on 2026-11-24, three runs
+# (10, 11, 11 s) — 15 stubbed legs: 6 green shapes, 9 red controls — plus the
+# classifier cells including the STARTED_AT cutoff matrix, the argument guards
+# and the wiring pins. `sleep` is stubbed so none of it waits on a clock. (The
+# 112 s this header quoted for 115 checks was never re-measured; the figure here
+# is from the three runs above.)
 # It shares the secret-hygiene runner with the other deploy tests rather than
 # getting a lane of its own.
 set -uo pipefail
@@ -87,17 +113,20 @@ mkdir -p "$work/bin" "$work/tree/fake"
 
 cat > "$work/bin/railway" <<'STUB'
 #!/usr/bin/env bash
-# Enough of the railway CLI for railway-deploy.sh's mutation mode: `api` (both
-# the mutation and the id-addressed row page), `deployment list` (the name-
-# resolved row page, which is what upload mode uses and what a staging leg must
-# NOT depend on any more), `logs` (the crash dump) and `up`, which records that
-# it happened and fails loudly.
+# Enough of the railway CLI for railway-deploy.sh's mutation mode: `api` (the
+# mutation AND the row read — one document each, both aimed by ids),
+# `deployment list` (the name-resolved row page, which is what upload mode uses
+# and what a staging leg must NOT depend on any more), `logs` (the crash dump)
+# and `up`, which records that it happened and fails loudly.
 #
-# Both row readers answer from the SAME builder, so a scenario is a statement
-# about the rows and not about the transport: switching the leg from one reader
-# to the other must not change any verdict. `deployment list` emits a bare JSON
-# array; `api` wraps the same array in the GraphQL connection envelope, because
-# that is the difference the leg's jq has to absorb.
+# Every row scenario is stated once, in `rows_page`, and each reader projects it
+# into the shape ITS transport would answer with: a bare JSON array for
+# `deployment list`, a `deployments` connection envelope for the list query, and
+# a single `serviceInstance.latestDeployment` object for the service-instance
+# query. A scenario is therefore a statement about the ROWS and not about the
+# transport: switching the leg from one reader to another must not change a
+# verdict, and if it does, the difference is visible here rather than in a
+# release.
 cmd="${1:-}"; shift || true
 
 base="$(printf '{"id":"%s","status":"SUCCESS","meta":{"commitHash":"%s"}}' "$BASE_ID" "$OTHER_SHA")"
@@ -149,9 +178,18 @@ rows_page() {
   esac
 }
 
-# edges_from <array-json>: wrap rows in the GraphQL connection shape.
+# edges_from <array-json>: wrap rows in the GraphQL connection shape — what
+# `deployments(input:)` answers with.
 edges_from() {
   printf '%s' "$1" | jq -c '{data:{deployments:{edges:(map({node:.}))}}}'
+}
+# latest_from <array-json>: the SAME rows in the shape
+# `serviceInstance{ latestDeployment{…} }` answers with — one object: the newest
+# row, or null when there is no row. This projection is the point of the new
+# transport, so every scenario has to survive it: `.[0]` is the newest, because
+# the rows above are built newest-first.
+latest_from() {
+  printf '%s' "$1" | jq -c '{data:{serviceInstance:{latestDeployment:(.[0] // null)}}}'
 }
 case "$cmd" in
   up)
@@ -160,14 +198,19 @@ case "$cmd" in
     exit 77
     ;;
   api)
-    # One endpoint, two documents. The row page is a query selecting
-    # `deployments(input:)`; the deploy is the serviceInstanceDeploy mutation.
-    # Dispatch on the document text, because that is the only thing that
-    # distinguishes them, and keep the mutation's counters exactly as they were
+    # One endpoint, three documents, told apart by their text — the only thing
+    # that distinguishes them. Keep the mutation's counters exactly as they were
     # so every pre-existing assertion still means what it said.
     doc="${1:-}"
     case "$doc" in
       *deployments\(input:*)
+        # The transport PR #1164 shipped, which train 45302515868 was refused on
+        # with HTTP 503 "unconditional drop overload" on all three staging legs.
+        # It stays answering in the stub, but it marks the log: a leg that goes
+        # back to it keeps producing verdicts, and the `connection-doc` counter
+        # below is what says so out loud instead of a scenario breaking for a
+        # shape reason.
+        printf 'connection-doc\n' >> "$STUB_ROWS_LOG"
         printf 'api-rows %s\n' "$*" >> "$STUB_ROWS_LOG"
         # `n=1` is the baseline read; anything bigger is the watch looking again.
         first=10
@@ -176,10 +219,6 @@ case "$cmd" in
         done
         if [ "$first" = 1 ]; then
           printf 'rows1\n' >> "$STUB_ROWS_LOG"
-          # The reader's own failure shape: a non-zero exit with its sentence on
-          # stderr. This is the cell that pins the leg must not go back to being
-          # silent about it — with both readers gone there is no page to judge,
-          # and the only acceptable output is a red leg that says what failed.
           if [ "${STUB_MODE}" = rows-refused ]; then
             echo "Error: Not Authorized (token scope)" >&2
             exit 1
@@ -194,6 +233,68 @@ case "$cmd" in
           exit 1
         fi
         edges_from "$(rows_page lookup)"
+        echo "Railway API request completed" >&2
+        exit 0
+        ;;
+      *serviceInstance\(serviceId:*)
+        # The measured readable row read: f2-token-probe.sh's DOC_ROW, answered
+        # in that document's own envelope. ONE document serves both the baseline
+        # read and the watch, so the stub decides which read this is from the
+        # leg's own state — no mutation recorded for this scenario yet means the
+        # newest row is the pre-existing baseline; after the mutation the same
+        # read is the leg judging what it did. A leg that read its baseline after
+        # mutating, or re-read it between polls, would compare its own deploy
+        # against itself and go red: the failure direction a pin should fail in.
+        mutated=0
+        [ -s "$STUB_API_LOG" ] && mutated=1
+        kind=lookup
+        [ "$mutated" = 0 ] && kind=baseline
+        printf 'latest-%s %s\n' "$kind" "$*" >> "$STUB_ROWS_LOG"
+        if [ "$kind" = baseline ]; then
+          printf 'rows1\n' >> "$STUB_ROWS_LOG"
+          n=0; [ -f "$STUB_BASELINE_COUNT" ] && n="$(cat "$STUB_BASELINE_COUNT")"
+          n=$((n + 1)); printf '%s' "$n" > "$STUB_BASELINE_COUNT"
+          # The reader's own failure shape: a non-zero exit with its sentence on
+          # stderr. This is the cell pinning that the leg must not go back to
+          # being silent about it — with the row read gone there is no baseline
+          # to judge against, and the only acceptable output is a red leg that
+          # says what failed.
+          if [ "${STUB_MODE}" = rows-refused ]; then
+            echo "Error: Not Authorized (token scope)" >&2
+            exit 1
+          fi
+          # `baseline-5xx`: one transient refusal, then the same read succeeds.
+          # The measured 503 was not transient, but a leg that cannot ride out a
+          # dropped connection reds a release for nothing, and a leg that retries
+          # forever hangs one. Both halves are checked: green after two attempts,
+          # and exactly two attempts.
+          if [ "${STUB_MODE}" = baseline-5xx ] && [ "$n" -le 1 ]; then
+            echo "Error: Railway API request failed with HTTP 503 Service Unavailable (unconditional drop overload)" >&2
+            exit 1
+          fi
+          # `latest-errors`: a refusal that arrives as HTTP 200 carrying errors[]
+          # and NO `.data` — the shape this API uses for `Not Authorized` (see
+          # the `refused` mutation scenario). A leg that reads a missing `.data`
+          # as "an environment with no rows" would treat every refusal as a
+          # blank slate and credit the pre-existing deployment as its own.
+          if [ "${STUB_MODE}" = latest-errors ]; then
+            printf '%s\n' '{"errors":[{"extensions":{"code":"INTERNAL_SERVER_ERROR"},"message":"Not Authorized"}]}'
+            echo "Railway API request completed" >&2
+            exit 0
+          fi
+          latest_from "$(rows_page baseline)"
+          echo "Railway API request completed" >&2
+          exit 0
+        fi
+        printf 'rows10\n' >> "$STUB_ROWS_LOG"
+        # `rows-refused` refuses the read whenever it happens, not only before
+        # the mutation: the scenario is "the row read does not answer", and a leg
+        # that dropped its baseline guard must still hear a refusal in the poll.
+        if [ "${STUB_MODE}" = rows-refused ]; then
+          echo "Error: Not Authorized (token scope)" >&2
+          exit 1
+        fi
+        latest_from "$(rows_page lookup)"
         echo "Railway API request completed" >&2
         exit 0
         ;;
@@ -282,19 +383,23 @@ check() { # <label> <expected> <actual>
   fi
 }
 
-# run_leg <stub-mode> -> "<rc> <up-calls> <mutation-calls> <watch-lookups> <name-resolved-list-calls>"
+# run_leg <stub-mode> -> "<rc> <up> <mutation> <watch-lookups> <name-resolved-list> <connection-doc>"
 #
 # Field 4 counts a watch lookup however it was fetched — `list10` from the
-# name-resolved reader or `rows10` from the id-addressed one — because "how many
-# times did the leg look at the page" is a statement about the verdict, not about
-# the transport. Field 5 exists to pin the other half: a mutation leg that goes
-# back to `railway deployment list` is the leg that died silently on 2026-11-23,
-# so it must be visible here as a non-zero count.
+# name-resolved reader, `rows10` from the id-addressed connection, or `rows10`
+# from the service-instance read — because "how many times did the leg look at
+# the rows" is a statement about the verdict, not about the transport. Field 5
+# pins the other half: a mutation leg that goes back to `railway deployment
+# list` is the leg that died silently on 2026-11-23. Field 6 is the newest of
+# the three: the `deployments(input:)` connection is the read that train
+# 45302515868 was refused on with HTTP 503, so a leg that returns to it is
+# visible as a non-zero count here even though the stub still answers it.
 run_leg() {
   local mode="$1" rc
   : > "$work/up.$mode"; : > "$work/api.$mode"; : > "$work/list.$mode"
   : > "$work/rows.$mode"
   : > "$work/api_count.$mode"; : > "$work/poll_count.$mode"
+  : > "$work/baseline_count.$mode"
   (
     cd "$work/tree" || exit 99
     STUB_MODE="$mode" \
@@ -302,6 +407,7 @@ run_leg() {
       STUB_LIST_LOG="$work/list.$mode" STUB_ROWS_LOG="$work/rows.$mode" \
       STUB_API_COUNT="$work/api_count.$mode" \
       STUB_POLL_COUNT="$work/poll_count.$mode" \
+      STUB_BASELINE_COUNT="$work/baseline_count.$mode" \
       PATH="$work/bin:$PATH" \
       SERVICE=backend RAILWAY_ENV=staging SHA="$SHA_STUB" \
       RAILWAY_TOKEN=rlwy_stub_value_never_printed \
@@ -312,11 +418,12 @@ run_leg() {
       bash "$deploy" >"$work/out.$mode" 2>&1
   )
   rc=$?
-  printf '%s %s %s %s %s' "$rc" \
+  printf '%s %s %s %s %s %s' "$rc" \
     "$(count "$work/up.$mode" '^railway up')" \
     "$(num "$work/api_count.$mode")" \
     "$(( $(count "$work/list.$mode" '^list10$') + $(count "$work/rows.$mode" '^rows10$') ))" \
-    "$(count "$work/list.$mode" '^list')"
+    "$(count "$work/list.$mode" '^list')" \
+    "$(count "$work/rows.$mode" '^connection-doc$')"
 }
 
 echo "=== the leg, green: the two shapes a real deploy row arrives in"
@@ -342,6 +449,18 @@ check "green: the token appears in no recorded argv" "0" \
 check "green: the token appears nowhere in the leg log" "0" \
   "$(count "$work/out.green" 'rlwy_stub_value_never_printed')"
 check "green: no name-resolved list call at all (a mutation leg is id-addressed)" "0" "$5"
+check "green: no deployments(input:) connection call at all" "0" "$6"
+# The row read is the probe's own document, aimed by ids and nothing else: the
+# service id and the staging environment id are its only two variables, which is
+# what makes it the same call run 45308408960 answered at 01:55:21Z.
+check "green: the row read carried the service id, not the name" "yes" \
+  "$(grep -q -- "--var s=$BACKEND_ID" "$work/rows.green" && echo yes || echo no)"
+check "green: the row read carried the staging environment id" "yes" \
+  "$(grep -q -- "--var e=$STAGING_ENV_ID" "$work/rows.green" && echo yes || echo no)"
+check "green: the row read asked for no service NAME" "0" \
+  "$(grep -c -- '--var s=backend\\|--var e=staging' "$work/rows.green")"
+check "green: the token appears in no recorded row-read argv" "0" \
+  "$(count "$work/rows.green" 'rlwy_stub_value_never_printed')"
 
 # The 2026-11-23 18:33Z staging legs. All three printed
 #     === deploying backend to staging (dda9d256…) ===
@@ -361,30 +480,68 @@ check "list-refused: the log names the baseline row it read" "yes" \
   "$(grep -q "^baseline row before the mutation: $BASE_ID$" "$work/out.list-refused" && echo yes || echo no)"
 check "list-refused: the log names the commit it deployed" "yes" \
   "$(grep -q 'deployed 1111111111.* (mutation)' "$work/out.list-refused" && echo yes || echo no)"
-check "list-refused: the row page came through the api" "yes" \
+check "list-refused: the row read came through the api, not the CLI name lookup" "yes" \
   "$(grep -q 'rows10' "$work/rows.list-refused" && echo yes || echo no)"
-check "list-refused: the id-addressed read carries the service id, not the name" "yes" \
-  "$(grep -q "serviceId\":\"$BACKEND_ID" "$work/rows.list-refused" && echo yes || echo no)"
-check "list-refused: the id-addressed read carries the staging environment id" "yes" \
-  "$(grep -q "environmentId\":\"$STAGING_ENV_ID" "$work/rows.list-refused" && echo yes || echo no)"
+check "list-refused: the row read is aimed by id" "yes" \
+  "$(grep -q -- "--var e=$STAGING_ENV_ID" "$work/rows.list-refused" && echo yes || echo no)"
 check "list-refused: the token appears in no recorded argv" "0" \
   "$(count "$work/rows.list-refused" 'rlwy_stub_value_never_printed')"
 
 # The other half of the same lesson: when the row read itself is what refuses,
 # the leg is allowed to be red — it just is not allowed to be quiet about it.
-# Without this cell the fix could be reduced to `printf '[]'; return 0` (an
+# Without this cell the fix could be reduced to `printf 'null'; return 0` (an
 # honest-looking empty page) and the suite would still pass, while a real CI leg
 # went back to dying 1.1 s in with no reason in the log.
 out="$(run_leg rows-refused)"; set -- $out
 check "rows-refused: the leg is RED (no baseline, no verdict)" "1" "$1"
 check "rows-refused: sends NO mutation (it refuses to guess at 'new row')" "0" "$3"
-check "rows-refused: the log says the row page read failed" "yes" \
-  "$(grep -q 'row page read failed (rc=1)' "$work/out.rows-refused" && echo yes || echo no)"
+check "rows-refused: the log says the row read failed" "yes" \
+  "$(grep -q 'row read failed (rc=1)' "$work/out.rows-refused" && echo yes || echo no)"
+check "rows-refused: the log names WHICH read failed" "yes" \
+  "$(grep -q 'baseline row read failed' "$work/out.rows-refused" && echo yes || echo no)"
 check "rows-refused: the log keeps the CLI's reason, not just a bare rc" "yes" \
   "$(grep -q 'Not Authorized' "$work/out.rows-refused" && echo yes || echo no)"
+check "rows-refused: the log names the ids the read was aimed at" "yes" \
+  "$(grep -q "service=$BACKEND_ID env=$STAGING_ENV_ID" "$work/out.rows-refused" && echo yes || echo no)"
 check "rows-refused: the named guard still fires" "yes" \
   "$(grep -q 'could not read the pre-mutation' "$work/out.rows-refused" && echo yes || echo no)"
 check "rows-refused: never ran railway up" "0" "$2"
+# The retry ladder is bounded, and this is where that is measured: three
+# attempts and no fourth. An unbounded ladder on the pre-mutation read is a leg
+# that hangs a release instead of failing it, and a leg that gives up after one
+# try is a leg that reds a release over one dropped connection.
+check "rows-refused: retried the baseline read EXACTLY three times, no more" "3" \
+  "$(count "$work/rows.rows-refused" '^rows1$')"
+check "rows-refused: never fell back to the connection or the name lookup" "0" \
+  "$(( $5 + $6 ))"
+
+# A refusal shaped as HTTP 200 carrying errors[] rather than a non-zero exit —
+# the shape this API uses for `Not Authorized`, and the one that a leg which
+# parses "did the CLI succeed" instead of "did Railway answer" reads as a clean
+# empty environment. Same required outcome as rows-refused, different mechanism:
+# a missing `.data` must never become a blank slate to diff against.
+out="$(run_leg latest-errors)"; set -- $out
+check "latest-errors: an errors[] body is RED, not an empty environment" "1" "$1"
+check "latest-errors: sends NO mutation" "0" "$3"
+check "latest-errors: the log keeps the CLI's reason" "yes" \
+  "$(grep -q 'Not Authorized' "$work/out.latest-errors" && echo yes || echo no)"
+check "latest-errors: the named guard fires" "yes" \
+  "$(grep -q 'could not read the pre-mutation' "$work/out.latest-errors" && echo yes || echo no)"
+check "latest-errors: never ran railway up" "0" "$2"
+
+# One dropped connection on the pre-mutation read must not be a red release: the
+# same read made again answers, and the leg deploys.
+out="$(run_leg baseline-5xx)"; set -- $out
+check "baseline-5xx: a transient 503 on the baseline read does not kill the leg" "0" "$1"
+check "baseline-5xx: sent exactly one mutation (it did not re-fire)" "1" "$3"
+check "baseline-5xx: the second attempt succeeded and the leg went green" "yes" \
+  "$(grep -q 'deployed 1111111111.* (mutation)' "$work/out.baseline-5xx" && echo yes || echo no)"
+check "baseline-5xx: the refusal is still in the log" "yes" \
+  "$(grep -q 'HTTP 503' "$work/out.baseline-5xx" && echo yes || echo no)"
+check "baseline-5xx: stopped retrying once it had a baseline (2 reads, not 3)" "2" \
+  "$(count "$work/rows.baseline-5xx" '^rows1$')"
+check "baseline-5xx: the log names the baseline row it read" "yes" \
+  "$(grep -q "^baseline row before the mutation: $BASE_ID$" "$work/out.baseline-5xx" && echo yes || echo no)"
 
 out="$(run_leg green-string-meta)"; set -- $out
 check "green via a stringified meta: exits 0" "0" "$1"
@@ -437,6 +594,13 @@ check "the HTTP-200 errors[] body reads as a token refusal" "yes" \
 out="$(run_leg no-baseline)"; set -- $out
 check "an unreadable baseline is RED" "1" "$1"
 check "an unreadable baseline sends NO mutation (it refuses to guess at 'new row')" "0" "$3"
+# `latestDeployment: null` is a READABLE answer that names no row. Retrying it
+# three times is the ladder working as designed; treating it as a blank slate
+# would be the false green, and crediting the first row that appears after the
+# mutation — whoever minted it — is exactly what the guard above exists to stop.
+check "an unreadable baseline still retries the read a bounded 3 times" "3" \
+  "$(count "$work/rows.no-baseline" '^rows1$')"
+check "an unreadable baseline never ran railway up" "0" "$2"
 
 echo "=== the guards: a leg that cannot be aimed says so before asking Railway"
 guards="$(
@@ -566,6 +730,28 @@ echo "=== the wiring"
 probe_doc="$(grep '^DOC_DEPLOY_SHA=' "$probe")"
 deploy_doc="$(grep '^DOC_DEPLOY_SHA=' "$deploy")"
 check "railway-deploy.sh sends the probe's mutation document verbatim" "$probe_doc" "$deploy_doc"
+# The row read, same rule: the ONLY staging row document with measured CI-side
+# evidence behind it is f2-token-probe.sh's DOC_ROW — run 45308408960 resolved it
+# through `railway api` with RAILWAY_TOKEN_STAGING from an unlinked runner and
+# got row 2df11e51 SUCCESS. Byte-for-byte is the point: a drifted document is a
+# second unmeasured claim, and the claim is what the 503 refused.
+probe_row_doc="$(grep '^DOC_ROW=' "$probe")"
+deploy_row_doc="$(grep '^DOC_ROW=' "$deploy")"
+check "railway-deploy.sh sends the probe's row document verbatim" "$probe_row_doc" "$deploy_row_doc"
+check "the row document resolves through serviceInstance, not a list" "yes" \
+  "$(printf '%s' "$deploy_row_doc" | grep -q 'serviceInstance(serviceId:\$s, environmentId:\$e){ latestDeployment' && echo yes || echo no)"
+# The connection that train 45302515868 was refused on must not be in the
+# script any more. Pinned on `DeploymentListInput` rather than on the looser
+# `deployments(input:)` because the prose in this file legitimately names the
+# refused query, and a type name only ever appears in a document. The stub
+# answers the connection in every scenario, so without this pin a revert would
+# pass the behavioural cells silently.
+check "railway-deploy.sh has no connection document of its own" "0" \
+  "$(grep -c 'DeploymentListInput' "$deploy")"
+check "no leg anywhere in this suite sent the deployments(input:) connection" "0" \
+  "$(cat "$work"/rows.* 2>/dev/null | grep -c '^connection-doc$')"
+check "no leg anywhere in this suite used the name-resolved list reader" "0" \
+  "$(cat "$work"/list.* 2>/dev/null | grep -c '^list')"
 check "the document is never the latestCommit spelling" "0" \
   "$(grep -c 'latestCommit:' "$deploy")"
 # The mutation branch, read off the script's own structure: it must contain no
@@ -593,6 +779,14 @@ check "the upload path still identifies its row by meta.cliMessage" "1" \
 # too, and a comment edit is not a change to what the leg executes.
 check "the leg executes the classifier three times (watch + describe + final)" "3" \
   "$(grep -c 'SCRIPT_DIR/staging-deploy-watch.py' "$deploy")"
+# One reader, called twice: the row the leg diffs against and the row it judges
+# come from the same document and the same transport. A watch that read through
+# a different path than the deploy it is judging is a second way for a verdict
+# and its evidence to disagree — and it is what this leg has done twice now.
+check "the poll reads the newest row through the measured reader" "1" \
+  "$(grep -c 'rows_page="$(latest_row_api lookup)"' "$deploy")"
+check "exactly one place in the leg sends the row document" "1" \
+  "$(grep -c 'railway api "\$DOC_ROW"' "$deploy")"
 # The cutoff is only a guard if it is taken INSIDE the window it guards: after
 # the baseline read (so a row that predates the leg can never be the baseline
 # AND predates the cutoff — one of the two must catch it) and before the
@@ -651,4 +845,4 @@ if [ "$failures" -ne 0 ]; then
   echo "FAIL  $failures of $checks check(s) failed"
   exit 1
 fi
-echo "ok — staging mutation leg pinned ($checks checks: 5 green legs, 8 red controls, the cutoff matrix, the readers, guards and wiring)"
+echo "ok — staging mutation leg pinned ($checks checks: 6 green legs, 9 red controls, the cutoff matrix, the readers, the retry ladder, guards and wiring)"
