@@ -1023,19 +1023,18 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, publi
 		connectvoting.NewRepository(pool), walletSvc, revenue, audit, amlSvc)
 	// Contest banners/logos are stored as a path under frontend-web's media route;
 	// this is the origin the mobile app is handed instead. WEB_APP_BASE_URL.
+	// It anchors the contestant-photo reader too (see below), so one variable puts
+	// every frontend-web-hosted media URL on the right host.
 	voteSvc.SetMediaBaseURL(cfg.WebAppBaseURL)
 	log.Printf("[connect-voting] contest media base = %q (WEB_APP_BASE_URL)", cfg.WebAppBaseURL)
-	// Contestant photos are stored as R2 object keys under registration/<userId>/,
-	// which frontend-web serves only to their owner. Voters need the picture, so the
-	// voting service signs those keys at read time, exactly as connect/profile does
-	// for member photos. Same bucket, same credentials.
-	voteSvc.SetPhotoSigner(r2.New(r2.Config{
-		AccountEndpoint: cfg.R2AccountEndpoint,
-		Bucket:          cfg.R2Bucket,
-		AccessKeyID:     cfg.R2AccessKeyID,
-		SecretAccessKey: cfg.R2SecretAccessKey,
-		Region:          cfg.R2Region,
-	}))
+	// Contestant photos are NOT signed here, deliberately. The registration upload
+	// route stores bytes in R2 only when frontend-web itself has bucket
+	// credentials; otherwise it writes to that app's disk. This service cannot see
+	// which, so signing the key produced a valid URL for an object that may never
+	// have arrived (404 NoSuchKey). Instead it hands clients frontend-web's reader
+	// — /api/v1/contestants/<id>/photo — which knows both stores, confirms the
+	// object, and redirects or serves the bytes. internal/connect/voting keeps the
+	// rule; connect/profile still signs member photos, which only it writes.
 	// Commission recording for realized paid-vote profit. Ledger-less recorder —
 	// the vote debit already posts into paymax_revenue, so RecordFor appends the
 	// earning ROW only; best-effort, never fails a vote (recordCommissionSafe).

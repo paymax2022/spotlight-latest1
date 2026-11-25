@@ -77,11 +77,9 @@ type Service struct {
 	solicitation SolicitationFlagger
 	commission   CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	// mediaBase is the web app origin used to absolutise stored contest image
-	// paths. Empty ⇒ paths are handed out as stored.
+	// paths and the contestant-photo reader URL. Empty ⇒ paths are handed out
+	// as stored.
 	mediaBase string
-	// photo signs stored contestant-photo object keys back into viewable URLs.
-	// nil ⇒ see SetPhotoSigner.
-	photo photoSigner
 }
 
 // NewService builds the voting service. solicitation may be nil.
