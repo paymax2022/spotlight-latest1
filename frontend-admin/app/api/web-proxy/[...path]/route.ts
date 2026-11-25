@@ -38,6 +38,39 @@ const WEB_API_BASE_URL = process.env.WEB_API_BASE_URL || '';
 const TIMEOUT_MS = Number(process.env.WEB_PROXY_TIMEOUT_MS ?? 20_000);
 
 /**
+ * A big upload gets a longer deadline than a JSON relay.
+ *
+ * `AbortSignal.timeout` covers the entire exchange, including pushing the body
+ * out to frontend-web. 20 s is right for the list/read calls this proxy mostly
+ * carries and wrong for the 50 MiB contest-template images it also carries: on a
+ * real connection the console aborts first, reports "the web app did not answer",
+ * and the image lands anyway — the worst kind of failure, because retrying
+ * stacks a second copy in the bucket.
+ *
+ * Measured 2026-11-25 against a dev server: the transfer itself is not the
+ * problem locally (a 20 MiB multipart relayed intact in 0.23 s), so this is
+ * about the remote hop, not about localhost.
+ */
+const LARGE_UPLOAD_BYTES = 4 * 1024 * 1024;
+const LARGE_UPLOAD_TIMEOUT_MS = Number(process.env.WEB_PROXY_UPLOAD_TIMEOUT_MS ?? 180_000);
+
+/**
+ * Body size: this proxy is deliberately NOT capped the way frontend-web's is.
+ *
+ * Next forks the request body for the proxy layer and cuts that fork at
+ * `experimental.proxyClientMaxBodySize` (10 MiB default) — which is why
+ * frontend-web needed `upload-limits.config.mjs` at all
+ * (frontend-web/upload-limits.config.mjs). Here it does not apply: the matcher in
+ * middleware.ts is `['/admin/:path*']`, so `/api/web-proxy` runs no proxy layer
+ * and nothing forks the body. Verified, not assumed — a 20 MiB multipart POST
+ * through this route on the unmodified config arrived at the upstream with
+ * `declared == received == 20 971 726` and no buffering warning in the dev log.
+ * If the matcher ever grows to cover `/api/*`, this route needs the same
+ * `proxyClientMaxBodySize` treatment frontend-web has, or every large upload
+ * starts arriving cut in half.
+ */
+
+/**
  * The four headers that describe the bytes being relayed, and nothing else.
  *
  * The body below is forwarded verbatim, so the headers a client needs to read
@@ -129,12 +162,19 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   // forwarded above.
   const body = method === 'GET' || method === 'HEAD' ? undefined : await request.arrayBuffer();
 
+  // The deadline covers the whole exchange, so it has to be sized to the body:
+  // an upload that outruns WEB_PROXY_TIMEOUT_MS mid-transfer is reported to the
+  // admin as "the web app did not answer", after frontend-web has already stored
+  // the file. Small JSON keeps the short deadline that catches a hung route.
+  const timeoutMs =
+    body && body.byteLength > LARGE_UPLOAD_BYTES ? LARGE_UPLOAD_TIMEOUT_MS : TIMEOUT_MS;
+
   try {
     const upstream = await fetch(target, {
       method,
       headers,
       body,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     // BYTE-FOR-BYTE passthrough, mirroring the request body above. Reading the
     // response as text corrupted every binary payload exactly the way it
@@ -153,7 +193,7 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
     return NextResponse.json({
       // This string is the only thing the operator sees, so it names the cause:
       // refused means nothing is listening, a missed deadline means it was slow.
-      error: describeUpstreamFailure(err, { baseUrl: WEB_API_BASE_URL, timeoutMs: TIMEOUT_MS }),
+      error: describeUpstreamFailure(err, { baseUrl: WEB_API_BASE_URL, timeoutMs }),
     }, { status: 502 });
   }
 }
