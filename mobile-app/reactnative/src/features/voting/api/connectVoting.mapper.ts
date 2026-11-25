@@ -6,7 +6,7 @@
 // without touching the append-only vote table. Everything below assumes that
 // convention and nothing else.
 
-import type { Contest, Contestant, ContestStatus, LeaderboardEntry, VotePackage } from '../types/voting.types';
+import type { Contest, Contestant, ContestStatus, LeaderboardEntry, VotePackage, VoteTransaction } from '../types/voting.types';
 import { formatAmount } from '../utils/voteFormatters';
 
 /**
@@ -242,5 +242,65 @@ export function mapVotePackage(raw: BackendVotePackage): VotePackage {
     bonusVotes: bonusVotes > 0 ? bonusVotes : undefined,
     // And no `popular`: the console's "Recommended" switch is `isRecommended`.
     isPopular: Boolean(raw.isRecommended),
+  };
+}
+
+/** A row of connect_votes as the Go connect module returns it. */
+export interface ConnectVoteRow {
+  id: string;
+  contest_id: string;
+  contest_title: string;
+  contestant_id: string;
+  contestant_name: string;
+  photo_url: string;
+  paid: boolean;
+  quantity: number;
+  amount_kobo: number;
+  created_at: string;
+}
+
+/**
+ * connect_votes is an immutable log of votes that HAPPENED, so there is no
+ * pending or failed row to represent: anything the caller can see already
+ * counted. Mapping every row to SUCCESSFUL is the honest translation, not a
+ * default — a status field that could only ever hold one value would invite the
+ * screen to render a filter that never changes anything.
+ *
+ * amount_kobo is kobo and VoteTransaction.amount is kobo — the same client unit
+ * as VotePackage.amount (#1170), what MOCK_VOTE_TRANSACTIONS writes, and what
+ * formatAmount expects. This seam therefore passes the figure through. It used
+ * to divide by 100 here, which the two screens that render it undid a second
+ * time: my-votes.tsx and VoteReceiptCard.tsx both call formatAmount(tx.amount),
+ * so a ₦500 vote printed "₦5". Do not "fix" that by changing the renderers to
+ * treat amount as naira — the payment path reads the same field as kobo.
+ *
+ * Relocated here from voting.api.ts unchanged, so the money line is testable by
+ * execution: voting.api.ts imports react-native-url-polyfill through the api
+ * client and cannot load under `node --test`, which is why this suite's older
+ * specs fell back to asserting source text. A number that renders 100× wrong is
+ * not something a regex should be trusted to catch.
+ */
+export function toVoteTransaction(r: ConnectVoteRow): VoteTransaction {
+  return {
+    id: r.id,
+    contestId: r.contest_id,
+    contestantId: r.contestant_id,
+    contestantName: r.contestant_name,
+    contestTitle: r.contest_title,
+    /**
+     * Already a renderable URL, but not a signature: since #1172 Go names
+     * frontend-web's reader (/api/v1/contestants/<id>/photo), which resolves the
+     * stored key against its own bucket or disk. A pasted external URL comes
+     * through unchanged; a value the reader cannot serve comes through empty,
+     * and the screens fall back to their initials placeholder.
+     */
+    contestantPhoto: r.photo_url || undefined,
+    voteType: r.paid ? 'PAID' : 'FREE',
+    votes: r.quantity,
+    amount: r.paid ? r.amount_kobo : undefined,
+    currency: 'NGN',
+    status: 'SUCCESSFUL',
+    reference: r.id,
+    createdAt: r.created_at,
   };
 }
