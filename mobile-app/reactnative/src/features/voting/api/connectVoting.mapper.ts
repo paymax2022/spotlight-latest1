@@ -287,7 +287,13 @@ export function toVoteTransaction(r: ConnectVoteRow): VoteTransaction {
     contestantId: r.contestant_id,
     contestantName: r.contestant_name,
     contestTitle: r.contest_title,
-    /** Already a renderable URL: the server signs the stored object key at read. */
+    /**
+     * Already a renderable URL, but not a signature: since #1172 Go names
+     * frontend-web's reader (/api/v1/contestants/<id>/photo), which resolves the
+     * stored key against its own bucket or disk. A pasted external URL comes
+     * through unchanged; a value the reader cannot serve comes through empty,
+     * and the screens fall back to their initials placeholder.
+     */
     contestantPhoto: r.photo_url || undefined,
     voteType: r.paid ? 'PAID' : 'FREE',
     votes: r.quantity,
