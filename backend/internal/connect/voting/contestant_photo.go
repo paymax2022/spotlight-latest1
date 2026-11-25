@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strings"
-	"time"
 )
 
 // Contestant photos come out of the registration upload route, so a
@@ -15,34 +14,33 @@ import (
 // file may open (registration/<userId>/ is also where their documents live), so
 // every voter who asked for it got a 403 and the screen showed nothing.
 //
-// The object key inside those values is therefore signed here at read time — the
-// same thing connect/profile and association do, because the R2 bucket is not
-// public — and clients receive a short-lived absolute URL they can render.
+// Signing the key here used to look like the answer, and it is not one. The
+// upload route writes to R2 only when THAT app has bucket credentials; without
+// them it falls back to its own disk (frontend-web/src/lib/storage/
+// local-uploads.ts). So the bytes' location is a property of the deployment's
+// web app, which this service cannot see: it signed a perfectly valid URL for an
+// object the bucket had never received, and the voter got 404 NoSuchKey — the
+// exact failure a dev box hits, because that is where uploads land on disk. See
+// the reader this hands out: frontend-web/app/api/v1/contestants/[id]/photo.
+//
+// A photo is therefore addressed the same way contest banners
+// (/api/admin/contests/banner/) and Open Mic songs (/api/open-mic/songs/)
+// already are: this API names frontend-web's reader, that plane resolves the key
+// against the bucket or its own disk, confirms the object exists, and answers —
+// redirect, bytes, or a 404 the caller renders as its placeholder.
 
-// photoSigner is satisfied by *r2.Presigner; an interface keeps the mapping
-// testable without cloud credentials.
-type photoSigner interface {
-	Configured() bool
-	PresignGet(key string, ttl time.Duration) (string, error)
-}
-
-// photoViewTTL matches connect/profile's photo view TTL: long enough that a
-// roster keeps rendering while it is scrolled, short enough that a leaked URL
-// stops working the same day.
-const photoViewTTL = 60 * time.Minute
+// contestantPhotoReaderPath is frontend-web's public contestant-photo reader; the
+// id is appended, then "/photo". Root-relative until the deployment's web origin
+// is configured, which resolveWebRoute handles.
+const contestantPhotoReaderPath = "/api/v1/contestants/"
 
 const registrationUploadsPath = "/api/registration/uploads/"
 const registrationKeyPrefix = "registration/"
 
-// SetPhotoSigner injects the R2 signer for contestant photos (app-wiring,
-// post-construction). Nil leaves stored values untouched, which is correct for
-// contestants whose photo is a plain URL.
-func (s *Service) SetPhotoSigner(p photoSigner) { s.photo = p }
-
 // contestantPhotoKey digs the R2 object key out of whatever photo_url holds.
 // The empty string means "not ours to sign" — an external URL, a value we cannot
-// parse, or a key outside the registration prefix — and the caller leaves the
-// stored value alone.
+// parse, or a key outside the registration prefix — and the caller decides what
+// that is worth.
 func contestantPhotoKey(stored string) string {
 	stored = strings.TrimSpace(stored)
 	if strings.HasPrefix(stored, "{") {
@@ -99,24 +97,40 @@ func decodeFileKeySegment(seg string) (string, error) {
 	return string(out), err
 }
 
-// resolveContestantPhoto turns a stored photo_url into something a voter's
-// screen can load. A value that is not ours to sign is returned unchanged
-// (pasted URLs already work); one that IS ours but cannot be signed becomes ""
-// rather than a private route, so the screen shows its initials placeholder
-// instead of a broken image.
-func (s *Service) resolveContestantPhoto(stored string) string {
-	key := contestantPhotoKey(stored)
-	if key == "" {
-		return stored
+// storedUploadValue recognises a photo value the registration upload flow wrote,
+// including the forms whose key could not be read out of it — a half-written blob
+// or a route segment that does not decode. Those are ours, and ours-to-nobody:
+// handing one back points the screen at a 403 or at raw JSON.
+func storedUploadValue(stored string) bool {
+	s := strings.TrimSpace(stored)
+	if strings.HasPrefix(s, "{") || strings.Contains(s, registrationUploadsPath) {
+		return true
 	}
-	if s.photo == nil || !s.photo.Configured() {
+	return strings.HasPrefix(strings.TrimPrefix(s, "/"), registrationKeyPrefix)
+}
+
+// resolveContestantPhoto turns a stored photo_url into something a voter's screen
+// can load: frontend-web's reader URL for a photo the upload flow stored, the
+// value itself for an address we do not own (a pasted URL already works), and the
+// empty string when there is nothing loadable to hand out — an unreadable upload
+// value, or a photo row whose id is missing so no reader URL can address it. The
+// caller's initials placeholder is the honest answer in that last case, not a
+// broken image.
+func (s *Service) resolveContestantPhoto(stored, contestantID string) string {
+	stored = strings.TrimSpace(stored)
+	if stored == "" {
 		return ""
 	}
-	url, err := s.photo.PresignGet(key, photoViewTTL)
-	if err != nil {
+	if contestantPhotoKey(stored) != "" {
+		if strings.TrimSpace(contestantID) == "" {
+			return ""
+		}
+		return resolveWebRoute(contestantPhotoReaderPath+contestantID+"/photo", s.mediaBase)
+	}
+	if storedUploadValue(stored) {
 		return ""
 	}
-	return url
+	return stored
 }
 
 // withPhoto resolves one entry's photo in place.
@@ -124,7 +138,7 @@ func (s *Service) withPhoto(e *RosterEntry) *RosterEntry {
 	if e == nil {
 		return nil
 	}
-	e.PhotoURL = s.resolveContestantPhoto(e.PhotoURL)
+	e.PhotoURL = s.resolveContestantPhoto(e.PhotoURL, e.ContestantID)
 	return e
 }
 
@@ -143,7 +157,7 @@ func (s *Service) withVotePhoto(v *MyVote) *MyVote {
 	if v == nil {
 		return nil
 	}
-	v.PhotoURL = s.resolveContestantPhoto(v.PhotoURL)
+	v.PhotoURL = s.resolveContestantPhoto(v.PhotoURL, v.ContestantID)
 	return v
 }
 
