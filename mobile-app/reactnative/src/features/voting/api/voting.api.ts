@@ -20,9 +20,11 @@ import {
   mapContestant,
   mapLeaderboardEntry,
   mapVotePackage,
+  toVoteTransaction,
   type BackendContest,
   type BackendRosterEntry,
   type BackendVotePackage,
+  type ConnectVoteRow,
 } from './connectVoting.mapper';
 import {
   MOCK_CONTESTS,
@@ -552,49 +554,6 @@ export async function getMyVotes(params?: {
   });
   const rows = (res.data?.data ?? res.data ?? []) as ConnectVoteRow[];
   return rows.map(toVoteTransaction);
-}
-
-/** A row of connect_votes as the Go connect module returns it. */
-interface ConnectVoteRow {
-  id: string;
-  contest_id: string;
-  contest_title: string;
-  contestant_id: string;
-  contestant_name: string;
-  photo_url: string;
-  paid: boolean;
-  quantity: number;
-  amount_kobo: number;
-  created_at: string;
-}
-
-/**
- * connect_votes is an immutable log of votes that HAPPENED, so there is no
- * pending or failed row to represent: anything the caller can see already
- * counted. Mapping every row to SUCCESSFUL is the honest translation, not a
- * default — a status field that could only ever hold one value would invite the
- * screen to render a filter that never changes anything.
- *
- * amount_kobo is kobo; the screen's `amount` is naira, which is the conversion
- * this seam exists to do.
- */
-function toVoteTransaction(r: ConnectVoteRow): VoteTransaction {
-  return {
-    id: r.id,
-    contestId: r.contest_id,
-    contestantId: r.contestant_id,
-    contestantName: r.contestant_name,
-    contestTitle: r.contest_title,
-    /** Already a renderable URL: the server signs the stored object key at read. */
-    contestantPhoto: r.photo_url || undefined,
-    voteType: r.paid ? 'PAID' : 'FREE',
-    votes: r.quantity,
-    amount: r.paid ? r.amount_kobo / 100 : undefined,
-    currency: 'NGN',
-    status: 'SUCCESSFUL',
-    reference: r.id,
-    createdAt: r.created_at,
-  };
 }
 
 /** One person who voted for a contestant. Contestant-only; see the Go service. */
