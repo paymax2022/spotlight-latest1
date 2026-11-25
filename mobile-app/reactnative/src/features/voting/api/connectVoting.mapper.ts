@@ -6,7 +6,7 @@
 // without touching the append-only vote table. Everything below assumes that
 // convention and nothing else.
 
-import type { Contest, Contestant, ContestStatus, LeaderboardEntry } from '../types/voting.types';
+import type { Contest, Contestant, ContestStatus, LeaderboardEntry, VotePackage } from '../types/voting.types';
 import { formatAmount } from '../utils/voteFormatters';
 
 /**
@@ -48,6 +48,34 @@ export interface BackendRosterEntry {
   song_submission_id?: string;
   song_status?: string;
   song_url?: string;
+}
+
+/**
+ * One row of the BFF's GET /api/v1/contests/:id/vote-packages, which answers
+ * with the server's own camelCase DTO straight from `public.vote_packages`.
+ *
+ * The units are the whole reason this type exists: `amount` is NAIRA, because
+ * `vote_packages.amount` is a `numeric(12,2)` major-unit column that the admin
+ * console writes in naira (its editor shows `amount × 100` kobo to the operator).
+ * `VotePackage.amount` on this side is KOBO — payment-method.tsx hands it to
+ * `checkout.start({ amountKobo })` and to `formatAmount`, which divides by 100 —
+ * so the two only meet correctly through `nairaToKobo`.
+ */
+export interface BackendVotePackage {
+  id: string;
+  contestId?: string;
+  name: string;
+  description?: string | null;
+  votes: number;
+  bonusVotes?: number | null;
+  totalVotes?: number | null;
+  /** Naira major units. Absent or unreadable means "no price", not "free". */
+  amount?: number | null;
+  currency?: string;
+  isActive?: boolean;
+  isRecommended?: boolean;
+  promoLabel?: string | null;
+  displayOrder?: number;
 }
 
 /** One row of GET /api/v1/connect/contests. */
@@ -186,4 +214,33 @@ export function mapLeaderboardEntry(raw: BackendRosterEntry, contestId: string):
     contestant: mapContestant(raw, contestId),
     votes: raw.total_votes,
   } as LeaderboardEntry;
+}
+
+/**
+ * Naira (major units) → kobo, the only conversion between the two money columns
+ * in this product. Rounds rather than truncates so a `numeric(12,2)` value like
+ * 1999.99 stays 199,999 kobo, and returns 0 for anything unparseable: a broken
+ * price must not reach the gateway as NaN.
+ */
+function nairaToKobo(amount: number | null | undefined): number {
+  const naira = Number(amount ?? 0);
+  if (!Number.isFinite(naira) || naira <= 0) return 0;
+  return Math.round(naira * 100);
+}
+
+export function mapVotePackage(raw: BackendVotePackage): VotePackage {
+  const bonusVotes = Number(raw.bonusVotes ?? 0);
+  return {
+    id: raw.id,
+    // Base votes only: VotePackageCard prints `votes + bonusVotes` itself, so
+    // folding the server's totalVotes in here would count the bonus twice.
+    votes: Number(raw.votes ?? 0),
+    amount: nairaToKobo(raw.amount),
+    currency: 'NGN',
+    // The DTO has no `label`; `name` is the pack title the console operator set.
+    label: raw.name || undefined,
+    bonusVotes: bonusVotes > 0 ? bonusVotes : undefined,
+    // And no `popular`: the console's "Recommended" switch is `isRecommended`.
+    isPopular: Boolean(raw.isRecommended),
+  };
 }
