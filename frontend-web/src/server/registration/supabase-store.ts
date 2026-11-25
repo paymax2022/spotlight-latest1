@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { ApiError } from '@/src/lib/api/responses';
 import {
   buildRegistrationSteps,
   getTalentSkillsForContestCategory,
@@ -929,7 +930,13 @@ export async function reviewRegistrationApplication(
   input: RegistrationReviewInput,
 ): Promise<RegistrationDraft> {
   const current = await getRegistrationDraft(applicationId);
-  if (!current) throw new Error('Application not found.');
+  // ApiError, not Error: `handleApiError` only lets a message through for an
+  // ApiError, and everything else becomes the route's generic 500 sentence.
+  // "No such application" is not a server fault — the admin needs to know the
+  // row is gone (withdrawn/deleted between list and click) so they reload.
+  if (!current) {
+    throw new ApiError('Application not found.', 404, 'application_not_found');
+  }
 
   const now = nowIso();
   const nextFraudFlags = input.fraudFlags || current.fraudFlags;
@@ -974,7 +981,17 @@ export async function reviewRegistrationApplication(
     const collectedKeys = new Set(buildRegistrationSteps(current).flatMap((step) => step.fields.map((field) => field.key)));
 
     if (collectedKeys.has('media.rightsConfirmed') && nextFormData['media.rightsConfirmed'] !== true) {
-      throw new Error('Cannot approve: applicant has not confirmed rights to the uploaded materials (media.rightsConfirmed consent missing).');
+      // 409 + code + the remedy, because this refusal is the admin's most
+      // common one and it is entirely resolvable: the applicant has not
+      // ticked the box, so the decision cannot be booked. As a plain Error
+      // this arrived in the console as "Failed to review registration
+      // application" (HTTP 500) and looked like a crash — see
+      // tests/unit/registration/consent-gating.test.ts.
+      throw new ApiError(
+        'Cannot approve: applicant has not confirmed rights to the uploaded materials (media.rightsConfirmed consent missing). Set the application to "More information requested" so the applicant can confirm it.',
+        409,
+        'consent_rights_required',
+      );
     }
     const supportsVoting = current.formData['derived.supportsVoting'] === true;
     if (
@@ -982,7 +999,11 @@ export async function reviewRegistrationApplication(
       collectedKeys.has('publicProfile.publicVotingConsent') &&
       nextFormData['publicProfile.publicVotingConsent'] !== true
     ) {
-      throw new Error('Cannot approve: applicant has not consented to public voting visibility (publicProfile.publicVotingConsent consent missing).');
+      throw new ApiError(
+        'Cannot approve: applicant has not consented to public voting visibility (publicProfile.publicVotingConsent consent missing). Set the application to "More information requested" so the applicant can confirm it.',
+        409,
+        'consent_voting_visibility_required',
+      );
     }
   }
 
@@ -1044,7 +1065,11 @@ export async function reviewRegistrationApplication(
         // rather than silently promoting with no/unsafe photo. The admin
         // sees this as a failed review action and must resolve the photo
         // (e.g. request a new one) before retrying.
-        throw new Error(`Cannot approve: contestant photo failed content moderation (${pipelineResult.reason})`);
+        throw new ApiError(
+          `Cannot approve: contestant photo failed content moderation (${pipelineResult.reason}). Ask the applicant for a different photo — set the application to "More information requested".`,
+          409,
+          'photo_moderation_rejected',
+        );
       }
 
       // 'ready' or 'fallback' — either way we have a usable URL to promote.

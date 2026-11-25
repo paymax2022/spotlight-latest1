@@ -18,8 +18,14 @@
  * client via createClient, not through @/lib/supabase/server.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ApiError } from '@/src/lib/api/responses';
 
 let registrationsRow: Record<string, unknown>;
+// The read and the notes UPDATE are the two DB seams this spec drives:
+// `readError`/`updateError` let a test make one of them fail without touching
+// the other. Both default to null (see beforeEach).
+let readError: { code: string; message: string } | null = null;
+let updateError: { message: string } | null = null;
 
 function makeChain(table: string) {
   const chain: any = {
@@ -27,12 +33,12 @@ function makeChain(table: string) {
     eq: () => chain,
     update: () => chain,
     insert: () => chain,
-    single: () => Promise.resolve({ data: registrationsRow, error: null }),
+    single: () => Promise.resolve({ data: registrationsRow, error: readError }),
     maybeSingle: () => Promise.resolve({ data: { id: 'connect-contest-1' }, error: null }),
   };
   if (table === 'registrations') {
     // chain itself resolve, same as review-template-wiring.test.ts's mock.
-    chain.then = (resolve: any) => resolve({ data: null, error: null });
+    chain.then = (resolve: any) => resolve({ data: null, error: updateError });
   }
   return chain;
 }
@@ -87,6 +93,8 @@ function baseRow(formData: Record<string, unknown>, contestSlug = 'reality-tv-sh
 
 beforeEach(() => {
   vi.clearAllMocks();
+  readError = null;
+  updateError = null;
   rpcMock.mockResolvedValue({ data: null, error: null });
   vi.mocked(processContestantPhotoNoTemplate).mockResolvedValue({ status: 'ready', photoUrl: 'https://cdn.test/cutout.png' });
 });
@@ -436,5 +444,146 @@ describe('SEC-010/RG-003/EC-006: submitRegistrationApplication records consent a
     expect(rights.device_fingerprint).toBeNull();
 
     vi.doUnmock('@/src/features/registration/config');
+  });
+});
+
+/**
+ * WHY THIS BLOCK EXISTS — the defect it pins down.
+ *
+ * Reported from the admin console (`/admin/registration`, localhost:3001):
+ *   "Reviewing application failed: Failed to review registration application"
+ * with the row showing `Fraud flags: missing_id_number`.
+ *
+ * The fraud flag is a red herring: nothing in the review path reads
+ * `fraud_flags` as a blocker (it is computed at step-save time by
+ * `runBasicFraudChecks` and only displayed). What actually happened is one of
+ * the refusals below — the applicant's own consents are missing, so approving
+ * is correctly refused. The bug is that the admin could not see that.
+ *
+ * `handleApiError` (src/lib/api/responses.ts) only passes a message and status
+ * through for `ApiError`s. Every other `Error` is logged server-side and
+ * replaced by the route's fallback string with status 500. Because the review
+ * refusals were plain `Error`s, an admin-facing business rule was
+ * indistinguishable from a crash: same sentence, same 500, no reason, no way
+ * to act. The applicant's record was left untouched — correct behaviour,
+ * unreadable answer.
+ *
+ * So: a refusal the admin can resolve must arrive as an actionable
+ * client-side error (409 + code + the remedy named in the sentence). A genuine
+ * server-side failure (the notes UPDATE or the status RPC blowing up) stays a
+ * plain Error and therefore stays an honest 500 — that boundary is asserted
+ * too, so the fix cannot slide into "dump internals on every error".
+ */
+describe('admin review refusals must reach the admin as reasons, not bare 500s', () => {
+  it('missing media.rightsConfirmed is a 409 consent refusal that names the remedy', async () => {
+    registrationsRow = baseRow({
+      'derived.supportsVoting': true,
+      'publicProfile.publicVotingConsent': true,
+      // media.rightsConfirmed absent
+    });
+
+    const err = await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', {
+      status: 'approved',
+    }).then(
+      () => null,
+      (e) => e,
+    );
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(409);
+    expect(err.code).toBe('consent_rights_required');
+    expect(err.message).toMatch(/rights to the uploaded materials/i);
+    // The admin must be able to act on the answer, in the answer.
+    expect(err.message).toMatch(/more information requested/i);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('missing publicProfile.publicVotingConsent is a 409 consent refusal that names the remedy', async () => {
+    registrationsRow = baseRow({
+      'derived.supportsVoting': true,
+      'media.rightsConfirmed': true,
+      'publicProfile.publicVotingConsent': false,
+    });
+
+    const err = await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', {
+      status: 'approved',
+    }).then(
+      () => null,
+      (e) => e,
+    );
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(409);
+    expect(err.code).toBe('consent_voting_visibility_required');
+    expect(err.message).toMatch(/public voting visibility/i);
+    expect(err.message).toMatch(/more information requested/i);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('a photo that fails content moderation is a 409 moderation refusal, still with no write', async () => {
+    registrationsRow = baseRow({
+      'derived.supportsVoting': true,
+      'media.rightsConfirmed': true,
+      'publicProfile.publicVotingConsent': true,
+      'media.photoUrl': 'https://cdn.test/raw-photo.jpg',
+    });
+    vi.mocked(processContestantPhotoNoTemplate).mockResolvedValue({
+      status: 'rejected',
+      reason: 'adult_content',
+    });
+
+    const err = await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', {
+      status: 'approved',
+    }).then(
+      () => null,
+      (e) => e,
+    );
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(409);
+    expect(err.code).toBe('photo_moderation_rejected');
+    expect(err.message).toMatch(/content moderation/i);
+    expect(err.message).toMatch(/adult_content/);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('an unknown application id is a 404, not a 500', async () => {
+    registrationsRow = null as unknown as Record<string, unknown>;
+    readError = { code: 'PGRST116', message: 'JSON request returned no result' };
+
+    const err = await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', {
+      status: 'approved',
+    }).then(
+      () => null,
+      (e) => e,
+    );
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
+    expect(err.code).toBe('application_not_found');
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('a database failure is STILL a plain Error, so the route keeps answering an honest 500', async () => {
+    // This is the boundary of the fix: internal failures must not become
+    // client-readable messages, they stay 500 + server log.
+    registrationsRow = baseRow({
+      'derived.supportsVoting': true,
+      'media.rightsConfirmed': true,
+      'publicProfile.publicVotingConsent': true,
+    });
+    updateError = { message: 'duplicate key value violates unique constraint "x"' };
+
+    const err = await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', {
+      status: 'approved',
+    }).then(
+      () => null,
+      (e) => e,
+    );
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ApiError);
+    expect(err.message).toMatch(/failed to review registration/i);
+    expect(rpcMock).not.toHaveBeenCalled();
   });
 });
