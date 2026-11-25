@@ -4,8 +4,12 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { requireUser } from '@/src/lib/auth/server';
 import { createR2UploadUrl, createR2DownloadUrl, hasR2Config } from '@/src/lib/storage/r2';
 import { saveLocalUpload } from '@/src/lib/storage/local-uploads';
+import { MAX_REGISTRATION_UPLOAD_BYTES, MAX_REGISTRATION_UPLOAD_MB } from '@/src/lib/storage/upload-limits';
+import { classifyFormDataParseFailure } from '@/src/lib/api/multipart-request';
 
-const MAX_FILE_SIZE_MB = 100;
+// The cap lives in src/lib/storage/upload-limits.ts because next.config.mjs has
+// to clear it with `experimental.proxyClientMaxBodySize` — see that file for why
+// a route-local number was the bug.
 
 // SEC-007: extension → canonical, server-trusted content type. `.svg` is
 // deliberately absent — inline SVG can carry <script>/onload XSS, and this
@@ -48,11 +52,21 @@ export async function POST(request: Request) {
   try {
     const { user } = await requireUser(request);
 
+    // `request.formData()` answers every body fault with the same TypeError, so
+    // the header decides whether this request ever promised us a part at all:
+    // see src/lib/api/multipart-request.ts for the three faults hiding in that
+    // one call and why a cut-off 20 MB upload used to read as a 415.
     let formData: FormData;
     try {
       formData = await request.formData();
-    } catch {
-      return errorResponse('Expected multipart/form-data', 415);
+    } catch (parseError) {
+      const verdict = classifyFormDataParseFailure(
+        request.headers.get('content-type'),
+        parseError,
+        MAX_REGISTRATION_UPLOAD_BYTES,
+      );
+      if (verdict.status >= 500) return handleApiError(parseError, verdict.message);
+      return errorResponse(verdict.message, verdict.status);
     }
     const file = formData.get('file');
 
@@ -66,9 +80,9 @@ export async function POST(request: Request) {
       return errorResponse('Unsupported file format', 400);
     }
 
-    const maxBytes = MAX_FILE_SIZE_MB * 1024 * 1024;
+    const maxBytes = MAX_REGISTRATION_UPLOAD_BYTES;
     if (file.size > maxBytes) {
-      return errorResponse(`File exceeds ${MAX_FILE_SIZE_MB}MB limit`, 400);
+      return errorResponse(`File exceeds ${MAX_REGISTRATION_UPLOAD_MB}MB limit`, 400);
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
