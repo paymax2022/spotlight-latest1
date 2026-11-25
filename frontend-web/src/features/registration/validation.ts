@@ -1,5 +1,5 @@
 import type { RegistrationDraft, RegistrationField, RegistrationStep } from './types';
-import { NIGERIA_CITIES_BY_STATE } from './config';
+import { buildRegistrationSteps, NIGERIA_CITIES_BY_STATE } from './config';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
 // Nigerian mobile numbers: 0 + 7/8/9 + 9 digits locally, i.e. +234 7/8/9…
@@ -289,7 +289,36 @@ export function deriveAge(dateOfBirth: unknown) {
   return age;
 }
 
-export function runBasicFraudChecks(draft: RegistrationDraft) {
+/**
+ * Field keys the applicant's OWN built form collects — the same "does this
+ * contest even ask?" question the consent gate in
+ * `server/registration/supabase-store.ts` answers with `collectedKeys`.
+ *
+ * Returns null when the question cannot be answered (a draft whose derived data
+ * is too broken to build a form, or a form that yielded no fields at all).
+ * Callers must treat null as UNKNOWN and keep flagging: a fraud signal may be
+ * over-reported, never silently retired by a form we failed to read.
+ */
+export function collectedFormKeys(draft: RegistrationDraft): Set<string> | null {
+  try {
+    const keys = new Set(
+      buildRegistrationSteps(draft).flatMap((step) => step.fields.map((field) => field.key)),
+    );
+    return keys.size > 0 ? keys : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The fraud checks proper, with the form's collected keys supplied rather than
+ * derived — so the "unknown keeps flagging" branch is reachable from a test
+ * without contriving an unbuildable draft.
+ */
+export function fraudFlagsFor(
+  draft: RegistrationDraft,
+  collected: Set<string> | null,
+): string[] {
   const flags: string[] = [];
   const formData = draft.formData;
 
@@ -297,9 +326,19 @@ export function runBasicFraudChecks(draft: RegistrationDraft) {
   const phone = getString(formData['personal.primaryPhone']);
   const email = getString(formData['personal.email'] || formData['account.email']);
 
+  // Email and phone stay unconditional. No built form renders either one — they
+  // come from the account (see `account-prefill.ts`) — so "the form did not ask"
+  // would be a permanent excuse, and contactability is precisely what these two
+  // flags exist to catch.
   if (!email) flags.push('missing_email');
   if (!phone) flags.push('missing_phone');
-  if (!idNumber) flags.push('missing_id_number');
+  // The ID number is the opposite case: it is a contest-specific field, present
+  // on only two of the five hand-built forms (and in the admin field catalog),
+  // optional on both. Flagging its absence on a form that never rendered the
+  // input booked every Open Mic applicant for a detail nobody asked them for.
+  if (!idNumber && (!collected || collected.has('identity.idNumber'))) {
+    flags.push('missing_id_number');
+  }
 
   const consentGranted = formData['guardian.consentGranted'] === true;
   const age = Number(formData['derived.age'] || 0);
@@ -309,4 +348,8 @@ export function runBasicFraudChecks(draft: RegistrationDraft) {
   }
 
   return flags;
+}
+
+export function runBasicFraudChecks(draft: RegistrationDraft) {
+  return fraudFlagsFor(draft, collectedFormKeys(draft));
 }
