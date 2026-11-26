@@ -14,6 +14,7 @@ import {
 } from '@/src/features/registration/validation';
 import { verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
 import { ACCOUNT_PROVIDED_KEYS } from '@/src/features/registration/account-prefill';
+import { derivedLocalityFor } from '@/src/features/registration/locality-fields';
 import {
   findLiveRegistrationForContest,
   RegistrationExistsError,
@@ -160,6 +161,14 @@ export async function saveRegistrationStep(params: {
     mergedData['derived.isPaidContest'] = lockedContest.isPaid;
     mergedData['derived.allowedTalentSkills'] = getTalentSkillsForContestCategory(lockedContest.contestCategory);
     mergedData['derived.formSchema'] = lockedContest.formSchema || null;
+    // The contest's locality travels with the other derived contest facts, so the
+    // applicant's LGA / village inputs can say which local government the contest
+    // belongs to. Stamped from `lockedContest` — the slug-resolved definition — and
+    // deliberately NOT from the title-matched `selectedContest` below, exactly like
+    // `derived.formSchema`: a coincidental title match must not blank a locality an
+    // operator set on the persisted row. Always four keys, so demoting a village
+    // contest to national clears the hint instead of stranding it on old drafts.
+    Object.assign(mergedData, derivedLocalityFor(lockedContest));
     mergedData['payment.feeAmount'] = lockedContest.registrationFeeNgn || 0;
   }
 
@@ -424,6 +433,9 @@ export async function startRegistrationDraft(params: {
     'derived.isPaidContest': contest.isPaid,
     'derived.allowedTalentSkills': getTalentSkillsForContestCategory(contest.contestCategory),
     'derived.formSchema': contest.formSchema || null,
+    // See saveRegistrationStep: the locality is what makes the injected LGA / village
+    // fields read as "this contest is for Onitsha North" instead of three generics.
+    ...derivedLocalityFor(contest),
     'payment.feeAmount': contest.registrationFeeNgn || 0,
     'payment.paymentStatus': contest.isPaid ? 'pending' : 'waived',
   };
