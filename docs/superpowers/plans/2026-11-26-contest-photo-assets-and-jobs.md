@@ -3362,120 +3362,251 @@ async function fail(job: PhotoJob, reason: string): Promise<'failed'> {
     supposed to have is pinned by the named case in `runner.test.ts`.
 ### Task 7: The worker — opportunistic drain with one loop per process
 
+**Executed 2026-11-26 as `781e2f406`** (2 files, 277 insertions) plus the
+one-line follow-up `eeae7dd9d`. The section below is the delivered code, not the
+draft; the draft's defects are listed after it so an executor re-deriving this
+task reads the corrections instead of re-introducing them.
+
 **Files:**
 - Create: `frontend-web/src/server/photo-jobs/worker.ts`
 - Test: `frontend-web/tests/unit/photo-jobs/worker.test.ts`
 
 **Interfaces:**
-- Consumes: `claimDuePhotoJobs`, `reclaimStalePhotoJobs`, `photoJobSummary` (Task 4), `runPhotoJob` (Task 6).
-- Produces: `drainPhotoJobs(opts?: { workerId?: string; limit?: number }): Promise<{ claimed: number; ready: number; failed: number; cancelled: number; reclaimed: number; errors: string[] }>`, `maybeDrainPhotoJobs(): void`, `photoQueueHealth(): Promise<{ due: number; locked: number; paused: number }>`.
+- Consumes: `claimDuePhotoJobs(workerId, limit)` returning `Promise<PhotoJob[]>`,
+  `reclaimStalePhotoJobs(ttlSeconds)` returning `Promise<number>`, and
+  `photoJobSummary()` returning `Promise<Record<string, number>>` (Task 4);
+  `runPhotoJob(job): Promise<RunOutcome>` (Task 6).
+- Produces: `drainPhotoJobs(opts?: { workerId?: string; limit?: number }):
+  Promise<DrainResult>` with `DrainResult = {claimed, ready, failed, cancelled,
+  reclaimed, errors}`; `maybeDrainPhotoJobs(): void`; `photoQueueHealth():
+  Promise<{due, locked, paused}>`. Task 8's status route and Task 9's enqueue
+  path are the only callers.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test** — 10 cases, delivered verbatim:
 
 ```ts
-// frontend-web/tests/unit/photo-jobs/worker.test.ts
+// tests/unit/photo-jobs/worker.test.ts
+/**
+ * Task 7 — the worker: one sequential drain, never two at once.
+ *
+ * Three properties the request paths depend on, each pinned by its own case:
+ * the drain costs nothing when the summary says the queue is empty (a submit
+ * route that fired it on every click would put a claim lock on the table for no
+ * reason); a runner that throws is a defect in *one* job and must not abandon
+ * its neighbours; and the overlap guard has to clear itself after a failure,
+ * because a latch that stays shut turns an opportunistic queue into a silent one.
+ *
+ * `runPhotoJob` is mocked at the module boundary: what is under test is the
+ * loop, the counting and the single-flight flag, not the compositor.
+ */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const store = vi.hoisted(() => ({
-  claimDuePhotoJobs: vi.fn(), reclaimStalePhotoJobs: vi.fn(), photoJobSummary: vi.fn(),
+  claimDuePhotoJobs: vi.fn(),
+  reclaimStalePhotoJobs: vi.fn(),
+  photoJobSummary: vi.fn(),
 }));
-vi.mock('@/src/server/photo-jobs/job-store', () => store);
 const runPhotoJob = vi.hoisted(() => vi.fn());
+
+vi.mock('@/src/server/photo-jobs/job-store', () => store);
 vi.mock('@/src/server/photo-jobs/runner', () => ({ runPhotoJob }));
 
 import { drainPhotoJobs, maybeDrainPhotoJobs, photoQueueHealth } from '@/src/server/photo-jobs/worker';
 
 const job = (id: string) => ({ id, status: 'extracting', attempt: 1, max_attempts: 6, render_params: {} });
 
+/** The single-flight flag is module state, as it must be — two request paths in
+ *  one process share it — so these cases have to say when a drain has actually
+ *  reached its claim rather than assuming one tick is enough. `flush()` is a
+ *  macrotask: every pending microtask (the summary await, then the claim, then
+ *  the runner, then the `finally` that clears the flag) runs before it lands,
+ *  whatever its depth. Counting `setImmediate`s, as the draft of this test did,
+ *  made two false claims at once: that `claimDuePhotoJobs` had been *called*
+ *  meant the drain had made progress, when the promise it hands back had not
+ *  even been created yet — so the captured `release` was still the no-op stub,
+ *  the drain hung, and the next test inherited a wedged latch. */
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
 beforeEach(() => {
   vi.resetAllMocks();
   store.reclaimStalePhotoJobs.mockResolvedValue(0);
   store.claimDuePhotoJobs.mockResolvedValue([]);
-  store.photoJobSummary.mockResolvedValue({ queued: 0, processing: 0, paused: 0 });
+  store.photoJobSummary.mockResolvedValue({ queued: 0, processing: 0, failed: 0, paused: 0, ready: 0 });
 });
 
-it('claims only when a summary says work may be due', async () => {
-  store.photoJobSummary.mockResolvedValue({ queued: 0, processing: 0, paused: 0 });
-  expect(await drainPhotoJobs()).toMatchObject({ claimed: 0 });
-  expect(store.claimDuePhotoJobs).not.toHaveBeenCalled();
+describe('drainPhotoJobs', () => {
+  it('claims only when a summary says work may be due', async () => {
+    expect(await drainPhotoJobs()).toMatchObject({ claimed: 0 });
+    expect(store.claimDuePhotoJobs).not.toHaveBeenCalled();
+    expect(store.reclaimStalePhotoJobs).not.toHaveBeenCalled();
 
-  store.photoJobSummary.mockResolvedValue({ queued: 2, processing: 0, paused: 0 });
-  store.claimDuePhotoJobs.mockResolvedValue([job('a'), job('b')]);
-  runPhotoJob.mockResolvedValue('ready');
-  expect(await drainPhotoJobs({ limit: 3 })).toMatchObject({ claimed: 2, ready: 2, errors: [] });
-  expect(runPhotoJob).toHaveBeenCalledTimes(2);
-});
-
-it('runs jobs sequentially — one container, one compositor at a time', async () => {
-  const order: string[] = [];
-  store.claimDuePhotoJobs.mockResolvedValue([job('a'), job('b')]);
-  store.photoJobSummary.mockResolvedValue({ queued: 2 });
-  runPhotoJob.mockImplementation(async (j: any) => {
-    order.push(`start:${j.id}`);
-    await new Promise((r) => setTimeout(r, 5));
-    order.push(`end:${j.id}`);
-    return 'ready';
+    store.photoJobSummary.mockResolvedValue({ queued: 2, processing: 0, failed: 0 });
+    store.claimDuePhotoJobs.mockResolvedValue([job('a'), job('b')]);
+    runPhotoJob.mockResolvedValue('ready');
+    expect(await drainPhotoJobs({ limit: 3 })).toMatchObject({ claimed: 2, ready: 2, errors: [] });
+    expect(runPhotoJob).toHaveBeenCalledTimes(2);
   });
-  await drainPhotoJobs();
-  expect(order).toEqual(['start:a', 'end:a', 'start:b', 'end:b']);
+
+  it('passes a per-process worker id and the default batch size through to the claim', async () => {
+    store.photoJobSummary.mockResolvedValue({ queued: 5 });
+    await drainPhotoJobs();
+    expect(store.claimDuePhotoJobs).toHaveBeenCalledWith(`web-${process.pid}`, 3);
+    await drainPhotoJobs({ workerId: 'admin-1', limit: 1 });
+    expect(store.claimDuePhotoJobs).toHaveBeenLastCalledWith('admin-1', 1);
+  });
+
+  it('runs jobs sequentially — one container, one compositor at a time', async () => {
+    const order: string[] = [];
+    store.photoJobSummary.mockResolvedValue({ queued: 2 });
+    store.claimDuePhotoJobs.mockResolvedValue([job('a'), job('b')]);
+    runPhotoJob.mockImplementation(async (j: { id: string }) => {
+      order.push(`start:${j.id}`);
+      await new Promise((r) => setTimeout(r, 5));
+      order.push(`end:${j.id}`);
+      return 'ready';
+    });
+    await drainPhotoJobs();
+    expect(order).toEqual(['start:a', 'end:a', 'start:b', 'end:b']);
+  });
+
+  it('a throwing runner does not abort the rest of the batch', async () => {
+    // `processing: 1` is what lets the stale-lock reclaim run at all: the guard
+    // on an in-flight count is precisely what avoids the extra RPC, so a summary
+    // with nothing being processed must not be expected to reclaim.
+    store.photoJobSummary.mockResolvedValue({ queued: 3, processing: 1 });
+    store.claimDuePhotoJobs.mockResolvedValue([job('a'), job('b'), job('c')]);
+    store.reclaimStalePhotoJobs.mockResolvedValue(1);
+    runPhotoJob
+      .mockRejectedValueOnce(new Error('worker bug'))
+      .mockResolvedValueOnce('failed')
+      .mockResolvedValueOnce('cancelled');
+    const out = await drainPhotoJobs();
+    expect(out).toMatchObject({ claimed: 3, failed: 2, cancelled: 1, ready: 0, reclaimed: 1 });
+    expect(out.errors).toEqual(['worker bug']);
+  });
+
+  it('still claims when a reclaim put rows back on the queue that the summary pre-dated', async () => {
+    // The summary is read before the reclaim, so a row the reclaim converts from
+    // a stale lock to `failed` is not in `due`. Without the compensating branch
+    // this drain would return without touching the very job it just rescued.
+    store.photoJobSummary.mockResolvedValue({ queued: 0, processing: 2, failed: 0 });
+    store.reclaimStalePhotoJobs.mockResolvedValue(2);
+    store.claimDuePhotoJobs.mockResolvedValue([job('rescued')]);
+    runPhotoJob.mockResolvedValue('ready');
+    expect(await drainPhotoJobs()).toMatchObject({ reclaimed: 2, claimed: 1, ready: 1 });
+    expect(store.claimDuePhotoJobs).toHaveBeenCalled();
+  });
+
+  it('asks the vendor-free question first: a paused queue is not due work', async () => {
+    store.photoJobSummary.mockResolvedValue({ queued: 0, processing: 0, failed: 0, paused: 9 });
+    expect(await drainPhotoJobs()).toMatchObject({ claimed: 0 });
+    expect(store.claimDuePhotoJobs).not.toHaveBeenCalled();
+  });
 });
 
-it('a throwing runner does not abort the rest of the batch', async () => {
-  store.photoJobSummary.mockResolvedValue({ queued: 3 });
-  store.claimDuePhotoJobs.mockResolvedValue([job('a'), job('b'), job('c')]);
-  store.reclaimStalePhotoJobs.mockResolvedValue(1);
-  runPhotoJob.mockRejectedValueOnce(new Error('worker bug')).mockResolvedValueOnce('failed').mockResolvedValueOnce('cancelled');
-  const out = await drainPhotoJobs();
-  expect(out).toMatchObject({ claimed: 3, failed: 2, cancelled: 1, ready: 0, reclaimed: 1 });
-  expect(out.errors).toEqual(['worker bug']);
+describe('maybeDrainPhotoJobs', () => {
+  it('never overlaps itself, and clears the latch once the drain finishes', async () => {
+    store.photoJobSummary.mockResolvedValue({ queued: 1 });
+    let release: (jobs: unknown[]) => void = () => {};
+    store.claimDuePhotoJobs.mockImplementation(
+      () => new Promise((r) => { release = (jobs) => r(jobs); }),
+    );
+    runPhotoJob.mockResolvedValue('ready');
+
+    maybeDrainPhotoJobs();
+    maybeDrainPhotoJobs();
+    maybeDrainPhotoJobs();
+    await flush(); // the summary probe is async; the claim starts on the next microtask
+    expect(store.claimDuePhotoJobs).toHaveBeenCalledTimes(1); // three calls, one drain
+    expect(store.photoJobSummary).toHaveBeenCalledTimes(1);
+
+    release([job('a')]);
+    await flush();
+    expect(runPhotoJob).toHaveBeenCalledTimes(1);
+
+    // And the latch is genuinely gone, not merely un-latched by the assertion
+    // above: the next click has to be able to drain again.
+    store.claimDuePhotoJobs.mockResolvedValue([]);
+    maybeDrainPhotoJobs();
+    await flush();
+    expect(store.claimDuePhotoJobs).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the flag when a drain rejects, so one bad tick cannot wedge the queue', async () => {
+    store.photoJobSummary.mockRejectedValue(new Error('summary down'));
+    maybeDrainPhotoJobs();
+    await flush();
+
+    store.photoJobSummary.mockReset();
+    store.photoJobSummary.mockResolvedValue({ queued: 1 });
+    store.claimDuePhotoJobs.mockResolvedValue([job('after')]);
+    runPhotoJob.mockResolvedValue('ready');
+
+    maybeDrainPhotoJobs();
+    await flush();
+    expect(store.claimDuePhotoJobs).toHaveBeenCalledTimes(1);
+    expect(runPhotoJob).toHaveBeenCalledTimes(1);
+  });
 });
 
-it('maybeDrainPhotoJobs never overlaps itself', async () => {
-  store.photoJobSummary.mockResolvedValue({ queued: 1 });
-  let release: () => void = () => {};
-  store.claimDuePhotoJobs.mockImplementation(() => new Promise((r) => { release = () => r([job('a')]); }));
-  runPhotoJob.mockImplementation(async () => { await new Promise((r) => setTimeout(r, 1)); return 'ready'; });
+describe('photoQueueHealth', () => {
+  it('reports queue health from the summary, never by scanning rows', async () => {
+    store.photoJobSummary.mockResolvedValue({ queued: 4, processing: 1, failed: 2, paused: 3 });
+    expect(await photoQueueHealth()).toEqual({ due: 6, locked: 1, paused: 3 });
+    expect(store.claimDuePhotoJobs).not.toHaveBeenCalled();
+  });
 
-  maybeDrainPhotoJobs();
-  maybeDrainPhotoJobs();
-  maybeDrainPhotoJobs();
-  expect(store.claimDuePhotoJobs).toHaveBeenCalledTimes(0); // summary probe is async
-  release();
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
-  expect(store.claimDuePhotoJobs).toHaveBeenCalledTimes(1);
-});
-
-it('reports queue health from the summary, never by scanning rows', async () => {
-  store.photoJobSummary.mockResolvedValue({ queued: 4, processing: 1, paused: 2 });
-  expect(await photoQueueHealth()).toEqual({ due: 4, locked: 1, paused: 2 });
+  it('answers zeros when the summary RPC is unavailable', async () => {
+    store.photoJobSummary.mockRejectedValue(new Error('rpc down'));
+    expect(await photoQueueHealth()).toEqual({ due: 0, locked: 0, paused: 0 });
+  });
 });
 ```
+- [x] **Step 2: Run to verify failure.** `npx vitest run
+  tests/unit/photo-jobs/worker.test.ts` → `Test Files 1 failed (1)`,
+  `Tests no tests`, `Error: Cannot find package
+  '@/src/server/photo-jobs/worker' imported from .../worker.test.ts`.
 
-- [ ] **Step 2: Run to verify failure** — FAIL, module missing.
-- [ ] **Step 3: Write the worker**
+- [x] **Step 3: Write the worker.**
 
 ```ts
+// src/server/photo-jobs/worker.ts
 /**
- * Opportunistic drain (spec §3). The job table is the queue; this function is the
- * only thing that consumes it in-process, and it is called from request paths
- * rather than from a dedicated loop — because `frontend-web` has no worker
- * service and the container is not serverless, a tick tied to traffic is enough
- * to keep latency low without inventing a fourth deployable.
+ * Opportunistic drain (spec §3). The job table is the queue; this function is
+ * the only thing that consumes it in-process, and it is called from request
+ * paths rather than from a dedicated loop — `frontend-web` has no worker
+ * service, and inventing a fourth deployable to tick a queue that traffic
+ * already drives is the kind of infrastructure the spec's "do not duplicate
+ * existing architecture" rule refuses.
  *
- * Sequential on purpose. sharp decoding is CPU-heavy and Railway gives this
- * service a shared slice; five concurrent composites would slow all five and
- * contend for the vendor's rate budget for no gain.
+ * Sequential on purpose. sharp decoding is CPU-heavy, this service gets a
+ * shared slice, and five concurrent composites would slow all five while
+ * contending for the vendor's rate budget for no gain.
+ *
+ * The summary comes first and is the only cost of an idle queue: one counts-only
+ * RPC, then nothing. Claiming unconditionally would put a row lock on
+ * `contest_photo_jobs` on every submit click, which is a contention source we
+ * would only notice in production.
+ *
+ * Read order matters, and the compensation is deliberate rather than tidy. The
+ * summary is sampled *before* the stale-lock reclaim, so rows the reclaim turns
+ * from `extracting` into `failed` are not in the `due` figure it produced — and
+ * a drain that then declined to claim would have rescued those jobs for nothing.
+ * `reclaimed > 0` therefore forces a claim on its own.
  */
 import { claimDuePhotoJobs, photoJobSummary, reclaimStalePhotoJobs } from './job-store';
-import { runPhotoJob, type PhotoJob } from './runner';
+import { runPhotoJob } from './runner';
 
 const DEFAULT_LIMIT = 3;
 const LOCK_TTL_SECONDS = 300;
 
 export interface DrainResult {
-  claimed: number; ready: number; failed: number; cancelled: number;
-  reclaimed: number; errors: string[];
+  claimed: number;
+  ready: number;
+  failed: number;
+  cancelled: number;
+  reclaimed: number;
+  errors: string[];
 }
 
 let draining: Promise<DrainResult> | null = null;
@@ -3492,39 +3623,118 @@ export async function drainPhotoJobs(opts: { workerId?: string; limit?: number }
   const jobs = await claimDuePhotoJobs(opts.workerId || `web-${process.pid}`, opts.limit ?? DEFAULT_LIMIT);
   out.claimed = jobs.length;
 
-  for (const job of jobs as PhotoJob[]) {
+  for (const job of jobs) {
     try {
       const outcome = await runPhotoJob(job);
       out[outcome] += 1;
     } catch (err) {
-      // The runner already tried to record its own failure; a throw escaping it is
-      // a defect. The stale-lock reclaim will requeue this row, so log loudly.
+      // The runner records its own failures; a throw escaping it is a defect in
+      // the runner. The lock expires and `reclaim_stale_photo_jobs` requeues the
+      // row, so the job is not lost — but this line is the only trace of the bug.
       out.failed += 1;
       out.errors.push(err instanceof Error ? err.message : String(err));
-      console.error('[photo-jobs] runner threw for job', job.id);
+      console.error('[photo-jobs] runner threw for job', job.id, err);
     }
   }
   return out;
 }
 
-/** Fire-and-forget: a request path must never wait on the drain. */
+/**
+ * Fire-and-forget: a request path must never wait on the drain. Called after a
+ * job is enqueued, so the common case — one contestant waiting on one photo —
+ * starts within the request that queued it.
+ *
+ * The single-flight flag is cleared in the `finally` of the drain itself, which
+ * runs before the outer promise settles, and the rejection is swallowed here so
+ * a background fault cannot become an unhandled rejection that kills a Node
+ * process. The next click tries again.
+ */
 export function maybeDrainPhotoJobs(): void {
   if (draining) return;
-  draining = drainPhotoJobs().finally(() => { draining = null; });
-  void draining.catch(() => undefined);
+  const running = drainPhotoJobs().finally(() => {
+    if (draining === running) draining = null;
+  });
+  draining = running;
+  running.catch(() => undefined);
 }
 
 export async function photoQueueHealth(): Promise<{ due: number; locked: number; paused: number }> {
-  const s = await photoJobSummary();
-  return { due: (s.queued ?? 0) + (s.failed ?? 0), locked: s.processing ?? 0, paused: s.paused ?? 0 };
+  let summary: Record<string, number> = {};
+  try {
+    summary = await photoJobSummary();
+  } catch (err) {
+    // The store already answers `{}` rather than throwing; this catch is for the
+    // admin surface never faulting a page over a queue readout.
+    console.warn('[photo-jobs] queue health unavailable:', err instanceof Error ? err.message : err);
+  }
+  return {
+    due: (summary.queued ?? 0) + (summary.failed ?? 0),
+    locked: summary.processing ?? 0,
+    paused: summary.paused ?? 0,
+  };
 }
 ```
+- [x] **Step 4: Run to verify pass.** `npx vitest run
+  tests/unit/photo-jobs/worker.test.ts` → `Test Files 1 passed (1)`,
+  `Tests 10 passed (10)`. Directory run `npx vitest run tests/unit/photo-jobs/`
+  → `Test Files 6 passed (6)`, `Tests 66 passed (66)` (17 runner, 16 job-store, 11 registry,
+  7 assets, 5 variants, 10 worker). With the review path alongside, `npx vitest run
+  tests/unit/photo-jobs/ tests/unit/registration/photo-pipeline.test.ts` → `Test Files
+  7 passed (7)`, `Tests 76 passed (76)` — the 10 pipeline cases are unchanged.
+  `npm run type-check` → exit 0.
+  Wider run `npx vitest run tests/unit/registration tests/unit/photo-jobs` →
+  `Test Files 1 failed | 39 passed (40)`, `Tests 2 failed | 328 passed (330)`; the
+  two failures are `contest-admin-schedule-route.spec.ts` and reproduce on
+  `origin/main` — see Task 5's note.
 
-- [ ] **Step 4: Run to verify pass** — `npx vitest run tests/unit/photo-jobs/worker.test.ts`, 5 tests.
-- [ ] **Step 5: Commit** — `git add frontend-web/src/server/photo-jobs/worker.ts frontend-web/tests/unit/photo-jobs/worker.test.ts && git commit -m "feat(photo): opportunistic sequential job drain"`
+- [x] **Step 5: Commit** — `781e2f406 feat(photo): opportunistic sequential job drain`,
+  then `eeae7dd9d refactor(photo): drop the redundant row cast in the drain loop`.
 
----
+**Corrections to the draft** (what an executor would otherwise get wrong):
 
+1. The draft's `import { runPhotoJob, type PhotoJob } from './runner'` does not
+   type-check: `runner.ts` exports only `runPhotoJob` and `RunOutcome`, and
+   `PhotoJob` lives in `job-store.ts`. Delivered: the rows come typed from
+   `claimDuePhotoJobs`, which is `Promise<PhotoJob[]>`, so the worker imports no
+   type at all and the loop variable needs no cast (that was `eeae7dd9d`).
+2. The draft's batch test expected `reclaimed: 1` from a summary of
+   `{queued: 3}` — but the reclaim only runs when `processing > 0`, which is the
+   guard that keeps an idle queue off the RPC. The expectation could never be
+   met by the code in the same draft. Delivered: the case reads
+   `{queued: 3, processing: 1}` and says why in a comment.
+3. The draft's overlap test called `release()` synchronously right after three
+   `maybeDrainPhotoJobs()` calls. That is a false claim of progress: the promise
+   handed to `claimDuePhotoJobs` is only *constructed* when the drain reaches the
+   claim, so `release` was still the initialised no-op stub, the drain awaited
+   forever, and the module-level `draining` latch stayed shut — the next test in
+   the file then inherited a wedged worker and failed for a reason that pointed
+   nowhere near its own code. Delivered: `await flush()`, a real macrotask
+   (`new Promise((r) => setTimeout(r, 0))`), before asserting and before
+   releasing, plus a tail that proves the latch genuinely reopened by letting a
+   second drain run.
+4. The draft asserted `toHaveBeenCalledTimes(0)` immediately after the three
+   calls, which passes because the summary probe is async — but proves nothing
+   about the guard. Delivered: assert `photoJobSummary` once and
+   `claimDuePhotoJobs` once *after* the flush, which is the actual
+   "three calls, one drain" property.
+5. The draft's `console.error('[photo-jobs] runner threw for job', job.id)`
+   printed the id and dropped the error, next to a comment saying "log loudly".
+   Delivered: the exception object goes to the log too — a runner defect that
+   escapes to the drain otherwise leaves a message with no stack.
+6. The draft's `photoQueueHealth` let a summary fault throw. Delivered: it
+   catches, warns, and answers zeros, because Task 8 renders this figure on an
+   admin page and a queue readout must not fault the page.
+7. The draft's `maybeDrainPhotoJobs` cleared the latch unconditionally
+   (`draining = null`) from the `finally` of the drain it started. Delivered: the
+   handle is named and cleared only `if (draining === running)`, and the
+   rejection is swallowed on that local handle rather than on the module
+   variable. Nothing in this task can currently interleave two drains, so this
+   is insurance, not a fix — worth keeping because the flag is process-wide state
+   and the next caller (Task 9) is a request path.
+8. The draft's `beforeEach` stubbed a summary of `{queued: 0, processing: 0,
+   paused: 0}`. Delivered: all five keys `photo_job_summary()` really returns, so
+   a future read of `ready`/`failed` in the drain cannot be written against a
+   shape the test never showed.
 ### Task 8: Status, cancel and config surfaces
 
 **Files:**
