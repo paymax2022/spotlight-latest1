@@ -220,8 +220,39 @@ export async function getPhotoJob(id: string): Promise<PhotoJob | null> {
     console.warn('[photo-jobs] read failed:', error.message);
     return null;
   }
-  if (!data) return null;
-  const row = data as Record<string, unknown>;
+  return data ? toPhotoJob(data as Record<string, unknown>) : null;
+}
+
+/**
+ * The newest job for one registration — the read that lets a surface reopen its
+ * own progress after a page reload, when it no longer holds the id the submit
+ * response handed it.
+ *
+ * Ordered by `created_at desc` because that is what the migration's
+ * `contest_photo_jobs_registration (registration_id, created_at desc)` index is
+ * there for; re-editing a registration appends jobs rather than replacing them,
+ * so the newest row is the one the editor's state produced.
+ */
+export async function getLatestPhotoJob(registrationId: string): Promise<PhotoJob | null> {
+  const { data, error } = await db()
+    .from('contest_photo_jobs')
+    .select('*, registrations(user_id)')
+    .eq('registration_id', registrationId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn('[photo-jobs] latest read failed:', error.message);
+    return null;
+  }
+  return data ? toPhotoJob(data as Record<string, unknown>) : null;
+}
+
+/** Both reads answer the same shape, and the ownership rule the status route
+ *  depends on lives or dies on this flattening: `registrations(user_id)` arrives
+ *  as a nested object, and `job.user_id === user.id` would be `undefined` for
+ *  every row, 403-ing the only caller who is allowed in. */
+function toPhotoJob(row: Record<string, unknown>): PhotoJob {
   const embedded = row.registrations as { user_id?: string } | null | undefined;
   const { registrations: _dropped, ...job } = row;
   return { ...(job as unknown as PhotoJob), registration_user_id: embedded?.user_id ?? null };
@@ -250,10 +281,15 @@ export interface PhotoAsset {
   render_params: Record<string, unknown>;
 }
 
+/** Named once so the two asset reads cannot drift apart: a column dropped from
+ *  this list must fail a test, not surface as a null inside a job. */
+const ASSET_COLUMNS =
+  'id, registration_id, contest_id, kind, storage_key, provider_url, content_type, width, height, bytes, template_id, template_version, render_params';
+
 export async function getPhotoAsset(id: string): Promise<PhotoAsset | null> {
   const { data, error } = await db()
     .from('contest_photo_assets')
-    .select('id, registration_id, contest_id, kind, storage_key, provider_url, content_type, width, height, bytes, template_id, template_version, render_params')
+    .select(ASSET_COLUMNS)
     .eq('id', id)
     .maybeSingle();
   if (error) {
@@ -261,6 +297,28 @@ export async function getPhotoAsset(id: string): Promise<PhotoAsset | null> {
     return null;
   }
   return (data as PhotoAsset) ?? null;
+}
+
+/**
+ * Everything the pipeline produced for one registration, oldest first: the
+ * original, then whatever the newest successful render added.
+ *
+ * The status surface reads this only for a `ready` job, and the caller picks by
+ * `kind` — so an entry here is a stored fact, not a claim that the contestant
+ * approved it. `contest_photo_assets_registration (registration_id, kind)` backs
+ * the lookup; `created_at` orders the rare registration with two renders.
+ */
+export async function listPhotoAssets(registrationId: string): Promise<PhotoAsset[]> {
+  const { data, error } = await db()
+    .from('contest_photo_assets')
+    .select(ASSET_COLUMNS)
+    .eq('registration_id', registrationId)
+    .order('created_at', { ascending: true });
+  if (error) {
+    console.warn('[photo-jobs] asset list failed:', error.message);
+    return [];
+  }
+  return (data ?? []) as PhotoAsset[];
 }
 
 export async function photoJobSummary(): Promise<Record<string, number>> {
