@@ -103,12 +103,15 @@ migrate-reset: # drop + recreate public schema, then re-apply from zero (fresh-r
 	$(MAKE) rls-check
 
 rls-check: # fail if any public table lacks RLS (fintech go-live gate; allowlist: $(RLS_ALLOWLIST))
-	@bad=$$(psql "$(DATABASE_URL)" -tAc "select coalesce(string_agg(t.tablename, ', ' order by t.tablename), '') \
+	@bad=$$(psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -tAc "select coalesce(string_agg(t.tablename, ', ' order by t.tablename), '') \
 	  from pg_tables t \
-	  join pg_class c on c.relname = t.tablename \
+	  join pg_class c on c.oid = ('public.' || quote_ident(t.tablename))::regclass \
 	  join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public' \
 	  where t.schemaname = 'public' and c.relrowsecurity = false \
-	  and t.tablename not in ($(RLS_ALLOWLIST));"); \
+	  and t.tablename not in ($(RLS_ALLOWLIST));") || { \
+	  echo "RLS CHECK FAILED — the gate could not query the database, and an unreachable database is not a pass."; \
+	  exit 1; \
+	}; \
 	if [ -n "$$bad" ]; then \
 	  echo "RLS CHECK FAILED — public tables without row-level security:"; \
 	  echo "  $$bad"; \
