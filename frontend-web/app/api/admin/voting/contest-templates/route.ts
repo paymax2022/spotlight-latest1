@@ -1,18 +1,32 @@
 import { randomUUID } from 'crypto';
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
+import { classifyFormDataParseFailure } from '@/src/lib/api/multipart-request';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
+import { describeStorageFailure } from '@/src/lib/storage/storage-error';
+import {
+  MAX_CONTEST_TEMPLATE_UPLOAD_BYTES,
+  MAX_CONTEST_TEMPLATE_UPLOAD_MB,
+} from '@/src/lib/storage/upload-limits';
 import { mapOverlayRow, mapSlotRow, mapTemplateRow, isValidStatus } from './_shared';
 
-const BUCKET = 'contest-templates';
+export const BUCKET = 'contest-templates';
 
-const ALLOWED_IMAGE_MIME_TYPES = new Set([
+/**
+ * The formats this route accepts — kept next to the bucket's own
+ * `allowed_mime_types` (supabase/migrations/20260405700000_contest_image_templates.sql)
+ * and pinned equal to it by tests/unit/voting/contest-template-bucket-policy.spec.ts,
+ * because the two drifting is how a legitimate file ends up refused.
+ */
+export const ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/png',
   'image/jpeg',
   'image/jpg',
   'image/webp',
   'image/svg+xml',
 ]);
+
+const ACCEPTED_LABEL = 'PNG, JPEG, WebP or SVG';
 
 const EXT_BY_MIME: Record<string, string> = {
   'image/png': 'png',
@@ -21,6 +35,11 @@ const EXT_BY_MIME: Record<string, string> = {
   'image/webp': 'webp',
   'image/svg+xml': 'svg',
 };
+
+// contest_templates.connect_contest_id and .created_by are UUID columns with
+// foreign keys, so anything else is a guaranteed insert failure — better answered
+// here, before a single byte reaches storage.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Lists templates (optionally filtered), each with its slots + text overlays
 // embedded so the admin UI can render everything from a single call.
@@ -97,24 +116,57 @@ export async function GET(request: Request) {
 // Uploads the file to the contest-templates Supabase Storage bucket and
 // inserts a new contest_templates row with status:'draft' (never 'active' on
 // create — an admin must explicitly activate after configuring slots).
+//
+// Every rejection on this path names its cause, because the console shows
+// `error` verbatim and a bare "Failed to upload template image" gave the admin
+// nothing to change (report 2026-11-25: the storage service was simply
+// unreachable, which the route knew from its own log line).
 export async function POST(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
 
-    const formData = await request.formData().catch(() => null);
-    if (!formData) return errorResponse('Expected multipart/form-data', 415);
+    // `request.formData()` answers three different faults with the same TypeError,
+    // and the header decides which one this was — see src/lib/api/multipart-request.
+    // The old `.catch(() => null)` called a body cut off in transit a content-type
+    // problem and blamed the admin's request instead of their file.
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch (parseError) {
+      const verdict = classifyFormDataParseFailure(
+        request.headers.get('content-type'),
+        parseError,
+        MAX_CONTEST_TEMPLATE_UPLOAD_BYTES,
+      );
+      if (verdict.status >= 500) return handleApiError(parseError, verdict.message);
+      return errorResponse(
+        verdict.message,
+        verdict.status,
+        verdict.status === 413 ? 'upload_incomplete' : 'multipart_required',
+      );
+    }
     const name = formData.get('name');
     const connectContestId = formData.get('connectContestId');
     const file = formData.get('file');
 
     if (typeof name !== 'string' || !name.trim()) {
-      return errorResponse('name is required', 400);
+      return errorResponse('name is required', 400, 'name_required');
     }
     if (typeof connectContestId !== 'string' || !connectContestId.trim()) {
-      return errorResponse('connectContestId is required', 400);
+      return errorResponse('connectContestId is required', 400, 'contest_required');
     }
     if (!(file instanceof File)) {
-      return errorResponse('file is required', 400);
+      return errorResponse('file is required', 400, 'file_required');
+    }
+    // Checked before the upload: contest_templates.connect_contest_id is a UUID
+    // with a foreign key to connect_contests, so a slug or a stray string could
+    // only fail the insert — after the image had already been written.
+    if (!UUID_RE.test(connectContestId)) {
+      return errorResponse(
+        'connectContestId must be the UUID of a Connect contest, as listed by the contest selector.',
+        400,
+        'contest_id_invalid',
+      );
     }
 
     // Validate it's an image mime type. The client-supplied File.type is the
@@ -124,7 +176,22 @@ export async function POST(request: Request) {
     // (20260405700000_contest_image_templates.sql) rather than trusting an
     // arbitrary value.
     if (!ALLOWED_IMAGE_MIME_TYPES.has(file.type)) {
-      return errorResponse(`Unsupported file type: ${file.type || 'unknown'}. Must be an image.`, 400);
+      return errorResponse(
+        `Unsupported file type: ${file.type || 'unknown'}. Template images must be ${ACCEPTED_LABEL}.`,
+        400,
+        'file_type_unsupported',
+      );
+    }
+
+    // The bucket's own limit, enforced before the bytes are read: past it the
+    // upload travels the whole way and storage answers with a 400 that used to be
+    // indistinguishable from every other failure.
+    if (file.size > MAX_CONTEST_TEMPLATE_UPLOAD_BYTES) {
+      return errorResponse(
+        `Image is larger than the ${MAX_CONTEST_TEMPLATE_UPLOAD_MB}MB limit for template images.`,
+        413,
+        'file_too_large',
+      );
     }
 
     const width = coercePositiveInt(formData.get('width')) ?? 1080;
@@ -143,15 +210,33 @@ export async function POST(request: Request) {
       upsert: false,
     });
     if (uploadError) {
-      console.error('[admin/voting/contest-templates POST] storage upload:', uploadError.message);
-      return errorResponse('Failed to upload template image', 500);
+      console.error(
+        `[admin/voting/contest-templates POST] storage upload to ${BUCKET}/${objectKey}:`,
+        uploadError.message,
+        'statusCode=', (uploadError as { statusCode?: string | number }).statusCode ?? 'none',
+      );
+      const verdict = describeStorageFailure(uploadError, {
+        bucket: BUCKET,
+        subject: 'template image',
+        maxMb: MAX_CONTEST_TEMPLATE_UPLOAD_MB,
+        formats: ['PNG', 'JPEG', 'WebP', 'SVG'],
+      });
+      return errorResponse(verdict.message, verdict.status, verdict.code);
     }
 
     const { data: publicUrlData } = supabase.storage.from(BUCKET).getPublicUrl(objectKey);
     const templateUrl = publicUrlData?.publicUrl;
     if (!templateUrl) {
-      return errorResponse('Upload succeeded but no public URL could be resolved', 500);
+      return errorResponse('Upload succeeded but no public URL could be resolved', 500, 'public_url_unresolved');
     }
+
+    // 'api-key' is what assertAdminPermission returns for an x-admin-key caller
+    // (src/server/admin/auth.ts:77). created_by is a UUID referencing
+    // user_profiles, so writing it verbatim failed the insert for every
+    // server-to-server create — after the image was already uploaded.
+    const createdBy = typeof identity?.actorId === 'string' && UUID_RE.test(identity.actorId)
+      ? identity.actorId
+      : null;
 
     const { data: inserted, error: insertError } = await supabase
       .from('contest_templates')
@@ -165,14 +250,21 @@ export async function POST(request: Request) {
         height,
         aspect_ratio: aspectRatio,
         status: 'draft',
-        created_by: identity.actorId || null,
+        created_by: createdBy,
       })
       .select('*')
       .single();
 
     if (insertError) {
-      console.error('[admin/voting/contest-templates POST]', insertError.message);
-      return errorResponse('Failed to create template', 500);
+      console.error('[admin/voting/contest-templates POST] insert:', insertError.message);
+      // The row never landed, so the object is unreachable by anything. Delete it
+      // rather than leaving an orphan behind for the next retry to pile onto.
+      const { error: cleanupError } = await supabase.storage.from(BUCKET).remove([objectKey]);
+      if (cleanupError) {
+        console.error('[admin/voting/contest-templates POST] orphan cleanup:', cleanupError.message);
+      }
+      const verdict = describeInsertFailure(insertError);
+      return errorResponse(verdict.message, verdict.status, verdict.code);
     }
 
     return successResponse(
@@ -182,6 +274,61 @@ export async function POST(request: Request) {
   } catch (error) {
     return handleApiError(error, 'Failed to create contest template');
   }
+}
+
+/**
+ * Why the row insert refused, in terms the admin can act on.
+ *
+ * PostgREST is informative here and this is an admin-only route, but the upstream
+ * text still goes to the log rather than the response: it quotes constraint names
+ * and table shapes that read as noise in a console banner.
+ */
+function describeInsertFailure(error: { code?: string; message?: string; details?: string }): {
+  status: number;
+  code: string;
+  message: string;
+} {
+  const haystack = `${error.message ?? ''} ${error.details ?? ''}`;
+
+  if (error.code === '23503' || /foreign key constraint/.test(haystack)) {
+    if (/connect_contests/.test(haystack)) {
+      return {
+        status: 400,
+        code: 'template_contest_not_found',
+        message:
+          'That contest does not exist in this environment, so the template could not be linked to it. ' +
+          'Pick the contest again from the selector.',
+      };
+    }
+    if (/user_profiles/.test(haystack) || /created_by/.test(haystack)) {
+      return {
+        status: 400,
+        code: 'template_actor_has_no_profile',
+        message:
+          'Your admin account has no profile row in this environment, so the template could not be ' +
+          'attributed. The image was removed again; re-check the account and retry.',
+      };
+    }
+    return {
+      status: 500,
+      code: 'template_insert_refused',
+      message: 'The template references data that is not present in this environment. Nothing was stored.',
+    };
+  }
+
+  if (error.code === '22P02' || /invalid input syntax/.test(haystack)) {
+    return {
+      status: 400,
+      code: 'template_insert_bad_id',
+      message: 'One of the ids sent with the template is not a valid UUID. Nothing was stored.',
+    };
+  }
+
+  return {
+    status: 500,
+    code: 'template_insert_failed',
+    message: 'Saving the template record failed. The uploaded image was removed again, so you can retry.',
+  };
 }
 
 function groupBy<T extends Record<string, any>>(rows: T[], key: string): Map<string, T[]> {

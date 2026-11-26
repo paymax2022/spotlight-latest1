@@ -105,6 +105,56 @@ function toTemplate(row: Record<string, unknown>): ContestTemplate {
 
 const BASE = '/api/admin/voting/contest-templates';
 
+/**
+ * What the upload form accepts, so a file that cannot work is refused at pick
+ * time instead of after a 50 MB round trip.
+ *
+ * These mirror the two authorities on the web side, and
+ * tests/admin/contest-template-upload-gate.spec.ts fails if they drift:
+ *   · the bucket's `allowed_mime_types` / `file_size_limit`
+ *     (supabase/migrations/20260405700000_contest_image_templates.sql), and
+ *   · frontend-web/app/api/admin/voting/contest-templates/route.ts, which answers
+ *     400/413 for anything outside them.
+ *
+ * `image/jpg` is listed because the bucket lists it. Storage matches on the
+ * declared Content-Type, and browsers send `image/jpeg` for a .jpg — the extra
+ * entry costs nothing and covers a hand-built form.
+ */
+export const TEMPLATE_IMAGE_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+  'image/svg+xml',
+] as const;
+
+export const TEMPLATE_IMAGE_ACCEPT = TEMPLATE_IMAGE_TYPES.join(',');
+
+/** Equals the bucket's `file_size_limit` (52 428 800 bytes). */
+export const TEMPLATE_MAX_MB = 50;
+export const TEMPLATE_MAX_BYTES = TEMPLATE_MAX_MB * 1024 * 1024;
+
+/** Human-readable format list, for the hint under the file input. */
+export const TEMPLATE_FORMATS_LABEL = 'PNG, JPEG, WebP or SVG';
+
+/**
+ * Returns the reason this file cannot become a template, or null when it can.
+ *
+ * Deliberately the same complaints the server makes, in the same words: an admin
+ * who reads "must be PNG, JPEG, WebP or SVG" in the console banner and then
+ * uploads a WebP should not get a different sentence from the API.
+ */
+export function checkTemplateImage(file: File | null | undefined): string | null {
+  if (!file) return null;
+  if (!TEMPLATE_IMAGE_TYPES.includes(file.type as (typeof TEMPLATE_IMAGE_TYPES)[number])) {
+    return `Unsupported file type: ${file.type || 'unknown'}. Template images must be ${TEMPLATE_FORMATS_LABEL}.`;
+  }
+  if (file.size > TEMPLATE_MAX_BYTES) {
+    return `Image is larger than the ${TEMPLATE_MAX_MB}MB limit for template images.`;
+  }
+  return null;
+}
+
 export async function listContestTemplates(connectContestId?: string): Promise<ContestTemplate[]> {
   const qs = connectContestId ? `?connectContestId=${encodeURIComponent(connectContestId)}` : '';
   const res = await fetch(`${webProxyBase()}${BASE}${qs}`, {

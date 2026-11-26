@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { getLocalUploadRoot, readLocalUpload, saveLocalUpload } from '../../../src/lib/storage/local-uploads';
+import { getLocalUploadRoot, readLocalUpload, readLocalUploadRange, saveLocalUpload, statLocalUpload } from '../../../src/lib/storage/local-uploads';
 
 const tempRoots: string[] = [];
 const tempFiles: string[] = [];
@@ -56,5 +56,41 @@ describe('local upload storage', () => {
     await expect(readLocalUpload(key)).resolves.toEqual(Buffer.from('legacy photo'));
     await expect(readFile(path.join(home, '.spotlight', 'registration-uploads', key)))
       .resolves.toEqual(Buffer.from('legacy photo'));
+  });
+
+  // WHY THIS IS SEPARATE FROM THE TEST ABOVE. `readLocalUpload` learned the old
+  // temp root; the beat and song readers never did. They go through
+  // `statLocalUpload` (does the object exist, and how big is it?) and
+  // `readLocalUploadRange` (which slice to stream), so an edition whose beat was
+  // written before the default moved stayed invisible to exactly the one surface
+  // that hands the file to an applicant — the download answered 404 "Audio not
+  // available" for bytes that were sitting on the disk a few directories away.
+  // All three entry points have to agree on where an object lives.
+  it('the ranged audio readers see an object left in the old temp root', async () => {
+    const temp = await makeTempRoot();
+    const home = path.join(temp, 'home');
+    const tempDir = path.join(temp, 'old-temp');
+    const key = 'openmic-beats/contest-1/beat-1.mp3';
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('TMPDIR', tempDir);
+    vi.stubEnv('LOCAL_UPLOAD_DIR', '');
+
+    const legacyFile = path.join(os.tmpdir(), 'spotlight-registration-uploads', key);
+    tempFiles.push(legacyFile);
+    await mkdir(path.dirname(legacyFile), { recursive: true, mode: 0o700 });
+    await writeFile(legacyFile, Buffer.alloc(1234, 9), { mode: 0o600 });
+
+    await expect(statLocalUpload(key)).resolves.toEqual({ sizeBytes: 1234 });
+
+    const slice = await readLocalUploadRange(key, { start: 0, end: 99 });
+    expect(slice?.buffer.byteLength).toBe(100);
+    expect(slice?.totalBytes).toBe(1234);
+
+    // Serving the bytes is only half of it. The temp directory is the location
+    // that already failed once, so a ranged read has to promote the object the
+    // same way `readLocalUpload` does — otherwise the beat plays today and 404s
+    // again the next time the OS or the container cleans up.
+    await expect(readFile(path.join(home, '.spotlight', 'registration-uploads', key)))
+      .resolves.toEqual(Buffer.alloc(1234, 9));
   });
 });

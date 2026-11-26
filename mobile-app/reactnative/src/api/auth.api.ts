@@ -36,6 +36,11 @@ function readableAuthError(error: unknown, fallback: string): Error {
     return new Error('Authentication service is unreachable. Confirm local Supabase is running and try again.');
   }
 
+  // Supabase's wording, from the SDK-level setSession step below — NOT the sign-in
+  // verdict. The verdict itself comes off POST /api/auth/login as an AxiosError and
+  // is mapped by utils/errorMapper (getErrorMessage({ authAttempt: true })), which
+  // renders every cause Go names verbatim (ADR-PR1163). Nothing here may re-generalise
+  // those sentences; a caller that wants the credential copy is on the wrong path.
   if (lowered.includes('invalid login credentials')) {
     return new Error('Invalid email or password.');
   }

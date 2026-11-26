@@ -1,13 +1,17 @@
 import { publicBeatUrl } from '@/src/features/openmic/beat-storage';
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
-import { getContestBySlug, logBeatDownload } from '@/src/server/openmic/persistence';
+import { SITE_URL } from '@/src/lib/site-url';
+import { resolveOpenMicEdition } from '@/src/server/openmic/edition-resolution';
+import { logBeatDownload } from '@/src/server/openmic/persistence';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { NextResponse } from 'next/server';
 
 export async function GET(request: Request, context: { params: Promise<{ slug: string }> }) {
   try {
     const { slug } = await context.params;
-    const contest = await getContestBySlug(slug);
+    // A caller may pass the catalog slug (`open-mic-competition`) or the edition's
+    // own; one rule maps either onto the live edition — see resolveOpenMicEdition.
+    const contest = await resolveOpenMicEdition(slug);
     if (!contest) return errorResponse('Contest not found', 404);
     if (!contest.beat) return errorResponse('Beat is not available for this contest', 404);
     if (!contest.beat.downloadUrl) return errorResponse('Beat download URL is not configured', 404);
@@ -16,10 +20,17 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
     }
 
     // Public-facing redirect — a relative configured downloadUrl must resolve
-    // on the public site origin, not request.url (http://0.0.0.0:PORT on
-    // Railway/cPanel). Absolute URLs ignore the base either way.
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
-    return NextResponse.redirect(new URL(contest.beat.downloadUrl, siteUrl), 302);
+    // on the site origin, not request.url (http://0.0.0.0:PORT on Railway/cPanel).
+    // Absolute URLs ignore the base either way.
+    //
+    // SITE_URL rather than a literal domain, for the same reason the metadata
+    // base uses it: an explicit NEXT_PUBLIC_SITE_URL still wins in production, but
+    // with no variable set, assuming the public domain made a development or
+    // preview applicant leave the site they were applying on, land on production,
+    // and get a 404 for a beat whose row only exists here. The download breaking
+    // is the loud half of that bug; the silent half is that the 404 says "not
+    // found" about a file the admin just uploaded.
+    return NextResponse.redirect(new URL(contest.beat.downloadUrl, SITE_URL), 302);
   } catch (error) {
     return handleApiError(error, 'Failed to download beat');
   }
@@ -53,7 +64,9 @@ export async function POST(request: Request, context: { params: Promise<{ slug: 
     if (!body.artistName?.trim()) return errorResponse('artistName is required', 400);
     if (!body.termsAccepted) return errorResponse('Beat usage terms must be accepted', 400);
 
-    const contest = await getContestBySlug(slug);
+    // A caller may pass the catalog slug (`open-mic-competition`) or the edition's
+    // own; one rule maps either onto the live edition — see resolveOpenMicEdition.
+    const contest = await resolveOpenMicEdition(slug);
     if (!contest) return errorResponse('Contest not found', 404);
     if (!contest.beat) return errorResponse('Beat is not available for this contest', 400);
 

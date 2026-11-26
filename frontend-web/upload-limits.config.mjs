@@ -15,6 +15,7 @@
  * multipart framing:
  *
  *   registration/uploads   100 MiB  src/lib/storage/upload-limits.ts
+ *   admin contest templates 50 MiB  src/lib/storage/upload-limits.ts
  *   open-mic songs/beats    50 MiB  src/features/openmic/song-storage.ts
  *   crowdfunding uploads   8/15 MiB app/api/crowdfunding/uploads/**
  *   contest banner          8 MiB   app/api/admin/contests/banner/route.ts

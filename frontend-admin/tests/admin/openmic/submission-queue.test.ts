@@ -10,7 +10,9 @@ import {
   QUEUE_SCOPE_LABELS,
   isAwaitingDecision,
   isPublished,
+  isSuperseded,
   matchesQuery,
+  needsOperator,
   orderQueue,
   queueCounts,
 } from '@/features/openmic/submission-queue';
@@ -90,6 +92,48 @@ describe('Open Mic submission queue rules', () => {
     expect(ids(orderQueue(rows, { scope: 'awaiting', query: '' }))).toEqual(['a', 'd']);
     expect(ids(orderQueue(rows, { scope: 'decided', query: '' }))).toEqual(['b', 'c']);
     expect(ids(orderQueue(rows, { scope: 'all', query: '' }))).toEqual(['a', 'd', 'b', 'c']);
+  });
+
+  it('reads a row that names the take which replaced it as superseded', () => {
+    // `replacedByEntryId` is written by the server when an artist hands in a
+    // newer take, so the field — not the status — is what says "this row is
+    // closed". An empty or blank value is a row that was never replaced.
+    expect(isSuperseded(row({ status: 'draft' }))).toBe(false);
+    expect(isSuperseded(row({ status: 'draft', replacedByEntryId: '' }))).toBe(false);
+    expect(isSuperseded(row({ status: 'draft', replacedByEntryId: '   ' }))).toBe(false);
+    expect(isSuperseded(row({ status: 'draft', replacedByEntryId: 'sub-2' }))).toBe(true);
+  });
+
+  it('drops a replaced take out of the operator queue while a bare draft stays in it', () => {
+    // A re-hand-in retires the artist's previous file to `draft`. `draft` is not
+    // a decided status, so without the superseded rule the queue grows a phantom
+    // task for every retry — and the "next row needing work" focus would land on
+    // a song the artist already replaced. A draft with no replacement behind it
+    // is a genuinely unfinished hand-in and must keep its place.
+    expect(needsOperator(row({ status: 'draft' }))).toBe(true);
+    expect(needsOperator(row({ status: 'draft', replacedByEntryId: 'sub-2' }))).toBe(false);
+    expect(needsOperator(row({ status: 'submitted', replacedByEntryId: 'sub-2' }))).toBe(false);
+    expect(needsOperator(row({ status: 'published_for_voting' }))).toBe(false);
+    // A decided row is decided: the lineage field cannot reopen it.
+    expect(needsOperator(row({ status: 'rejected', replacedByEntryId: 'sub-2' }))).toBe(false);
+  });
+
+  it('counts and scopes replaced takes with the closed rows, not the backlog', () => {
+    const rows = [
+      row({ id: 'a', status: 'submitted', submittedAt: '2026-11-18T09:00:00.000Z' }),
+      // The retired take loses its `submitted_at` with its live status, so it is
+      // an undated row: it must still land out of the backlog.
+      row({ id: 'b', status: 'draft', replacedByEntryId: 'live-1', submittedAt: undefined }),
+      row({ id: 'c', status: 'draft', submittedAt: '2026-11-17T09:00:00.000Z' }),
+      row({ id: 'd', status: 'published_for_voting', submittedAt: '2026-11-20T09:00:00.000Z' }),
+    ];
+    // The two scopes stay a partition of the list: a row is never in neither,
+    // which is why a superseded take belongs with "Already decided" rather than
+    // vanishing from both filters.
+    expect(queueCounts(rows)).toEqual({ total: 4, awaiting: 2, published: 1 });
+    expect(ids(orderQueue(rows, { scope: 'awaiting', query: '' }))).toEqual(['a', 'c']);
+    expect(ids(orderQueue(rows, { scope: 'decided', query: '' }))).toEqual(['d', 'b']);
+    expect(ids(orderQueue(rows, { scope: 'all', query: '' }))).toEqual(['a', 'c', 'd', 'b']);
   });
 
   it('narrows on the artist or the song name, case-insensitively and trimmed', () => {

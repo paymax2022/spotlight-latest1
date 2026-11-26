@@ -247,45 +247,71 @@ func (s *authService) RegisterUser(ctx context.Context, in domain.RegisterReques
 	return result, nil
 }
 
-// resolveLoginEmail turns a client-supplied identifier into the account email.
+// resolveLoginEmail turns a client-supplied identifier into the account email,
+// collapsing every reason it cannot into "".
 //
-// A phone is resolved SERVER-SIDE and the email is never returned to the caller. A
-// public "phone -> email" endpoint would be an enumeration oracle: anyone could walk a
-// range of numbers and harvest the address behind each. Resolving inside the login call
-// means a wrong phone is indistinguishable from a wrong password.
-//
-// Stored phones are not normalised, so the match is on the last 10 digits (see
-// NormalizePhone and the user_profiles_phone_nsn_idx functional index).
+// Kept for the OTP code path (otp_login.go), which has its own, deliberately
+// vague posture: there the identifier already came from an address we agreed
+// to send a code to, so distinguishing "no account" there buys the user
+// nothing and costs an oracle. Password login uses resolveLoginIdentity,
+// which reports WHY.
 func (s *authService) resolveLoginEmail(ctx context.Context, identifier, fallbackEmail string) string {
+	email, err := s.resolveLoginIdentity(ctx, identifier, fallbackEmail)
+	if err != nil {
+		return ""
+	}
+	return email
+}
+
+// resolveLoginIdentity is resolveLoginEmail with a cause attached.
+//
+// A phone is still resolved SERVER-SIDE and its email is never returned to the
+// caller (see TestLogin_NeverEchoesTheResolvedEmailForAPhoneIdentifier): the
+// caller learns "no account uses that number" or "that number is on two
+// accounts", not which address sits behind it.
+//
+// The four failure causes are distinct on purpose — an unusable shape, an
+// unknown account, an ambiguous number and a broken lookup were all one ""
+// before, which is why a lookup outage could be reported as a missing account.
+func (s *authService) resolveLoginIdentity(ctx context.Context, identifier, fallbackEmail string) (string, error) {
 	id := strings.TrimSpace(identifier)
 	if id == "" {
-		return strings.TrimSpace(strings.ToLower(fallbackEmail))
+		fallback := strings.TrimSpace(strings.ToLower(fallbackEmail))
+		if fallback == "" {
+			return "", ErrInvalidIdentifier
+		}
+		return fallback, nil
 	}
 	if LooksLikeEmail(id) {
-		return strings.ToLower(id)
+		return strings.ToLower(id), nil
 	}
 	nsn := NormalizePhone(id)
 	if nsn == "" {
-		return "" // not an email, not a usable phone — no match
+		return "", ErrInvalidIdentifier // neither an email nor a usable phone
 	}
 	return s.phoneToEmail(ctx, nsn)
 }
 
 // phoneToEmail finds the account email behind a normalised 10-digit national number.
 //
-// PostgREST cannot express "last 10 digits of a de-punctuated column", so the match is
-// done here: fetch the candidate rows whose stored phone ENDS in those digits (a
-// `like` PostgREST can index-assist), then confirm with the same normalisation the
-// caller used. Returns "" on no match or ambiguity — two accounts sharing a number is
-// a data problem, and guessing between them would sign somebody into the wrong account.
-func (s *authService) phoneToEmail(ctx context.Context, nsn string) string {
+// PostgREST cannot express "last 10 digits of a de-punctuated column", so the
+// match is done here: fetch the candidate rows whose stored phone ENDS in those
+// digits (a `like` PostgREST can index-assist), then confirm with the same
+// normalisation the caller used.
+//
+// The three outcomes are separated because the user's next step differs:
+// no match → the number is not registered; two matches → sign in with the
+// email instead; lookup failure → nothing was proven, so retry (a failed read
+// must never be reported as "no account found", which is a claim about data we
+// could not read).
+func (s *authService) phoneToEmail(ctx context.Context, nsn string) (string, error) {
 	var rows []map[string]any
 	if err := s.supabase.REST(ctx, http.MethodGet, "user_profiles", map[string]string{
 		"phone":  "like.*" + nsn,
 		"select": "email,phone",
 		"limit":  "5",
 	}, nil, &rows); err != nil {
-		return ""
+		return "", fmt.Errorf("%w: phone lookup: %w", ErrAuthUnavailable, err)
 	}
 	var found string
 	for _, r := range rows {
@@ -297,11 +323,14 @@ func (s *authService) phoneToEmail(ctx context.Context, nsn string) string {
 			continue
 		}
 		if found != "" && found != email {
-			return "" // ambiguous — refuse rather than pick
+			return "", ErrAmbiguousIdentifier // refuse rather than pick
 		}
 		found = email
 	}
-	return found
+	if found == "" {
+		return "", ErrAccountNotFound
+	}
+	return found, nil
 }
 
 // ErrEmailNotConfirmed means the credentials were CORRECT but the address has
@@ -327,6 +356,80 @@ var ErrEmailNotConfirmed = errors.New("email not confirmed")
 // any answer. Callers must not count it as a failed attempt.
 var ErrAuthUnavailable = errors.New("authentication service unavailable")
 
+// LOGIN FAILURE CAUSES — one per thing that can actually be wrong.
+//
+// Until ADR-PR1163 every refusal below collapsed into errors.New("invalid
+// credentials"), which the handler answered as a bare 401. That was a
+// deliberate anti-enumeration choice (#788), and in practice it told a user
+// whose account was LOCKED, whose account was SUSPENDED, whose address was
+// never registered, or who had typed an unusable identifier, that their
+// password was wrong. They then did what the message invited: retried the
+// password they remembered correctly, each retry another strike against the
+// lockout budget. A real user lost an afternoon to exactly that.
+//
+// The product decision is now to tell the truth (docs/adr/ADR-PR1163). These
+// are the causes; the handler owns wording and status, this layer owns
+// classification and the data a sentence needs (unlock time, strikes left).
+//
+// Each is only satisfied by its own errors.Is target — TestLoginClass_CausesAreDistinct
+// pins that, because two causes matching each other is how "invalid
+// credentials" got back in through the side door.
+var (
+	// ErrInvalidIdentifier: what was typed is neither a parseable email nor a
+	// usable Nigerian phone number, so there is nothing to look up.
+	ErrInvalidIdentifier = errors.New("invalid identifier")
+	// ErrAmbiguousIdentifier: a phone number that more than one account uses.
+	// Picking one would sign someone into a stranger's account.
+	ErrAmbiguousIdentifier = errors.New("ambiguous identifier")
+	// ErrAccountNotFound: nothing registered matches the identifier.
+	ErrAccountNotFound = errors.New("account not found")
+	// ErrIncorrectPassword: the account exists; the password did not match.
+	ErrIncorrectPassword = errors.New("incorrect password")
+	// ErrAccountLocked: too many failed attempts; the lock expires. Carries
+	// when, via AccountLockedError.
+	ErrAccountLocked = errors.New("account locked")
+	// ErrAccountLockedByAdmin: status=locked with no locked_until, i.e. the
+	// admin console's "Lock User" action. Nothing expires; waiting does not
+	// help, so it must not be phrased like an auto-lockout.
+	ErrAccountLockedByAdmin = errors.New("account locked by support")
+	// ErrAccountSuspended: status suspended/deleted. Needs support, not a
+	// password.
+	ErrAccountSuspended = errors.New("account suspended")
+	// ErrAccountClosed: the profile row is soft-deleted (deleted_at set).
+	ErrAccountClosed = errors.New("account closed")
+	// ErrIdentityRecordMissing: GoTrue accepts the password but platform_users
+	// has no row, so the suspension/lock gate could not run. The session is
+	// refused — issuing it would bypass that gate — and the log line is loud
+	// because the identity bridge trigger is supposed to make this impossible.
+	ErrIdentityRecordMissing = errors.New("identity record missing")
+)
+
+// WrongPasswordError reports a bad password and how much of the lockout
+// budget is left, so the client can say "3 attempts left" instead of letting
+// the user discover the lock by hitting it.
+type WrongPasswordError struct {
+	AttemptsRemaining int
+}
+
+func (e *WrongPasswordError) Error() string {
+	return fmt.Sprintf("incorrect password (%d attempts remaining)", e.AttemptsRemaining)
+}
+
+func (e *WrongPasswordError) Unwrap() error { return ErrIncorrectPassword }
+
+// AccountLockedError reports a lock that expires at Until (set by
+// bump_failed_login_attempts). Until is UTC; the human sentence counts down in
+// minutes rather than printing a wall clock in the wrong zone.
+type AccountLockedError struct {
+	Until time.Time
+}
+
+func (e *AccountLockedError) Error() string {
+	return "account locked until " + e.Until.UTC().Format(time.RFC3339)
+}
+
+func (e *AccountLockedError) Unwrap() error { return ErrAccountLocked }
+
 // LoginFailureError wraps an error from LoginUser with the identity the service had
 // already resolved when the attempt failed — a phone identifier becomes the
 // account email, and the platform user id is known once platform_users has
@@ -343,11 +446,13 @@ func (e *LoginFailureError) Error() string { return e.Err.Error() }
 func (e *LoginFailureError) Unwrap() error { return e.Err }
 
 func (s *authService) LoginUser(ctx context.Context, in domain.LoginRequest) (map[string]any, error) {
-	email := s.resolveLoginEmail(ctx, in.Identifier, in.Email)
-	if email == "" {
-		// Same error the wrong-password path returns, deliberately: a distinct
-		// "no such account" would leak which phone numbers are registered.
-		return nil, errors.New("invalid credentials")
+	email, idErr := s.resolveLoginIdentity(ctx, in.Identifier, in.Email)
+	if idErr != nil {
+		// A cause, not a guess: unparseable input, an unknown number, a number on
+		// two accounts, and an unreadable lookup are four different things and the
+		// user's next step differs for each. Before ADR-PR1163 all four answered
+		// "invalid credentials".
+		return nil, idErr
 	}
 	var user *platformUser
 	// fail reports err with whatever identity was resolved before the failure,
@@ -359,6 +464,11 @@ func (s *authService) LoginUser(ctx context.Context, in domain.LoginRequest) (ma
 		}
 		return f
 	}
+	// rowMissing records the AUTH-014 state: an email whose platform_users row is
+	// absent, so the suspension/lock gate has nothing to check. The password is
+	// still evaluated — for CLASSIFICATION only (see below) — never to issue a
+	// session.
+	rowMissing := false
 	user, err := s.findPlatformUserByEmail(ctx, email)
 	if err == nil {
 		if user == nil {
@@ -367,14 +477,13 @@ func (s *authService) LoginUser(ctx context.Context, in domain.LoginRequest) (ma
 			// (20260904000000_rbac_identity_bridge.sql) mirrors auth.users into
 			// platform_users SYNCHRONOUSLY, inside the same transaction as account
 			// creation — so a normal account always has a row by the time it can
-			// log in at all. A missing row here is not a race to tolerate, it's
-			// anomalous, and silently skipping the suspension/lock gate for it was
-			// the bug: refuse instead, with the same generic message every other
-			// refusal on this path uses so this can't be told apart from a wrong
-			// password.
-			return nil, fail(errors.New("invalid credentials"))
-		}
-		if err := s.validateLoginStatus(user); err != nil {
+			// log in at all. A missing row is still anomalous and still must not
+			// produce a session: skipping the gate silently was the original bug.
+			// What changed (ADR-PR1163) is the ANSWER — GoTrue decides whether this
+			// is "no such account" or "your account record is broken", instead of
+			// both claiming the password was wrong.
+			rowMissing = true
+		} else if err := s.validateLoginStatus(user); err != nil {
 			return nil, fail(err)
 		}
 	}
@@ -414,7 +523,15 @@ func (s *authService) LoginUser(ctx context.Context, in domain.LoginRequest) (ma
 		// a failed attempt locks the account out after MaxFailedLoginAttempts for
 		// doing nothing wrong, and the user cannot escape it: every retry is
 		// another strike, and the thing they need to fix is not their password.
+		//
+		// With no platform_users row, though, GoTrue accepting the password means
+		// the mirror is broken, and "verify your email" would send the user to a
+		// code flow for an account this service cannot gate. Report the broken
+		// record, which is the true cause.
 		if upstream.ErrorCode == "email_not_confirmed" {
+			if rowMissing {
+				return nil, fail(ErrIdentityRecordMissing)
+			}
 			return nil, fail(ErrEmailNotConfirmed)
 		}
 
@@ -428,20 +545,53 @@ func (s *authService) LoginUser(ctx context.Context, in domain.LoginRequest) (ma
 			return nil, fail(fmt.Errorf("%w: token endpoint returned %d", ErrAuthUnavailable, resp.StatusCode))
 		}
 
-		if user != nil {
-			// A failed bump must not go silent — an uncounted failure is one
-			// free retry against the lockout budget (AUD-BE-007).
-			if err := s.bumpFailedLogin(ctx, user); err != nil {
-				log.Printf("bumpFailedLogin(%s): %v", user.ID, err)
-			}
+		// A definitive 4xx credential rejection. With no platform_users row there
+		// is nothing to strike and no account to sign in: GoTrue just confirmed
+		// the address is not registered (or not with that password) — the truth
+		// is "no account found", which is ADR-PR1163's disclosure.
+		if rowMissing {
+			return nil, fail(ErrAccountNotFound)
 		}
-		return nil, fail(errors.New("invalid credentials"))
+
+		// The account exists; the password did not match. The atomic bump RPC has
+		// already decided in SQL whether this strike trips the lock, and it
+		// returns the post-increment count, so the count — not a re-read — tells
+		// the user how many tries are left, or that the account is now locked
+		// until the window expires. Saying "incorrect password" for the strike
+		// that locked them out would hide the thing they now have to act on.
+		if err := s.bumpFailedLogin(ctx, user); err != nil {
+			// A failed bump must not go silent — an uncounted failure is one
+			// free retry against the lockout budget (AUD-BE-007). The stored
+			// count never moved, so the budget left is still measured from it.
+			log.Printf("bumpFailedLogin(%s): %v", user.ID, err)
+			return nil, fail(&WrongPasswordError{
+				AttemptsRemaining: s.cfg.MaxFailedLoginAttempts - user.FailedLoginAttempts,
+			})
+		}
+		if user.FailedLoginAttempts >= s.cfg.MaxFailedLoginAttempts {
+			lockedUntil := time.Now().UTC().Add(time.Duration(s.cfg.AccountLockMinutes) * time.Minute)
+			return nil, fail(&AccountLockedError{Until: lockedUntil})
+		}
+		return nil, fail(&WrongPasswordError{
+			AttemptsRemaining: s.cfg.MaxFailedLoginAttempts - user.FailedLoginAttempts,
+		})
 	}
 	var out map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		// A 2xx we cannot decode is an upstream/version-compat failure, not a
 		// verdict on the password — same classification as a transport error.
 		return nil, fail(fmt.Errorf("%w: decode token response: %w", ErrAuthUnavailable, err))
+	}
+	// GoTrue accepted the password, but platform_users has no row to gate it
+	// against — the suspension/lock check could not run — so the session is
+	// withheld rather than issued (AUTH-014 keeps its teeth). Loud on purpose:
+	// the identity-bridge trigger makes this state impossible for an account
+	// created through this service, so seeing it means data drift, not a
+	// credential problem the user can fix. No address in the line: an access log
+	// of addresses is a user list.
+	if rowMissing {
+		log.Printf("[auth] LOGIN: GoTrue accepted a password with no platform_users row — session withheld (identity-bridge drift, ADR-PR1163)")
+		return nil, fail(ErrIdentityRecordMissing)
 	}
 	// The ACCOUNT email, which is not the same as what the caller sent — login
 	// accepts a phone number and resolves it server-side. A second factor has to
@@ -626,21 +776,35 @@ func (s *authService) findPlatformUserByEmail(ctx context.Context, email string)
 	return u, nil
 }
 
+// validateLoginStatus runs the account-state gate BEFORE any password is
+// evaluated, and now says which state it refused on. Every branch here used to
+// return the same prose the wrong-password path used, which is how a locked
+// account talked its owner into retrying a correct password until the lockout
+// deepened.
 func (s *authService) validateLoginStatus(u *platformUser) error {
 	now := time.Now().UTC()
+	// A soft-deleted profile is a closed account, not a punishment: the honest
+	// next step is to open a new one, which a "suspended, contact support"
+	// sentence would block.
 	if u.DeletedAt != nil {
-		return errors.New("account unavailable")
+		return ErrAccountClosed
 	}
 	if u.Status == "suspended" || u.Status == "deleted" {
-		return errors.New("account unavailable")
+		return ErrAccountSuspended
 	}
 	// A nil LockedUntil means "no expiry" (see UnlockUser, which clears it to nil
 	// as part of unlocking), not "not locked" — an indefinite manual lock (e.g.
 	// the admin console's "Lock User" action, which sets status=locked without
 	// ever setting LockedUntil) must still refuse. Only a LockedUntil that has
 	// actually passed lets an auto-lockout (which always sets it) self-expire.
+	//
+	// The two are told apart because only one of them ends by itself: an expired
+	// auto-lockout gets a countdown, an admin lock gets support.
 	if u.Status == "locked" && (u.LockedUntil == nil || u.LockedUntil.After(now)) {
-		return errors.New("account locked")
+		if u.LockedUntil == nil {
+			return ErrAccountLockedByAdmin
+		}
+		return &AccountLockedError{Until: *u.LockedUntil}
 	}
 	return nil
 }

@@ -87,13 +87,13 @@ describe('mergeStatusTimeline', () => {
       [
         step('beat-downloaded', 'Beat downloaded', '2026-11-20T20:05:00.000Z'),
         step('song-uploaded', 'Song uploaded', '2026-11-20T20:10:00.000Z', 'Street Light'),
-        step('song-submitted', 'Song submitted for review', '2026-11-20T20:12:00.000Z'),
+        step('song-submitted', 'Song submitted', '2026-11-20T20:12:00.000Z'),
       ],
     );
     assert.deepEqual(
       merged.map((entry) => entry.title),
       [
-        'Song submitted for review',
+        'Song submitted',
         'Song uploaded',
         'Beat downloaded',
         'Approved',
@@ -117,10 +117,10 @@ describe('mergeStatusTimeline', () => {
   it('drops an entry with no usable timestamp rather than printing Invalid Date', () => {
     const merged = mergeStatusTimeline(
       [statusEvent('e1', 'approved', '')],
-      [step('song-uploaded', 'Song uploaded', 'not-a-date'), step('song-submitted', 'Song submitted for review', '2026-11-20T20:12:00.000Z')],
+      [step('song-uploaded', 'Song uploaded', 'not-a-date'), step('song-submitted', 'Song submitted', '2026-11-20T20:12:00.000Z')],
     );
     assert.equal(merged.length, 1);
-    assert.equal(merged[0].title, 'Song submitted for review');
+    assert.equal(merged[0].title, 'Song submitted');
   });
 
   it('omits a note rather than rendering an empty line', () => {

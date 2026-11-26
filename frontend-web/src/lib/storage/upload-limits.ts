@@ -16,3 +16,18 @@
 export const MAX_REGISTRATION_UPLOAD_MB = 100;
 
 export const MAX_REGISTRATION_UPLOAD_BYTES = MAX_REGISTRATION_UPLOAD_MB * 1024 * 1024;
+
+/**
+ * Admin contest-template frames — `app/api/admin/voting/contest-templates`.
+ *
+ * NOT a number this route invented: it is the `file_size_limit` the bucket was
+ * created with in supabase/migrations/20260405700000_contest_image_templates.sql
+ * (52 428 800 bytes = exactly 50 MiB). Without checking it here, an over-limit
+ * frame still travelled the whole way — browser → admin web-proxy → this route →
+ * storage — and only then came back as one indistinguishable sentence.
+ * tests/unit/voting/contest-template-bucket-policy.spec.ts fails if the two
+ * drift apart.
+ */
+export const MAX_CONTEST_TEMPLATE_UPLOAD_MB = 50;
+
+export const MAX_CONTEST_TEMPLATE_UPLOAD_BYTES = MAX_CONTEST_TEMPLATE_UPLOAD_MB * 1024 * 1024;

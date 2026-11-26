@@ -5,6 +5,7 @@ import { buildSongObjectKey, songContestRef, songReaderUrl } from '@/src/feature
 import { getSongSubmissionEligibility } from './submission-eligibility';
 import { projectReview } from './review-rules';
 import { isOpenMicContestRow } from './edition-identity';
+import { planSubmissionReplacement, SUPERSEDED_STATUS } from './submission-replacement';
 import { randomUUID } from 'node:crypto';
 import { recordVoteFraudSignals, recordVoteAudit } from '@/src/server/voting/core';
 import type {
@@ -291,6 +292,9 @@ function mapSubmissionRow(row: any): OpenMicSubmission {
     noUnauthorizedSamplesConfirmed: meta.noUnauthorizedSamplesConfirmed === true,
     finaleAvailabilityConfirmed: meta.finaleAvailabilityConfirmed === true,
     status: String(row.status || 'draft').toLowerCase() as OpenMicSubmission['status'],
+    // Only present on a take the artist replaced; see `OpenMicSubmission`.
+    replacedByEntryId: meta.replacedByEntryId || undefined,
+    replacedAt: meta.replacedAt || undefined,
     reviewNote: row.moderation_feedback || undefined,
     voteCount: Number(row.public_vote_count || 0),
     leaderboardScore: Number(row.leaderboard_score || 0),
@@ -734,6 +738,9 @@ export async function updateContest(contestId: string, patch: Partial<OpenMicCon
         finalePlaylistLocked: current?.finalePlaylistLocked === true,
         selectionModel: current?.selectionModel || 'hybrid',
         finalistsTarget: current?.finalistsTarget ?? 10,
+        submissionStartAt: current?.submissionStartAt,
+        submissionEndAt: current?.submissionEndAt,
+        reviewEndAt: current?.reviewEndAt,
       });
       const { data, error } = await supabase
         .from('contests')
@@ -795,6 +802,9 @@ export async function updateContest(contestId: string, patch: Partial<OpenMicCon
       finalePlaylistLocked: updated.finalePlaylistLocked === true,
       selectionModel: updated.selectionModel,
       finalistsTarget: updated.finalistsTarget,
+      submissionStartAt: updated.submissionStartAt,
+      submissionEndAt: updated.submissionEndAt,
+      reviewEndAt: updated.reviewEndAt,
     });
 
     const dbPatch: Record<string, unknown> = {};
@@ -1466,31 +1476,9 @@ export async function createSubmission(input: Parameters<typeof createSubmission
 
     const supabase = createAdminClient();
     const submissionId = input.submissionId || randomUUID();
-    const stageNameKey = String(input.stageName || '').trim().toLowerCase();
-    const emailKey = String(input.email || '').trim().toLowerCase();
-    const existingRows = await supabase
-      .from('competition_entries')
-      .select('id, status, entry_title, lyrical_concept_summary')
-      .eq('competition_id', contest.id);
-    if (existingRows.error) throw existingRows.error;
-    const duplicate = safeArray<any>(existingRows.data).find((row) => {
-      if (String(row.id) === submissionId) return false;
-      const rowStatus = String(row.status || '').toLowerCase();
-      if (['rejected', 'disqualified'].includes(rowStatus)) return false;
-      let summary: Record<string, unknown> = {};
-      try {
-        summary = row.lyrical_concept_summary ? (JSON.parse(String(row.lyrical_concept_summary)) as Record<string, unknown>) : {};
-      } catch {
-        summary = {};
-      }
-      const existingStage = String(summary.stageName || '').trim().toLowerCase();
-      const existingEmail = String(summary.email || '').trim().toLowerCase();
-      return (stageNameKey && existingStage === stageNameKey) || (emailKey && existingEmail === emailKey);
-    });
-    if (duplicate) {
-      return { success: false as const, errors: { duplicateApplication: 'You already have an active submission for this contest.' } };
-    }
-
+    // Resolved before the duplicate scan, because ownership is what the scan
+    // needs: the same artist's earlier rows are theirs to replace, and a row on
+    // another account is not.
     const submissionUserId =
       input.artistUserId ||
       linkedApplication?.userId ||
@@ -1499,6 +1487,40 @@ export async function createSubmission(input: Parameters<typeof createSubmission
       return { success: false as const, errors: { user: 'Unable to resolve applicant account for submission.' } };
     }
 
+    const existingRows = await supabase
+      .from('competition_entries')
+      .select('id, status, user_id, entry_title, lyrical_concept_summary')
+      .eq('competition_id', contest.id);
+    if (existingRows.error) throw existingRows.error;
+    const replacement = planSubmissionReplacement({
+      submissionId,
+      artistUserId: submissionUserId,
+      stageName: input.stageName,
+      email: input.email,
+      rows: safeArray<any>(existingRows.data).map((row) => {
+        let summary: Record<string, unknown> = {};
+        try {
+          summary = row.lyrical_concept_summary ? (JSON.parse(String(row.lyrical_concept_summary)) as Record<string, unknown>) : {};
+        } catch {
+          summary = {};
+        }
+        return {
+          id: String(row.id),
+          userId: row.user_id == null ? null : String(row.user_id),
+          status: row.status == null ? null : String(row.status),
+          // `lyrical_concept_summary` is an untyped JSON blob, so each field is
+          // read as the string it is meant to be before the rule sees it: a
+          // summary written by an older build can hold anything in these keys.
+          stageName: typeof summary.stageName === 'string' ? summary.stageName : null,
+          email: typeof summary.email === 'string' ? summary.email : null,
+        };
+      }),
+    });
+    // A matching row this account cannot prove is ours still stops the hand-in —
+    // that is the collision the rule exists for.
+    if (replacement.conflict) {
+      return { success: false as const, errors: { duplicateApplication: 'You already have an active submission for this contest.' } };
+    }
     const now = new Date().toISOString();
     const expectedObjectKey = input.songObjectKey
       ? buildSongObjectKey({
@@ -1615,10 +1637,75 @@ export async function createSubmission(input: Parameters<typeof createSubmission
       live_at: submission.submittedAt || null,
     });
     if (error) throw error;
+    // The new take is live, so the artist's own earlier rows can leave the
+    // active set. After the write, deliberately: a retirement that fails leaves
+    // two visible rows an admin can see and fix, while one that runs before a
+    // failed write would leave the artist with no entry at all.
+    await retireSupersededEntries(supabase, replacement.supersede, submissionId, now);
     return { success: true as const, submission };
   } catch (error) {
     if (!shouldFallback(error)) throw error;
     return createSubmissionMemory(input);
+  }
+}
+
+/**
+ * File the rows a hand-in replaced as drafts of the artist's own song.
+ *
+ * `draft` is the value, not a new word: it is what `uploads/complete` already
+ * writes for a song whose hand-in has not landed, the review console and the
+ * leaderboard read it as "not in this contest", and the Go attention counter
+ * that asks an admin to look at something excludes it. Retirement keeps the row
+ * — `user_id`, `entry_title` and the bytes behind it all survive — and only
+ * removes its claim on the entry slot, so an admin can still see that there was
+ * an earlier take.
+ *
+ * One row at a time, and the summary is read before it is written: the blob also
+ * holds that take's own metadata, and replacing it wholesale would destroy the
+ * audit trail the retirement exists to keep.
+ */
+async function retireSupersededEntries(
+  supabase: ReturnType<typeof createAdminClient>,
+  previousIds: string[],
+  replacedByEntryId: string,
+  replacedAt: string,
+) {
+  for (const previousId of previousIds) {
+    try {
+      const current = await supabase
+        .from('competition_entries')
+        .select('lyrical_concept_summary')
+        .eq('id', previousId)
+        .maybeSingle();
+      if (current.error) throw current.error;
+      let summary: Record<string, unknown> = {};
+      try {
+        summary = current.data?.lyrical_concept_summary
+          ? (JSON.parse(String(current.data.lyrical_concept_summary)) as Record<string, unknown>)
+          : {};
+      } catch {
+        summary = {};
+      }
+      const { error } = await supabase
+        .from('competition_entries')
+        .update({
+          status: SUPERSEDED_STATUS,
+          submitted_at: null,
+          // Cleared with the hand-in it stood for, so a retired row is exactly
+          // the state the upload route books before a song is handed in —
+          // `draft`, nothing submitted, nothing live. A reader keyed on
+          // `live_at` instead of status must not resurrect a replaced take.
+          live_at: null,
+          updated_at: replacedAt,
+          lyrical_concept_summary: JSON.stringify({ ...summary, replacedByEntryId, replacedAt }),
+        })
+        .eq('id', previousId);
+      if (error) throw error;
+    } catch (retireError) {
+      // Loud, but it does not turn a song that is now live into a failed
+      // hand-in: the artist already has their entry in the contest.
+      console.warn('[openmic] superseded entry could not be retired', { previousId, replacedByEntryId, retireError });
+    }
   }
 }
 

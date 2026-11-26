@@ -252,6 +252,69 @@ jobs:
       # the stub is on PATH.
       - name: Test the deploy upload retry
         run: bash scripts/ci/test-railway-deploy-retry.sh
+      # Staging frontends have a Railway rootDirectory, so their archive must keep
+      # the app folder at the archive root while avoiding a full-monorepo upload.
+      # The test also proves dirty working-tree bytes cannot leak into a release.
+      - name: Test the deploy archive shape
+        run: bash scripts/ci/test-railway-deploy-archive.sh
+      # The staging legs' replacement for that upload, since 2026-11-23:
+      # release.yml now calls serviceInstanceDeploy(commitSha:) instead of
+      # `railway up`, because the upload-initiate endpoint has refused every
+      # staging leg since 2026-11-16 — trains 45179479514 and 45194518587 each
+      # exhausted the full 900 s ladder, 9-for-9, with zero Indexing/Uploading
+      # lines. What this pins is the part that cannot be eyeballed from a runner
+      # log: the leg is decided by a NEW deployment row that NAMES the commit,
+      # because `true` on its own is the silent no-op measured on production's
+      # git-less frontend-admin, and "a row appeared" is satisfied by someone
+      # else's deploy. Stub-driven, no network, and it counts which CLI
+      # subcommands the leg reached — so a mutation leg that quietly went back
+      # to uploading would go red here rather than on a release.
+      - name: Test the staging mutation deploy leg
+        run: bash scripts/ci/test-staging-deploy-watch.sh
+      # The manual single-service lane (ops-railway-upload.yml) has no release.yml
+      # matrix to copy, so it DERIVES the upload shape from the instance's live
+      # rootDirectory. Wrong here is the bug class that cost 40 minutes on 2026-11-16:
+      # a repo-root archive where rootDirectory is unset builds the MONOREPO, every
+      # route then 404s, and the upload still reports SUCCESS. Stub-driven — a phantom
+      # rootDirectory and a missing instance must both refuse to yield a shape.
+      - name: Test the upload shape resolver
+        run: bash scripts/ci/test-railway-root-shape.sh
+      # THE VARIABLE THAT WAS F2. `RAILWAY_ENV` is not this repo's variable to
+      # reuse: the Railway CLI reads it as an internal API-STAGE selector and, for
+      # `staging`, sends every request to backboard.railway-staging.com, whose
+      # non-JSON HTTP 503 is exactly the `Failed to fetch: error decoding response
+      # body` that killed every `deploy Staging` leg since 2026-11-16 — see Episode
+      # 25 of docs/devops/railway-upload-fault-report.md. The legs now carry the
+      # name in `RAILWAY_ENV_NAME`, address the environment by `--environment`,
+      # and `unset RAILWAY_ENV`; this gate goes red if any of those three regress,
+      # including a workflow that re-exports the poisoned key. Stub-driven, no
+      # network.
+      - name: Test that no railway call inherits RAILWAY_ENV
+        run: bash scripts/ci/test-railway-env-name.sh
+      # The ops lane's other Railway call. Dispatch 45179114945 died on a single-shot
+      # `railway status --json` at ~12:53Z with Railway's decode body and never packed an
+      # archive, while the same command/secret/CLI decoded 52 KB at 13:01:27Z in run
+      # 45179580758 — a window, not a credential. This pins that the pre-flight rides the
+      # window out AND still refuses a token aimed at another environment or service, so
+      # the retry cannot quietly become "keep asking until anything answers". Stub-driven,
+      # no network.
+      - name: Test the ops status pre-flight
+        run: bash scripts/ci/test-railway-status-guard.sh
+      # The same fault's probe. F2 kills every `deploy Staging` leg, and the one
+      # lane that works — serviceInstanceDeploy(commitSha:"<full sha>"); the
+      # latestCommit spelling has been refused owner-side three of three — has
+      # never been tried with the token CI holds, which exists only inside a
+      # runner. So its verdict function is driven here against recorded payloads
+      # and a local stub edge: 200 checks, including the measured HTTP-200 "Not
+      # Authorized" body, a red control that must NOT read as deployable, three
+      # commit-sha shapes that must send nothing at all, and a structural read of
+      # the opt-in write step in ci-railway-token-class.yml.
+      # No network to Railway. NOT sub-second: measured 37 s on a laptop as of
+      # 2026-11-23 — each stub scenario binds a local server and polls it, and
+      # the sha-refusal loop added three more runs. The label was written at 55
+      # checks and never updated.
+      - name: Test the F2 token probe
+        run: bash scripts/ci/test-f2-token-probe.sh
       # RN-PLANE-001: a store build bakes mobile-app/reactnative/.env.production,
       # which is gitignored and which eas.json cannot correct — the build scripts run
       # local Gradle, so the profile's env never applies. Found with that file naming

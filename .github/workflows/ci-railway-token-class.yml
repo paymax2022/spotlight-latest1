@@ -1,0 +1,390 @@
+name: Railway token class probe (read-only)
+
+# WHY THIS EXISTS
+#
+# The F2 probe (#1143) filled the mutation cell on 2026-11-22 and the answer was
+# `mutation=token-rejected`: the credential in `RAILWAY_TOKEN_STAGING` is refused
+# `serviceInstanceDeploy`, and also refused the two plain reads (`project`,
+# `serviceInstance`). That single result has TWO explanations, and they lead to
+# completely different fixes:
+#
+#   (A) CLASS.  Project tokens cannot use the deployment GraphQL API at all — any
+#       of them, in any environment. Then the mutation lane can never replace
+#       `railway up` in CI, and the credential class has to change (a user-scoped
+#       token in CI, or a scope grant from Railway).
+#   (B) VALUE.  The project-token CLASS is fine and only the STAGING secret is
+#       broken — stale, rotated-out, or mistyped. Then the fix is one paste in
+#       Settings → Secrets, and it plausibly explains F2 itself: the request
+#       that obtains the upload destination carries this same project token, and
+#       it is the only request in the leg that has never returned a decodable
+#       body.
+#
+# The three secrets are the discriminator, and they only exist inside a runner.
+# Development's legs upload successfully with `RAILWAY_TOKEN_DEVELOPMENT` (3/3
+# green at 09:39Z on train 45005535349), so *some* project token drives the
+# upload lane; whether one can drive GraphQL reads is what this file answers.
+#
+# WHY EACH CREDENTIAL IS READ THREE TIMES
+#
+# Both #1143 probe runs agreed, so nothing here is known to be intermittent:
+#   run 45009371410 (read-only, 09:49:38Z)  auth=token-rejected (http=200)
+#   run 45009997472 (write cell, 09:57:10Z) auth=token-rejected (http=200)
+#                                                     mutation=token-rejected
+# Repeats are for robustness, not for a phenomenon: one sample per credential
+# cannot tell a stable refusal from a transient edge or rate-limit refusal, and
+# this job's whole output is a three-way choice — class, value, or a credential
+# behaving inconsistently. Agreement across attempts is what makes the chosen
+# branch worth acting on; disagreement is itself an answer, and the only verdict
+# that forbids an action.
+#
+# Reading the answer (the job summary prints the table and one verdict):
+#   anonymous 3/3 ok           → CONTROL BROKEN: the classifier is not proving
+#                                anything, because a token and no token looked
+#                                identical. Railway answers HTTP 200 for auth
+#                                failures, which is why that row exists at all.
+#   mixed for any token        → INTERMITTENT: neither class nor value; the ask
+#                                goes to Railway, not to Settings and not to CI.
+#   dev 3/3 ok + staging 0/3   → (B) VALUE: rotate the staging secret.
+#   all three 0/3              → (A) CLASS: no CI script change can help.
+#   dev 3/3 ok + staging 3/3 ok→ neither: re-read the raw bodies, something new.
+#
+# SAFETY: every read step is unconditional and ends in `|| true` on purpose — a
+# refused read is a RESULT here, not a failure, and the job that stops at the
+# first refusal answers nothing. The job env pins `PROBE_MODE: read-only`, and
+# the ONLY way to reach the mutation cell is the dispatch form's `write_cell`
+# checkbox, which is default-off and is checked by no automated caller. That one
+# box is therefore the whole deploy surface of this workflow, and it is bounded
+# three ways: the environment id is hardcoded to staging inside the script (there
+# is no production id in it), `PROBE_SERVICE_NAME: backend` limits it to one
+# service, and `deploy_sha` must be a full 40-hex commit or both the guard step
+# and the script refuse before any credential is loaded. A short sha, an absent
+# sha, or an unchecked box all leave the write cell unmeasured.
+#
+# How to run:
+#   gh workflow run ci-railway-token-class.yml --ref main
+#   gh run view <id> --log | grep -E 'CLASS_CELL|PROBE_CELL'
+#
+#   ...and to measure the write cell (this redeploys staging backend to the sha
+#   you name — see docs/ops/railway-f2-token-probe.md before doing it):
+#   gh workflow run ci-railway-token-class.yml --ref main \
+#     -f write_cell=true -f deploy_sha=<40-hex>
+#   gh run view <id> --log | grep -E 'PROBE_CELL mutation|PROBE_CELL readback'
+
+on:
+  workflow_dispatch:
+    inputs:
+      # Opt-in, default off, and double-checked: this one turns a read-only probe
+      # into a staging redeploy, so it needs both the box and an exact commit.
+      write_cell:
+        description: 'Send the write cell — serviceInstanceDeploy(commitSha:) with the STAGING project token. This redeploys staging backend.'
+        type: boolean
+        default: false
+      deploy_sha:
+        description: 'Full 40-hex commit the write cell names. Required when write_cell is checked; a short sha is refused.'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-token-class
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    # Same guard as the F2 probe: this reaches the network with three live
+    # credentials, so it must not run in a fork.
+    if: github.repository == 'paymax2022/spotlight-latest1'
+    runs-on: ubuntu-latest
+    env:
+      PROBE_MODE: read-only
+      PROBE_TRANSPORT: curl
+      # Cell 2's row query needs a service; backend is the smallest, and it is
+      # also the only service the opt-in write cell can name, so nothing here
+      # can touch a frontend.
+      PROBE_SERVICE_NAME: backend
+      # Attempts per credential. Three is enough to tell "always refused" from
+      # "refused sometimes" without turning a read-only probe into a load test.
+      PROBE_CLASS_REPEATS: 3
+      PROBE_CLASS_PAUSE_S: 5
+      # The status-decode probe has to run the binary the ops lane runs, not the
+      # newest one: ops-railway-upload.yml installs 5.40.1 (step "Install the
+      # pinned Railway CLI"), and this laptop's 5.71.0 decodes the same response
+      # with a user token, so a different version here would answer a different
+      # question.
+      PROBE_RAILWAY_VERSION: 5.40.1
+    steps:
+      - uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # Write-cell guard. The probe script refuses this too, and this step
+      # exists so the refusal is visible before any credential is loaded
+      # rather than as an error line inside a cell file: a deploy that was
+      # asked for with a short or absent sha must not get as far as a token.
+      # ------------------------------------------------------------------
+      - name: 'write cell guard'
+        env:
+          WRITE_CELL: ${{ inputs.write_cell }}
+          CANDIDATE_SHA: ${{ inputs.deploy_sha }}
+        run: |
+          if [[ "$WRITE_CELL" != "true" ]]; then
+            echo "read-only run: the write cell stays unmeasured, no deploy is possible from this run"
+            exit 0
+          fi
+          if [[ ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::write_cell needs deploy_sha as a full 40-hex commit; nothing was sent"
+            exit 1
+          fi
+          echo "write cell armed for ${CANDIDATE_SHA:0:9} (staging backend, staging project token, cli transport)"
+
+      # Installed once for four probes. The class probe above never needed a CLI
+      # — it speaks GraphQL with curl — but the status question is specifically
+      # "what does this binary do with this credential", so the binary is the
+      # subject, not the transport.
+      - name: Install the pinned Railway CLI
+        run: |
+          set -euo pipefail
+          npm install --global @railway/cli@"${PROBE_RAILWAY_VERSION}" >/dev/null
+          railway --version
+
+      # One read per credential is not enough for a three-way answer. Both #1143
+      # runs refused the staging token (read-only 09:49:38Z; write cell
+      # 09:57:10Z, `auth=token-rejected` and `mutation=token-rejected`), so
+      # agreement is the expected result here — and agreement is exactly what a
+      # single sample cannot show. Three attempts each, and a mixed rate becomes
+      # its own verdict rather than an average.
+      - name: control - no credential at all
+        env:
+          RAILWAY_TOKEN: ''
+          CLASS_LABEL: anonymous
+        run: |
+          for i in $(seq 1 "${PROBE_CLASS_REPEATS:-3}"); do
+            { echo "CLASS_CELL label=${CLASS_LABEL} attempt=${i}"; bash scripts/ci/f2-token-probe.sh 2>&1; } | tee "/tmp/class-${CLASS_LABEL}-${i}.txt" || true
+            sleep "${PROBE_CLASS_PAUSE_S:-5}"
+          done
+
+      - name: development project token
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+          CLASS_LABEL: development
+        run: |
+          for i in $(seq 1 "${PROBE_CLASS_REPEATS:-3}"); do
+            { echo "CLASS_CELL label=${CLASS_LABEL} attempt=${i}"; bash scripts/ci/f2-token-probe.sh 2>&1; } | tee "/tmp/class-${CLASS_LABEL}-${i}.txt" || true
+            sleep "${PROBE_CLASS_PAUSE_S:-5}"
+          done
+
+      - name: staging project token
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          CLASS_LABEL: staging
+        run: |
+          for i in $(seq 1 "${PROBE_CLASS_REPEATS:-3}"); do
+            { echo "CLASS_CELL label=${CLASS_LABEL} attempt=${i}"; bash scripts/ci/f2-token-probe.sh 2>&1; } | tee "/tmp/class-${CLASS_LABEL}-${i}.txt" || true
+            sleep "${PROBE_CLASS_PAUSE_S:-5}"
+          done
+
+      - name: production project token
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          CLASS_LABEL: production
+        run: |
+          for i in $(seq 1 "${PROBE_CLASS_REPEATS:-3}"); do
+            { echo "CLASS_CELL label=${CLASS_LABEL} attempt=${i}"; bash scripts/ci/f2-token-probe.sh 2>&1; } | tee "/tmp/class-${CLASS_LABEL}-${i}.txt" || true
+            sleep "${PROBE_CLASS_PAUSE_S:-5}"
+          done
+
+      - name: Verdict
+        if: always()
+        # The rules live in scripts/ci/f2-token-class-verdict.py, not in a
+        # heredoc, so they can be driven from recorded sample sets by
+        # scripts/ci/test-f2-token-probe.sh instead of only ever running on a
+        # runner that holds three live credentials.
+        run: |
+          # QUOTED, and that is not cosmetic. Run 45024735432 had this line
+          # unquoted: the runner's shell expanded `/tmp/class-*.txt` into twelve
+          # words, argparse read the first as --glob's value and the other eleven
+          # as positional garbage, exited 2 with "unrecognized arguments", and the
+          # job reported no verdict after twelve successful samples. The script now
+          # also tolerates the expanded spelling, so neither form can silence it.
+          python3 scripts/ci/f2-token-class-verdict.py \
+            --glob "/tmp/class-*.txt" --out "$GITHUB_STEP_SUMMARY"
+
+      # ------------------------------------------------------------------
+      # STATUS DECODE CELLS
+      #
+      # The class probe above speaks GraphQL with curl, so it can only ever
+      # report what the edge returns. These four steps ask a question curl
+      # cannot: what the pinned CLI itself does with the same credential. On
+      # 2026-11-22 six staging dispatches of ops-railway-upload.yml died 0.3 s
+      # into their own pre-flight — job 137230172408 — printing
+      #
+      #     Failed to fetch: error decoding response body
+      #         0: error decoding response body
+      #
+      # with no archive and no upload anywhere in the call, while `railway api`
+      # on the same runner and the same token decoded fine. Locally the same
+      # pinned binary with a user token exits 0 with 213,691 bytes. The one
+      # variable left is the credential class, and only a runner holds one.
+      #
+      # Reading the table:
+      #   anonymous decode-refused, tokens decoded  → CONTROL BROKEN: the
+      #     refusal is what a missing token looks like, so the rows say nothing.
+      #   all tokens decode-refused                 → F2 reproduces on a plain
+      #     read with every CI credential: not staging's data, not the upload
+      #     endpoint. Support thread gets a two-line repro.
+      #   development+production decoded, staging decode-refused
+      #                                             → the fault is staging's
+      #     environment payload, not the credential class.
+      #   all decoded                               → the CLI path is healthy
+      #     in runners; F2 lives in the upload request alone, as eleven earlier
+      #     episodes assumed.
+      # One sample per credential: unlike the class cells, this question has no
+      # intermittency to separate — the six dispatches agreed, and a decode is
+      # a property of the response, not of timing.
+      # ------------------------------------------------------------------
+      - name: 'status decode - control (no credential)'
+        env:
+          RAILWAY_TOKEN: ''
+          CLASS_LABEL: anonymous
+        run: |
+          bash scripts/ci/f2-status-probe.sh 2>&1 | tee "/tmp/status-${CLASS_LABEL}.txt" || true
+
+      - name: 'status decode - development project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+          CLASS_LABEL: development
+        run: |
+          bash scripts/ci/f2-status-probe.sh 2>&1 | tee "/tmp/status-${CLASS_LABEL}.txt" || true
+
+      - name: 'status decode - staging project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          CLASS_LABEL: staging
+        run: |
+          bash scripts/ci/f2-status-probe.sh 2>&1 | tee "/tmp/status-${CLASS_LABEL}.txt" || true
+
+      - name: 'status decode - production project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          CLASS_LABEL: production
+        run: |
+          bash scripts/ci/f2-status-probe.sh 2>&1 | tee "/tmp/status-${CLASS_LABEL}.txt" || true
+
+      - name: Status decode verdict
+        if: always()
+        # Presentation and comparison only. Every verdict WORD comes from
+        # scripts/ci/f2-probe-verdict.py's `status` cell, and the rule that
+        # turns four words into one line lives in
+        # scripts/ci/f2-status-verdict.py —
+        # a file, not a heredoc, so scripts/ci/test-f2-token-probe.sh can drive
+        # it from recorded cells instead of only from a runner holding three
+        # live credentials. Quoted glob: same lesson as the class verdict above.
+        run: |
+          python3 scripts/ci/f2-status-verdict.py \
+            --glob "/tmp/status-*.txt" --out "$GITHUB_STEP_SUMMARY"
+
+      # ------------------------------------------------------------------
+      # TRANSPORT CELLS — the same documents, sent by the CLI instead of curl
+      #
+      # WHAT THIS SEPARATES
+      # The class cells above refuse `project(id)` and `serviceInstance` for
+      # every credential INCLUDING the token-less control (run 45171097305:
+      # `auth=token-rejected (http=200)` twelve times out of twelve). That is
+      # what the class verdict reads as CLASS, and one half of it is now known
+      # to be about the request rather than the token: measured 2026-11-23 on
+      # this laptop with a credential whose authority is not in question, the
+      # same document on the same endpoint arrives authenticated as
+      # `Authorization: Bearer` and comes back `Not Authorized` both with
+      # `X-Railway-Token` and with no credential at all. Meanwhile the pinned
+      # CLI, given that same document through `railway api`, resolves it —
+      # including from a directory that has never been linked, which matters
+      # because the runner reports `link_state=no-config`.
+      #
+      # So a curl-only table cannot tell "project tokens have no GraphQL
+      # surface" from "this project token cannot read that field". These four
+      # steps send the identical documents through the identical client the
+      # owner lane uses, with the identical token in the environment, and the
+      # verdict file compares the two answers per credential:
+      #   refused on both      → the class really is the variable. Nothing in a
+      #                          CI script can obtain the deployment target;
+      #                          the ask goes to Railway for a scope grant and
+      #                          owner-side sha promotion stays the staging path.
+      #   refused curl, ok cli → the sampler was the broken instrument. The
+      #                          CLASS sentence is retired and the mutation cell
+      #                          gets re-measured with PROBE_TRANSPORT=cli —
+      #                          which is exactly what the write cell below does.
+      #   control `ok`         → CONTROL BROKEN: that field does not need a
+      #                          credential through this client, so `ok` rows
+      #                          prove nothing about tokens.
+      # Measured 2026-11-23 13:00:04Z→13:01:36Z (run 45179580758): the third
+      # branch won — curl refused all four credentials, the CLI resolved
+      # `project(id)` for all three tokens. These steps stay read-only —
+      # `PROBE_MODE` comes from the job env — and only the opt-in step beneath
+      # them can write.
+      # ------------------------------------------------------------------
+      - name: 'cli transport - control (no credential)'
+        env:
+          RAILWAY_TOKEN: ''
+          CLASS_LABEL: anonymous
+          PROBE_TRANSPORT: cli
+        run: |
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/cli-${CLASS_LABEL}.txt" || true
+
+      - name: 'cli transport - development project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
+          CLASS_LABEL: development
+          PROBE_TRANSPORT: cli
+        run: |
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/cli-${CLASS_LABEL}.txt" || true
+
+      - name: 'cli transport - staging project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          CLASS_LABEL: staging
+          PROBE_TRANSPORT: cli
+        run: |
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/cli-${CLASS_LABEL}.txt" || true
+
+      - name: 'cli transport - production project token'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          CLASS_LABEL: production
+          PROBE_TRANSPORT: cli
+        run: |
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/cli-${CLASS_LABEL}.txt" || true
+
+      # ------------------------------------------------------------------
+      # The write cell, opt-in. Why cli transport: the transport cells proved
+      # curl does not authenticate a project-token bearer at all, so a curl
+      # refusal here could never be read as a scope answer. Why the staging
+      # token: it is the only credential in CI that resolves a staging
+      # serviceInstance, which is the target the mutation names. Why one
+      # service: `PROBE_SERVICE_NAME: backend` comes from the job env, so an
+      # authorized run redeploys staging backend and nothing else.
+      # A refusal here is the answer, so the step keeps `|| true`.
+      # ------------------------------------------------------------------
+      - name: 'write cell - staging project token x serviceInstanceDeploy(commitSha)'
+        if: inputs.write_cell
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          CLASS_LABEL: staging
+          PROBE_MODE: mutate
+          PROBE_TRANSPORT: cli
+          PROBE_DEPLOY_SHA: ${{ inputs.deploy_sha }}
+        run: |
+          bash scripts/ci/f2-token-probe.sh 2>&1 | tee "/tmp/mutate-${CLASS_LABEL}.txt" || true
+
+      - name: Transport x credential verdict
+        if: always()
+        # Two cell sets in, one line out. The rules are a file
+        # (scripts/ci/f2-transport-verdict.py) for the same reason as the other
+        # two: a comparison that only ever runs on a runner holding three live
+        # credentials ships unexecuted. Both globs QUOTED — same lesson as the
+        # class verdict step above.
+        run: |
+          python3 scripts/ci/f2-transport-verdict.py \
+            --curl-glob "/tmp/class-*.txt" --cli-glob "/tmp/cli-*.txt" \
+            --out "$GITHUB_STEP_SUMMARY"

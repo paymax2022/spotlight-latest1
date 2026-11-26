@@ -37,3 +37,29 @@ export function isOpenMicContestRow(row: ContestIdentityRow | null | undefined):
   // its category alone still has an Open Mic edition, and it should behave like one.
   return OPEN_MIC_CONTEST_SLUGS.includes(normalized(row.slug));
 }
+
+/**
+ * The same question asked of an APPLICATION instead of an edition.
+ *
+ * `registrations` has no `contest_id`, so the only link to an edition is
+ * `contest_slug` — and it holds the CATALOG slug (`open-mic-competition`), not the
+ * slug of the edition the admin published. What the row does carry is the identity
+ * the registration plane locked onto `form_data` when the draft was created
+ * (`contest.type`, `contest.category`, from `resolveAnyContest`). Reading all three
+ * is what lets a catalog-slug application be recognised as Open Mic even though no
+ * `contests` row answers to its slug.
+ */
+export type RegistrationIdentityHint = {
+  slug?: string | null;
+  /** `form_data['contest.type']`. */
+  contestType?: string | null;
+  /** `form_data['contest.category']`. */
+  contestCategory?: string | null;
+};
+
+export function isOpenMicRegistration(hint: RegistrationIdentityHint | null | undefined): boolean {
+  if (!hint) return false;
+  if (normalized(hint.contestType) === OPEN_MIC_CONTEST_TYPE) return true;
+  if (normalized(hint.contestCategory) === OPEN_MIC_REGISTRATION_CATEGORY) return true;
+  return OPEN_MIC_CONTEST_SLUGS.includes(normalized(hint.slug));
+}

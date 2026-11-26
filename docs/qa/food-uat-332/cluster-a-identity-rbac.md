@@ -21,13 +21,13 @@ Spec: `mobile-app/reactnative/tests/e2e/food-uat/cluster-a-identity-rbac.spec.ts
 | RST-UAT-0002 | Block duplicate phone registration | P0 | Core | In-Scope | Blocked | Needs verified fixture + OTP gateway | — |
 | RST-UAT-0003 | Reject invalid or expired OTP | P0 | Core | In-Scope | Blocked | Needs live OTP; `app/(auth)/verify-otp.tsx`, `internal/otp` attempt ceiling | — |
 | RST-UAT-0004 | Enforce OTP resend controls | P1 | Core | In-Scope | Blocked | Needs OTP gateway; limiters at `backend/internal/app/router.go:155-169` | — |
-| RST-UAT-0005 | Login via password or configured method | P0 | Core | In-Scope | Blocked | Invalid creds: `POST :8080/api/auth/login` -> 401 `invalid credentials` (pass, spec test). Valid-login/logout leg needs fixture | — |
+| RST-UAT-0005 | Login via password or configured method | P0 | Core | In-Scope | Blocked | Invalid creds: `POST :8080/api/auth/login` -> 401 `account_not_found` naming the address (was generic `invalid credentials`; see "Contract amendment" at the foot of this file). Valid-login/logout leg needs fixture | — |
 | RST-UAT-0006 | Reject disabled account login | P0 | Core | In-Scope | Blocked | Needs admin-disabled account (`platform_users` gate in `auth_service.go`) | — |
 | RST-UAT-0007 | Reset credentials safely | P0 | Core | In-Scope | Blocked | Needs email OTP gateway | — |
 | RST-UAT-0008 | Protect session on token expiry | P0 | Core | In-Scope | Blocked | Needs real session with controllable expiry | — |
 | RST-UAT-0009 | Update customer profile | P1 | Core | In-Scope | Blocked | Needs real session + R2 | — |
 | RST-UAT-0010 | Manage saved addresses | P1 | Core | In-Scope | Blocked | Needs real session, two devices | — |
-| RST-UAT-0011 | Prevent insecure account enumeration | P1 | Core | In-Scope | Pass | Spec test passed live: `POST /api/auth/request-password-reset` unknown email -> 200 "If your email exists, reset instructions were sent."; login unknown -> 401 generic. (Only the unknown-identifier side was probed; existing-account parity not compared.) | — |
+| RST-UAT-0011 | Prevent insecure account enumeration (login side superseded by ADR-PR1163) | P1 | Core | In-Scope | Pass (amended) | Spec test passed live: `POST /api/auth/request-password-reset` unknown email -> 200 "If your email exists, reset instructions were sent."; login unknown -> 401 generic. (Only the unknown-identifier side was probed; existing-account parity not compared.) **The generic-login half of this requirement was deliberately retired by** [ADR-PR1163](../../adr/ADR-PR1163-login-names-the-failure-cause.md) **— login now answers 401 `account_not_found` with a sentence naming the address, so this row passes only for the reset and OTP surfaces. See "Contract amendment (ADR-PR1163)" below** | — |
 | RST-UAT-0012 | Handle revoked second device session | P0 | Core | In-Scope | Blocked | Needs two live sessions + global sign-out | — |
 | RST-UAT-0013 | Find merchant upgrade from customer profile | P0 | Core | In-Scope | Blocked | Harness. Code: `app/food/index.tsx:413-430` label "Sell food on Paymax — set up your restaurant" -> `/food/restaurant`, same session, no separate sign-up | — |
 | RST-UAT-0014 | Preserve identity and history after upgrade | P0 | Core | In-Scope | Blocked | Needs seeded history. By construction `restaurants.owner_id` = auth user id | — |
@@ -249,7 +249,7 @@ Method note: no test in this spec was skipped because of the harness itself. The
 | RST-UAT-0013 | Blocked (harness) | **Pass** (DISSOLVED) | Live: `/food` shows "Sell food on Paymax — set up your restaurant"; click -> `/food/restaurant`, same session, URL not signup/register |
 | RST-UAT-0052 | Blocked (harness) | **Pass** (DISSOLVED) | Live: "Restaurant owner dashboard" -> `/food/restaurant`; back to `/food` shows "Food & Delivery" and "My orders" with the same session |
 | RST-UAT-0053 | Blocked (harness) | **Pass** (DISSOLVED) | Live: `/food/rider` renders "Rider · Offers", "Available offers", empty state on a customer session (no role gate on the client); `/food` reachable again. One cold-compile timeout on the first run, green on re-run and final run |
-| RST-UAT-0005 | Blocked | Blocked (unchanged) | Invalid-credential leg passes (401 `invalid credentials`); valid-login leg needs a fixture credential |
+| RST-UAT-0005 | Blocked | Blocked (unchanged) | Invalid-credential leg passes (401 `invalid credentials`); valid-login leg needs a fixture credential — **the sentence in this cell was true when recorded; see "Contract amendment (ADR-PR1163)" below** |
 | RST-UAT-0011 | Pass | Pass (unchanged) | Re-confirmed live |
 | RST-UAT-0056 / 0057 / 0059 / 0062 | Blocked | Blocked (unchanged; unauth+forged legs re-confirmed passing) | Customer/merchant/rider/admin-token legs still need seeded multi-actor fixtures |
 | RST-UAT-0001-0004, 0006-0010, 0012 | Blocked | Blocked (unchanged) | OTP gateway / disabled-account / expiring-session / two-device fixtures absent |
@@ -260,3 +260,51 @@ Method note: no test in this spec was skipped because of the harness itself. The
 | 12 N/A rows (0026, 0027, 0033, 0035-0038, 0040, 0041, 0047, 0051, 0054) | N/A | N/A (unchanged) | Capability absent / owned by Mobility; code-path citations retained |
 
 Net for Cluster A: **3 statuses changed (Blocked -> Pass, all DISSOLVED), 0 dissolved Fail -> Pass, 13 Fail remain, 3 of 37 Blocked resolved (34 still Blocked on missing fixtures, not harness).** Revised totals: Pass 4, Fail 13, Blocked 34, N/A 12.
+
+## Contract amendment (ADR-PR1163): login names the cause
+
+Recorded 2026-11-24, against `main` after PR #1160. This section does not restate the
+Phase 3 / Phase 5 results above — those were true of the backend at the time they were
+measured. It records that the **login** half of RST-UAT-0011 and the `invalid credentials`
+evidence in RST-UAT-0005 are no longer the contract.
+
+The blanket refusal was the thing users could not act on: a locked, suspended, closed,
+unregistered or mistyped sign-in all arrived as one 401 `invalid credentials`, and the
+clients rendered it as "session expired" or "check your email and password" — including
+the real incident that started this (an active 30-minute auto-lockout reported to the user
+as a credential problem). The owner chose **fully explicit** messaging, accepting the
+consequence.
+
+| Surface | Then | Now |
+| --- | --- | --- |
+| `POST /api/auth/login`, unknown address | 401 `invalid credentials` | 401 `account_not_found` — "No account found for \<what you typed\>. Check you typed it correctly, or create an account." |
+| `POST /api/auth/login`, wrong password | 401 `invalid credentials` | 401 `incorrect_password` — "Incorrect password for \<typed\>. N attempts left before the account locks. Use Forgot password to reset it." |
+| `POST /api/auth/login`, time-based lock | 401 `invalid credentials` | **423** `account_locked` — "Account locked for \<typed\> … Try again in N minutes." |
+| `POST /api/auth/login`, support/admin lock | 401 `invalid credentials` | 423 `account_locked_by_support` — no minutes promised (the lock has no expiry) |
+| `POST /api/auth/login`, suspended | 401 `invalid credentials` | 403 `account_suspended` — contact support |
+| `POST /api/auth/login`, closed | 401 `invalid credentials` | 403 `account_closed` |
+| `POST /api/auth/login`, malformed / ambiguous identifier | 401 `invalid credentials` | 400 `invalid_identifier` / 400 `ambiguous_identifier` |
+| GoTrue accepts a password with no `platform_users` row | session issued (AUTH-014 regression) | 500 `account_record_missing`, session withheld |
+| `POST /api/auth/request-password-reset` | 200 "If your email exists…" | **unchanged** — still generic, still must not contain not-found wording |
+| OTP login / verify | generic | **unchanged** — deliberately not made explicit |
+| Any error the taxonomy does not classify | 401 `invalid credentials` | **unchanged** — the generic answer remains for the unknown case only |
+
+The enumerated sentences are defined in `backend/internal/handlers/auth_handler.go` and are
+rendered verbatim by both clients (`frontend-web` passes them through `toReadableAuthError`;
+`mobile-app/reactnative/src/utils/errorMapper.ts` passes them through `LOGIN_CAUSE_CODES`).
+Because the text is the contract, the specs assert the cause and the key phrase rather than a
+whole sentence.
+
+**What RST-UAT-0011 now means.** Login is a bounded account-existence oracle: 401
+`account_not_found` versus 401 `incorrect_password` distinguishes a registered address from an
+unregistered one, and the 423/403 causes reveal account state. The mitigation is that it is
+rate-limited and self-limiting (5 strikes → 30-minute lock), the resolved email behind a phone
+identifier is never echoed (only what the caller typed), and the reset and OTP surfaces stay
+generic. The full trade-off and the revisit options are in
+[ADR-PR1163](../../adr/ADR-PR1163-login-names-the-failure-cause.md).
+
+**Known gap found while writing this, not fixed here.** A successful password reset does not
+clear `failed_login_attempts` or `locked_until`, so the "Incorrect password … Use Forgot
+password to reset it" advice does not unlock a time-locked account — the lock still has to
+expire. The locked message therefore promises only the wait, never the reset. Tracked as a
+separate defect.

@@ -157,6 +157,15 @@ export type OpenMicSubmissionRow = {
   /** The note the last decision carried, shown so an operator sees why a row
    *  was rejected before writing a new one. OpenMicSubmission.reviewNote. */
   reviewNote?: string;
+  /**
+   * Set on a hand-in the artist later replaced: the server retires the older row
+   * to `draft` and stamps the id of the take that superseded it, so the queue can
+   * tell "unfinished upload" from "this song is closed" (`isSuperseded`).
+   * OpenMicSubmission.replacedByEntryId.
+   */
+  replacedByEntryId?: string;
+  /** When the replacement was published, ISO. OpenMicSubmission.replacedAt. */
+  replacedAt?: string;
 };
 
 export type OpenMicPaymentEventRow = {

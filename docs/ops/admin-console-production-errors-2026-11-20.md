@@ -589,7 +589,7 @@ machinery, and it would still deploy a branch whose `frontend-web` does not buil
 
 ```bash
 git worktree add /tmp/web-deploy <merged-main-sha> && cd /tmp/web-deploy
-SERVICE=frontend-web RAILWAY_ENV=production SHA=<merged-main-sha> \
+SERVICE=frontend-web RAILWAY_ENV_NAME=production SHA=<merged-main-sha> \
 UPLOAD_PATH=frontend-web ROOT_FLAG=--path-as-root BUILD_DIR='' \
 RAILWAY_PROJECT=e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
 RAILWAY_HTTP_TIMEOUT=600 RAILWAY_TOKEN=<the Production token> \
@@ -632,6 +632,27 @@ Two further facts from the same reading, both useful and both currently unused:
   `release.yml`'s own design rule ("nothing reaches production until staging has been probed"), so it is an
   architecture choice for the owner, not something to slip in beside a docs fix. This file documents the
   trade-off instead of choosing it.
+
+**2026-11-22 — the trade-off was taken, and the narrow lane exists.** The instruction for this arc became
+"ensure the push gets to production", and by then every other route was closed by measurement rather than by
+preference: the full train could not reach production because all three `deploy Staging (…)` legs died again
+on F2 (run `45012115042`, head `6ade5f7bcb`, 9 decode refusals per leg, 0 trial lines, 0 GnuTLS — episode 18
+of the fault report), the zero-byte `serviceInstanceDeploy(latestCommit:true)` lane is inert on this git-less
+production service (it answered `reason=redeploy`, rebuilt a stale Next-16.4.0 snapshot and FAILED on
+`Can't resolve '@vercel/turbopack-next/internal/font/google/font'`), and this laptop cannot carry the archive
+(`git archive --format=tar origin/main -- frontend-web` measures **113.3 MB**, 100.6 MB of it
+`frontend-web/public/`; two `railway up` attempts were refused with HTTP 524 at 46 s and 20 s and each still
+wrote a FAILED, inert row). GitHub runners are not that machine — the same tree uploads there fine, which is
+why `deploy Development (frontend-web)` was green in that very run. So `.github/workflows/ops-railway-upload.yml`
+is the sanctioned Command 6: `workflow_dispatch` only, ONE service, a typed confirmation that names both the
+environment and the service, and **no migration step at all**. What it deliberately is not: it is not the
+release chain, it runs no `migrate production database`, and it cannot touch `backend` and the frontends in
+one wave, which is the specific thing that would have overwritten prod's Maplerad rail (13 files under
+`backend/` exist on `prod` and not on `main`: `internal/finance/maplerad/`,
+`internal/orchestration/adapters/maplerad.go`, `internal/provider/maplerad/`, two `tests/fx/` files). The
+upload shape is derived from each instance's live `rootDirectory` by
+`scripts/ci/railway-root-shape.sh` — pinned by `scripts/ci/test-railway-root-shape.sh`, run in `ci.yml` — so
+the §8 shape rule cannot be copied wrong the way a hardcoded matrix can.
 
 Verify after it lands — and verify it **against the web host itself**, not through the console: on
 `frontend-admin-production-*` the proxy guard answers 401 for *invented* paths too (the four-plane table in
@@ -684,6 +705,205 @@ buttons; that is correct behaviour, not the deploy. Read it as a three-code ladd
 is still stale, 401 = the route is live and you are anonymous, 403 = the route is live and the signed-in
 account lacks the slug.** The same ladder is how you tell Command 6's success from an unrelated gap without
 touching Supabase.
+
+## 2026-11-22 — Command 6 ran on a runner, and production `frontend-web` is main-lineage
+
+`.github/workflows/ops-railway-upload.yml` (added by #1146, repaired by #1147) is Command 6
+executed by a GitHub runner instead of a laptop: one service, one environment, no migrations. Its
+first green dispatch is
+[run 45022257571](https://github.com/paymax2022/spotlight-latest1/actions/runs/45022257571), ref
+`ops/upload-tooling-split` @ `fa3146287`, inputs
+`environment=production`, `service=frontend-web`, `sha=1002ec24ec6eab39fe980a39c22a3888142d2bf1`,
+`confirm=UPLOAD-production-frontend-web`.
+
+Everything in this table was read back after the run closed — from Railway's API and from the
+service itself, not from the run log:
+
+| when (UTC) | read | value |
+|---|---|---|
+| 12:26:33 | production `frontend-web` deployment row | `5df16f41-3a28-4084-aa9c-b491d99e5dd7` **`SUCCESS`**, `meta.cliMessage = 1002ec24e…`, snapshot `0e84baf7-1e77-4245-817b-eeae36507159` |
+| 12:28:26 | probe while the build was still running | all three `/api/admin/…` paths still `404` — the old build serving |
+| 12:30:12 | the run | `completed / success`; steps 1–12 plus the three post steps all `success`, none failed. Step 12 is `railway-smoke.sh` with `REQUIRE_READYZ=true` |
+| 12:31:58 | `/api/admin/voting/contestants/01e02692-d38b-4f84-b13c-9363e4ab528d/photo` | **`401`** `{"success":false,"error":"Unauthorized"}` |
+| 12:32:00 | `/api/admin/open-mic/contests/c7ab8479-0275-473d-a78f-b923664a3b54/applicants` | **`401`**, same envelope |
+| 12:32:01 | `/api/admin/definitely-not-a-route` (control) | `404` "No API route matches GET …" — so the two `401`s are mounted routes, not a catch-all |
+| 12:34:07 / 12:34:10 | `/` and `/voting` | `200`, `200` |
+| 12:34:11 | `/api/v1/public/build` (proxied to the Go API) | `200`, commit `e43c6455…` — unchanged |
+
+Two routes moving `404 → 401` with the control route still `404` is the acceptance test this
+section asked for: production `frontend-web` now runs the tree carrying #1140. What is left is the
+authenticated click, and per the ladder above a `403` there is a missing RBAC slug on that admin
+account, not a stale deploy.
+
+**The pairing re-check this file asked for at upload time:** `git diff --name-only
+528382b26..1002ec24e -- frontend-admin` measured **0 files**, so the pinned production console
+build (`33254f63`, built from `528382b26`) does not need re-pinning. `frontend-web` moved 7 files
+over the same range — all of #1144: `src/features/registration/lock.ts`,
+`src/server/registration-v2/registration-voting.ts`, `src/server/registration/errors.ts`,
+`src/server/registration/supabase-store.ts` and three registration specs — and neither #1140 route
+file is among them, which is exactly why the two `401`s above are the only behavioural difference
+the console can see.
+
+**Rollback handle.** The build that was serving before this upload is deployment `ea71b561…`
+(snapshot `52dcadf9-9277-4c1a-9c08-ffdb147d13bd`, `meta.cliMessage main-ef97ec64b-prod-web`,
+created 2026-11-16T09:06:41Z, a hand upload from a `qoder` CLI). It now reads `REMOVED`, and that
+flip is worth knowing before you use history as a rollback tool: **a superseded build stops being
+`SUCCESS` and becomes `REMOVED`, so "the newest `SUCCESS` row" names whatever is serving right now
+and nothing else** — the same property that makes a `FAILED` row invisible to that query while the
+previous build keeps answering `200`.
+
+**What this lane deliberately did not do.** It runs no `migrate …` job and uploads exactly one
+service, so `deploy Production (backend)` never fired: production `backend` stayed `e43c6455`, and
+the `prod`-branch-only files (`backend/internal/finance/maplerad/`,
+`backend/internal/orchestration/adapters/maplerad.go`, `backend/internal/provider/maplerad/`) are
+untouched. That separation is the whole reason this workflow exists instead of re-running the
+`release.yml` production dispatch.
+
+Two dispatches of the lane failed before this one, and neither failure came from Railway: the job
+used to run its harness out of the very tree it uploads, and its env called the variable
+`ENVIRONMENT` while `scripts/ci/railway-deploy.sh` demanded `RAILWAY_ENV` (that input is
+`RAILWAY_ENV_NAME` since 2026-11-24 — see Episode 25 of
+`docs/devops/railway-upload-fault-report.md` for why the old name was never safe). Both verbatim errors are
+quoted in the workflow's own comments, so the next reader finds the reason where the fix lives.
+
+## 2026-11-22 (afternoon) — the same lane cannot be run for **staging**, and staging moved anyway
+
+The request was: bring staging up to `df6676406` for all three services, with this lane. Six
+dispatches ran — two waves of three — and all six ended inside 30 s of starting, at the step that
+exists to protect the deploy:
+
+| wave | runs (`service`) | created | failing step |
+|---|---|---|---|
+| 1 | `45029642480` (backend), `45029655782` (frontend-web), `45029668211` (frontend-admin) | 13:51:04Z / 13:51:14Z / 13:51:23Z | Confirm the token resolves the intended environment and service |
+| 2 | `45030318903` (backend), `45030322482` (frontend-web), `45030326422` (frontend-admin) | 13:59:09Z / 13:59:12Z / 13:59:14Z | the same step, the same three services |
+
+Each printed, after `railway 5.40.1` installed without complaint:
+
+```
+Failed to fetch: error decoding response body
+
+ Caused by:
+     0: error decoding response body
+     1: expected value at line 1 column 1
+```
+
+The refused call is the pre-flight's own `railway status --json`, so no byte was uploaded and no
+deployment row was written: the six runs are inert. **Re-dispatching them for staging is not a
+recovery path.**
+
+**The refusal follows the staging credential, and this file contains the pair that proves it.** Run
+`45022257571` (12:26:10Z, `environment=production`, `service=frontend-web`) executed *this same
+step* on *this same runner image* and the log shows it pass:
+
+```
+12:26:29.183Z   token resolves production / frontend-web
+12:26:30.564Z   UPLOAD_PATH=[frontend-web] ROOT_FLAG=[--path-as-root] BUILD_DIR=[]
+```
+
+and that second line only prints after `railway-root-shape.sh` has read the live `rootDirectory`
+over `railway api`. Same workflow, same CLI, same GraphQL documents, one secret different. Three
+controls, all taken inside the same hour, rule out the other candidates:
+
+1. *It is not a stale secret value.* `RAILWAY_TOKEN=bogus-token-abc railway status --json` answers
+   `Invalid RAILWAY_TOKEN. Please check that it is valid and has access to the resource you're
+   trying to use.` — a clean, distinct message. The staging runs got neither that message nor JSON.
+   (The local copies in `backend/.env` cannot be used for this comparison: both of them, staging and
+   development, now authenticate as invalid, which is why the question had to be settled on a
+   runner.)
+2. *It is not the pinned CLI.* Locally, minutes after the sixth refusal, both the installed
+   `railway 5.71.0` and `npx @railway/cli@5.40.1` returned the full status document for this
+   project, `staging / 6b5f27a3-a290-…` included, with a **user-scoped** token.
+3. *It is not the environment being down, and it is not billing.* Staging takes writes and serves
+   traffic, both shown below; and `grep -ci trial` over the wave-1 backend job log is **0**, so the
+   refusal carries neither Railway's plan sentence nor its authentication sentence.
+
+### Reconciling with #1150's CLASS verdict
+
+`docs/ops/railway-f2-token-probe.md` concludes **CLASS** ("no project token can read the deployment
+graph") from twelve runner samples, and its conclusion is the reason this lane's staging legs looked
+like a network fault rather than a credential one. The samples are real; the sentence drawn from them
+is not: the production project token read `project → environments → serviceInstances → rootDirectory`
+and `deployments(input:{serviceId,environmentId})` from a runner at 12:26:29Z, which is inside the
+deployment graph. Either `RAILWAY_TOKEN_PRODUCTION` is not the same token kind as the other two — a
+user-scoped token placed in CI, which would also explain why only production legs of this lane have
+ever worked — or the sampler's `project { id name }` document is refused where these documents are
+not. Both readings keep #1150's operational conclusion intact, because that one is about **uploads**
+and it stands on its own evidence; what has to go is the blanket "reads are impossible from CI", and
+with it the inference that the staging wall is a class rule Railway imposes on everyone. The
+experiments that would settle it are cheap and both belong in the support thread: state which token
+kind each of the three secrets holds, and ask whether a project token can be granted the deployment
+read.
+
+**Corrected 2026-11-24: the variable this section was circling is in the workflow itself, not in the
+secret.** `.github/workflows/ops-railway-upload.yml` exported `RAILWAY_ENV: ${{ inputs.environment }}`,
+and the Railway CLI reads `RAILWAY_ENV` as an *internal API-stage selector*: `staging` (also `STAGING`,
+`dev`) moves every request to `https://backboard.railway-staging.com/graphql/v2`, which answers a
+non-JSON `unconditional drop overload` HTTP 503 — the `Failed to fetch: error decoding response body`
+above. `production` and `development` do not redirect, which is precisely why "only production legs of
+this lane have ever worked", why the same step passed at 12:26:29Z, and why control 2 (a local
+`railway status` with no `RAILWAY_ENV`) answered in seconds. The credential/class reading, and the
+"re-dispatching for staging is not a recovery path" conclusion drawn from it, are retired: staging is
+recoverable from CI now that the name is `RAILWAY_ENV_NAME` and the scripts `unset RAILWAY_ENV`. Full
+measurement in `docs/devops/railway-upload-fault-report.md`, Episode 25.
+
+### What moved staging: the mutation, not the upload
+
+The three staging instances are git-linked (`source.repo = paymax2022/spotlight-latest1`,
+`meta.branch = main`), so no archive has to leave anyone's machine:
+
+```bash
+E=6b5f27a3-a290-4574-a977-363eb21d43ad              # staging
+SHA=df667640637bdc7da783ecf3e15e35a59cbcee32        # the requested commit
+for s in 70de07d8-c058-4221-b645-61c4f1ac7aa5       # backend
+         dda6372c-0bb7-4014-a2b1-aa646c11a281       # frontend-web
+         c4f1086e-0a2d-4367-b503-209c14a2ce6f; do   # frontend-admin
+  railway api 'mutation($s:String!,$e:String!,$h:String!){
+    serviceInstanceDeploy(serviceId:$s,environmentId:$e,commitSha:$h) }' \
+    --var "s=$s" --var "e=$E" --var "h=$SHA"
+done
+```
+
+Two properties to know before trusting it. `serviceInstanceDeploy` returns **`Boolean!`** — it has
+no subfields, so it can confirm nothing, and the only evidence is reading `deployments(…)` after it.
+And `commitSha:` being a silent no-op is a property of production's `frontend-web`, whose instance
+has no git source (`reason=redeploy`, `cliMessage=null`); **on staging `commitSha` is honoured**, and
+`meta.commitHash` reads `df6676406…` on all three rows. This ran from the owner's user session at
+14:03Z and needs no token in CI, which is the whole point of writing it down.
+
+### Read-back: what staging serves now
+
+| check | measured |
+|---|---|
+| `backend-staging-new/api/v1/public/build` | `{"commit":"df667640637bdc7da783ecf3e15e35a59cbcee32","source":"env","started_at":"2026-11-22T14:03:36Z","uptime_seconds":39}` — the running process, not a row |
+| `latestDeployment` ×3 | `faa7ff43` / `032caf24` / `95ed7740`, all `SUCCESS`, all `meta.commitHash df6676406…`, created 14:03:00Z / 14:03:05Z / 14:03:09Z |
+| `/api/admin/voting/contestants/01e02692-d38b-4f84-b13c-9363e4ab528d/photo` | **401** `{"success":false,"error":"Unauthorized"}` → the #1140 route is in the deployed BFF |
+| `/api/admin/open-mic/contests/c7ab8479-0275-473d-a78f-b923664a3b54/applicants` | **401** → same |
+| `/api/admin/definitely-not-a-route-xyz` | **404** `No API route matches GET …` → the control that makes the two `401`s mean "live" |
+| `frontend-web` `/`, `frontend-admin` `/` | `200` in 2.74 s and 1.26 s |
+
+All three rows reached `SUCCESS` inside two minutes, which is too fast for a cold `next build` — the
+images were almost certainly already there. That is why the table above leads with the backend
+process reporting its own SHA and a fresh `started_at`: the row is the intent, the response is the
+fact.
+
+**`snapshotId` is how to read this history.** `FAILED` with no `snapshotId` means the upload never
+produced a build: staging `frontend-web` rows `d9e7be19` (02:11Z, `cliCaller=automation:launchd`) and
+`04cf77d6` (02:17Z, `cliCaller=agent_unknown:shell:qoder`) both carry `cliMessage 10f6f72b6…`, both
+`FAILED`, both `snapshotId=null`. A row that *does* have a snapshot built, and `REMOVED` on such a row
+means only that it was superseded — `20af4cc5` (staging `backend`, 02:10:50Z, snapshot `6ba06d20`,
+same `cliMessage`) is a laptop upload of the 26 MB tree that worked, one minute from the 111 MB
+`frontend-web` upload that did not. Size, not the token, was the difference there.
+
+**Collision worth recording.** `df6676406` stopped being main's tip while this was running: PR #1150
+landed as `b55757379` (committer date 13:54:37Z) and another session promoted all three staging
+services to it at 13:59:02Z–13:59:22Z. The deploys above therefore moved staging back one commit. The
+two commits differ in exactly two files, both documentation — `docs/ops/DEPLOY_BLOCKED.md` and
+`docs/ops/railway-f2-token-probe.md` — and the three app subtrees are byte-identical: `backend`
+`657cfe39`, `frontend-web` `bd0060b9`, `frontend-admin` `cc944473`. So staging serves the same product
+either way, nothing was lost, and the rollback handle is
+`serviceInstanceDeploy(commitSha:b55757379…)` over the same three service ids, for the rows now marked
+`REMOVED` (`4118cd30`, `62b5451c`, `eff0c342`). Two Qoder sessions writing to one staging environment
+inside four minutes is the thing to watch here, not the content.
 
 ## Companion file
 

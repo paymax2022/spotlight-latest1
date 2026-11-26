@@ -259,6 +259,18 @@ export type OpenMicSubmission = {
   noUnauthorizedSamplesConfirmed: boolean;
   finaleAvailabilityConfirmed: boolean;
   status: OpenMicEntryStatus;
+  /**
+   * Set on a row that the artist themselves replaced with a newer take.
+   *
+   * A re-hand-in files the previous entry as `draft` — it is no longer the song
+   * in the contest — but the row, its bytes and its `user_id` stay so an admin
+   * can see what was there. These two fields say which entry took its place and
+   * when, which is what makes a `draft` row readable as "superseded" instead of
+   * "never finished". Written by both planes (`lyrical_concept_summary` in
+   * Postgres, the object itself in memory).
+   */
+  replacedByEntryId?: string;
+  replacedAt?: string;
   reviewNote?: string;
   voteCount: number;
   leaderboardScore: number;

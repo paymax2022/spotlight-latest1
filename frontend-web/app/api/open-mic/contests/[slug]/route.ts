@@ -1,10 +1,13 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
-import { getContestBySlug, getLeaderboard } from '@/src/server/openmic/persistence';
+import { resolveOpenMicEdition } from '@/src/server/openmic/edition-resolution';
+import { getLeaderboard } from '@/src/server/openmic/persistence';
 
 export async function GET(_request: Request, context: { params: Promise<{ slug: string }> }) {
   try {
     const { slug } = await context.params;
-    const contest = await getContestBySlug(slug);
+    // A caller may pass the catalog slug (`open-mic-competition`) or the edition's
+    // own; one rule maps either onto the live edition — see resolveOpenMicEdition.
+    const contest = await resolveOpenMicEdition(slug);
     if (!contest) return errorResponse('Contest not found', 404);
     const leaderboard = await getLeaderboard(contest.id);
     // Public leaderboard: strip entrant PII (realName/email/phone/user id) and

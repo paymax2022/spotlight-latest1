@@ -24,6 +24,30 @@ export function isAwaitingDecision(status: string): boolean {
 }
 
 /**
+ * Has an artist already handed in a newer take over this row?
+ *
+ * When a contestant re-uploads, the server publishes the new entry and retires
+ * the one it replaces to `draft`, stamping `replacedByEntryId` on the retired row
+ * (`submission-replacement.ts`). `draft` is not a decided status, so without this
+ * the queue would grow a phantom "Awaiting a decision" task for every retry and
+ * the "next row needing work" focus would land the operator on a song that no
+ * longer stands. Only a non-blank value counts: a never-replaced draft keeps its
+ * real open task.
+ */
+export function isSuperseded(row: Pick<OpenMicSubmissionRow, 'replacedByEntryId'>): boolean {
+  return typeof row.replacedByEntryId === 'string' && row.replacedByEntryId.trim() !== '';
+}
+
+/**
+ * The single question the queue is built on: does an operator still owe this row
+ * a decision? A closed status closes it, and so does a take the artist replaced.
+ */
+export function needsOperator(row: OpenMicSubmissionRow): boolean {
+  if (!isAwaitingDecision(row.status)) return false;
+  return !isSuperseded(row);
+}
+
+/**
  * Can voters hear it? `finalist` and `winner` move a standing without touching
  * playback, so counting either here would overstate what is on the leaderboard.
  */
@@ -41,9 +65,14 @@ export const QUEUE_SCOPE_LABELS: Record<QueueScope, string> = {
   all: 'Everything',
 };
 
-export function scopeMatches(status: string, scope: QueueScope): boolean {
+/**
+ * Does a row belong in this scope? The two named scopes stay a partition of the
+ * list — every row is in exactly one of `awaiting` or `decided` — so a replaced
+ * take shows up under "Already decided" rather than disappearing from both.
+ */
+export function scopeMatches(row: OpenMicSubmissionRow, scope: QueueScope): boolean {
   if (scope === 'all') return true;
-  const awaiting = isAwaitingDecision(status);
+  const awaiting = needsOperator(row);
   return scope === 'awaiting' ? awaiting : !awaiting;
 }
 
@@ -51,7 +80,7 @@ export function scopeMatches(status: string, scope: QueueScope): boolean {
 export function queueCounts(rows: OpenMicSubmissionRow[]): { total: number; awaiting: number; published: number } {
   return {
     total: rows.length,
-    awaiting: rows.filter((row) => isAwaitingDecision(row.status)).length,
+    awaiting: rows.filter((row) => needsOperator(row)).length,
     published: rows.filter((row) => isPublished(row.status)).length,
   };
 }
@@ -80,9 +109,9 @@ export function orderQueue(
   options: { scope: QueueScope; query: string },
 ): OpenMicSubmissionRow[] {
   return rows
-    .filter((row) => scopeMatches(row.status, options.scope) && matchesQuery(row, options.query))
+    .filter((row) => scopeMatches(row, options.scope) && matchesQuery(row, options.query))
     .sort((a, b) => {
-      const group = Number(isAwaitingDecision(b.status)) - Number(isAwaitingDecision(a.status));
+      const group = Number(needsOperator(b)) - Number(needsOperator(a));
       if (group !== 0) return group;
       return handInTime(b) - handInTime(a);
     });

@@ -152,6 +152,25 @@ either wave. Its same-basis pairing is timed from Railway's own deployment rows
 > environment `6b5f27a3-a290-4574-a977-363eb21d43ad`, ref `9cedaad87…`, both attempts** —
 > first refusals 17:13:37.826Z / 17:13:38.041Z / 17:13:41.642Z and 20:19:05.552Z /
 > 20:19:06.092Z / 20:19:15.085Z.
+>
+> **Episodes 18-21 (2026-11-22 13:53Z → 2026-11-23 15:17Z) supersede the pull list
+> above and settle the last open question in this pack.** Episode 19 retired the
+> credential-class story (three project tokens decode `railway status --json` in a
+> runner; the curl sampler, not the token, was refusing), and **Episode 21 then
+> measured the write**: CI's own `RAILWAY_TOKEN_STAGING` calls
+> `serviceInstanceDeploy(serviceId, environmentId, commitSha)` and staging deploys
+> — `PROBE_VERDICT[backend]=project-token-can-deploy`, run `45194092365`, 14:27:14Z,
+> a new `SUCCESS` row 30 s later, zero bytes uploaded. In the same three hours the
+> upload path refused **27 out of 27** staging calls across three consecutive trains
+> (`45171028615`, `45179479514`, `45194518587`), nine attempts per leg, every leg
+> with zero `Indexing...`, zero `Uploading...` and **zero deployment rows**, while the
+> mutation deployed those same three staging services to the same commit in 28 seconds
+> (rows `2df11e51`, `d7abcc2e`, `6e39f119`, 14:29:10-14:29:38Z). That is the control
+> this pack was missing: the environment, the services, the plan and the credential
+> are all demonstrably deployable, and only the request that obtains the upload
+> destination refuses. **Pull list now: environment
+> `6b5f27a3-a290-4574-a977-363eb21d43ad`, refs `d563144151…` / `0329a903a5…` /
+> `09921c258f…`, nine legs — first-refusal times in Episode 21.**
 
 ## The ask
 
@@ -1651,3 +1670,1180 @@ millisecond. And anyone re-counting attempts from a raw log should grep
 notice prints only *before* a retry and the ninth attempt ends instead with
 `still failing after 9 attempts (last exit 1)`; a bare `grep -c retry` returns 9 and
 double-counts that terminal line.
+
+## Episode 18 — 2026-11-22 13:53-14:56Z: staging left the upload fault behind, and the lane that does it needs an explicit sha
+
+F2 reproduced on the way in. Train `45027694563` (head `df6676406`, the PR #1148 squash)
+cleared its gate, deployed all three development services (`SUCCESS` rows at 14:10:58Z,
+14:11:02Z and 14:11:04Z), kept `migrate staging database / supabase db push (staging)`
+green, and then lost all three staging legs. Those logs were pulled before this paragraph
+was written, and each carries the F2 signature and none of the other two:
+
+| leg (job id) | `Failed to fetch: error decoding response body` | retry notices | `GnuTLS recv error` | `trial has expired` | `Indexing` |
+|---|---|---|---|---|---|
+| `deploy Staging (backend)` `137235706730` | 9 | 8 | 0 | 0 | 0 |
+| `deploy Staging (frontend-web)` `137235706713` | 9 | 8 | 0 | 0 | 0 |
+| `deploy Staging (frontend-admin)` `137235706716` | 9 | 8 | 0 | 0 | 0 |
+
+`smoke Staging` → `migrate production database` → `deploy Production (…)` → `smoke
+Production` were skipped, which is the usual blast radius. Nine attempts per leg, eight
+notices, nothing indexed — the request that obtains the upload destination still refuses to
+return a decodable body.
+
+**Staging, however, no longer needs the upload path.** At 13:59:00Z, 13:59:05Z and
+13:59:25Z the same three staging instances were deployed by GraphQL instead of by upload,
+and each reached `SUCCESS` inside four minutes with a `snapshotId`, `meta.branch = "main"`
+and `meta.reason = "deploy"` — the git-source signature, no archive anywhere in the request.
+The point of this section is the argument that made that work, because the obvious one does
+not:
+
+| call, same account, same three instances, minutes apart | result |
+|---|---|
+| `serviceInstanceDeploy(serviceId, environmentId, latestCommit: true)` — 13:53:24Z / 13:53:39Z / 13:53:54Z | **refused 3/3** — `{"extensions":{"code":"INTERNAL_SERVER_ERROR"},"message":"Not Authorized","path":["serviceInstanceDeploy"]}`, traceIds `7638569940617653028`, `8666048400144838034`, `245729836332584137` |
+| `serviceInstanceDeploy(serviceId, environmentId, commitSha: "b557573795e7e13540d1254901ad4bdcd42fe057")` — 13:59:00Z / 13:59:05Z / 13:59:25Z | **accepted 3/3** — `{"data":{"serviceInstanceDeploy":true}}`, rows `faa7ff43`/`032caf24`/`95ed7740` `SUCCESS` by 14:02:44Z |
+
+The bearer is the same in both rows of that table, so the difference is the argument.
+`railway whoami` printed `spec.ng@gmail.com`, and that account id (`bbb8bca4…`, matched
+against the config's own `user.id`) is also the `creator.id` recorded on the staging rows —
+this is not a token-class mix-up. Reads were healthy throughout: `project`, `environments`,
+`serviceInstance` and `deployments` all returned data in the same minute the mutation was
+refused.
+
+This is a **change on Railway's side, not a myth about the past**. This file's own positive
+control (2026-11-18 17:16-17:22Z, above) called `latestCommit: true` on these same staging
+services and got `true` three times, with rows that built from `branch: "main"` and reached
+`SUCCESS` inside two minutes. Whatever made that call work then makes it `Not Authorized`
+now, for the same user, on the same three instances. One caveat stated plainly: the
+`02:18:30Z` staging rows that promoted this environment to `f9309845c` earlier today carry
+the same git-source signature, and a deployment row does not record which of the two
+arguments produced it — so this section does not claim `latestCommit` was used then.
+
+The nearest read that tracks the refusal is `serviceInstance { isUpdatable }`, which is
+`false` on `backend` in both staging and production. It is a correlate, not a proven cause:
+`isUpdatable` was already `false` on the instance that accepted `commitSha` five minutes
+later, so the field cannot be the gate. It is reported because it is the only boolean the
+API offers next to the refusal.
+
+**Six staging dispatches reproduce F2 on a read, and that is new.** Six `workflow_dispatch`
+runs of `.github/workflows/ops-railway-upload.yml` targeting staging — `45029642480`,
+`45029655782`, `45029668211` (13:51Z) and `45030318903`, `45030322482`, `45030326422`
+(13:59Z), all at head `df6676406` — die inside thirty seconds at their own step
+`Confirm the token resolves the intended environment and service`, before any archive is
+built. The step is one command:
+
+```bash
+railway status --json > /tmp/railway-status.json
+```
+
+and job `137230172408` (run `45029642480`) shows what that command printed back, 0.3 s after
+it started (13:51:21.380Z):
+
+```
+Failed to fetch: error decoding response body
+    0: error decoding response body
+```
+
+That is F2's string, verbatim, on an endpoint that has nothing to do with uploads. So two
+things held at once, on the same runner, within an hour: `railway api` with the staging
+project token **decodes fine** and answers the GraphQL read with `Not Authorized` at HTTP
+200 (the probe's own cells, run `45027737590`), while `railway status --json` with that same
+token **cannot decode the response at all**. **[Corrected by Episode 19: that is what these
+six dispatches did on 2026-11-22, not what a project token always does — at 12:07Z on
+2026-11-23 the same pinned CLI with the same staging token decoded the same read into
+52,349 bytes, rc=0. So the refusal is time-windowed, and the narrowing below — "at least two
+CLI requests, one of which is a plain status read" — holds as a set of requests that CAN
+refuse, not as a property of the credential.]** The decode refusal therefore tracks a request
+shape, not the upload-initiate call — which narrows the hypothesis in this file's "what is
+F2" section from "the request that obtains the upload destination" to "at least two CLI
+requests, one of which is a plain status read, and not the raw `railway api` path".
+
+One confound was controlled here rather than assumed. That runner installs
+`@railway/cli@5.40.1` (`ops-railway-upload.yml`, step *Install the pinned Railway CLI*), and
+this laptop runs 5.71.0, so "the CLI is too old for the response" was a live alternative. It
+is not the whole story: `npx @railway/cli@5.40.1 status --json` against this workspace with
+the owner's user token exits 0 and writes 213,691 bytes of parseable JSON. The pinned version
+decodes this project's status when a *user* credential asks for it. What has never been
+measured is the same pinned binary running `railway status --json` on a runner holding the
+development project token: if that decodes, the staging response differs by environment and
+the variable is Railway's data; if it refuses too, the variable is the credential class, and
+the support thread gets a two-line repro — `railway api` decodes a refusal, `railway status`
+cannot decode anything.
+
+**Production `frontend-web` had a different fault, and both halves of it are now read.**
+Three `ops-railway-upload.yml` dispatches fire inside ten minutes, all three aimed at
+production `frontend-web`, and the one that worked is the one running different lane code:
+
+| run | time | branch the workflow ran from | payload sha | where it died |
+|---|---|---|---|---|
+| `45021408276` | 12:16:17Z | `main` (`1002ec24e`) | `528382b26a…` | step *Resolve the upload shape…* — `UPLOAD_PATH: unbound variable` |
+| `45021663624` | 12:19:19Z | `main` (`1002ec24e`) | `1002ec24e…` | step *Upload frontend-web to production* — `scripts/ci/railway-deploy.sh: line 66: RAILWAY_ENV: required: RAILWAY_ENV` |
+| `45022257571` | 12:26:10Z | `ops/upload-tooling-split` (`fa3146287`) | `1002ec24e…` | nothing — success |
+
+Neither failure reached the network: each exited within four seconds of its step starting,
+so F2 is not in either log and no deployment row was created for them. They are variable
+wiring. The job exported `ENVIRONMENT`, while `railway-deploy.sh` demands `RAILWAY_ENV`, and
+the inline shape-resolution step echoed `UPLOAD_PATH`/`ROOT_FLAG`/`BUILD_DIR` before
+`eval` had set them under `set -u`. PR #1147 — "fix(ops): give the upload lane a harness that
+outlives the payload" — fixes exactly those two lines: it adds `RAILWAY_ENV: ${{ inputs.environment
+}}` at job level and `${UPLOAD_PATH:-}` / `${ROOT_FLAG:-}` / `${BUILD_DIR:-}` in the echo, and
+its comments quote both error strings verbatim, so the lane now names its own failure modes.
+Its branch tip `fa3146287` merged fifty-three minutes *after* the successful dispatch (13:19:59Z,
+squash `e7b229172`), so the run that worked was executing lane code main did not yet have. The
+row it produced is `SUCCESS` at 12:26:33Z with `meta.cliMessage = 1002ec24ec6eab39…` — the
+first sha production `frontend-web` has served since `ea71b561` (2026-11-16).
+
+The row underneath it was a separate cause, and Railway names it. The `FAILED` row at
+11:00:31Z carries `meta.cliMessage = 2f51561fb0e3f329…` — PR #1068's squash — and its
+`diagnosis` is `build_error`: `npm ci` completed, `[builder 5/5] RUN npm run build` exited
+1, "Turbopack build failed with 28 errors", each `Module not found: Can't resolve
+'@vercel/turbopack-next/internal/font/google/font'`, traced through the Kumbh Sans
+`next/font/google` import in `app/layout.js`. Railway's own words: "This build ran Next.js
+16.4.0, while the last successful build (`ea71b561`) ran 16.4.3." The repository supplies the
+detail the diagnosis could not see: `2f51561fb` pins `"next": "^16.4.0"` in
+`frontend-web/package.json` and its lockfile resolves **16.4.0**, while `ce977589e` (#1010,
+"bump the npm-minor-patch group", 2026-11-18) — the commit that raises that pin to
+`^16.4.6` — is **not** an ancestor of `2f51561fb`. `1002ec24e` is a descendant, resolves
+16.4.6, and builds. So the streak was an upload lane carrying pre-#1010 trees, and it ended
+for two reasons at once: the lane got a harness that survives the payload, and the payload
+moved past the Next bump.
+
+One signature in that history belongs to neither cause. The 2026-11-21T15:58:45Z `FAILED`
+row uploaded `bd1b2aa3e` (post-#1010, Next 16.4.6) yet failed with `configErrors: ["Failed
+to create code snapshot…"]` and `cliCaller: automation:launchd:webdeploy` — a scheduled job
+on somebody's machine, a third failure mode. "Prod web wouldn't build" was never one cause,
+and PR #1142 (`528382b26`, "cut staging frontend upload archives from the commit", merged
+09:01:45Z) is not the fix either — it changes how the *staging* legs derive an archive, and
+the row it did produce is production `frontend-admin` serving `528382b26` from 10:55:27Z.
+
+**State at 14:53Z, read from `latestDeployment` per service, not from HTTP:**
+
+| environment | backend | frontend-web | frontend-admin |
+|---|---|---|---|
+| development | `df6676406` 14:11:04Z (train) | `df6676406` 14:11:02Z (train) | `df6676406` 14:10:58Z (train) |
+| staging | `df6676406` 14:03:00Z (mutation) | `df6676406` 14:03:05Z (mutation) | `df6676406` 14:03:09Z (mutation) |
+| production | `e43c64557` 2026-11-21T23:32:45Z | `1002ec24e` 12:26:33Z (ops lane) | `528382b26` 10:55:27Z |
+
+Development and staging therefore match, which they have not done since 2026-11-21. One
+honest wrinkle in that row: the staging rows above are *not* the ones this session created.
+`commitSha: b55757379…` (main's tip after PR #1150) was promoted at 13:59Z and was serving
+staging at 14:02:44Z; at 14:03:00-14:03:09Z another caller replaced all three rows with
+`df6676406`, one commit older and differing only by a documentation commit. Nothing was
+broken by that — it is the same lane pointed at the previous sha — but it is why the recipe
+below says to re-read `latestDeployment` before promoting, and it is the second time this
+week a staging row appeared that this session did not create.
+
+**The recipe, as it now works (owner-side, no upload, ~4 min per service):**
+
+```bash
+SHA=$(git rev-parse origin/main)
+DOC='mutation($s:String!,$e:String!,$sha:String){ serviceInstanceDeploy(serviceId:$s, environmentId:$e, commitSha:$sha) }'
+for s in 70de07d8-c058-4221-b645-61c4f1ac7aa5 dda6372c-0bb7-4014-a2b1-aa646c11a281 c4f1086e-0a2d-4367-b503-209c14a2ce6f; do
+  railway api "$DOC" --compact --raw-var "s=$s" \
+    --raw-var "e=6b5f27a3-a290-4574-a977-363eb21d43ad" --raw-var "sha=$SHA"
+done
+```
+
+`--raw-var` matters: `--var` tries to parse its value as JSON, and a 40-hex sha that happens
+to be all digits would arrive as a number rather than a string. Pin the sha to a commit the
+gates approved. `latestCommit` is both refused today and the wrong thing to want on a merge
+train: it deploys whatever HEAD happens to be when the call lands, which is exactly how a
+staging row ended up one documentation commit behind the one this session promoted.
+
+**The ask, amended.** Add to the support thread: why does `serviceInstanceDeploy` with
+`latestCommit: true` return `Not Authorized` (wrapped in `INTERNAL_SERVER_ERROR`, traceIds
+above) for a user session that deploys the same three services with `commitSha` five minutes
+later, when the identical call succeeded on these same instances on 2026-11-18? The F2
+question itself is unchanged: staging's upload-initiate still never returns a body, and this
+episode removes only staging's *dependence* on it — and the episode adds one line to that
+question, because `railway status --json` with the same staging project token returns a body
+the CLI cannot decode in 0.3 s, which is the same failure string on an endpoint with no
+upload anywhere in it. **[Episode 19 measures the same command succeeding with the same
+token eleven hours later on a runner, so this line is now a window, not a standing property
+of the credential — and the transport cells exist to say whether the `Not Authorized` half of
+this paragraph was ever a statement about the tokens at all.]**
+
+**What this does not fix.** No code, no secret, no workflow changed here. `release.yml`'s
+staging legs still upload with a project token and still die 9/9; production still receives
+nothing from a train; and the mutation lane is reachable only from the owner's session
+because of the credential-class answer, not because of anything episode 18 discovered.
+
+## Episode 19 — 2026-11-23 12:06-12:07Z: the same pinned CLI decoded the same read with the same staging token, and the credential answer got narrower
+
+PR #1155 put four status cells into `ci-railway-token-class.yml` to ask the
+question episode 18 could only assert: does F2 reproduce on `railway status
+--json` **with a project token in a runner**? Run `45171097305` (dispatched on
+`main` at `d56314415` at 12:06:12Z, job `compare` = `137680533814`,
+`@railway/cli@5.40.1` — the version `ops-railway-upload.yml` installs):
+
+| credential | rc | bytes | verdict | link state |
+|---|---|---|---|---|
+| `anonymous` control | 1 | 0 | `other-failure` | `no-config` |
+| `RAILWAY_TOKEN_DEVELOPMENT` | 0 | 43,753 | `decoded` | `no-config` |
+| `RAILWAY_TOKEN_STAGING` | 0 | 52,349 | `decoded` | `no-config` |
+| `RAILWAY_TOKEN_PRODUCTION` | 0 | 36,979 | `decoded` | `no-config` |
+
+That closes one line of the support question and opens another.
+
+**Closed:** the plain read is not a standing F2 path. Six staging dispatches died
+0.3 s into exactly this call on 2026-11-22 (job `137230172408`), and none of them
+reproduced here — with the same credential class, the same binary, the same
+runner image. So the decode refusal is **time-windowed** rather than a property of
+staging's environment payload, which is how episode 17 already described the
+upload path. The F2 census in this file is unchanged: staging legs still refuse
+`railway up` 9/9 per attempt.
+
+**Opened:** the credential answer. Episode 18's closing paragraph rested on
+"the mutation lane is reachable only from the owner's session because of the
+credential-class answer". The class answer was built from twelve curl samples in
+which `project(id)` and `serviceInstance` were refused identically by all three
+project tokens *and* by the token-less control. Tonight's table shows those same
+tokens decoding a 43–52 KB status body, so "project tokens cannot read the graph"
+was never supported by that data — only "project tokens are not answered by these
+two fields on this surface".
+
+Two clients, one document, is what separates them, so this PR adds the second
+client rather than a new argument: four `PROBE_TRANSPORT=cli` cells that send the
+sampler's own documents through `railway api`, plus
+`scripts/ci/f2-transport-verdict.py` to compare the answers per credential. Its
+reading table is in `docs/ops/railway-f2-token-probe.md`; the short version is
+that refused-on-both keeps the class story alive (now field-scoped), while
+refused-on-curl-and-`ok`-on-cli retires it and re-opens the mutation lane for CI.
+
+Measured before writing a word of that, because each one would have silently
+produced a false verdict:
+
+- `Authorization: Bearer` **is** the header backboard honours. Same document, same
+  endpoint, owner's CLI credential: Bearer returned `project.name =
+  spotlight-platform`, while `X-Railway-Token` and no credential at all both
+  returned `Not Authorized` at HTTP 200. (Without a curl-like `User-Agent` all
+  four variants answer `HTTP 403` with 17 non-JSON bytes — an edge refusal, not a
+  token statement. That dead end is worth recording so nobody reads it as scope.)
+  So the curl sampler is not a broken instrument for credentials that can use it,
+  and the runner's refusals are about the tokens — the open question is only which
+  kind of "about".
+- `railway api` appends a sentence to the body on non-200 responses, which makes
+  the body unparseable and would have classified a refused credential as a
+  transport fault; the cli branch now keeps only line 1 and passes
+  `--allow-errors`.
+- `f2-status-probe.sh` printed the version the workflow *pinned* rather than the
+  version it had just measured, in a block whose comment promised the opposite.
+  The cell now says `cli=<measured> pin=<requested>` and caveats a mismatch — a
+  stub run of the probe against a fake `railway 9.9.9` is part of the offline
+  suite, which is how the bug was found at all.
+
+**No deployment, secret, or workflow behaviour changed in this episode.** The
+cells are read-only (`PROBE_MODE` is a literal in the YAML, the file has no
+`inputs:` block), and the answer they will produce decides whether the next change
+belongs in `release.yml` or in a Railway support reply.
+
+## Episode 20 — 2026-11-23 12:36-12:57Z: F2 reproduced on the train that carried the status probe
+
+Run `45171028615` (push-triggered at 12:05:36Z, head `d5631441510aaaa27fa28993b36dfa364fc62fc7`
+— PR #1155, the four status cells) is the plainest F2 demonstration in this file,
+because its own gate and development arms succeeded minutes before the refusals:
+`release gate` green 12:05:39-12:36:00Z, all three `deploy Development (…)` legs
+green (12:36:03-12:39:50Z), `migrate staging database` green (12:36:03-12:36:31Z).
+Then the three staging legs of the same commit, same runners, same binary, same
+credential class:
+
+| leg | job | first → last refusal | span | `Failed to fetch` | decode lines | retry notices | GnuTLS | trial | `Indexing` | `Uploading` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `frontend-admin` | `137696986827` | 12:36:45.088 → 12:57:39.990 | 1,254.9 s | 9 | 18 | 8 | 0 | 0 | 0 | 0 |
+| `backend` | `137696987689` | 12:36:46.079 → 12:54:44.230 | 1,078.2 s | 9 | 18 | 8 | 0 | 0 | 0 | 0 |
+| `frontend-web` | `137696986800` | 12:36:53.212 → 12:55:11.882 | 1,098.7 s | 9 | 18 | 8 | 0 | 0 | 0 | 0 |
+
+Nine attempts per leg, the Episode 17 ladder, and the refusal is still the first
+network call: zero `Indexing...`, zero `Uploading...`, zero byte counts. The
+ladder spans its designed 900-1,350 s window and the fault is still there at the
+end of it, so the window reading from Episode 19 cannot be stretched over a
+staging leg either.
+
+`deploy Staging (…)` failing is what skips `smoke Staging` → `migrate production
+database` → `deploy Production (…)` → `smoke Production`; all four were `skipped`,
+and the run concluded `failure`. **Zero staging deployment rows were created in
+that window** — see Episode 21's row diff, which is the cheap live tell.
+
+## Episode 21 — 2026-11-23 13:42-15:17Z: nine legs, twenty-seven refusals, zero rows — and the same commit reaches staging by mutation 27 minutes later
+
+Two more trains of the same hour reproduce the identical signature, so this is no
+longer a sample of one. Both are push trains whose gate and development arms and
+`migrate staging database` all passed:
+
+| run | head | leg | job | first → last refusal | span | FTF / decode / notices | GnuTLS / trial / Indexing / Uploading |
+|---|---|---|---|---|---|---|---|
+| `45179479514` | `0329a903a…` | `backend` | `137733900111` | 13:43:10.529 → 14:02:07.234 | 1,136.7 s | 9 / 18 / 8 | 0 / 0 / 0 / 0 |
+| `45179479514` | `0329a903a…` | `frontend-web` | `137733899932` | 13:43:15.241 → 14:01:55.559 | 1,120.3 s | 9 / 18 / 8 | 0 / 0 / 0 / 0 |
+| `45179479514` | `0329a903a…` | `frontend-admin` | `137733900558` | 13:43:15.800 → 14:01:18.240 | 1,082.4 s | 9 / 18 / 8 | 0 / 0 / 0 / 0 |
+| `45194518587` | `09921c258…` | `backend` | `137780874302` | 14:59:13.707 → 15:16:32.647 | 1,038.9 s | 9 / 18 / 8 | 0 / 0 / 0 / 0 |
+| `45194518587` | `09921c258…` | `frontend-web` | `137780874224` | 14:59:14.291 → 15:17:01.636 | 1,067.3 s | 9 / 18 / 8 | 0 / 0 / 0 / 0 |
+| `45194518587` | `09921c258…` | `frontend-admin` | `137780874613` | 14:59:16.043 → 15:16:46.663 | 1,050.6 s | 9 / 18 / 8 | 0 / 0 / 0 / 0 |
+
+Three trains × three legs × nine attempts = **27 refusals in the 12:36:45-15:17:01Z
+band**, and the row history says what that costs. `railway deployment list
+--service <n> --environment staging --project e7dca861-… --limit 30` filtered to
+2026-11-23 returns **three rows in total** — one per service — and not one of them
+falls inside any leg window:
+
+| service | rows on 2026-11-23 | created | by |
+|---|---|---|---|
+| `backend` | `d1fb169d` (REMOVED), `2df11e51` (SUCCESS) | 14:27:13.595Z, 14:29:10.823Z | mutation |
+| `frontend-web` | `d7abcc2e` (SUCCESS) | 14:29:24.779Z | mutation |
+| `frontend-admin` | `6e39f119` (SUCCESS) | 14:29:38.077Z | mutation |
+
+Every one of those four rows carries `meta.reason = "deploy"`, `meta.cliMessage =
+null` and a `meta.commitHash` — the mutation signature. Upload rows look
+different (`meta.cliMessage = <sha>`), and no upload row exists for staging on
+this date at all. So: **27 refused uploads mint zero rows; 4 mutations mint 4 rows
+and deploy three services in 28 seconds.** That asymmetry is the strongest single
+fact in this pack, because it locates the fault inside the upload-initiate path
+rather than in the environment, the service, the plan, the archive or the network.
+
+**The write cell answered in the same hour, and it answered `yes`.** Run
+`45194092365` (`ci-railway-token-class.yml` dispatched on `d91a6e2e9` at 14:25:44Z,
+job `compare` = `137759803757`) checked `write_cell` with `deploy_sha = df6676406`
+— the sha staging already served, so an authorized call could not change the
+running tree:
+
+```
+14:27:12.918Z --- cell 3: the missing cell — project token x serviceInstanceDeploy(commitSha:)
+14:27:14.200Z {"data":{"serviceInstanceDeploy":true}}
+14:27:14.216Z PROBE_CELL mutation=accepted (http=cli-transport) sha=df6676406
+14:27:29.777Z   [+15s] row=d1fb169d status=BUILDING isNew=true read=ok
+14:27:45.405Z   [+30s] row=d1fb169d status=SUCCESS isNew=true read=ok
+14:27:45.438Z PROBE_VERDICT[backend]=project-token-can-deploy
+```
+
+CI's own `RAILWAY_TOKEN_STAGING` therefore resolves staging's deployment target and
+deploys it, with no upload — the reading table's `project-token-can-deploy` row
+says propose the `release.yml` swap, and Episode 21 is where that happens. Two
+traps worth recording from the same log: at 14:27:03.450Z the run's **curl** branch
+still printed `Verdict: CLASS`, four seconds before its own **cli** branch produced
+the deploy above, so a summary line inherited from the retired sampler must never
+be read as this run's answer; and the same run's read-only cells only resolved
+`serviceInstance` for the staging token — development's and production's tokens
+stay refused that field, so the scope is per-token and the swap is staging-only.
+
+**What we changed as a result (this is ours, not yours).** The three
+`deploy Staging (…)` legs no longer call `railway up`. They call
+`serviceInstanceDeploy(serviceId, environmentId, commitSha)` for the same three
+services against environment `6b5f27a3-a290-4574-a977-363eb21d43ad`, and the leg is
+**not** judged on the `true` return: `scripts/ci/staging-deploy-watch.py` decides
+`deployed` / `build-failed` / `no-new-row` / `other-commit` / `rows-unparseable`
+from the row list, because Episode 18 measured a `true` that created nothing on a
+git-less service, and a short sha created a `FAILED` row for a commit that does not
+exist. A row is only credited when it was **created after this leg fired** (the leg
+stamps `STARTED_AT` between the baseline read and the mutation): `release.yml` has
+no workflow-level concurrency and two trains on one sha have been seen, so another
+train's — or a re-run's — SUCCESS row names this very commit, is not the baseline,
+and would read `deployed` for a mutation that minted nothing. The cutoff's own
+second counts as ours, because a fast edge can create our row inside it; a row with
+an unrecognised timestamp is never filtered, and over-filtering lands on
+`mutation-is-noop` — a loud red, never a green.
+`deploy Development (…)` and `deploy Production (…)` still upload; production
+is untouched by this and its `frontend-admin` remains a git-less service where the
+mutation is a silent no-op. The behaviour is pinned offline by
+`scripts/ci/test-staging-deploy-watch.sh` (98 checks, and mutation-proven: deleting
+the filter in the classifier turns 7 of them red, deleting the argument in the leg
+turns 3 red — including the leg scenario that would otherwise exit 0 on another
+train's row) wired into `ci.yml`.
+
+**Served state read back after all of it** (`serviceInstance.latestDeployment`,
+not inferred from a run conclusion): development `backend`, `frontend-web` and
+`frontend-admin` all at `09921c258…` (rows 14:58:40-14:58:42Z, `SUCCESS`); staging
+all three at `0329a903a…` (14:29:10 / 14:29:24 / 14:29:38Z, `SUCCESS`); production
+`backend` `e43c64557…` (2026-11-21T23:32:45Z), `frontend-web` `f3407986d…`
+(12:51:27Z), `frontend-admin` `528382b26…` (2026-11-22T10:55:27Z). Three other runs
+in this window conclude `success` (`45184035823` verdict `noop_docs_only`,
+`45193856472` and `45176930855` both `superseded`) with every deploy leg `skipped`,
+which is the standing reason a green Release is not evidence of a deploy.
+
+**Pull list now — three refs, one environment, 27 refused requests:**
+
+- environment `6b5f27a3-a290-4574-a977-363eb21d43ad`, ref `d5631441510aaaa27fa28993b36dfa364fc62fc7`
+  — first refusals 12:36:45.088Z (`frontend-admin`), 12:36:46.079Z (`backend`), 12:36:53.212Z (`frontend-web`)
+- ref `0329a903a5ffccc96e8b080f9467f62fe185e32b` — 13:43:10.529Z (`backend`), 13:43:15.241Z (`frontend-web`), 13:43:15.800Z (`frontend-admin`)
+- ref `09921c258f4d044c3cc5443efa8776252a84243b` — 14:59:13.707Z (`backend`), 14:59:14.291Z (`frontend-web`), 14:59:16.043Z (`frontend-admin`)
+
+Each leg retried nine times across ~1,040-1,255 s and was refused every time, with
+`project.id = e7dca861-3667-4d9a-8090-6d2f4d179ec2` and the same
+`@railway/cli` upload path in all three. Meanwhile `serviceInstanceDeploy` with a
+commit sha deployed the *same three staging services* to `0329a903a…` in 28 seconds
+and produced the rows above. So the question for Railway stays exactly the one
+Episode 15 narrowed it to — **the status and body of the request that obtains the
+upload destination for this environment** — and Episode 21 adds the strongest form
+of the control: the environment is deployable, the services are deployable, the
+token is authorized to deploy them, and only the upload-destination call refuses.
+
+## Episode 22 — 2026-11-23 18:33Z and 2026-11-24 00:10Z: the swap's own first two trains died in 13-22 s, and the refusal was our read
+
+The fast leg is not F2. Two trains after Episode 21's swap reproduce a signature
+that has never appeared in this file, and it is worth putting beside the F2
+signature precisely because from the run page the two look alike — three red
+staging legs and a skipped production:
+
+| run | head | leg | job | window | length | `Failed to fetch` | decode lines | rows minted |
+|---|---|---|---|---|---|---|---|---|
+| `45234100845` | `dda9d2569…` (the swap) | `frontend-web` | `137920169670` | 18:32:56 → 18:33:13Z | 17 s | 0 | 0 | 0 |
+| `45234100845` | `dda9d2569…` | `frontend-admin` | `137920169677` | 18:32:56 → 18:33:14Z | 18 s | 0 | 0 | 0 |
+| `45234100845` | `dda9d2569…` | `backend` | `137920170069` | 18:32:57 → 18:33:19Z | 22 s | 0 | 0 | 0 |
+| `45289639755` | `b215276b5…` | `frontend-web` | `138107532949` | 00:10:28 → 00:10:41Z | 13 s | 0 | 0 | 0 |
+| `45289639755` | `b215276b5…` | `frontend-admin` | `138107533062` | 00:10:28 → 00:10:41Z | 13 s | 0 | 0 | 0 |
+| `45289639755` | `b215276b5…` | `backend` | `138107533199` | 00:10:29 → 00:10:46Z | 17 s | 0 | 0 | 0 |
+
+F2 is ~1,050 s, nine refusals, eighteen decode lines, eight retry notices. These
+legs are 13-22 s, and the whole `deploy Staging (backend)` log of the first train
+is 14,745 bytes whose last two content lines are
+
+```
+2026-11-23T18:33:15.5987956Z === deploying backend to staging (dda9d2569d5cae25b6fd4e2cb5014330af00dfc3) ===
+2026-11-23T18:33:16.7078078Z ##[error]Process completed with exit code 1.
+```
+
+One point one one seconds, and nothing between them. No `baseline row before the
+mutation:`, no `mutation fired at:`, no `waiting for`, no `::error::` — not one of
+the three sentences the mutation branch writes. The gate verdict was `proceed`
+(both trains' `deploy Development (…)` and `smoke Development (…)` legs ran and
+passed), so this is a release chain stopped by a leg that could not explain
+itself.
+
+**Root cause, and it is ours.** The swap aimed the *deploy* with ids
+(`serviceId` / `environmentId`) but left both *reads* — the pre-mutation baseline
+row and every watch page — on `railway deployment list --service <name>
+--environment <name>`, the one CLI call in the leg that asks Railway to resolve
+names. That call was written as `… 2>/dev/null | jq …` inside
+`BASELINE_ROW="$(…)"`. With `set -euo pipefail`, a non-zero CLI exit travels
+through `pipefail`, the command substitution returns non-zero, and `set -e` ends
+the script at that line — so the guard two lines below it,
+`[ -n "$BASELINE_ROW" ] || { echo "::error::could not read the pre-mutation …"; exit 1; }`
+which exists for exactly this condition, was unreachable. The `2>/dev/null` was
+what Railway's own sentence died in. That is why the log stops at the header: the
+leg was not refusing, it was aborting before it could refuse.
+
+**What was checked before concluding that**, because "the read is broken" is the
+same shape as "the token is broken" and this file has already been fooled once by
+reading one transport as another's answer:
+
+- The development legs of the *same commit* in the *same train* read their rows
+  with the same name-resolved command — upload mode's poll is
+  `railway deployment list --service <name> --environment <name> --project <id>
+  --limit 10 --json`, which differs from the staging baseline call only in the
+  limit and in the `2>/dev/null` — and it worked there: job `137919832426`
+  (backend, train `45234100845`) polled **13** times, 18:32:41 → 18:36:01Z, and
+  ended `=== backend/development deployed dda9d2569d… ===`; job `138112622097`
+  (backend, train `45289639755`) polled **11** times, 00:10:12 → 00:13:02Z, and
+  ended `=== backend/development deployed b215276b5… ===`. The statuses those
+  polls saw are `INITIALIZING` then `BUILDING` — the leg's own terminal line is
+  the `deployed` sentence, so this file should not claim a `DEPLOYING` row it did
+  not read. Either way: the flags, the pinned `@railway/cli@5.40.1`, `jq` and the
+  polling budget were all fine on that runner class, in that train.
+- The same command line, run locally against the real project, exits 0 on both
+  5.40.1 and 5.71.0 and returns row `2df11e51` — so it is not a usage error either,
+  and the difference left is the credential and the call path, not the syntax.
+- The environment name is unambiguous: the project has exactly one `staging`
+  (`6b5f27a3…`), and `staging-Old` (`acf4b4fe…`) is a separate name, so no prefix
+  collision explains it. (Checked because a two-answer question is what the decoy
+  id exists to make dangerous.)
+- `railway api` — the transport the mutation itself uses, and the one Episode 21
+  measured against `RAILWAY_TOKEN_STAGING` in a runner — answers
+  `deployments(input:{projectId,serviceId,environmentId})` with the same rows,
+  newest-first, carrying `id`, `status`, `createdAt` and a flat `meta`.
+
+**Why the name-resolved call refuses in that job is deliberately not settled
+here.** The leg no longer depends on the answer, and inventing one (token scope,
+link context, the `staging-Old` decoy) would put an unmeasured claim in the place
+where the measured defect lives. What is recorded is the shape: with this
+credential, in a mutation job, that call exits non-zero, and the code that
+surrounded it turned a loud condition into a silent one.
+
+**What changed.** Mutation mode now reads with ids, through the same document
+family as the mutation: `rows_page_api <limit>` sends
+`query($in:DeploymentListInput!,$n:Int){ deployments(input:$in, first:$n){ edges{
+node{ id status createdAt meta } } } }` and converts the connection to a bare JSON
+array, so `scripts/ci/staging-deploy-watch.py` — the decision rule, its 98 pinned
+classifier checks, and every fixture — is untouched by the transport change. Both
+the baseline and the watch page come from it, and the pin is now explicit: a
+mutation leg must not ask the CLI to resolve a name at all. A failed read prints
+`row page read failed (rc=N) service=… env=… :: <the CLI's own sentence>` **on
+stderr**, redacted, and hands back `[]` so the pre-existing guard ends the leg —
+the reader can no longer abort the script, and the reason can no longer vanish.
+Upload mode is unchanged: development and production still name-resolve, because
+that is the path that works and this episode must not disturb it.
+
+**The stderr detail is a defect we found with the test, not before it.** The first
+version printed that diagnostic to stdout. `baseline_row_id` pipes its reader into
+`jq`, so the sentence became the page, jq died on
+`parse error: Invalid numeric literal at line 1, column 6`, and the leg exited 5 —
+the silent death, just wearing a different number. Reversed, the suite says so.
+
+**Verification.** `scripts/ci/test-staging-deploy-watch.sh` grows from 98 checks
+over 11 legs to **115 checks over 13 legs** (measured 112 s on a laptop
+2026-11-24), and the two new legs are the two failure modes above: `list-refused`
+makes the name-resolved reader fail and requires the leg to deploy anyway and to
+never have called that reader; `rows-refused` removes the id-addressed reader too
+and requires a red leg that names the failure, never a bare exit. Both were
+written red against the unpatched script first (9 checks failing, every pre-existing
+check passing). Two mutants prove the pins: putting the baseline read back on
+`railway deployment list` reddens 8 checks; printing the diagnostic to stdout
+instead of stderr reddens 4. Each mutant was applied by `cp` to a /tmp copy, then
+restored and the restore asserted by sha256 against that pre-mutation copy — so
+the proof is the equality, not a hash worth quoting after the file changes. (The
+first draft of this episode pinned the restore to a literal sha256, `eb6855ff…`;
+a comment-only edit to that same script later moved it to `4ff4a2e3…`, which is
+exactly why a restore assertion belongs in this file as an assertion and not as a
+permanent file hash.)
+The five sibling Railway suites — `test-railway-deploy-retry`,
+`test-railway-deploy-archive`, `test-railway-root-shape`,
+`test-railway-status-guard`, `test-f2-token-probe` — all still pass, which is how
+this change is not allowed to touch upload mode.
+
+**Served state when this was written** (`serviceInstance.latestDeployment`, read at
+2026-11-24 ~00:20Z, not inferred from a run conclusion): development `backend`
+`430b717d`, `frontend-web` `e28b1757`, `frontend-admin` `fb21b7d4`, all `SUCCESS`
+at 00:10:09-00:10:12Z naming `b215276b5…` (`meta.cliMessage` set — an upload).
+Staging is **unchanged since Episode 21**: `2df11e51` / `d7abcc2e` / `6e39f119`,
+all still `0329a903a…` at 14:29Z on 2026-11-23 — neither post-swap commit ever
+reached it, because both trains died in the read. Production is untouched:
+`d4bf7af7` `e43c64557…` (backend, 11-21), `531cfcdc` `f3407986d…` (frontend-web,
+11-23 12:51Z), `33254f63` `528382b26…` (frontend-admin, 11-22 10:55Z).
+
+**Consequence for the next reader.** A `deploy Staging` leg under half a minute is
+now a third signature to sort out, and it is separable from F2 on the spot: F2
+prints nine `Failed to fetch` lines and mints no row; ours printed *nothing* and
+minted no row either. The cheap live tell still works — zero staging rows in the
+leg window — and the new tell is the log's last line: if the leg ends one second
+after its own `=== deploying … ===` header, read `railway-deploy.sh`, not
+Railway's status page. The fix only bites from the train whose gate sha contains
+it, so the first train to prove it is the one that follows this commit.
+
+## Episode 23 — 2026-11-24 01:51Z: that first train proves the loud guard, and the new reader is itself refused — HTTP 503
+
+> **[Corrected by Episode 24 — the causal claim, not the observations.]** This
+> episode concludes that `deployments(input:)` is the document the edge drops for
+> the staging token in CI and that `serviceInstance{latestDeployment}` is the
+> readable replacement. Train `45315222075` ran the replacement and was refused
+> nine times in thirty-six seconds with the same HTTP 503 sentence, and the same
+> document answered in a probe job forty seconds later. The refusal is therefore
+> not the document. Everything else in this episode — the three refused legs, the
+> loud stderr line, the guard firing, zero mutations, zero new rows — stands as
+> measured.
+
+The train that follows Episode 22 is `45302515868`, head
+`8bdc29b9cbf8069aa611297861b94bd11c3649ee` (PR #1163), `push`, created 01:06:42Z,
+completed `failure` at 01:53:38Z. Its gate sha contains `368e4028f`, so this is
+the first run in which the id-addressed reader actually decides what staging does:
+
+| job | leg | conclusion | window / terminal evidence |
+|---|---|---|---|
+| `138138489455` | `release gate (CI green for this commit)` | success | 01:07:53 → 01:50:05Z, verdict `proceed` |
+| `138156270449` | `deploy Development (backend)` | success | `=== backend/development deployed 8bdc29b9c… ===` at 01:53:15.093442Z |
+| `138156270463` | `deploy Development (frontend-admin)` | success | `=== frontend-admin/development deployed 8bdc29b9c… ===` at 01:50:56.091663Z |
+| `138156270599` | `deploy Development (frontend-web)` | success | `=== frontend-web/development deployed 8bdc29b9c… ===` at 01:52:29.237060Z |
+| — | `smoke Development (…)` ×3 | success | all three, after their legs |
+| `138156270776` | `migrate staging database / supabase db push (staging)` | success | 01:50:09 → 01:50:52Z |
+| `138156575365` | `deploy Staging (backend)` | **failure** | 01:51:14.136781Z header → 01:51:14.678153Z exit 1 (0.54 s) |
+| `138156575373` | `deploy Staging (frontend-admin)` | **failure** | 01:51:07.276338Z → 01:51:08.069273Z (0.79 s) |
+| `138156575394` | `deploy Staging (frontend-web)` | **failure** | 01:51:06.840444Z → 01:51:07.664818Z (0.82 s) |
+| `138156746680` / `138156746118` / `138156747315` / `138156747204` | `smoke Staging`, `migrate production`, `deploy Production`, `smoke Production` | skipped | the chain Episode 18 documented |
+
+**Episode 22's fix is proven by this table, and it is not the episode's news.** The
+silent 13–22 s abort is gone. Each staging leg now ends with the platform's own
+sentence on stderr, redacted, followed by the guard that Episode 22 said was
+unreachable — verbatim, backend, job `138156575365`:
+
+```
+2026-11-24T01:51:14.1367816Z === deploying backend to staging (8bdc29b9cbf8069aa611297861b94bd11c3649ee) ===
+2026-11-24T01:51:14.6751910Z   row page read failed (rc=1) service=70de07d8-c058-4221-b645-61c4f1ac7aa5 env=6b5f27a3-a290-4574-a977-363eb21d43ad :: unconditional drop overloadRailway API request failed with HTTP 503 Service Unavailable 
+2026-11-24T01:51:14.6774490Z ##[error]could not read the pre-mutation backend/staging deployment row; refusing to guess at 'new row'
+2026-11-24T01:51:14.6781537Z ##[error]Process completed with exit code 1.
+```
+
+The two sentences are glued because the diagnostic prints the response body and the
+CLI's trailing lines in one field; nothing was lost. The three service ids the legs
+aimed are all in the three logs — backend `70de07d8-c058-4221-b645-61c4f1ac7aa5`,
+frontend-admin `c4f1086e-0a2d-4367-b503-209c14a2ce6f` (refused 01:51:08.065320Z),
+frontend-web `dda6372c-0bb7-4014-a2b1-aa646c11a281` (01:51:07.655981Z) — one
+environment id `6b5f27a3…`, one refusal per leg, zero retries, zero mutations
+fired, and **zero new staging rows**, which remains the cheapest live tell.
+
+**Root cause, and it is still ours.** *[Episode 24 measured this claim and
+falsified it: the substituted document is refused exactly the same way in a
+release job, so the document was never the variable.]* The document Episode 22 chose —
+`deployments(input:{projectId,serviceId,environmentId})`, i.e.
+`DeploymentListInput` — was refused by the edge with HTTP 503 `unconditional drop
+overload` for the staging project token in a runner, in all three legs. It is
+refused the same way for all three service ids, so the variable is not which
+service was asked. Episode 22 adopted it on two measurements: locally it exits 0 and
+returns the rows, and `railway api` answers it *in general*. Neither measurement was
+this-credential-in-a-CI-runner, which is the one place the leg lives. The file
+already had the rule — read the transport your credential is measured against —
+and the mistake was applying it to the transport while leaving the *document*
+unproven.
+
+**What this evidence does *not* establish, stated before the fix rather than
+after.** Two things, and both survive the paragraph above:
+
+- The connection is not universally refused from CI. `docs/ops/
+  admin-console-production-errors-2026-11-20.md` ("Reconciling with #1150's CLASS
+  verdict") records the **production** project token reading
+  `deployments(input:{serviceId,environmentId})` from a runner at 12:26:29Z. So the
+  honest claim is about this document **with this credential**, not about the
+  document.
+- One sample per leg separates "the staging token cannot read this document" from
+  "the edge dropped it for eight seconds" — it does not choose between them. There
+  was no retry in the pre-fix code, so the legs took the first drop as terminal.
+  The 01:55:21Z cell below proves the *replacement* document answers minutes later,
+  which is why it is the right thing to read; it does not prove the connection is
+  permanently closed to this token.
+
+That ambiguity is the second half of the fix: the leg now reads the document that
+has been measured answering with this credential **and** it retries a bounded
+number of times, so a next train can tell the two readings apart instead of
+guessing from one refusal.
+
+**Consequence beyond this lane, noted not fixed.** `ops-railway-upload.yml`'s
+"Record what is serving now (the rollback handle)" step is the same document under
+`set -euo pipefail`, with no retry and no fallback: a 503 there aborts the manual
+upload before it records the rollback handle. It uses whichever
+`RAILWAY_TOKEN_{DEVELOPMENT,STAGING,PRODUCTION}` the operator picked, so the
+production leg is measured fine and the staging leg is where this refusal would
+land. Changing it is outside this task, and the next person who dispatches a
+staging upload should expect that step to be the one that fails.
+
+**The discriminator ran four minutes later, on the same runner class, with the same
+three secrets.** Run `45308408960`, job `138157787978`
+(`ci-railway-token-class.yml`, `transport=cli`, steps in the file's order: control,
+development, staging, production). Its `serviceInstance(serviceId, environmentId){
+latestDeployment }` cell:
+
+| step | cell 1 (`project` class read) | cell 2 (the staging row) |
+|---|---|---|
+| control, no credential | `auth=token-rejected (http=cli-transport)` 01:55:19.955001Z | `baseline=token-rejected row= status=` 01:55:20.436847Z |
+| development token | `auth=ok (http=cli-transport)` 01:55:20.818617Z | `baseline=token-rejected row= status=` 01:55:21.193680Z |
+| **staging token** | `auth=ok (http=cli-transport)` 01:55:21.566801Z | **`baseline=ok row=2df11e51 status=SUCCESS`** 01:55:21.927746Z |
+| production token | `auth=ok (http=cli-transport)` 01:55:22.307711Z | `baseline=token-rejected row= status=` 01:55:22.673901Z |
+
+Row `2df11e51` is the staging backend row this file has named since Episode 21, so
+the cell says the staging credential resolves the newest staging deployment row at
+01:55:21Z — 247 s after the backend leg was refused that same row list with 503.
+The other two refusals are the environment diagonal, not a fault. So: the
+credential, the ids, the pinned CLI and the transport are all sound; the
+`deployments(input:)` connection is what the edge drops for this token in CI.
+
+**Read the same run's own `Verdict: CLASS` line with care.** At 01:55:16.360138Z the
+step summary of this very job asserts *"No project token reads the deployment
+graph, so `serviceInstanceDeploy` is unreachable from CI whatever the secret value
+says"* — from twelve curl samples, every one `PROBE_CELL baseline=token-rejected
+(http=200)` between 01:54:12 and 01:55:11Z. That reading was retired in Episode 21
+(run `45179580758`) for exactly this reason: it measures the sampler, not the
+credential. Five seconds later the same job's cli-transport table answers the same
+document `ok`. Both lines are in one log; only one of them is evidence, and the
+cheap way to tell which is to look at `PROBE_TRANSPORT` in the step's env block.
+
+**What changed.** Mutation mode reads rows through that measured document and
+nothing else. `scripts/ci/railway-deploy.sh` now carries the probe's `DOC_ROW` —
+the `serviceInstance(serviceId:$s, environmentId:$e){ latestDeployment{ id
+createdAt status meta } }` query — and `latest_row_api` maps its single object to a
+bare one-element JSON array (`[]` when the read fails), so
+`scripts/ci/staging-deploy-watch.py`, its classifier checks and every fixture stay
+untouched. Both the baseline and every watch page come from it; the name-resolved
+CLI reader and the connection document are gone from mutation mode, pinned as
+absent. The row document is byte-pinned against `scripts/ci/f2-token-probe.sh`'s
+own `DOC_ROW` (a check diffs the two `^DOC_ROW=` lines), so the leg cannot drift
+from the thing that was measured. Baseline reads get a bounded ladder —
+`ROW_RETRY_ATTEMPTS=3`, `ROW_RETRY_BASE_DELAY_S=15` — because a 503 is a *drop*, and
+the failure the ladder protects against is a leg that gives up on one transient
+edge refusal before the mutation is ever aimed. Upload mode is untouched again, for
+the same reason as Episode 22: development's uploads worked in this train.
+
+**What the single-row page costs, said plainly.** The watch used to be handed ten
+rows and now gets the newest one. Classification survives, because `mine()` only
+ever acts on a row that names this sha and `newest_other()` only runs when nothing
+does. What is lost: if another train's row becomes newest while ours is building —
+`release.yml` still has no workflow-level concurrency — our leg reads
+`row-naming-another-commit` and goes red on a deploy that did happen. That is the
+safe direction (it cannot read green for a deploy that did not happen) and the
+`row under watch (id / status / commit / which)` line prints the row it dismissed,
+so the other train is visible in the log rather than inferred later. A read that
+fails during the watch is not fatal either: `no-new-row` falls in the keep-waiting
+arm, so each refused page costs one 15 s slot; only a budget that expires on
+`no-new-row` prints `mutation-is-noop`, and that word then describes our blind read
+rather than Railway's no-op — the leg is red either way, and the refusal lines
+above it say which.
+
+**Not yet measured, and deliberately not claimed.** The staging cell that came back
+`ok` was for `PROBE_SERVICE_NAME: backend`, i.e. service id `70de07d8…`. The
+frontend-admin and frontend-web ids ride the same document with a different `$s`.
+The 503 was identical across all three on the connection, which is why the
+difference is expected to be the document rather than the service — but the honest
+statement is that two of the three ids are read on an extrapolation, and the loud
+stderr line names the id so the next train can say which case it is.
+
+**Verification.** `scripts/ci/test-staging-deploy-watch.sh` grows to **143 checks
+over 15 legs** (measured 11 s on a laptop on 2026-11-24, three runs: 10, 11, 11 s —
+Episode 22's "112 s for 115 checks" was never re-measured, and the honest
+re-measurement of the enlarged suite is what that line should have said). Written
+red first: 21 of the 143 failed against the unpatched script, including every
+transport pin. One pre-fix green is worth recording as a defect in the *old* test,
+not the old code: the new `latest-errors` leg — an HTTP 200 body carrying `errors[]`
+— passed before the fix, which is how a refused read used to become an empty page
+and then a blank slate. Added legs and pins: `latest-errors`, `baseline-5xx` (green
+after two attempts, `rows1` counted twice, the refusal still in the log, and the
+baseline printed as the pre-existing row id), `rows-refused` rewritten to require
+exactly three baseline attempts and no fallback to either retired reader, "no
+`deployments(input:)` connection call at all" for the leg and for every leg in the
+suite, "the row read carried the service id, not the name", "the row read asked for
+no service NAME", one-and-only-one `railway api "$DOC_ROW"` call site, and the poll
+reading the newest row through the measured reader. Three mutants, each applied by
+`cp` to a /tmp copy and restored with the restore asserted by sha256 against that
+pre-mutation copy: dropping the `errors[]` shape check reddens **1** check, removing
+the retry ladder reddens **7**, sending the diagnostic to stdout instead of stderr
+reddens **6** (the Episode 22 failure mode, still caught). Final pristine sha256 of
+the script at the time of writing:
+`d88afb4332c730490d3668333d501f8bbc5f4ff7f3c0732869909738d0e9eab5` — quoted as a
+checkpoint, not as a landing test; six sibling Railway suites pass.
+
+**Served state when this was written.** Development serves `8bdc29b9c` on all three
+services, read from the train's own terminal lines above — those lines are the
+leg's measured evidence, and per Episode 22 this file does not dress a `DEPLOYING`
+row as a served one. Staging is **unchanged for a third train running**:
+`2df11e51` / `d7abcc2e` / `6e39f119`, all still `0329a903a…` since 2026-11-23T14:29Z
+(the 01:55:21Z cell above re-reads `2df11e51` live, so this is an observation, not a
+carry-over). Production is untouched: `e43c64557…` (backend), `f3407986d…`
+(frontend-web), `528382b26…` (frontend-admin).
+
+**Consequence for the next reader.** There are now four things that can kill a
+`deploy Staging` leg, and the log says which in its own words: ~1,050 s with nine
+`Failed to fetch` = F2; under 25 s and *nothing* printed = the Episode 22 silent
+abort; under 25 s printing `could not read the pre-mutation … row` with no HTTP
+line = a reader that exits non-zero; **under 25 s printing `HTTP 503 … unconditional
+drop overload` = the edge dropping the document, which is this episode.** The rule
+this arc converges on, stated once for whoever edits this leg next: *a mutation leg
+may read only through a document that has been measured answering in a runner, with
+the credential that leg uses. A local exit 0 is not that measurement, and a verdict
+line from a sampler is not either.* *[Episode 24 keeps this rule and sharpens its
+object: the measurement has to be taken in the same **command shape** as the leg that
+relies on it. The probe job and the release leg share the token, the pinned CLI, the
+ids, the endpoint, the runner image and this very document, and they still disagree —
+so "measured answering in a runner" was never sufficient by itself, and the shape is
+the missing term.]* The fix bites from the train whose gate sha
+contains it; the train after that one is the first that can prove staging receives
+a commit.
+
+## Episode 24 — 2026-11-24 03:24-03:31Z: the replacement document is refused as well, and a probe job answers it forty seconds later
+
+**What this episode establishes.** Episode 23's root cause — *the edge drops that
+document, so swap it for one the staging token answers* — was wrong, and train
+`45315222075` is the measurement that says so. The swap landed as PR #1165 → squash
+`342cf106d1d02716a53326c3081d8257827f28c3`, and the runner prints the head it checked
+out in each leg:
+
+```
+HEAD is now at 342cf10 ci(staging): the mutation leg reads its row through the document the staging token answers (#1165)
+```
+
+So the legs below ran the *new* reader, and the new reader was refused exactly like
+the old one:
+
+```
+03:24:32.996Z  baseline row read failed (rc=1) service=70de07d8-… env=6b5f27a3-… :: unconditional drop overloadRailway API request failed with HTTP 503 Service Unavailable
+03:24:48.614Z  baseline row read failed (rc=1) service=70de07d8-… env=6b5f27a3-… :: unconditional drop overloadRailway API request failed with HTTP 503 Service Unavailable
+03:25:04.277Z  baseline row read failed (rc=1) service=70de07d8-… env=6b5f27a3-… :: unconditional drop overloadRailway API request failed with HTTP 503 Service Unavailable
+##[error]could not read the pre-mutation backend/staging deployment row; refusing to guess at 'new row'
+##[error]Process completed with exit 1.
+```
+
+Three refusals per leg × three legs — `138193544184` (backend), `138193544286`
+(frontend-web), `138193544188` (frontend-admin), all starting inside one second
+(03:24:18/03:24:19/03:24:19Z) — nine refusals in ~36 s per leg, zero `Failed to
+fetch`, zero archive, zero upload: the loud guard from Episode 22 did its job and said
+*which* read died, and `smoke Staging` (`138193873419`) skipped, so production again
+received nothing. **The document was never the variable.**
+
+**The counter-measurement, taken forty seconds later.** Run `45319901941`
+(`ci-railway-token-class.yml`, same head `342cf106d…`, conclusion success), job
+`138195671108`:
+
+```
+03:31:15.0331185Z PROBE_CELL baseline=ok row=2df11e51 status=SUCCESS
+```
+
+`row=2df11e51` is staging's own latest deployment, so that cell read the same
+environment the leg had just failed to read. I checked the two calls are the same
+call rather than assuming it:
+
+| | release `deploy Staging` leg | probe `compare` job |
+| --- | --- | --- |
+| GraphQL document | `DOC_ROW='query($s:String!,$e:String!){ serviceInstance(serviceId:$s, environmentId:$e){ latestDeployment{ id createdAt status meta } } }'` | byte-identical string in `scripts/ci/f2-token-probe.sh:91` |
+| flags | `railway api "$DOC_ROW" --compact --allow-errors --var s=… --var e=…` | `api "$doc" --compact --allow-errors --var …` (`:159`) |
+| CLI | `@railway/cli@5.40.1` (`release.yml:397`) | `PROBE_RAILWAY_VERSION: 5.40.1`, printed 28× in the log |
+| credential | `secrets.RAILWAY_TOKEN_STAGING` (`release.yml:401`) | `secrets.RAILWAY_TOKEN_STAGING` (`ci-railway-token-class.yml`, "cli transport - staging project token") |
+| ids | service `70de07d8-…`, env `6b5f27a3-…` | `STAGING_ENV_ID` default `6b5f27a3-…` |
+| runner | `ubuntu-latest` | `ubuntu-latest` |
+| **result** | **HTTP 503 `unconditional drop overload`, 9/9** | **`baseline=ok row=2df11e51 status=SUCCESS`** |
+
+Everything I can control is equal. What is not equal is visible in the logs: the
+release job's action env blocks carry two workflow-level variables
+(`release.yml:63` and `:67`) that appear **nowhere** in the probe log —
+
+```
+03:24:20.391Z   RAILWAY_PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+03:24:20.391Z   RAILWAY_HTTP_TIMEOUT: 600
+```
+
+— and the release train issues three of these calls simultaneously while the probe
+issues one at a time. `unconditional drop overload` is a load-shedding sentence, so
+concurrency is a suspect, and `RAILWAY_HTTP_TIMEOUT: 600` (set so the 110 MB
+frontend-web archive can upload) plausibly changes how the CLI's HTTP client shapes
+the request. Those are the two remaining candidate variables; this episode does not
+pick between them, because picking requires changing one at a time in a runner, which
+is what the fix does.
+
+**Why the obvious fix is not available.** Deleting the two vars job-wide would break
+the things that need them: `scripts/ci/railway-root-shape.sh:47,55` fails without
+`RAILWAY_PROJECT` (it feeds `--var "p=$RAILWAY_PROJECT"`), and the 600 s timeout is
+the reason `railway up` can push frontend-web at all (the comment at `release.yml:64-66`).
+So the strip has to be scoped to the read, not applied to the job.
+
+**The fix in this PR — make the leg itself the experiment.** One change that
+discriminates without confounding:
+
+1. **Shape-alternating reads.** `latest_row_api` takes a shape; `baseline_row_id`
+   uses the job's own environment (`inherited`) on attempt 1 and
+   `env -u RAILWAY_PROJECT -u RAILWAY_HTTP_TIMEOUT railway` from attempt 2, and
+   `lookup` polls in whichever shape answered. The leg prints
+   `row reads run under command shape: inherited|stripped`, so the train log states
+   which shape the edge accepts — the question this episode could only ask.
+2. **The mutation fires anyway.** A refused baseline no longer aborts the leg. The
+   decision rule is frozen and unchanged; reading its code is what licenses an empty
+   baseline — `mine()` skips only `if baseline_id and r.get("id") == baseline_id`, so
+   with no id nothing is skipped and nothing is guessed; `_predates()` returns False
+   when `since_sec` is empty, and the leg always supplies a post-mutation cutoff, so
+   a pre-existing row still cannot masquerade as the new one. Two new `cell()` cases
+   pin that behaviour.
+3. **A refusal after the mutation is its own verdict.** If the post-mutation read is
+   refused the leg ends `read-refused`, red, with
+   `could not read the deployment row after the mutation (command shape: X); the
+   mutation was accepted and this leg cannot say what it did` — never a false green,
+   never a silent `no-new-row`.
+4. **`deploy-staging.strategy.max-parallel: 1`.** Removes the concurrency confound,
+   so if the stripped shape answers there is only one explanation left. Uploads are
+   unaffected (the other jobs keep their own strategies), and the three legs run in
+   ~3× the wall time — acceptable for a lane that currently deploys nothing.
+
+Firing the mutation despite a blind read is also the only way to reach the **write
+cell under release-job conditions**, which has never been measured: the 2026-11-23
+14:27Z probe (`project-token-can-deploy`) proved the staging token *can* deploy from a
+probe job; nothing has yet proved what the same mutation does inside a release leg.
+
+**Verification.** `scripts/ci/test-staging-deploy-watch.sh` now runs 171 checks, all
+green, red-first at 30 before the script changed. Six mutants each reddened the cells
+they should (9/3/3/4/6/16 checks) and every restore was asserted byte-identical by
+sha256. Four sibling Railway suites pass. The upload path is pinned untouched: a new
+source check asserts `env -u …` never wraps `railway up` (count 0) and appears at
+least twice (the two read paths), plus the `env-shape` leg — stub refuses the inherited
+shape with the real 503 sentence, leg goes red-but-fired, exactly one
+`row read failed`, zero `kind=lookup shape=inherited timeout=`.
+
+**What the next train can say.**
+- *stripped answers* → staging receives the commit; the variable is the release job's
+  env, and the follow-up is to stop inheriting those vars for the read permanently.
+- *both shapes refuse* → the variable is the job itself (the edge, the parallelism,
+  or something in the release environment not printed in the log), staging still
+  needs owner-side promotion, and I hand over the owner-run `railway up` command.
+- Either way the mutation attempt is now on the record, which is the cell this arc has
+  never been able to read.
+
+**Served as I write this** (staging project tokens, `serviceInstance.latestDeployment`,
+read at 03:31Z): development `342cf106d1…` on all three services; staging still
+`0329a903a5…` — no leg has replaced it since the 2026-11-23 14:29Z promotion;
+production `e43c64557b…` backend, `f3407986d0…` frontend-web, `528382b26a…`
+frontend-admin.
+
+**There are now five things that can kill a `deploy Staging` leg**, and the log says
+which in its own words: ~1,050 s with nine `Failed to fetch` = F2; under 25 s and
+*nothing* printed = the Episode 22 silent abort; under 25 s printing
+`could not read the pre-mutation … row` with no HTTP line = a reader that exits
+non-zero; under 25 s printing `HTTP 503 … unconditional drop overload` = the edge
+dropping the read **in this job shape** (Episodes 23 and 24); under 25 s printing
+`could not read the deployment row after the mutation` = the write was accepted and
+the leg is blind afterwards — this episode's `read-refused`.
+
+## Episode 25 — 2026-11-24 05:10-05:50Z: F2 was a variable name — the CLI reads `RAILWAY_ENV` as its OWN internal API stage
+
+**What this episode establishes.** Twenty-three episodes asked what makes
+`railway up`, `railway api` and `railway status` refuse inside a `deploy Staging` leg
+and answer outside it. The answer is one environment variable that this repo exported
+into those legs and nowhere else:
+
+```
+RAILWAY_ENV: staging            # release.yml:403 (deploy-staging), :458 (smoke-staging)
+RAILWAY_ENV: ${{ inputs.environment }}   # ops-railway-upload.yml:115, the manual lane
+```
+
+`RAILWAY_ENV` is **not** "my environment is called staging" to the Railway CLI. It is
+the CLI's own internal API-stage selector, and one value of it moves the GraphQL host.
+Measured 2026-11-24 against the pinned `@railway/cli@5.40.1` with a dead proxy, so the
+CLI prints the URL it chose without a request ever leaving the machine:
+
+```
+$ env HTTPS_PROXY=http://127.0.0.1:9 RAILWAY_ENV=staging railway api 'query($p:String!){ project(id:$p){ id } }' --var p=…
+error sending request for url (https://backboard.railway-staging.com/graphql/v2)
+
+$ env HTTPS_PROXY=http://127.0.0.1:9 railway api 'query($p:String!){ project(id:$p){ id } }' --var p=…
+error sending request for url (https://backboard.railway.com/graphql/v2)
+```
+
+Without the proxy the redirected host answers, and its answer is not JSON:
+
+```
+unconditional drop overloadRailway API request failed with HTTP 503 Service Unavailable
+```
+
+which is the sentence Episode 23 and Episode 24 recorded from the legs, verbatim
+(`… :: unconditional drop overloadRailway API request failed with HTTP 503 Service
+Unavailable`). And a command whose whole job is to *fetch and decode* a body from that
+host, given the same variable, prints the F2 sentence itself:
+
+```
+$ env RAILWAY_ENV=staging railway whoami
+Failed to fetch: error decoding response body          <-- F2, from a command with no document,
+                                                          no ids, no archive, no upload
+$ env railway whoami
+Unauthorized. Please check that your RAILWAY_TOKEN is valid …   <-- the real API, answering
+```
+
+So the two signatures that this file spent eight episodes separating — F2's
+`error decoding response body` and the legs' `HTTP 503 unconditional drop overload` —
+are the **same fault at two layers**: the 503 is what `backboard.railway-staging.com`
+sends, and "expected value at line 1 column 1" is what the CLI says when it tries to
+JSON-parse that body. Nine ladder attempts against an internal Railway stage is nine
+attempts that were never going to reach the API the credential belongs to.
+
+**The value sweep, and what it exonerates.** Same document (`project(id:)`), same
+binary, no credential at all (`RAILWAY_TOKEN=`), only `RAILWAY_ENV` varying — the
+marker of every row below is whether the *real* API answered (`Not Authorized` is an
+answer; the internal stage produces a 503 instead):
+
+| `RAILWAY_ENV` | result |
+| --- | --- |
+| unset | GraphQL answer (real API) |
+| `development` | GraphQL answer |
+| `production` | GraphQL answer |
+| `preview`, `dev`→see note, `prod`, `test`, `zzz`, `staging-Old`, `production-staging`, `""` | GraphQL answer |
+| **`staging`** | **`unconditional drop overload` / HTTP 503** |
+| **`STAGING`** | **same refusal — the match is case-insensitive** |
+
+Note: `dev` is redirected too (with the proxy dead it printed no request URL because
+the CLI short-circuits on that stage before the transport), and `staging-Old` — the
+decoy environment in this very project — is *not* redirected, which is the proof that
+this is not the CLI resolving my environment name. Three further controls, all
+measured rather than assumed:
+
+1. **The document is irrelevant.** `project(id:)`, the leg's
+   `serviceInstance(serviceId, environmentId){ latestDeployment }`, and `whoami`'s own
+   call all refuse identically under the var. Episode 23's "the edge drops *that*
+   document" is retired.
+2. **The ids are irrelevant.** Setting `RAILWAY_ENVIRONMENT_ID` to staging's real id,
+   or aiming `--var p=` at an all-zero project id, changes nothing.
+3. **`RAILWAY_API_URL` is not the lever.** Overriding it does not rescue the call —
+   and the override cell is void anyway: with a dead `RAILWAY_API_URL` and the var
+   unset the CLI still answered like the default host, so 5.40.1 does not read that
+   variable. Do not "fix" this by pointing the CLI somewhere.
+
+**Which readings this retires, in order.**
+
+- *F2 is a time window on Railway's edge* (Episodes 9-21). Replaced: it is a host
+  choice, and the window that made the sentence come and go is the availability of
+  Railway's internal staging backboard, which no amount of client-side backoff spans.
+  The retry ladder of Episode 17 is therefore not wrong, just aimed at the wrong wall —
+  and it must stay for the dev legs' genuinely transient refusals.
+- *The staging credential / token class cannot read the deployment graph*
+  (Episode 21's controls, `docs/ops/railway-f2-token-probe.md`'s CLASS detour, and
+  `docs/ops/admin-console-production-errors-2026-11-20.md`'s "the refusal follows the
+  staging credential"). Replaced by the workflow line above: that lane derived
+  `RAILWAY_ENV` from `inputs.environment`, so `environment=production` passed the
+  pre-flight at 12:26:29Z and `environment=staging` refused it six times at 13:51Z and
+  13:59Z **with the same CLI, same runner image, same document** — the asymmetry the
+  file documented as "only production legs of this lane have ever worked" is exactly
+  the one value that redirects. Corrected in place in that file.
+- *The two remaining candidates are command shape (`RAILWAY_PROJECT` +
+  `RAILWAY_HTTP_TIMEOUT`) and leg parallelism* (Episode 24). Both falsified by the
+  train that carried that episode's experiment, `45328377363` (head `85f91969b5`): the
+  leg ran alone under `max-parallel: 1`, asked in **both** shapes, and all three
+  refused — `inherited` once, `stripped` twice — and then the mutation fired and was
+  refused the same way (`mutation verdict: body-undecodable (exit 1) under command
+  shape: stripped`). Locally the redirect happens with neither var set, which is why
+  shape could never have mattered.
+- *A document measured answering in a probe job is not licensed for a release leg
+  because of the job shape* (Episode 24's closing rule, restated in the matrix). The
+  observation stood; the explanation did not. What differs between the release legs and
+  the probe jobs is that the probe workflows never export `RAILWAY_ENV` at all — which
+  is also why `ci-railway-token-class.yml`'s write cell could deploy staging at 14:27Z
+  on 2026-11-23 while no release leg ever could.
+
+**The fix — the name was the bug, so the name is the fix.** One change, applied where
+the CLI is reached:
+
+1. **`RAILWAY_ENV` → `RAILWAY_ENV_NAME`** for this repo's own variable, in
+   `scripts/ci/railway-deploy.sh`, `railway-root-shape.sh`, `railway-smoke.sh`, the six
+   `env:` blocks of `release.yml`, the manual lane `ops-railway-upload.yml`, and every
+   test that feeds the leg. The environment is addressed by **flag**
+   (`--environment "$RAILWAY_ENV_NAME"`), which is where the CLI actually reads it.
+2. **`unset RAILWAY_ENV`** in the two scripts that call `railway api`/`railway up`, as
+   the belt: a caller that still exports the old name cannot route the leg.
+   `railway-root-shape.sh` needs it most — it calls `railway api` with **no**
+   `--environment`, so an inherited `RAILWAY_ENV` was the only thing deciding its host.
+3. **A leg configured only the old way refuses loudly** (`required:
+   RAILWAY_ENV_NAME`) instead of silently talking to Railway's internal stage. This is
+   the property that makes the rename safe to land: no workflow can regress by
+   forgetting one line.
+4. **`scripts/ci/test-railway-env-name.sh`, wired into `ci.yml`'s Railway test lane** —
+   17 checks: the stub CLI records for every call whether `RAILWAY_ENV` was in its
+   environment (never the token), so the gate fails on *inheritance*, plus argv checks
+   that `--environment staging` still reaches `railway up`, the refuse-without-the-name
+   cells for both CLI-calling scripts, and two repo-wide scans that no workflow exports
+   the poisoned key. Comment lines are exempt from the scans on purpose: the verbatim
+   old error in `ops-railway-upload.yml:112` is evidence, and a gate that punishes
+   quoting history gets its history deleted to go green.
+
+Kept, with its purpose corrected: the shape-alternating reader and the fire-anyway
+mutation from Episode 24 stay in `railway-deploy.sh`. The alternation is now a cheap
+fallback rather than the experiment, and the mutation-fires-anyway plus
+`read-refused` are what let the next train say something true about staging either way.
+`deploy-staging` stays `max-parallel: 1` until one train proves the landing, then it can
+go back to three at a time.
+
+**Verification.** The gate was red first — 12/17 checks failing on main `85f91969b5`,
+including both inheritance cells — and 17/17 green after. Four mutants, each restored
+byte-identical by sha256: deleting `unset RAILWAY_ENV` from the deploy leg reddens 2
+checks (mutation and upload inheritance), deleting it from the shape resolver reddens 1,
+putting `RAILWAY_ENV: staging` back into `release.yml` reddens 2, and restoring the old
+required-variable name reddens 1. Four sibling suites pass untouched: the staging leg
+(171 checks), the archive shapes, the retry ladder, the root-shape resolver, the ops
+status guard (16 checks) and the token probe (203 checks). `actionlint` is not
+installed on this machine, so the workflow lint lane runs unverified locally and is
+CI's to judge.
+
+**What the next train can say.** Staging legs now address the API the credential
+belongs to, so the expected outcome is a baseline read that answers (or an honest empty
+page), a mutation that is accepted, and a new row that names the commit. If a decode
+refusal survives with the variable gone, this episode's claim is falsified by the train
+that carries it — which is how Episodes 23 and 24 were settled, and the gate above is
+what makes the difference measurable instead of arguable.
+**Answered: it did not survive. See Episode 26 immediately below.**
+
+**Served as I write this** (05:49:16Z, `serviceInstance.latestDeployment`, read-only):
+development all three at `85f91969b5` (rows `48f35cfb`/`a66ae88a`/`96381462`, 05:25:19-20Z,
+from train `45328377363`); **staging all three still `0329a903a5`** — rows
+`2df11e51`/`d7abcc2e`/`6e39f119` from the 2026-11-23 14:29Z promotion, i.e. no CI train
+has ever replaced a staging row; production `e43c64557b` backend (row `d4bf7af7`,
+11-21 23:32Z), `f3407986d0` frontend-web (row `531cfcdc`, 11-23 12:51Z), `528382b26a`
+frontend-admin (row `33254f63`, 11-22 10:55Z).
+
+**The signature ladder, current count: six, and one of them is now explained to the
+bottom.** Under ~25 s, printing nothing: Episode 22's name-resolved silent abort.
+Under ~25 s printing `could not read the pre-mutation … row` with no HTTP line: a
+reader that exits non-zero on its own refusal. `HTTP 503 … unconditional drop
+overload`: **the leg exported `RAILWAY_ENV=staging` and is talking to
+backboard.railway-staging.com** (Episodes 23, 24 — and this episode). `could not read
+the deployment row after the mutation`: the write was accepted and only the read died.
+~1,050 s with nine `Failed to fetch: error decoding response body`: the same internal
+host, caught by the CLI's JSON parser instead of its status line — F2. `Your trial has
+expired`: account state, and it hits the dev legs, not staging.
+
+## Episode 26 — 2026-11-24 06:15-07:00Z: the train that carries Episode 25 is the first train in the retained history to reach production
+
+**Cost to us:** none — this is the settlement. Twenty-five episodes of staging
+refusals ended, and the release chain ran end to end: the only such run in the 100
+most recent trains of this workflow, which is the whole retained history at the time
+of writing.
+
+**Run `45339054031`**, push-triggered on `e078dc00b9…` (the squash that landed #1167),
+gate verdict `proceed` at 06:48:11Z with `at_main_tip: true`. **Every job succeeded.**
+
+**Control, because a green Release has fooled this arc before.** Census over all **100
+retained runs** of this workflow, judged from each run's job list rather than its
+status: exactly one run has a `success` `smoke Staging` or `deploy Production` job,
+and it is this one.
+
+| shape | runs | `smoke Staging` / `deploy Production` |
+|---|---|---|
+| `45339054031` (`e078dc00b9`) | **1** | both `success` |
+| earlier runs whose workflow has those jobs | **83** | present, never `success` |
+| older runs predating that workflow shape | **16** | the jobs do not exist |
+
+Four runs in the recent window do conclude `success` at the run level —
+`45302407317`, `45193856472`, `45184035823`, `45176930855` — and each of those four is
+exactly `1 success (the gate) + 8 skipped`, because their verdict was
+`noop_docs_only`. So "the release is green" has never been evidence of a deploy, and
+this time it is: **21 jobs, 21 success, 0 skipped**, six staging legs and six
+production legs among them. GitHub retains 100 runs of this workflow, so never in
+this episode means never in the retained history, not never since the file was first
+written.
+
+| step | evidence |
+|---|---|
+| `deploy Development` x3 | rows `4f073a73`/`cc10c8f2`/`e33861e8`, `SUCCESS` 06:48:39-40Z, `meta.cliMessage=e078dc00b9…` |
+| `migrate staging database` | success |
+| `deploy Staging (backend)` | row `34936e97-83f9-45fd-9fd7-8b8244ee9cab` `SUCCESS` **06:49:18Z**, `meta.commitHash=e078dc00b9699f396a89d9b58a3524d6a7a3ed3e`, `meta.branch=main`, `meta.reason=deploy` — the first staging row CI has ever written |
+| `deploy Staging (frontend-web)` | row `840bfcc6` `SUCCESS` 06:52:31Z, same `commitHash` |
+| `deploy Staging (frontend-admin)` | row `b45c7635` `SUCCESS` 06:54:23Z, same `commitHash` |
+| `smoke Staging` x3 | success — in the 83 earlier runs that have the job it is never `success` |
+| `migrate production database` | success; job log 06:55:44Z `SKIP_APPLY: false`, `DRY_RUN: false` and `production apply is enabled; dry_run=false.`, 06:56:00Z `supabase db push --linked`, 06:56:02Z `Remote database is up to date.` — so the apply really ran against production and found nothing pending (`include_all: false`; every migration in this tree had already been applied by the scoped lanes) |
+| `deploy Production` x3 | rows `8ae9763d`/`93e61331`/`1202badf` `SUCCESS` 06:56:20-26Z, `meta.cliMessage=e078dc00b9…` |
+| `smoke Production` | success |
+
+Each staging leg took 2-3 minutes, with zero decode refusals, zero retries, zero
+`Failed to fetch`, zero `HTTP 503`, zero `unconditional drop overload` and zero
+`Your trial has expired` lines in all three logs. Every leg read its baseline, and the
+lines are identical in shape across the three — the inherited command answered on the
+first attempt, so Episode 24's env-stripped fallback never fired:
+
+```
+deploy Staging (backend)         baseline row before the mutation: 2df11e51-6300-4107-80de-1722a50e24ef
+                                 row reads run under command shape: inherited
+                                 mutation verdict: accepted (exit 0) under command shape: inherited
+deploy Staging (frontend-web)    baseline row before the mutation: d7abcc2e-bd8f-462a-bdb9-9980d57804a8
+                                 row reads run under command shape: inherited
+                                 mutation verdict: accepted (exit 0) under command shape: inherited
+deploy Staging (frontend-admin)  baseline row before the mutation: 6e39f119-567c-481c-9b8b-9a9af6e1922e
+                                 row reads run under command shape: inherited
+                                 mutation verdict: accepted (exit 0) under command shape: inherited
+```
+
+Those three baseline ids are the 2026-11-23 14:29Z promotion rows — the last thing
+staging had before this train — so the reads that returned them are reads that used to
+refuse nine times in a row. That is the cleanest statement of the fix available: the
+same inherited command that used to die now succeeds untouched, because the only thing
+removed from its environment was the key the CLI owns. The mutation path (`DEPLOY_METHOD=mutation` judged by
+`scripts/ci/staging-deploy-watch.py` on the row that names the commit) did exactly what
+its 171 checks say it does.
+
+**Outcome read-back, not pipeline read-out.** `GET /api/v1/public/build` on the three
+backends — hostnames from `docs/CLAUDE_CODE_DEVELOPMENT_HANDOFF.md:122` and this pack,
+never guessed (`api.spotlightng.com` and `staging-api.spotlightng.com` do not resolve):
+
+```
+backend-development-502c.up.railway.app  {"commit":"e078dc00b9…","source":"ldflags","started_at":"2026-11-24T06:51:21Z"}
+backend-staging-new.up.railway.app       {"commit":"e078dc00b9…","source":"env",   "started_at":"2026-11-24T06:51:56Z"}
+backend-production-1b33d.up.railway.app  {"commit":"e078dc00b9…","source":"ldflags","started_at":"2026-11-24T06:59:00Z"}
+```
+
+**Reproduction clause.** The claim is falsifiable the same way: re-run a push to `main`
+and read the staging rows; if `RAILWAY_ENV` ever comes back into a leg's environment,
+`scripts/ci/test-railway-env-name.sh` reddens before the deploy step can reach it, and
+the refusal reappears as `HTTP 503 unconditional drop overload` on
+`backboard.railway-staging.com`.
+
+**New blast radius for the next operator.** Staging no longer gates production by
+accident. Merging to `main` is now a production release: `release.yml` triggers on every
+push to `main` and the chain runs to `smoke Production` unless a leg genuinely fails.
+A docs-only push still launches a run, but the gate verdict is `noop_docs_only` and every
+leg skips, so documentation merges remain harmless — which is why this episode lands as
+docs rather than as a cleanup PR that would redeploy three production services to
+byte-identical app code.
+
+**Scaffolding still standing, deliberately.** `deploy-staging.strategy.max-parallel: 1`
+and the shape-alternating fallback reader in `scripts/ci/railway-deploy.sh` are both
+provably unnecessary now, and neither is harmful. They ride the next code-bearing PR
+instead of costing a production deploy on their own.

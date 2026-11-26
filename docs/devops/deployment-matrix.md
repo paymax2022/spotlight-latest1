@@ -11,15 +11,15 @@ file a docs PR to correct it rather than silently re-pointing a config.
 
 | Service | Production | Staging | Mechanism | Evidence |
 |---|---|---|---|---|
-| `frontend-web` (Next.js) | cPanel Passenger (`spotlightng.com`) | Railway (`frontend-web-staging-new`) | **Prod:** push to `main` here → `sync-frontend-web.yml` ("Spotlight Frontend Web Safe Merge", gated on `vars.SPOTLIGHT_FRONTEND_SYNC_ENABLED`) copies `frontend-web/` into `paymax2022/spotlight-latest` `main` → **that repo's** ungated `Deploy to Namecheap cPanel (SSH)` lane builds, rsyncs, purges `.next/server/route-cache` and restarts Passenger — so a `main` push IS a production release. This repo's own `deploy-cpanel.yml` stays inert (`vars.CPANEL_DEPLOY_ENABLED` unset, secrets absent) and is not the writer. **Staging:** `release.yml`'s `deploy-staging` job (`railway up`). It is **not** a "Railway native git deploy from the `staging` branch" — that claim was wrong twice over, and [Railway git sources, measured 2026-11-16](#railway-git-sources--measured-2026-11-16) is the measurement that replaces it | `sync-frontend-web.yml:48` (destination repo), `spotlight-latest` Deploy-to-cPanel runs green on every sync (latest 2026-11-11), `deploy-cpanel.yml` header, `frontend-web/server.js`, `frontend-web/railway.json`, `eas.json` staging API URL |
+| `frontend-web` (Next.js) | cPanel Passenger (`spotlightng.com`) | Railway (`frontend-web-staging-new`) | **Prod:** push to `main` here → `sync-frontend-web.yml` ("Spotlight Frontend Web Safe Merge", gated on `vars.SPOTLIGHT_FRONTEND_SYNC_ENABLED`) copies `frontend-web/` into `paymax2022/spotlight-latest` `main` → **that repo's** ungated `Deploy to Namecheap cPanel (SSH)` lane builds, rsyncs, purges `.next/server/route-cache` and restarts Passenger — so a `main` push IS a production release. This repo's own `deploy-cpanel.yml` stays inert (`vars.CPANEL_DEPLOY_ENABLED` unset, secrets absent) and is not the writer. **Staging:** `release.yml`'s `deploy-staging` job — which since 2026-11-23 calls `serviceInstanceDeploy(serviceId, environmentId, commitSha)` instead of `railway up`, because Railway's upload-initiate has refused every staging leg of every train since 2026-11-16 (F2; `docs/devops/railway-upload-fault-report.md` Episodes 20-21). Railway still builds the commit from the service's repo connection; only the trigger changed. It is **not** a "Railway native git deploy from the `staging` branch" — that claim was wrong twice over, and [Railway git sources, measured 2026-11-16](#railway-git-sources--measured-2026-11-16) is the measurement that replaces it | `sync-frontend-web.yml:48` (destination repo), `spotlight-latest` Deploy-to-cPanel runs green on every sync (latest 2026-11-11), `deploy-cpanel.yml` header, `frontend-web/server.js`, `frontend-web/railway.json`, `eas.json` staging API URL |
 | `frontend-web` (Railway **production** BFF) | `release.yml`, on every push to `main` | production | `frontend-web-production-9259.up.railway.app` | **A different host from the cPanel row above, and not interchangeable with it.** `www.spotlightng.com` is served by the cPanel lane (`sync-frontend-web.yml` → `paymax2022/spotlight-latest` → that repo's ungated cPanel workflow); `deploy-cpanel.yml` in *this* repo is inert (0 successes in 843 runs, `vars.CPANEL_DEPLOY_ENABLED` unset). This Railway instance is the BFF that `mobile-app/reactnative/eas.json:65` bakes into the shipped build's `EXPO_PUBLIC_API_BASE_URL` (and `production-apk` inherits at `:72`), and that `frontend-admin`'s production `WEB_API_BASE_URL` points at. Before `release.yml` nothing in the repo updated it — its 2026-11-15 deployment was a hand-run `railway up`. Because a store build bakes the base URL at submission time, a stale host here cannot be re-pointed without a new submission. |
-| `backend` (Go API) | Railway `production` service `backend` (`backend-production-1b33d.up.railway.app`) | Railway `staging` service `backend` (`backend-staging-new.up.railway.app`) | `release.yml` on every push to `main` (Railway `railway up`, per environment). Migrations are applied to that environment first — `migrate-staging` before `deploy-staging`, `migrate-production` before `deploy-production`. `/api/v1/public/build` reports the served commit, stamped via `backend/BUILD_COMMIT` + `-ldflags`. GCP Cloud Run remains the **intended** target of `.github/workflows/deploy.yml` (sha-tagged image → staging → 10% canary → human-gated promotion), but every one of its jobs is skipped while `vars.GCP_PROJECT_ID` is unset | live `GET /api/v1/public/health` 200 on both Railway hosts and `NXDOMAIN` for `api.spotlightng.com`; `deploy.yml:34` gate, 100/100 `skipped` runs in its history; `infra/terraform/cloud-run.tf`. **Serving binary measured 2026-11-14** — `curl -s https://backend-production-1b33d.up.railway.app/api/v1/public/build` → `{"commit":"585bd2ca7fab5c0a5adf9e67ab40b04068e9cee0","source":"ldflags","started_at":"2026-11-13T09:48:09Z"}` (staging, read the same minute, answers `2a82a62ef…` — the same commit as its `origin/staging` tip at that reading). `585bd2ca7…` is the tip of `origin/chore/promote-prod-module-readiness` (PR #996) and is **not an ancestor of `origin/main`** (`git merge-base --is-ancestor` → false); against the pin below it is 7 commits ahead-side / 713 behind (`git rev-list --count` both directions). **PENDING, NOT DONE — the release-SHA cutover:** nothing in this plan has deployed, dispatched or pushed this service. Bringing prod to `RELEASE_SHA c49b395643473ba6ff7a225d7a7a339a41eddfe6` is **Task 11**, still open, and ledger §10.6 requires re-reading `/api/v1/public/build` at execution time instead of quoting any figure stored in a doc — including the one above. |
+| `backend` (Go API) | Railway `production` service `backend` (`backend-production-1b33d.up.railway.app`) | Railway `staging` service `backend` (`backend-staging-new.up.railway.app`) | `release.yml` on every push to `main` (per environment: `railway up` for development and production, `serviceInstanceDeploy(commitSha:)` for staging since 2026-11-23 — see the `deploy-staging` header and Episodes 20-21 of `docs/devops/railway-upload-fault-report.md`). Migrations are applied to that environment first — `migrate-staging` before `deploy-staging`, `migrate-production` before `deploy-production`. `/api/v1/public/build` reports the served commit, stamped via `backend/BUILD_COMMIT` + `-ldflags`. GCP Cloud Run remains the **intended** target of `.github/workflows/deploy.yml` (sha-tagged image → staging → 10% canary → human-gated promotion), but every one of its jobs is skipped while `vars.GCP_PROJECT_ID` is unset | live `GET /api/v1/public/health` 200 on both Railway hosts and `NXDOMAIN` for `api.spotlightng.com`; `deploy.yml:34` gate, 100/100 `skipped` runs in its history; `infra/terraform/cloud-run.tf`. **Serving binary measured 2026-11-14** — `curl -s https://backend-production-1b33d.up.railway.app/api/v1/public/build` → `{"commit":"585bd2ca7fab5c0a5adf9e67ab40b04068e9cee0","source":"ldflags","started_at":"2026-11-13T09:48:09Z"}` (staging, read the same minute, answers `2a82a62ef…` — the same commit as its `origin/staging` tip at that reading). `585bd2ca7…` is the tip of `origin/chore/promote-prod-module-readiness` (PR #996) and is **not an ancestor of `origin/main`** (`git merge-base --is-ancestor` → false); against the pin below it is 7 commits ahead-side / 713 behind (`git rev-list --count` both directions). **PENDING, NOT DONE — the release-SHA cutover:** nothing in this plan has deployed, dispatched or pushed this service. Bringing prod to `RELEASE_SHA c49b395643473ba6ff7a225d7a7a339a41eddfe6` is **Task 11**, still open, and ledger §10.6 requires re-reading `/api/v1/public/build` at execution time instead of quoting any figure stored in a doc — including the one above. |
 | Backend workers (asynq) | Render `spotlight-notification-worker` | Render | `render.yaml` worker service (AUD-INFRA-006). **Not deployed by `release.yml`** — no matrix in it names `notification-worker`, on purpose. Production's consumer is Render's `spotlight-notification-worker`; a Railway production worker would put two consumers on one queue with the same `REDIS_URL` and double-deliver every push, email and SMS. See "`notification-worker` version state" below for the open question about which branch its Render blueprint tracks. | `render.yaml` |
 | `frontend-admin` (Next.js) | `admin.spotlightng.com` (cPanel) | Railway (`frontend-admin-staging-new`) | cPanel Passenger host; `frontend-admin/railway.json` for staging | `backend/internal/config/config.go` `ADMIN_APP_BASE_URL` default, `frontend-admin/railway.json` |
 | `mobile-app/reactnative` | EAS `production` profile | EAS `staging`/`preview` profiles | `eas build -p android --profile <p>`; store distribution out of band | `mobile-app/reactnative/eas.json` |
 | Postgres + GoTrue | Supabase cloud | Supabase cloud (shared project) | **Superseded on 2026-11-16, by PR B:** `db-migrate.yml` is dispatch-only — its `push:` trigger is gone, and `release.yml`'s `migrate-staging` / `migrate-production` jobs are now the automatic applies, each ahead of its own environment's deploy, sharing `_reusable-db-apply.yml` with the manual lane. The rest of this cell is kept as the 2026-11-14 measurement it was, because the reviewer history and the lane census in it are what justify that single apply path; read it as history, not as today's triggers. **`db-migrate.yml` was NOT dormant then** (corrects the earlier "dormant by design (AUD-INFRA-005)" claim, which was false). Measured 2026-11-14: it then triggered on `push` to `branches: [main, staging]` with paths `supabase/migrations/**` **and** its own file (`db-migrate.yml:40-43`), and its `apply` job runs when `(workflow_dispatch && target=='production') \|\| (push && ref=='refs/heads/main' && vars.DB_MIGRATE_ENABLED=='true')` (`:79-81`) under `environment: production` (`:83`), **which has required reviewers** — measured 2026-11-14: `gh api …/actions/runs/<parked run id>/pending_deployments` returns the deployment parked on environment `Production` with a populated `reviewers` array of two `User` entries and `wait_timer: 0` — the run ids themselves are held once, in ledger §16.2 item 1, which owns them. (An earlier draft of this cell called that fact "unconfirmed" because `…/environments/Production/deployment_protection_rules` reads `[]`; that endpoint lists *custom* protection rules such as wait timers, not required-reviewer rules, so `[]` is the expected answer and proves nothing. `pending_deployments[].reviewers` is the field to read, and it names who can approve.) Both switches are on today: `gh api …/actions/variables` → `DB_MIGRATE_ENABLED=true`, `DB_MIGRATE_STAGING_ENABLED=true`. So three lanes could write the DB at that reading — `db-migrate.yml` (gated by `Production`'s required reviewers, and one of its runs was parked when measured), `ops-db-push.yml` (manual, same gate, also parked at that reading) and `ops-db-push-scoped.yml` (`environment: production-db-scoped`, whose 2026-11-12 run was not parked at all, and it refuses the staging ref) — plus the bare `supabase db push` of the reconciliation runbook. PR B adds a fourth, and it is the only automatic one: `release.yml`'s two migrate jobs → `_reusable-db-apply.yml`. The `Production` required reviewers that gated the first three were removed on 2026-11-15, so nothing in that census still parks a run — see `docs/launch/BRANCH-PROTECTION.md`. `gh api …/actions/runs?status=waiting` and `status=pending` were both re-run on 2026-11-14: two writes sit parked on the `Production` gate and one further run had not reached an environment job. Their ids, heads and timestamps are recorded once — ledger §16.2 item 1 owns them, so this table deliberately does not repeat them (a fourth copy of a live run state is a fourth way to be stale). **Nothing in this plan approved, declined, dispatched or pushed any of them.** | `docs/devops/cloud-migration-reconciliation-runbook.md`; ledger §1.3-§1.4, §5.7, §16 |
 | Redis / asynq broker | Render `spotlight-redis` | same | `render.yaml` service | `render.yaml` |
-| `release.yml` | `on: push: branches: [main]` (plus `workflow_dispatch` for rollback) | development, staging, production — Railway, via `railway up` | `backend`, `frontend-web`, `frontend-admin` in each; migrations applied per environment before that environment's deploy | The ONLY automatic writer of any Railway environment. One brake: `vars.RAILWAY_DEPLOY_ENABLED`. No reviewer, no typed confirmation, no promotion branch. "Automatic" is scoped to this repo: the staging services still carry Railway repo connections, and [Railway git sources, measured 2026-11-16](#railway-git-sources--measured-2026-11-16) records what would make one of them a second writer — and that it is not the frozen promotion branches. |
+| `release.yml` | `on: push: branches: [main]` (plus `workflow_dispatch` for rollback) | development + production — Railway, via `railway up`; **staging — since 2026-11-23, via `serviceInstanceDeploy(commitSha:)`** (F2 workaround, judged by the deployment row that names the commit) | `backend`, `frontend-web`, `frontend-admin` in each; migrations applied per environment before that environment's deploy | The ONLY automatic writer of any Railway environment. One brake: `vars.RAILWAY_DEPLOY_ENABLED`. No reviewer, no typed confirmation, no promotion branch. "Automatic" is scoped to this repo: the staging services still carry Railway repo connections, and [Railway git sources, measured 2026-11-16](#railway-git-sources--measured-2026-11-16) records what would make one of them a second writer — and that it is not the frozen promotion branches. |
 
 ## Non-authoritative / legacy configs
 
@@ -518,6 +518,112 @@ never yet been executed — `RAILWAY_TOKEN_PRODUCTION` is validated *read-only* 
 (run 43905428515 listed production's real deployment history in 628 ms), but the
 production upload itself has never run from CI. Read the probe contract below before
 believing either deployment.
+
+## The staging leg's row reads go by id, since 2026-11-24
+
+The swap to `serviceInstanceDeploy(commitSha:)` changed the staging *trigger*; the
+trains that followed showed the trigger was only half of it. Both staging legs of
+trains `45234100845` and `45289639755` died 13–22 s after their own header with
+nothing else in the log, because the leg still **read** — its pre-mutation baseline
+row and every watch page — through `railway deployment list --service <name>
+--environment <name>`, the one call in the job that asks the CLI to resolve names.
+Wrapped as `BASELINE_ROW="$(… 2>/dev/null | jq …)"` under `set -euo pipefail`, a
+non-zero exit ends the script on that line, so the guard written for an unreadable
+baseline never ran and Railway's own sentence died in the `2>/dev/null`. Full
+measurement, the controls (including the development legs of the same commits
+polling the same reader 13 and 11 times successfully) and the fix are Episode 22 of
+`docs/devops/railway-upload-fault-report.md`.
+
+The reader Episode 22 put in its place is itself refused, and Episode 23 blamed the
+document: train `45302515868` at 01:51Z on 2026-11-24 died all three staging legs
+about half a second after their headers, printing `row page read failed (rc=1) …
+HTTP 503 Service Unavailable` and the now-loud guard, while run `45308408960` read the
+newest staging row on a runner three minutes later with the same staging token through
+`serviceInstance(serviceId, environmentId){ latestDeployment{…} }`. That episode's
+conclusion — *the `DeploymentListInput` connection is what the edge drops; swap the
+document and the leg reads* — **was falsified by the very train that carried the
+swap.** PR #1165 landed it as `342cf106d`, train `45315222075` ran that head (the legs
+print `HEAD is now at 342cf10 … (#1165)`), and the replacement document was refused
+nine times in ~36 s with the identical `HTTP 503 … unconditional drop overload`, once
+per leg attempt; the legs died at `could not read the pre-mutation … row`. Forty
+seconds later run `45319901941` job `138195671108` printed
+`PROBE_CELL baseline=ok row=2df11e51 status=SUCCESS` at 03:31:15Z — same document
+string, same flags (`api … --compact --allow-errors --var`), same CLI `5.40.1`, same
+`secrets.RAILWAY_TOKEN_STAGING`, same service and environment ids, same
+`ubuntu-latest` image. Episode 24 has the table. So the variable is not the query; the
+two differences still standing are the release job's workflow env
+(`RAILWAY_PROJECT` + `RAILWAY_HTTP_TIMEOUT: 600`, `release.yml:63,67` — printed in the
+legs' action env blocks and appearing nowhere in the probe log) and the fact that the
+train issues three identical calls at once while the probe issues one. Neither var can
+simply be deleted job-wide: `scripts/ci/railway-root-shape.sh:47,55` requires
+`RAILWAY_PROJECT`, and the 600 s timeout is what lets the 110 MB `frontend-web`
+archive upload at all.
+
+The rule this left on 2026-11-24 morning — *a document measured answering in a probe
+job is not thereby licensed for a release leg; the measurement has to be taken in the
+same command shape the leg will use* — kept the observation and lost the explanation,
+and **Episode 25 of `docs/devops/railway-upload-fault-report.md`, the same afternoon,
+falsified the explanation.** What differs between a release leg and a probe job is not
+`RAILWAY_PROJECT` or `RAILWAY_HTTP_TIMEOUT`: `release.yml:403,458` and
+`ops-railway-upload.yml:115` export `RAILWAY_ENV`, and the Railway CLI owns that name.
+It is the CLI's internal API-stage selector, and the value `staging` (also `STAGING`,
+`dev`) moves every request to `https://backboard.railway-staging.com/graphql/v2` —
+Railway's own pre-production backboard, which answers a non-JSON
+`unconditional drop overload` HTTP 503. `development`, `production`, `preview`, `zzz`,
+`""` and unset all keep `backboard.railway.com`. That one line is why every staging
+`railway up` leg has died since 2026-11-16, why the same document answers forty seconds
+later in a probe workflow that never sets the variable, why
+`scripts/ci/railway-root-shape.sh` — which passes no `--environment` at all — could not
+read the project from inside a staging leg, and why the manual lane's production
+dispatch passed its pre-flight while its six staging dispatches refused.
+
+The rule that replaces it: **no `railway` call in this repo may inherit
+`RAILWAY_ENV`.** The environment name travels as `RAILWAY_ENV_NAME` and reaches the CLI
+only as the `--environment` flag; the two scripts that call the CLI `unset RAILWAY_ENV`
+themselves; a leg configured only the old way refuses with `required: RAILWAY_ENV_NAME`
+rather than quietly addressing the internal stage; and
+`scripts/ci/test-railway-env-name.sh` (17 checks, wired into `ci.yml`'s Railway test
+lane) fails on inheritance — its stub CLI records whether the variable was present in
+the environment of every call.
+`scripts/ci/railway-deploy.sh` `latest_row_api` is still the only row reader in mutation
+mode; it sends the probe's `DOC_ROW` verbatim — the same string
+`scripts/ci/f2-token-probe.sh` uses, pinned equal by a check that diffs the two
+`^DOC_ROW=` lines — through `railway api`, the transport `RAILWAY_TOKEN_STAGING` is
+measured against. It maps the one `latestDeployment` object to a bare JSON array
+(`[]` on failure), so `scripts/ci/staging-deploy-watch.py` decides verdicts from one
+shape and one set of fixtures. It still alternates shapes, because Episode 24 could not
+yet rule the vars out: baseline attempt 1 uses the release job's own environment
+(`inherited`), attempts 2 and 3 drop the two vars (`env -u RAILWAY_PROJECT
+-u RAILWAY_HTTP_TIMEOUT railway`, `stripped`), and every later `lookup` poll runs in
+whichever shape answered — the leg prints `row reads run under command shape: X`. After
+Episode 25 that printing is a fallback and a cost check, not an experiment: neither
+shape says anything about the fault any more. A refused baseline read is no
+longer fatal: the mutation still fires, because the frozen decision rule cannot guess
+without a baseline id (`mine()` skips a row only `if baseline_id and r.get("id") ==
+baseline_id`) and the post-mutation cutoff still refuses a row that predates the
+mutation (`_predates()` returns False only when `since_sec` is empty, and the leg
+always supplies one). What *is* fatal now is blindness after the mutation: if the
+post-mutation read is refused the leg ends `read-refused` red.
+`deploy-staging.strategy.max-parallel` is `1`, a hold-over from that same experiment.
+**The condition it was waiting for is met**: train `45339054031` landed staging rows
+naming `e078dc00b9` on all three services at 06:49-06:54Z on 2026-11-24, so the three
+legs can run together again — on the next code-bearing PR, because a
+`release.yml` change alone now costs a real production deploy for identical app code
+(Episode 26). Development and production keep the name-resolved
+reader: that path works, it is what `railway up` needs, and this rule is scoped to
+mutation mode.
+
+Reading consequence for the next operator: a red `deploy Staging` leg shorter than
+about a minute, with zero `Failed to fetch` lines and zero new staging rows, is one of
+these defects and its own last line separates them — no HTTP line at all was Episode
+22's name-resolved abort, `could not read the pre-mutation … deployment row` with the
+`HTTP 503 … unconditional drop overload` diagnostic above it meant the leg was talking
+to Railway's internal staging backboard, which an exported `RAILWAY_ENV=staging` causes
+and the rename above removes, and `could not read the deployment row
+after the mutation` means the write was accepted and only the read died. Neither is
+F2 — and F2 (`~1,050 s`, nine `error decoding response body` refusals) is now the same
+fault as the 503 above, caught one layer higher in the CLI instead of at the status
+line. Check the leg's last line before blaming Railway's status page.
 
 ## Railway project tokens: scope, minting, inventory — measured 2026-11-16
 

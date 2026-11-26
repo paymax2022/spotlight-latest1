@@ -13,7 +13,8 @@ import { publicBeatUrl } from '@/src/features/openmic/beat-storage';
 import { songReaderUrl } from '@/src/features/openmic/song-storage';
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
-import { getContestBySlug, listSubmissions } from '@/src/server/openmic/persistence';
+import { listSubmissions } from '@/src/server/openmic/persistence';
+import { resolveOpenMicEdition } from '@/src/server/openmic/edition-resolution';
 import { getSongSubmissionEligibility } from '@/src/server/openmic/submission-eligibility';
 
 export const dynamic = 'force-dynamic';
@@ -25,7 +26,14 @@ export async function GET(request: Request) {
     const contestSlug = String(searchParams.get('contestSlug') || '').trim();
     if (!contestSlug) return errorResponse('contestSlug is required', 400);
 
-    const contest = await getContestBySlug(contestSlug);
+    // The caller passes the slug it knows, which for an application coming from the
+    // registration plane is the CATALOG slug (`open-mic-competition`) rather than
+    // the slug of the edition that carries the beat. An exact lookup answered 404
+    // for those, and a 404 here is what made the phone's phase panel show neither
+    // the beat nor the upload. `resolveOpenMicEdition` is the one rule that maps
+    // either slug onto the live edition, and the response then carries the EDITION
+    // slug so every later call (beat download, presign, hand-in) uses it.
+    const contest = await resolveOpenMicEdition(contestSlug);
     if (!contest) return errorResponse('Contest not found', 404);
 
     const verdict = await getSongSubmissionEligibility(contest, user.id);

@@ -3,6 +3,19 @@
 **Status:** all GitHub Actions runs on this repo are failing — **this is a billing block, not a
 code or migration regression.** The code on `main` is verified green locally.
 
+> **SUPERSEDED — this page describes July 2026 and must not be acted on.** GitHub Actions is
+> not blocked: `ci.yml` on `main` completed `success` twice on 2026-11-22 (`45021348362` at
+> 12:15Z on `1002ec24e`, `45024666177` at 12:54Z on `d6f282f5a`), and the release trains run,
+> report a gate verdict, and deploy the three development services. Nothing on this page
+> explains why staging still does not get main's code — that fault is F2, the
+> upload-initiate refusal on the staging legs, and its ledger is
+> [../devops/railway-upload-fault-report.md](../devops/railway-upload-fault-report.md) with
+> the credential-class answer in
+> [railway-f2-token-probe.md](./railway-f2-token-probe.md). The `REPO=paymax2022/spotlight-latest`
+> in the re-trigger snippet below is also stale: this remote is `spotlight-latest1`, so the
+> commands here would 404 rather than do anything useful. Kept because "green code, red CI"
+> was the honest read at the time and the local-proof list is still accurate.
+
 ## Symptom
 Every workflow run (CI — CLAUDE.md gates, integration-verify, module CIs, **Deploy to Namecheap
 cPanel (SSH)**) fails within a few seconds with **no steps executed**. Sampling the last 100 runs:
