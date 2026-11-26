@@ -16867,6 +16867,56 @@ paths:
                 properties:
                   audit: { type: array, items: { $ref: '#/components/schemas/FreAuditEntry' } }
 
+  # ---------------------------------------------------------------------------
+  # Connect voting — locality reference data (snake_case, mirrors the Go model).
+  #
+  # The village tier of the state -> local government -> village cascade that both
+  # registration wizards use. public.villages is CURATED PER LGA and deliberately
+  # sparse: only Onitsha North has rows, because only Onitsha North was named by a
+  # human (supabase/migrations/20272000000000_locality_villages.sql). An uncurated
+  # LGA is therefore a SUCCESS returning mode=free_text, and the picker switches
+  # to a text input — it is not a 404 and not an empty select.
+  # ---------------------------------------------------------------------------
+  /api/v1/connect/villages:
+    get:
+      operationId: connectVillages
+      summary: Curated villages under a state and local government
+      tags: [Connect]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: state
+          required: true
+          schema: { type: string, maxLength: 80 }
+          example: Anambra
+        - in: query
+          name: lga
+          required: true
+          schema: { type: string, maxLength: 80 }
+          example: Onitsha North
+      responses:
+        '200':
+          description: Village list, alphabetical
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [state, lga, mode, villages]
+                properties:
+                  state: { type: string }
+                  lga: { type: string }
+                  mode: { type: string, enum: [curated, free_text] }
+                  villages:
+                    type: array
+                    items:
+                      type: object
+                      required: [name]
+                      properties:
+                        name: { type: string, example: Ogbendida }
+        '400':
+          description: state or lga missing or too long — the body names which field
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   # ╔══════════════════════════════════════════════════════════════════════╗
   # ║ Connect — discovery / swipe / matching / boosts (camelCase responses) ║
   # ║ Bearer-authed member routes under /api/v1/connect. No raw coordinates ║

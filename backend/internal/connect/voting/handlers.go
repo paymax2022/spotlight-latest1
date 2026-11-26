@@ -380,6 +380,10 @@ func Register(member gin.IRouter, svc *Service, cfg config.Config, redis *platfo
 	member.GET("/contests/:id/contestants", h.ListRoster)
 	member.GET("/contests/:id/free-vote-allowance", h.FreeVoteAllowance)
 	member.GET("/contestants/:id", h.GetContestant)
+	// The village tier of the state -> LGA -> village cascade. Read-only, and it
+	// answers an uncurated LGA with mode=free_text rather than an error, so the
+	// registration pickers can fall back to a text input on 773 LGAs.
+	member.GET("/villages", h.ListVillages)
 	if cfg.FeatureContestantSocialEnabled {
 		member.POST("/contestants/:id/like", h.LikeContestant)
 		member.DELETE("/contestants/:id/like", h.UnlikeContestant)
