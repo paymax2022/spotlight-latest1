@@ -159,6 +159,69 @@ excepted — that needs a real admin sign-in):
 
 `tsc` clean in both apps.
 
+### Multipart uploads through this proxy
+
+Three Path A consoles post bytes rather than JSON through this proxy — contest
+banners/logos (`contestsAdminService.ts`), Open Mic beats (`openMicAdminService.ts`),
+and the contest-template frames (`/admin/voting/templates`). The last one is why
+`app/api/web-proxy/[...path]/route.ts` now carries two deadlines.
+`WEB_PROXY_TIMEOUT_MS` (20 s) stays right for the JSON relays; a
+body over `LARGE_UPLOAD_BYTES` (4 MiB) gets `WEB_PROXY_UPLOAD_TIMEOUT_MS` (180 s). One
+deadline for both was the bug: the short one aborted mid-transfer, the console reported
+"the web app did not answer", and frontend-web had already stored the image — so the
+admin's retry stacked a second copy in the bucket.
+
+This proxy applies **no** body cap, unlike frontend-web. Next forks the request body only
+where a middleware/proxy layer runs, and `middleware.ts` matches `['/admin/:path*']`, so
+`/api/web-proxy` runs no proxy layer and never forks it. Measured rather than assumed: a
+20 MiB multipart relayed with `declared == received == 20 971 726` and no buffering
+warning. If that matcher ever grows to cover `/api/*`, this route needs the same
+`experimental.proxyClientMaxBodySize` treatment `frontend-web/upload-limits.config.mjs`
+exists for, or every large upload starts arriving cut in half.
+
+Every refusal on the route names its cause, because the console renders `error` verbatim
+and one blanket sentence — "Failed to upload template image" — hid several unrelated
+faults at once, including the incident that started the hunt: a stopped
+`supabase_storage_spotlight` container made `supabase.storage.upload()` answer 502 while
+every other Supabase call kept working. The mapping lives in
+`frontend-web/src/lib/storage/storage-error.ts`:
+
+| Code | Status | Means |
+|---|---|---|
+| `file_too_large`, `storage_too_large`, `upload_incomplete` | 413 | over the 50 MiB cap, or a body cut off in transit |
+| `file_type_unsupported`, `storage_type_rejected` | 400 | mime outside the bucket's `allowed_mime_types` |
+| `contest_id_invalid`, `template_contest_not_found` | 400 | the selector's contest UUID is malformed or gone |
+| `name_required`, `contest_required`, `file_required` | 400 | a form field the console did not send |
+| `template_actor_has_no_profile`, `template_insert_bad_id` | 400 | no `user_profiles` row for this admin, or a non-UUID id |
+| `storage_duplicate` | 409 | an object with that name already exists |
+| `multipart_required` | 415 | the request was not multipart at all |
+| `storage_bucket_missing`, `storage_policy_refused`, `storage_upload_failed`, `template_insert_refused`, `template_insert_failed` | 500 | bucket/policy/record fault, not the admin's file |
+| `storage_unreachable` | 502 | storage is down — the original incident, now distinguishable |
+
+The trap the classifier exists for: Supabase reports `status: 400` for an oversize file
+*and* for a refused mime type, so reading `status` alone turned every "your file is too
+big" into an undifferentiated server error. The stable signals are `statusCode` plus
+`code`. The 50 MiB / mime list are pinned to
+`supabase/migrations/20260405700000_contest_image_templates.sql` on both sides by
+`frontend-web/tests/unit/voting/contest-template-bucket-policy.spec.ts` and
+`frontend-admin/tests/admin/contest-template-upload-gate.spec.ts`, so a migration edit
+fails CI instead of quietly desynchronising the console from the bucket.
+
+A refused create leaves nothing behind: if the insert fails after the object is written,
+`app/api/admin/voting/contest-templates/route.ts` removes the object, and the
+`x-admin-key` path stores `created_by = null` instead of the literal `'api-key'` in a
+UUID column — the `22P02` that used to fail that insert *after* a successful upload.
+
+**Do not read routing off a duplicate dev server.** Next 16 lets one `next dev` own a
+project directory (`<app>/.next/dev/lock`); a second launch exits with "Another next dev
+server is already running." An instance that ends up competing like this answers its two
+catch-all proxies as if they did not exist — 404 on `GET /api/web-proxy/…`, and 409
+`Server Action unavailable.` (text from Next's own app-render action handler, not this
+app) on a multipart `POST` — while a static route such as `/api/contests` still answers
+200. Observed 2026-11-26 with `frontend-admin` in a task worktree: the table above only
+reproduces against a single clean instance, which answers 401 from inside `forward()` for
+both catch-alls. Suspect the instance before believing a catch-all is broken.
+
 ### Known issue surfaced by the slice 3 spike — status after slice 5
 
 The original finding: `frontend-web/app/admin/(dashboard)/page.tsx` (the
@@ -231,7 +294,9 @@ left alone rather than patched in a file with a known expiry date.
   (reality-show data-path fix), `397b2835` (slice 5, registration/dashboard/
   reports fix + console), `bf44098a` (slice 4, Open Mic console), `c7e504d0`
   (slice 4a, Judges & Scores console + moved off its own `globalThis` mock onto
-  `public.judge_application_scorecards`). The Stages & Evictions console
+  `public.judge_application_scorecards`), `8166252ca` (template uploads relayed through
+  this proxy: each refusal classified, a failed insert rolls its object back, bodies
+  over 4 MiB get their own deadline). The Stages & Evictions console
   (`realityShowAdminService.ts`, `app/admin/stages-evictions/*`) followed in a
   separate pass after these; check `git log` for its commit if citing it later.
 - `.github/workflows/admin-drift-guard.yml`, `scripts/ci/check-admin-surface-drift.sh`
