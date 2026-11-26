@@ -12,6 +12,7 @@ import { buildOpenMicCompetitionSteps } from './open-mic-competition';
 import { buildFilmAcademySteps } from './film-academy';
 import { buildDefaultSteps } from './default';
 import { buildStepsFromSchema } from './from-schema';
+import { ensureLocalityFields } from '../locality-fields';
 
 export type RegistrationFormBuilder = (draft: RegistrationDraft) => RegistrationStep[];
 
@@ -39,6 +40,14 @@ function readFormSchema(draft: RegistrationDraft): ContestFormSchema | null {
  *      contestant sees exactly the admin-mapped inputs.
  *   2. Hand-tailored per-contest template (forms/<slug>.ts) for built-in contests.
  *   3. Capability-driven default form for any other slug.
+ *
+ * The state -> LGA -> village cascade is added to branches 2 and 3, not 1. It is a
+ * platform-level question (the same one every contest's roster filters read from)
+ * rather than one template's choice, and before it was added here no hand-built
+ * form asked for a local government or a quarter at all — so a contest scoped to
+ * an LGA in the console still collected nothing to match it against. An operator
+ * who mapped `formSchema` picks their own fields from the catalog, which already
+ * offers all three keys, so that list is left exactly as they set it.
  */
 export function buildStepsForContest(draft: RegistrationDraft): RegistrationStep[] {
   const schema = readFormSchema(draft);
@@ -46,5 +55,5 @@ export function buildStepsForContest(draft: RegistrationDraft): RegistrationStep
     return buildStepsFromSchema(draft, schema);
   }
   const builder = registrationFormBuilders[draft.contestSlug] || buildDefaultSteps;
-  return builder(draft);
+  return ensureLocalityFields(builder(draft), draft);
 }

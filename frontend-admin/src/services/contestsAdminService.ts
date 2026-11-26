@@ -88,7 +88,14 @@ export type ContestType =
   | 'pitch_competition' | 'school_vs_school_contest' | 'regional_contest'
   | 'national_contest' | 'international_entry';
 
-export type RegionScope = 'state' | 'regional' | 'national' | 'international';
+/**
+ * 'lga' and 'village' are the local contest: the whole entry pool is meant to
+ * come from one defined place. Accepted since migration 20272000000000 widened
+ * the column check. Display + filter only — nothing blocks an entry or a vote
+ * for being from elsewhere; /api/admin/contests refuses a local scope that
+ * arrives without its state/LGA(/village), so these two values must be sent.
+ */
+export type RegionScope = 'state' | 'regional' | 'national' | 'international' | 'lga' | 'village';
 
 export interface FullContest {
   id?: string;
@@ -143,6 +150,17 @@ export interface FullContest {
    * `prizePool` for the web contest page.
    */
   prizePool?: string;
+  /**
+   * The locality triple, read back from contests.locality_state/_lga/_village.
+   *
+   * Free text on the server (VARCHAR(80), no village foreign key) so a village
+   * nobody has curated yet still survives; the cascade in the editor offers the
+   * curated list but never deletes a stored name it does not recognise.
+   * '' = not set.
+   */
+  localityState?: string;
+  localityLga?: string;
+  localityVillage?: string;
 }
 
 async function readJsonOrThrow(res: Response, label: string): Promise<Record<string, unknown>> {

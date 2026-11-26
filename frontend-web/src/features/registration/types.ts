@@ -156,7 +156,27 @@ export interface ContestRegistrationDefinition {
   contestCategory: ContestCategory;
   contestType: ContestType;
   seasonOrEdition: string;
-  regionScope: 'state' | 'regional' | 'national' | 'international';
+  /**
+   * Where the contest is scoped. 'lga' and 'village' are the local tiers added
+   * by 20272000000000 and land on public.contests.location_scope, which has no
+   * CHECK — the vocabulary is enforced at the write boundary
+   * (src/server/registration-v2/contest-locality.ts, used by both admin contest
+   * routes), because a constraint would make that migration refuse to replay on
+   * any environment holding an older value.
+   */
+  regionScope: 'state' | 'regional' | 'national' | 'international' | 'lga' | 'village';
+  /**
+   * The locality a local contest belongs to, and the reason the contestant's
+   * state-of-origin -> LGA -> village cascade exists. Optional, and '' when the
+   * scope is not local: most contests never had a locality and every stored
+   * definition predates these keys, so requiring them would force a migration of
+   * in-memory snapshots for no behaviour change.
+   *
+   * Display + filter only. No applicant or voter is blocked by these values.
+   */
+  localityState?: string;
+  localityLga?: string;
+  localityVillage?: string;
   isPaid: boolean;
   registrationFeeNgn?: number;
   requiresGuardianConsentForMinors: boolean;

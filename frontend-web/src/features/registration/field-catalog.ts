@@ -41,6 +41,11 @@ export const FIELD_CATALOG: CatalogField[] = [
   { key: 'personal.gender', label: 'Gender', type: 'select', step: 'personal_information', group: 'Personal details', options: ['Female', 'Male'], defaultRequired: true },
   { key: 'personal.nationality', label: 'Nationality', type: 'select', step: 'personal_information', group: 'Personal details', options: ['Nigerian'], defaultRequired: true },
   { key: 'personal.stateOfOrigin', label: 'State of origin', type: 'select', step: 'personal_information', group: 'Personal details', options: [...NIGERIA_STATES] },
+  // Locality tier, for local contests. Both stay OPTIONAL on purpose: the
+  // enforcement decision for locality is display + filter, so an applicant who
+  // cannot answer one of them is never boxed out of entering.
+  { key: 'personal.localGovernment', label: 'Local government (LGA)', type: 'select', step: 'personal_information', group: 'Personal details', options: [], helpText: 'Populated from the selected state of origin.' },
+  { key: 'personal.village', label: 'Village / quarter', type: 'text', step: 'personal_information', group: 'Personal details', helpText: 'Pick from the published list where your LGA has one, otherwise type it.' },
   { key: 'personal.stateOfResidence', label: 'State of residence', type: 'select', step: 'personal_information', group: 'Personal details', options: [...NIGERIA_STATES], defaultRequired: true },
   { key: 'personal.city', label: 'City / town', type: 'select', step: 'personal_information', group: 'Personal details', options: [], defaultRequired: true, helpText: 'Populated from the selected state of residence.' },
   { key: 'personal.address', label: 'Residential address', type: 'textarea', step: 'personal_information', group: 'Personal details' },

@@ -12,6 +12,7 @@ import { publishContestToVotingPlane } from '@/src/server/registration-v2/publis
 import { createAdminClient } from '@/lib/supabase/server';
 import { allowedCategorySlugs } from '@/src/server/contests/categories';
 import { contestScheduleError, readContestSchedule } from '@/src/server/contests/schedule';
+import { contestLocalityFor } from '@/src/server/registration-v2/contest-locality';
 
 const allowedTypes: ContestType[] = [
   'online_contest',
@@ -105,6 +106,11 @@ export async function POST(request: Request) {
     const scheduleProblem = schedule ? contestScheduleError(schedule) : null;
     if (scheduleProblem) return errorResponse(scheduleProblem, 400);
 
+    // Locality, same position for the same reason: refuse a half-named local
+    // contest before the slug lookup, so a bad payload never writes a row.
+    const locality = contestLocalityFor(regionScope, body ?? {});
+    if (!locality.ok) return errorResponse(locality.error, 400);
+
     if (await contestSlugExists(slug)) {
       return errorResponse('A contest with that slug already exists.', 409);
     }
@@ -116,6 +122,10 @@ export async function POST(request: Request) {
       contestType,
       seasonOrEdition,
       regionScope,
+      // Onto the definition, and contest-store.ts puts them on the row. They have
+      // to be columns, not only contest_config: Go reads connect_contests, and the
+      // JSON snapshot is invisible to the phone.
+      ...locality.locality,
       isPaid,
       registrationFeeNgn,
       requiresGuardianConsentForMinors: Boolean(body?.requiresGuardianConsentForMinors),

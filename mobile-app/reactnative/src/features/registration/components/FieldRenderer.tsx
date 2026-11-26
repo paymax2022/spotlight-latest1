@@ -19,6 +19,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import type { RegistrationField, UploadedFileValue } from '../types/registration.types';
 import { pickFileForField } from '../utils/filePicker';
+import { villageSuggestionsFor } from '../utils/localityOptions';
 import { uploadFailureMessage } from '../utils/uploadFailureMessage';
 
 interface Props {
@@ -80,8 +81,8 @@ function renderField({ field, value, error, onChange, onUpload }: Props) {
     case 'email':
     case 'tel':
     case 'url':
-    case 'text':
-      return (
+    case 'text': {
+      const input = (
         <TextInputField
           label={labelText(field)}
           value={asString(value)}
@@ -93,6 +94,38 @@ function renderField({ field, value, error, onChange, onUpload }: Props) {
           autoCapitalize={field.type === 'email' || field.type === 'url' ? 'none' : 'sentences'}
         />
       );
+      const suggestions = villageSuggestionsFor(field);
+      if (suggestions.length === 0) return input;
+      // The published quarters of the chosen LGA, tappable without opening a picker —
+      // the RN equivalent of the web wizard's <datalist>. The box stays editable on
+      // purpose: a quarter spelled differently at home must still be typeable, which
+      // is why this is a text field with suggestions and not a select.
+      const picked = asString(value);
+      return (
+        <View>
+          {input}
+          <View style={styles.suggestBlock}>
+            <Text style={styles.suggestionsNote}>Quarters published for this area</Text>
+            <View style={styles.chipWrap}>
+              {suggestions.map((name) => {
+                const active = picked === name;
+                return (
+                  <Pressable
+                    key={name}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    onPress={() => onChange(field.key, name)}
+                    style={[styles.chip, active && styles.chipOn]}
+                  >
+                    <Text style={[styles.chipText, active && styles.chipTextOn]}>{name}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+      );
+    }
 
     case 'date':
       return (
@@ -253,6 +286,10 @@ const styles = StyleSheet.create({
   wrapper: { marginBottom: Spacing.md },
   label: { ...Typography.labelMd, color: Colors.onSurface, marginBottom: Spacing.xs },
   helpText: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
+  // TextInputField already carries a bottom margin, so the caption sits back up into
+  // it instead of adding a second gap under the box.
+  suggestionsNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: -Spacing.sm, marginBottom: Spacing.xs },
+  suggestBlock: { marginBottom: Spacing.md },
   error: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
 
   checkRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
