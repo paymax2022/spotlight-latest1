@@ -18,6 +18,7 @@ import { listVotingContests } from '@/services/competitionsService';
 import {
   listContestTemplates, createContestTemplate, updateContestTemplate,
   deleteContestTemplate, replaceTemplateSlots,
+  checkTemplateImage, TEMPLATE_IMAGE_ACCEPT, TEMPLATE_MAX_MB, TEMPLATE_FORMATS_LABEL,
   type ContestTemplate, type TemplateSlot, type TemplateSlotInput,
   type TemplateSlotType, type TemplateCropMode, type TemplateStatus,
 } from '@/services/contestTemplatesService';
@@ -101,6 +102,10 @@ function ContestTemplatesInner() {
     if (!uploadFile) return setError('Choose an image file first');
     if (!uploadName.trim()) return setError('Template name is required');
     if (!contestId) return setError('Select a contest first');
+    // Second gate, same sentence as the picker: a file that the API must refuse
+    // should never spend the upload's worth of time getting there.
+    const fileProblem = checkTemplateImage(uploadFile);
+    if (fileProblem) return setError(fileProblem);
 
     setUploading(true); setError(null); setNotice(null);
     try {
@@ -428,10 +433,21 @@ function ContestTemplatesInner() {
             <input
               id="tpl-file"
               type="file"
-              accept="image/*"
-              onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+              accept={TEMPLATE_IMAGE_ACCEPT}
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                setUploadFile(file);
+                // Refuse it as the file is picked — before the admin fills the
+                // rest of the form and waits for a transfer that cannot succeed.
+                const problem = checkTemplateImage(file);
+                if (problem) setError(problem);
+                else if (file) setError(null);
+              }}
               style={{ fontSize: 13 }}
             />
+            <span style={{ display: 'block', fontSize: 12, color: colors.muted, marginTop: 4 }}>
+              {TEMPLATE_FORMATS_LABEL}, up to {TEMPLATE_MAX_MB}MB.
+            </span>
           </div>
         </div>
         <div style={{ padding: '0 16px 16px', display: 'flex', gap: 10, alignItems: 'center' }}>

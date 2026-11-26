@@ -20,7 +20,10 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { MAX_REGISTRATION_UPLOAD_BYTES } from '@/src/lib/storage/upload-limits';
+import {
+  MAX_REGISTRATION_UPLOAD_BYTES,
+  MAX_CONTEST_TEMPLATE_UPLOAD_BYTES,
+} from '@/src/lib/storage/upload-limits';
 import { MAX_SONG_BYTES } from '@/src/features/openmic/song-storage';
 import { MAX_MULTIPART_BODY_BYTES, MAX_MULTIPART_BODY_SIZE } from '../../../upload-limits.config.mjs';
 
@@ -28,6 +31,7 @@ import { MAX_MULTIPART_BODY_BYTES, MAX_MULTIPART_BODY_SIZE } from '../../../uplo
 const DECLARED_CAPS: Record<string, number> = {
   'registration/uploads': MAX_REGISTRATION_UPLOAD_BYTES,
   'open-mic songs': MAX_SONG_BYTES,
+  'admin contest templates': MAX_CONTEST_TEMPLATE_UPLOAD_BYTES,
 };
 
 describe('multipart body limit vs. the upload caps it has to clear', () => {
