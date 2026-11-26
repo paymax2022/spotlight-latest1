@@ -797,19 +797,46 @@ git commit -m "feat(photo): contest photo asset rows and durable render jobs"
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// frontend-web/tests/unit/media/provider.test.ts
+/**
+ * @file tests/unit/media/provider.test.ts
+ *
+ * The seam between the photo job runner and whatever vendor is configured
+ * (spec §5, §10). Two promises are under test here, and both are the kind a
+ * reviewer cannot see by reading `cloudinary.ts`:
+ *
+ *   1. a configuration surface reports the NAMES of missing variables and never
+ *      their values — this object is what an admin screen and the job ledger
+ *      will render, so one echoed secret would put a vendor API secret in front
+ *      of every operator with access to /admin; and
+ *   2. when creds are absent the seam answers with a result, it does not reach
+ *      the network. The runner keeps its own fail-closed rule, and that rule
+ *      only holds if "not configured" is distinguishable from "vendor said no".
+ */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/src/lib/media/cloudinary', () => ({
-  moderatePhoto: vi.fn(async () => ({ approved: true })),
-  removeBackground: vi.fn(async () => ({ ok: true, resultUrl: 'https://cdn/x.png' })),
-}));
+// Only the two network calls are faked. The env helpers stay real, because the
+// whole point of the seam is that readiness is decided by the same list
+// `cloudinary.ts` reads — mocking that away would let a drifted duplicate of
+// the contract pass this file.
+vi.mock('@/src/lib/media/cloudinary', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/src/lib/media/cloudinary')>();
+  return {
+    ...actual,
+    moderatePhoto: vi.fn(async () => ({ approved: true })),
+    removeBackground: vi.fn(async () => ({ ok: true, resultUrl: 'https://cdn/x.png' })),
+  };
+});
 
 import { getPhotoProvider, photoProviderConfig } from '@/src/lib/media/provider';
 import { moderatePhoto, removeBackground } from '@/src/lib/media/cloudinary';
 
 describe('photo provider seam', () => {
-  beforeEach(() => { vi.clearAllMocks(); delete process.env.CLOUDINARY_CLOUD_NAME; });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.CLOUDINARY_CLOUD_NAME;
+    delete process.env.CLOUDINARY_API_KEY;
+    delete process.env.CLOUDINARY_API_SECRET;
+  });
 
   it('reports not-configured with the exact missing variable names, never values', () => {
     process.env.CLOUDINARY_API_KEY = 'k';
@@ -825,7 +852,11 @@ describe('photo provider seam', () => {
     process.env.CLOUDINARY_API_SECRET = 's';
     const provider = getPhotoProvider();
     expect(provider.name).toBe('cloudinary');
-    await expect(provider.extractBackground('https://example.test/a.jpg')).resolves.toEqual({ ok: true, resultUrl: 'https://cdn/x.png' });
+    expect(provider.configured).toBe(true);
+    await expect(provider.extractBackground('https://example.test/a.jpg')).resolves.toEqual({
+      ok: true,
+      resultUrl: 'https://cdn/x.png',
+    });
     expect(removeBackground).toHaveBeenCalledWith('https://example.test/a.jpg');
     await expect(provider.moderate('https://example.test/a.jpg')).resolves.toEqual({ approved: true });
     expect(moderatePhoto).toHaveBeenCalledTimes(1);
@@ -834,8 +865,23 @@ describe('photo provider seam', () => {
   it('answers notConfigured without calling the vendor when creds are absent', async () => {
     const provider = getPhotoProvider();
     expect(provider.name).toBe('none');
-    await expect(provider.extractBackground('https://example.test/a.jpg')).resolves.toMatchObject({ ok: false, notConfigured: true });
+    await expect(provider.extractBackground('https://example.test/a.jpg')).resolves.toMatchObject({
+      ok: false,
+      notConfigured: true,
+    });
     expect(removeBackground).not.toHaveBeenCalled();
+  });
+
+  // Moderation is the fail-closed gate (IMG-001 / SEC-010). An unconfigured
+  // vendor must never read as "approved" to the runner, or a missing secret
+  // would silently publish unmoderated contestant photos.
+  it('fails moderation closed when unconfigured', async () => {
+    const provider = getPhotoProvider();
+    await expect(provider.moderate('https://example.test/a.jpg')).resolves.toMatchObject({
+      approved: false,
+      notConfigured: true,
+    });
+    expect(moderatePhoto).not.toHaveBeenCalled();
   });
 });
 ```
@@ -851,21 +897,40 @@ Expected: FAIL — `Cannot find module '@/src/lib/media/provider'`.
 
 ```ts
 /**
- * Provider seam for contestant-photo rendering (spec §5, §10). One place decides
- * *whether* a vendor can be used; `cloudinary.ts` stays the only place Cloudinary
- * HTTP lives. The job runner talks to this interface, so P2's blend presets and a
- * future second vendor are parameters here rather than a new call site.
+ * Provider seam for contestant-photo rendering (spec §5, §10).
  *
- * `photoProviderConfig()` deliberately returns variable NAMES and booleans. A
- * configuration surface that echoed a secret would leak it into an admin-readable
- * response; the operator needs to know which key is missing, not what it holds.
+ * One place decides *whether* a vendor can be used; `cloudinary.ts` stays the
+ * only place Cloudinary HTTP lives. The job runner talks to this interface, so
+ * P2's blend presets and a possible second vendor become parameters here rather
+ * than a new call site scattered through the pipeline.
+ *
+ * Readiness is delegated to the client's own env contract
+ * (`missingCloudinaryEnv`) instead of a second copy of the variable list: a
+ * drifted duplicate would let the admin config surface claim "configured" while
+ * every vendor call failed closed.
+ *
+ * `photoProviderConfig()` deliberately returns variable NAMES and booleans. This
+ * is what an admin screen and the job ledger render, so echoing a value would
+ * put a vendor secret in front of every operator with access to /admin.
+ *
+ * Nothing here is memoised. Env is fixed at process start in this deployment, so
+ * a cache buys nothing, and the config surface has to answer for the process as
+ * it stands — including in the tests that flip these variables per case.
  */
-import { moderatePhoto, removeBackground, type ModerationResult } from './cloudinary';
+import {
+  configured as cloudinaryConfigured,
+  missingCloudinaryEnv,
+  moderatePhoto,
+  removeBackground,
+  type BackgroundRemovalResult,
+  type ModerationResult,
+} from './cloudinary';
 
 export type PhotoProviderName = 'cloudinary' | 'none';
-export type ExtractResult =
-  | { ok: true; resultUrl: string }
-  | { ok: false; reason: string; notConfigured?: boolean };
+
+/** The extract shape is the client's, aliased rather than redefined so the
+ * runner and the vendor can never disagree about what `ok: false` carries. */
+export type ExtractResult = BackgroundRemovalResult;
 
 export interface PhotoProvider {
   name: PhotoProviderName;
@@ -875,32 +940,44 @@ export interface PhotoProvider {
   moderate(sourceUrl: string): Promise<ModerationResult>;
 }
 
-const REQUIRED_ENV = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'] as const;
-
-export function photoProviderConfig(): { configured: boolean; name: PhotoProviderName; missing: string[] } {
-  const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
-  return { configured: missing.length === 0, name: missing.length === 0 ? 'cloudinary' : 'none', missing };
+export function photoProviderConfig(): {
+  configured: boolean;
+  name: PhotoProviderName;
+  missing: string[];
+} {
+  // `configured` comes from the client, and `missing` from the same list it
+  // checks; deriving one from the other here would be a second policy.
+  const configured = cloudinaryConfigured();
+  return { configured, name: configured ? 'cloudinary' : 'none', missing: missingCloudinaryEnv() };
 }
 
 export function getPhotoProvider(): PhotoProvider {
   const { configured, name, missing } = photoProviderConfig();
+
   if (!configured) {
+    const reason = `Cloudinary is not configured (missing ${missing.join(', ')})`;
     return {
       name: 'none',
       configured: false,
       missing,
-      async extractBackground() {
-        return { ok: false, notConfigured: true, reason: `Cloudinary is not configured (missing ${missing.join(', ')})` };
+      // Both branches return a result rather than throwing: the runner's
+      // fail-closed rule needs to tell "no vendor" apart from "vendor refused",
+      // which is what `notConfigured` is for.
+      async extractBackground(): Promise<ExtractResult> {
+        return { ok: false, notConfigured: true, reason };
       },
-      async moderate() {
-        return { approved: false, notConfigured: true, reason: 'Cloudinary is not configured' };
+      async moderate(): Promise<ModerationResult> {
+        return { approved: false, notConfigured: true, reason };
       },
     };
   }
+
   return {
-    name, configured, missing,
-    extractBackground: (sourceUrl) => removeBackground(sourceUrl),
-    moderate: (sourceUrl) => moderatePhoto(sourceUrl),
+    name,
+    configured,
+    missing,
+    extractBackground: (sourceUrl: string) => removeBackground(sourceUrl),
+    moderate: (sourceUrl: string) => moderatePhoto(sourceUrl),
   };
 }
 ```
@@ -911,6 +988,18 @@ Run: `NODE_OPTIONS="--require /tmp/zstd-shim.cjs" npx vitest run tests/unit/medi
 Expected: PASS on both files (the existing 12 Cloudinary tests must stay green — this task changed nothing in that client's behaviour).
 
 - [ ] **Step 5: Commit** — `git add frontend-web/src/lib/media/provider.ts frontend-web/tests/unit/media/provider.test.ts && git commit -m "refactor(photo): provider seam in front of the Cloudinary client"`
+
+---
+
+Two things this task did differently from the first draft of the steps above, both
+because the draft would have been wrong rather than merely shorter: the seam must
+NOT re-declare the required env variable names (it imports the client's
+`CLOUDINARY_ENV_VARS` / `missingCloudinaryEnv()` / `configured()`, so the config
+surface and the client can never disagree), and `ExtractResult` is an alias of the
+client's `BackgroundRemovalResult` rather than a second shape. The test therefore
+mocks Cloudinary with `importOriginal` -- faking only the two network functions and
+leaving the env helpers real -- and it carries a fourth case proving an
+unconfigured vendor fails *moderation* closed, not open.
 
 ---
 
