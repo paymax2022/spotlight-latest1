@@ -82,6 +82,26 @@ function scheduleOrDefault(def: ContestRegistrationDefinition): ContestSchedule 
 }
 
 /**
+ * The locality triple as Postgres columns.
+ *
+ * Same reason the schedule is a column and not only `contest_config`: Go reads
+ * `connect_contests`, and the JSON snapshot is invisible to the phone. 20272000000000
+ * puts the values on `contests.locality_*` and the mirror trigger copies them across,
+ * so a contest scoped to an LGA is only filterable if the write lands here.
+ *
+ * '' is the correct "absent" value, not null: the columns are NOT NULL DEFAULT '' and
+ * an empty string is what clears a locality on the road from 'village' back to
+ * 'national'.
+ */
+function localityColumns(def: ContestRegistrationDefinition) {
+  return {
+    locality_state: String(def.localityState ?? '').trim(),
+    locality_lga: String(def.localityLga ?? '').trim(),
+    locality_village: String(def.localityVillage ?? '').trim(),
+  };
+}
+
+/**
  * Persist a contest definition to public.contests.
  *
  * status is 'active' so the contest is visible immediately — that is the point of
@@ -123,6 +143,7 @@ export async function persistContestDefinition(
       season_name: def.seasonOrEdition,
       voting_enabled: def.supportsVoting,
       age_min: def.legalAdultAge,
+      ...localityColumns(def),
       // publishContestToVotingPlane (called right after this, same request) was
       // meant to set these on first creation — but it does a slug lookup first,
       // finds the row THIS insert just created, and takes its "existing contest,
@@ -187,6 +208,8 @@ export async function updateContestDefinition(
       season_name: def.seasonOrEdition,
       voting_enabled: def.supportsVoting,
       age_min: def.legalAdultAge,
+      // Always written, so the road off a local scope clears the triple.
+      ...localityColumns(def),
       rules_text: def.rulesText?.trim() || '',
       banner_image_url: def.bannerImageUrl?.trim() || '',
       logo_url: def.logoUrl?.trim() || '',
@@ -263,7 +286,7 @@ export function isContestStatus(value: unknown): value is ContestStatus {
 export async function listPersistedContests(): Promise<PersistedContest[]> {
   const { data, error } = await getSupabase()
     .from('contests')
-    .select('id, slug, name, status, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, rules_text, banner_image_url, logo_url, start_date, end_date, prize_pool, contest_config, created_at')
+    .select('id, slug, name, status, category, contest_type, location_scope, locality_state, locality_lga, locality_village, entry_fee_ngn, season_name, voting_enabled, rules_text, banner_image_url, logo_url, start_date, end_date, prize_pool, contest_config, created_at')
     .order('created_at', { ascending: false });
   if (error) throw new Error(`Failed to list contests: ${error.message}`);
 
@@ -287,6 +310,13 @@ export async function listPersistedContests(): Promise<PersistedContest[]> {
         startDate: cfg.startDate || strOrEmpty(row.start_date),
         endDate: cfg.endDate || strOrEmpty(row.end_date),
         prizePool: cfg.prizePool ?? strOrEmpty(row.prize_pool),
+        // Unlike the schedule, an empty locality column IS an answer: it is what
+        // a contest moved off 'lga'/'village' writes. So the column wins outright
+        // instead of falling back to the snapshot, which would resurrect a
+        // quarter somebody deliberately cleared.
+        localityState: strOrEmpty(row.locality_state),
+        localityLga: strOrEmpty(row.locality_lga),
+        localityVillage: strOrEmpty(row.locality_village),
       };
     }
     return {
@@ -298,6 +328,9 @@ export async function listPersistedContests(): Promise<PersistedContest[]> {
       contestType: String(row.contest_type ?? 'online_contest'),
       seasonOrEdition: String(row.season_name ?? ''),
       regionScope: (row.location_scope ?? 'national'),
+      localityState: strOrEmpty(row.locality_state),
+      localityLga: strOrEmpty(row.locality_lga),
+      localityVillage: strOrEmpty(row.locality_village),
       isPaid: Number(row.entry_fee_ngn ?? 0) > 0,
       registrationFeeNgn: Number(row.entry_fee_ngn ?? 0),
       requiresGuardianConsentForMinors: false,

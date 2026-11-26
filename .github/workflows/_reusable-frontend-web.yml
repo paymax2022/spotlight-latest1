@@ -97,6 +97,20 @@ jobs:
       - name: Contest and voting guards (prize projection, settings sync, bridge)
         run: npx vitest run tests/unit/contests tests/unit/voting
 
+      # Same blind spot a third time: tests/unit/registration is 38 files and no
+      # lane above runs it, so the locality cascade (state -> LGA -> village, and
+      # the /api/admin/contests write boundary that gives "local contest" its
+      # meaning) was only ever executed on a laptop. Every break there is silent:
+      # a column dropped from the store mapping still saves, and the phone just
+      # stops being filterable.
+      #
+      # Two SUBSTRING filters, not a directory: the locality story spans four specs
+      # (cascade rules, picker resets, villages route, admin routes), and the
+      # sibling registration specs are not yet triaged. Measured on this tree: 4
+      # files / 38 tests, green.
+      - name: Locality guards (village cascade, villages route, admin write boundary)
+        run: npx vitest run locality villages
+
       - name: Contract check (implementation vs openapi.yaml)
         run: npm run contract:check
 

@@ -41,7 +41,7 @@ export interface LocalityArgs {
   error?: string;
 }
 
-function normalizeLocality(value: unknown): string {
+export function normalizeLocality(value: unknown): string {
   if (typeof value !== 'string') return '';
   // Newlines and tabs arrive from pasted values and from a query string that was
   // split on & — none of them are part of a place name.

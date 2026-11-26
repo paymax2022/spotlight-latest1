@@ -15,6 +15,7 @@ import {
 import type { ContestCategory, ContestRegistrationDefinition, ContestType } from '@/src/features/registration/types';
 import { sanitizeContestFormSchema } from '@/src/features/registration/field-catalog';
 import { contestScheduleError, readContestSchedule } from '@/src/server/contests/schedule';
+import { contestLocalityFor, isContestLocalityError } from '@/src/server/registration-v2/contest-locality';
 
 const allowedTypes: ContestType[] = [
   'online_contest',
@@ -102,6 +103,12 @@ function normalizeContestPayload(
     throw new Error('Registration fee must be a valid number for paid contests.');
   }
 
+  // Locality follows the scope, exactly as it does on POST: a local contest has
+  // to name its state and LGA, and a scope that is no longer local clears the
+  // triple rather than leaving a stale claim on the row.
+  const locality = contestLocalityFor(regionScope, body);
+  if (!locality.ok) throw new Error(locality.error);
+
   const normalized: Partial<ContestRegistrationDefinition> = {
     slug,
     title,
@@ -109,6 +116,7 @@ function normalizeContestPayload(
     contestType,
     seasonOrEdition,
     regionScope,
+    ...locality.locality,
     isPaid,
     registrationFeeNgn,
     requiresGuardianConsentForMinors: Boolean(body.requiresGuardianConsentForMinors),
@@ -251,6 +259,11 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ slug: str
     ) {
       return errorResponse(message, 409);
     }
+    // The locality errors carry the exact sentence the admin needs (which level
+    // is missing), so they pass through verbatim rather than being flattened
+    // into the generic 500. POST answers the same mistake with
+    // errorResponse(locality.error, 400).
+    if (isContestLocalityError(message)) return errorResponse(message, 400);
     return handleApiError(error, 'Failed to update contest');
   }
 }

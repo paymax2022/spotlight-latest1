@@ -31,6 +31,12 @@ vi.mock('@/src/server/registration/store', () => ({
   updateRegistrationContest: vi.fn(() => null),
   deleteRegistrationContest: vi.fn(),
   listRegistrationContests: () => [],
+  // PATCH reads the legacy catalog as the fallback when Postgres has no row
+  // (app/api/admin/contests/[slug]/route.ts). The mock omitted this key, so the
+  // lookup threw "is not a function" inside the try and both 404/400 cases below
+  // came back 500 — the route was never reached. Null means "not in memory", which
+  // is the state those tests describe.
+  getRegistrationContestBySlug: vi.fn(() => null),
 }));
 vi.mock('@/src/server/registration-v2/contest-store', () => ({
   persistContestDefinition: vi.fn(async (def: Record<string, unknown>) => {
