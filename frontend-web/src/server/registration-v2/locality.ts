@@ -3,7 +3,9 @@
 // Two halves live here, and the split is the point:
 //
 //   * the LGA list is static reference data (reference-data.ts) and needs no
-//     server, exactly like the residence -> city picker;
+//     server for the web wizard, exactly like the residence -> city picker. The
+//     admin console is a separate app with its own bundle, so the same table is
+//     also served over GET /api/registration/lgas rather than copied into it;
 //   * the VILLAGE list is curated content owned by admins, stored in
 //     `public.villages` (migration 20272000000000). It is never bundled into the
 //     app — publishing a quarter an admin added must not require a redeploy — so
@@ -21,6 +23,7 @@
 // boundary checks in the villages table. Rejecting here means an absurd string
 // never reaches Postgres at all.
 import { createAdminClient } from '@/lib/supabase/server';
+import { NIGERIA_LGAS_BY_STATE } from '@/src/features/registration/reference-data';
 
 export const MAX_LOCALITY_LEN = 80;
 
@@ -122,5 +125,50 @@ export async function readVillages(rawState: unknown, rawLga: unknown): Promise<
   return {
     ok: true,
     payload: villagesPayload(args.state, args.lga, (data ?? []).map((row) => row.name)),
+  };
+}
+
+export interface LgasPayload {
+  /** The canonical state key the list was found under. */
+  state: string;
+  mode: VillageMode;
+  /** Alphabetical, always an array. */
+  lgas: string[];
+}
+
+export type LgasResult =
+  | { ok: true; payload: LgasPayload }
+  | { ok: false; status: 400; error: string };
+
+/**
+ * The middle tier: the LGAs of one state, from the same static table the web
+ * wizard's dropdown reads.
+ *
+ * No database, so this is the one locality read that is pure. The case-insensitive
+ * lookup exists because the value arrives from a query string, and a caller that
+ * lowercases a label would otherwise get `free_text` for a state the table knows.
+ * An unknown state still answers 200 + empty for the reason the header gives for
+ * villages: a gap in reference data is a text box, not an error.
+ */
+export function readLgas(rawState: unknown): LgasResult {
+  const asked = normalizeLocality(rawState);
+  if (!asked) return { ok: false, status: 400, error: 'state is required.' };
+  if (asked.length > MAX_LOCALITY_LEN) {
+    return { ok: false, status: 400, error: `state must be ${MAX_LOCALITY_LEN} characters or fewer.` };
+  }
+
+  const wanted = asked.toLowerCase();
+  const state = asked in NIGERIA_LGAS_BY_STATE
+    ? asked
+    : Object.keys(NIGERIA_LGAS_BY_STATE).find((key) => key.toLowerCase() === wanted);
+
+  const lgas = state ? NIGERIA_LGAS_BY_STATE[state] ?? [] : [];
+  return {
+    ok: true,
+    payload: {
+      state: state ?? asked,
+      mode: lgas.length > 0 ? 'curated' : 'free_text',
+      lgas: [...lgas].sort((a, b) => a.localeCompare(b)),
+    },
   };
 }

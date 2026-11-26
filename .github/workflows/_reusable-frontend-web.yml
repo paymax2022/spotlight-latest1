@@ -104,10 +104,10 @@ jobs:
       # a column dropped from the store mapping still saves, and the phone just
       # stops being filterable.
       #
-      # Two SUBSTRING filters, not a directory: the locality story spans four specs
-      # (cascade rules, picker resets, villages route, admin routes), and the
-      # sibling registration specs are not yet triaged. Measured on this tree: 4
-      # files / 38 tests, green.
+      # Two SUBSTRING filters, not a directory: the locality story spans five specs
+      # (cascade rules, picker resets, the lgas and villages routes, the admin write
+      # boundary), and the sibling registration specs are not yet triaged. Measured
+      # on this tree: 5 files / 45 tests, green.
       - name: Locality guards (village cascade, villages route, admin write boundary)
         run: npx vitest run locality villages
 
