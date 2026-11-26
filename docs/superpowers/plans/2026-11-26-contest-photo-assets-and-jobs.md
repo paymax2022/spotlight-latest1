@@ -1767,69 +1767,284 @@ claim payload, and the two null answers of `getPhotoJob`.
 
 **Files:**
 - Create: `frontend-web/src/server/photo-jobs/registry.ts`
+- Create: `frontend-web/src/server/registration/connect-contest-id.ts`
+- Modify: `frontend-web/src/server/registration/template-resolver.ts` (returns the template's identity)
+- Modify: `frontend-web/src/lib/media/asset-source.ts` (adds `uploadObjectKeyFor`)
+- Modify: `frontend-web/src/server/registration/supabase-store.ts` (imports the moved helper)
 - Test: `frontend-web/tests/unit/photo-jobs/registry.test.ts`
 
 **Interfaces:**
-- Consumes: `resolveFetchableSource` (Task 3), `upsertPhotoAsset`/`enqueuePhotoJob`/`buildRunKey` (Task 4), `resolveConnectContestId` + `resolveActiveTemplateForContest` (existing).
-- Produces: `registerOriginalAndEnqueue(input: { registrationId: string; contestSlug: string | null; storedPhotoValue: string; renderParams?: Record<string, unknown>; userId?: string | null }): Promise<{ assetId: string | null; jobId: string | null; skipped: string | null }>`
+- Consumes: `resolveFetchableSource` + `uploadObjectKeyFor` (Task 3), `upsertPhotoAsset`/`enqueuePhotoJob`/`buildRunKey` (Task 4), `resolveConnectContestId` (moved here from `supabase-store.ts`), `resolveActiveTemplateForContest` (existing), `contentTypeForKey` (existing).
+- Produces: `registerOriginalAndEnqueue(input: RegisterInput): Promise<RegisterOutcome>` where
+  `RegisterInput = { registrationId, contestSlug?, contestId?, storedPhotoValue, renderParams? }` and
+  `RegisterOutcome = { assetId: string | null; jobId: string | null; skipped: string | null }`.
+  Tasks 6, 9, 10 and 11 all call this; nothing else writes an `original` asset row.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 // frontend-web/tests/unit/photo-jobs/registry.test.ts
+/**
+ * Task 5 — the registry that records a contestant's original photograph and
+ * then asks for a render (spec §5, acceptance criterion 16).
+ *
+ * Two of these cases exist because of faults the design review caught in the
+ * plan's draft of this file, and both are the kind that no amount of reading
+ * the code would have surfaced:
+ *
+ *   1. The draft stored the *presigned* URL Cloudinary would fetch as the
+ *      asset's reference. A signed URL expires, so the reference would rot —
+ *      and the row's unique key is that reference, so the same photograph
+ *      re-ingested later would mint a second "original" for one contestant.
+ *      Case (a) asserts the object key is stored and the signed URL appears
+ *      nowhere in the write.
+ *   2. The draft hard-coded `image/jpeg`, so a PNG original was labelled
+ *      wrongly forever. Same case asserts `image/png` for a PNG object.
+ *
+ * `buildRunKey` is deliberately NOT mocked. The plan's draft mocked the whole
+ * job store, which made its own instruction — "assert the run key differs
+ * between two template ids" — unassertable, because the mock returned the same
+ * string both times. Importing the real one keeps the interesting behaviour
+ * under test and mocks only the functions that need a database.
+ */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ upsertPhotoAsset: vi.fn(), enqueuePhotoJob: vi.fn(), buildRunKey: vi.fn() }));
-vi.mock('@/src/server/photo-jobs/job-store', () => store);
+const jobStore = vi.hoisted(() => ({
+  upsertPhotoAsset: vi.fn(),
+  enqueuePhotoJob: vi.fn(),
+}));
+
+vi.mock('@/src/server/photo-jobs/job-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/src/server/photo-jobs/job-store')>();
+  return { ...actual, upsertPhotoAsset: jobStore.upsertPhotoAsset, enqueuePhotoJob: jobStore.enqueuePhotoJob };
+});
+
 const source = vi.hoisted(() => ({ resolveFetchableSource: vi.fn() }));
-vi.mock('@/src/lib/media/asset-source', () => source);
+
+// Only the fetchable-URL step is faked (it signs requests to R2); the route
+// decoder next to it stays real, because reading an object key back out of an
+// upload URL is exactly what this file must get right.
+vi.mock('@/src/lib/media/asset-source', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/src/lib/media/asset-source')>();
+  return { ...actual, resolveFetchableSource: source.resolveFetchableSource };
+});
+
+const contests = vi.hoisted(() => ({ resolveConnectContestId: vi.fn() }));
+// Mocked at its own module: the registry reaches the slug lookup directly, and
+// mocking supabase-store instead would leave this file asserting against a
+// module the code under test never imports.
+vi.mock('@/src/server/registration/connect-contest-id', () => contests);
+
 const resolver = vi.hoisted(() => ({ resolveActiveTemplateForContest: vi.fn() }));
 vi.mock('@/src/server/registration/template-resolver', () => resolver);
 
 import { registerOriginalAndEnqueue } from '@/src/server/photo-jobs/registry';
 
+const ROUTE = (key: string): string =>
+  `/api/registration/uploads/${Buffer.from(key, 'utf8').toString('base64url')}`;
+
+function template(overrides: Record<string, unknown> = {}) {
+  return {
+    templateId: 'tpl-1',
+    templateVersion: 4,
+    templateUrl: 'https://cdn/t.png',
+    templateWidth: 1080,
+    templateHeight: 1350,
+    slot: { id: 'slot-1', x: 10, y: 20, width: 300, height: 400 },
+    ...overrides,
+  };
+}
+
+const FETCHED = {
+  ok: true as const,
+  url: 'https://r2.example.com/registration/u-1/photo.jpg?X-Amz-Signature=abc123',
+  objectKey: 'registration/u-1/photo.jpg',
+  ttlSeconds: 600,
+};
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  jobStore.upsertPhotoAsset.mockResolvedValue('asset-1');
+  jobStore.enqueuePhotoJob.mockResolvedValue({ jobId: 'job-1', status: 'queued', alreadyExisted: false });
+  source.resolveFetchableSource.mockResolvedValue(FETCHED);
+  contests.resolveConnectContestId.mockResolvedValue('contest-1');
+  resolver.resolveActiveTemplateForContest.mockResolvedValue(null);
+});
+
 describe('registerOriginalAndEnqueue', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-    store.upsertPhotoAsset.mockResolvedValue('asset-1');
-    store.buildRunKey.mockReturnValue('rk-1');
-    store.enqueuePhotoJob.mockResolvedValue({ jobId: 'job-1', status: 'queued', alreadyExisted: false });
-    resolver.resolveActiveTemplateForContest.mockResolvedValue(null);
-  });
+  it('records the original by object key and never stores the signed URL', async () => {
+    const out = await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      contestSlug: 'rising-star',
+      storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
+    });
 
-  it('stores the original by object key and enqueues one job', async () => {
-    source.resolveFetchableSource.mockResolvedValue({ ok: true, url: 'https://x/a.jpg', objectKey: 'registration/u/a.jpg', ttlSeconds: 600 });
-    const out = await registerOriginalAndEnqueue({ registrationId: 'r1', contestSlug: 'rising-star', storedPhotoValue: '/api/registration/uploads/abc' });
     expect(out).toEqual({ assetId: 'asset-1', jobId: 'job-1', skipped: null });
-    expect(store.upsertPhotoAsset).toHaveBeenCalledWith(expect.objectContaining({ kind: 'original', storageKey: 'registration/u/a.jpg' }));
-    expect(store.enqueuePhotoJob).toHaveBeenCalledWith(expect.objectContaining({ runKey: 'rk-1', sourceAssetId: 'asset-1' }));
+    expect(jobStore.upsertPhotoAsset).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registrationId: 'r-1',
+        kind: 'original',
+        storageKey: 'registration/u-1/photo.jpg',
+        providerUrl: null,
+        contentType: 'image/jpeg',
+      }),
+    );
+    // The URL we handed the vendor is signed and short-lived; persisting it
+    // would rot and would split one photo across two asset rows.
+    const written = JSON.stringify(jobStore.upsertPhotoAsset.mock.calls);
+    expect(written).not.toContain('X-Amz-Signature');
+    expect(written).not.toContain('https://r2.example.com');
   });
 
-  it('skips without a photo value and never calls the vendor', async () => {
-    const out = await registerOriginalAndEnqueue({ registrationId: 'r1', contestSlug: 'x', storedPhotoValue: '' });
-    expect(out.skipped).toBe('noPhoto');
-    expect(store.upsertPhotoAsset).not.toHaveBeenCalled();
+  it('keeps the extension-derived content type for a PNG original', async () => {
+    source.resolveFetchableSource.mockResolvedValue({
+      ...FETCHED,
+      objectKey: 'registration/u-1/photo.png',
+    });
+    await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      storedPhotoValue: ROUTE('registration/u-1/photo.png'),
+    });
+    expect(jobStore.upsertPhotoAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ contentType: 'image/png' }),
+    );
+  });
+
+  it('records a remote provider URL as providerUrl when the photo is not ours', async () => {
+    const remote = 'https://cdn.example.net/entries/a.png';
+    source.resolveFetchableSource.mockResolvedValue({ ok: true, url: remote, objectKey: null, ttlSeconds: 0 });
+    await registerOriginalAndEnqueue({ registrationId: 'r-1', storedPhotoValue: remote });
+    expect(jobStore.upsertPhotoAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ storageKey: null, providerUrl: remote }),
+    );
+  });
+
+  it('skips without a photo and touches neither the vendor nor the queue', async () => {
+    const out = await registerOriginalAndEnqueue({ registrationId: 'r-1', storedPhotoValue: '   ' });
+    expect(out).toEqual({ assetId: null, jobId: null, skipped: 'noPhoto' });
     expect(source.resolveFetchableSource).not.toHaveBeenCalled();
+    expect(jobStore.upsertPhotoAsset).not.toHaveBeenCalled();
+    expect(jobStore.enqueuePhotoJob).not.toHaveBeenCalled();
   });
 
-  it('records the original even when the source is not fetchable, so the photo is never lost', async () => {
-    source.resolveFetchableSource.mockResolvedValue({ ok: false, kind: 'notFetchable', reason: 'R2 not configured' });
-    const out = await registerOriginalAndEnqueue({ registrationId: 'r1', contestSlug: 'x', storedPhotoValue: '/api/registration/uploads/abc' });
+  it('still records the original when the source is not fetchable, so the photo is never lost', async () => {
+    source.resolveFetchableSource.mockResolvedValue({
+      ok: false,
+      kind: 'notFetchable',
+      reason: 'R2 is not configured (set R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, NEXT_PUBLIC_R2_PUBLIC_BASE_URL)',
+    });
+    const out = await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
+    });
+
+    // The asset row is written BEFORE fetchability is consulted, and the
+    // object key survives even though no URL could be signed for it.
+    expect(jobStore.upsertPhotoAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ storageKey: 'registration/u-1/photo.jpg' }),
+    );
     expect(out.assetId).toBe('asset-1');
     expect(out.jobId).toBeNull();
-    expect(out.skipped).toBe('notFetchable: R2 not configured');
-    expect(store.enqueuePhotoJob).not.toHaveBeenCalled();
+    expect(out.skipped).toMatch(/^notFetchable: /);
+    expect(jobStore.enqueuePhotoJob).not.toHaveBeenCalled();
   });
 
-  it('uses the object key as the source reference when it is not a decodeable route', async () => {
-    source.resolveFetchableSource.mockResolvedValue({ ok: true, url: 'https://pub/a.jpg', objectKey: null, ttlSeconds: 600 });
-    await registerOriginalAndEnqueue({ registrationId: 'r1', contestSlug: 'x', storedPhotoValue: 'https://pub-xyz.r2.dev/contestants/images/a.png' });
-    expect(store.upsertPhotoAsset).toHaveBeenCalledWith(expect.objectContaining({ storageKey: null, providerUrl: 'https://pub-xyz.r2.dev/contestants/images/a.png' }));
+  it('reports assetWriteFailed and enqueues nothing when the asset row cannot be written', async () => {
+    jobStore.upsertPhotoAsset.mockResolvedValue(null);
+    const out = await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
+    });
+    expect(out).toEqual({ assetId: null, jobId: null, skipped: 'assetWriteFailed' });
+    expect(jobStore.enqueuePhotoJob).not.toHaveBeenCalled();
+  });
+
+  it('reports enqueueFailed but keeps the asset id — the original is safe', async () => {
+    jobStore.enqueuePhotoJob.mockResolvedValue(null);
+    const out = await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
+    });
+    expect(out).toEqual({ assetId: 'asset-1', jobId: null, skipped: 'enqueueFailed' });
+  });
+
+  it('pins the resolved template so a template change cannot reuse a finished render', async () => {
+    resolver.resolveActiveTemplateForContest.mockResolvedValue(template({ templateId: 'tpl-1', templateVersion: 4 }));
+    const first = await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      contestId: 'contest-1',
+      storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
+    });
+    expect(first.jobId).toBe('job-1');
+
+    const pinned = jobStore.enqueuePhotoJob.mock.calls[0][0];
+    expect(pinned).toMatchObject({ templateId: 'tpl-1', sourceAssetId: 'asset-1', registrationId: 'r-1' });
+
+    // Same source photo, a different template: a different run key, so the
+    // unique index cannot answer the new request with the old completed job.
+    resolver.resolveActiveTemplateForContest.mockResolvedValue(template({ templateId: 'tpl-2', templateVersion: 1 }));
+    await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      contestId: 'contest-1',
+      storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
+    });
+    const runKeys = jobStore.enqueuePhotoJob.mock.calls.map((call) => call[0].runKey);
+    expect(runKeys).toHaveLength(2);
+    expect(runKeys[1]).not.toBe(runKeys[0]);
+    expect(runKeys[0]).toContain('tpl-1');
+    expect(runKeys[1]).toContain('tpl-2');
+  });
+
+  it('gives a different renderParams object its own run key', async () => {
+    resolver.resolveActiveTemplateForContest.mockResolvedValue(template());
+    await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      contestId: 'contest-1',
+      storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
+      renderParams: { offsetX: 0 },
+    });
+    await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      contestId: 'contest-1',
+      storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
+      renderParams: { offsetX: 40 },
+    });
+    const [first, second] = jobStore.enqueuePhotoJob.mock.calls.map((call) => call[0]);
+    expect(second.runKey).not.toBe(first.runKey);
+    // The request must carry the params themselves, not only their hash, or
+    // the worker has nothing to render from.
+    expect(first.renderParams).toEqual({ offsetX: 0 });
+    expect(second.renderParams).toEqual({ offsetX: 40 });
+  });
+
+  it('resolves the contest from the slug when no contest id is supplied', async () => {
+    await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      contestSlug: 'rising-star',
+      storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
+    });
+    expect(contests.resolveConnectContestId).toHaveBeenCalledWith('rising-star');
+    expect(resolver.resolveActiveTemplateForContest).toHaveBeenCalledWith('contest-1');
+    expect(jobStore.upsertPhotoAsset).toHaveBeenCalledWith(expect.objectContaining({ contestId: 'contest-1' }));
+    expect(jobStore.enqueuePhotoJob).toHaveBeenCalledWith(expect.objectContaining({ contestId: 'contest-1' }));
+  });
+
+  it('does not look up a contest when neither id nor slug is given', async () => {
+    await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
+    });
+    expect(contests.resolveConnectContestId).not.toHaveBeenCalled();
+    expect(resolver.resolveActiveTemplateForContest).not.toHaveBeenCalled();
+    expect(jobStore.enqueuePhotoJob).toHaveBeenCalledWith(expect.objectContaining({ templateId: null }));
   });
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — FAIL, module missing.
+- [ ] **Step 2: Run to verify failure**
+
+Run: `npx vitest run tests/unit/photo-jobs/registry.test.ts`
+Expected: FAIL — `Cannot find package '@/src/server/photo-jobs/registry'`, `Test Files 1 failed (1)`, `Tests 0`.
 
 - [ ] **Step 3: Implement**
 
@@ -1837,75 +2052,305 @@ describe('registerOriginalAndEnqueue', () => {
 
 ```ts
 /**
- * The single entry point the rest of the app uses (spec §5). It records the
- * uploaded original as an immutable asset row FIRST, then enqueues the render.
+ * The single entry point the rest of the app uses to put a contestant's
+ * photograph into the compositing pipeline (spec §5, acceptance criterion 16).
  *
- * Order matters and is the reason this file exists as its own unit: the
- * previous design wrote the pipeline output over the only stored photo value,
- * so a failure lost the input. Recording the original before anything can fail
- * means the contestant's photograph survives every downstream fault, including
- * a source the vendor cannot fetch — which is reported, not silently swallowed.
+ * Order is the whole design: resolve what we can, record the original as an
+ * asset row, and only then ask for a render. The behaviour this replaces wrote
+ * the pipeline's output over the one stored photo value, so any failure
+ * destroyed the input and left nothing to retry from. Here, a job that cannot
+ * run — because the vendor has no URL to fetch, because moderation refused,
+ * because the queue write failed — still leaves the photograph recorded and
+ * readable. `assetId` comes back on every non-fatal path for exactly that
+ * reason, and callers that show a photo should show it from the asset row.
+ *
+ * What gets stored is the object key, never a signed URL. A presigned URL is a
+ * temporary capability with the same shape as a permanent one in a text column,
+ * and the row's unique key is built from that value: store the ephemeral string
+ * and every re-ingest mints a fresh "original" for the same photograph while the
+ * reference quietly stops resolving an hour later.
+ *
+ * Returns rather than throws. The callers are the submit and review paths, both
+ * of which must keep working when this feature fails, so the outcome is a small
+ * record the caller can log or surface — never an exception that turns a broken
+ * compositing job into a lost application.
  */
-import { resolveFetchableSource } from '@/src/lib/media/asset-source';
+import { contentTypeForKey } from '@/src/lib/storage/local-uploads';
+import { resolveFetchableSource, uploadObjectKeyFor } from '@/src/lib/media/asset-source';
+import { resolveConnectContestId } from '@/src/server/registration/connect-contest-id';
 import { resolveActiveTemplateForContest } from '@/src/server/registration/template-resolver';
 import { buildRunKey, enqueuePhotoJob, upsertPhotoAsset } from './job-store';
 
 export interface RegisterInput {
   registrationId: string;
-  contestSlug: string | null;
-  storedPhotoValue: string;
-  renderParams?: Record<string, unknown>;
-  userId?: string | null;
+  /**
+   * Which contest this entry belongs to. Either form is accepted because the
+   * rest of the registration flow carries a slug while the admin and job paths
+   * carry the `connect_contests` id; the slug is resolved to an id here so no
+   * caller has to duplicate that query.
+   */
+  contestSlug?: string | null;
   contestId?: string | null;
+  /** The value currently stored in `form_data['media.photoUrl']`. */
+  storedPhotoValue: string;
+  /**
+   * Contestant positioning choices from the preview editor. Part of the run key,
+   * which is what lets a re-crop of the same photo be a new job rather than a
+   * replay of the finished one.
+   */
+  renderParams?: Record<string, unknown>;
+}
+
+export interface RegisterOutcome {
+  /** The original's asset row id, or null when nothing was recorded. */
+  assetId: string | null;
+  /** The queued render's id, or null when no job was created. */
+  jobId: string | null;
+  /**
+   * Why no job was created, or null when one was. Kept as a short machine-ish
+   * string (`noPhoto`, `assetWriteFailed`, `enqueueFailed`, or
+   * `<sourceKind>: <reason>`) so a caller can log it and an operator can read
+   * it without this module owning any presentation.
+   */
+  skipped: string | null;
 }
 
 export async function registerOriginalAndEnqueue(
   input: RegisterInput,
-): Promise<{ assetId: string | null; jobId: string | null; skipped: string | null }> {
+): Promise<RegisterOutcome> {
   const stored = (input.storedPhotoValue || '').trim();
   if (!stored) return { assetId: null, jobId: null, skipped: 'noPhoto' };
 
+  // Skipped rather than called with an empty slug: the helper answers null for
+  // that input anyway, and a queue writer that fires a pointless query on every
+  // photo-less call is how a hot path ends up rate-limited by its own database.
+  const contestId =
+    input.contestId ?? (input.contestSlug ? await resolveConnectContestId(input.contestSlug) : null);
+
+  // Both of these read the stored value; neither may fail. The key is what the
+  // row stores, the fetchable source is only what the vendor can be given, and
+  // a machine without R2 credentials still has to record the photograph.
+  const objectKey = uploadObjectKeyFor(stored);
   const resolved = await resolveFetchableSource(stored);
-  const storageKey = resolved.ok ? resolved.objectKey : (stored.startsWith('registration/') ? stored : null);
-  const providerUrl = resolved.ok && !resolved.objectKey ? resolved.url : (storageKey ? null : stored);
+
+  // An object we own is referenced by key; anything else — a CDN URL from an
+  // older import, a value this module does not recognise — is kept verbatim in
+  // provider_url. Storing the unrecognised form is not a claim that it is
+  // fetchable; it is the alternative to losing the only pointer we have.
+  const storageKey = objectKey;
+  const providerUrl = objectKey ? null : stored;
 
   const assetId = await upsertPhotoAsset({
     registrationId: input.registrationId,
     kind: 'original',
     storageKey,
     providerUrl,
-    contentType: 'image/jpeg',
-    contestId: input.contestId ?? null,
+    // Derived from the name rather than assumed: a PNG original labelled
+    // image/jpeg is a wrong fact on an immutable row forever, and this is the
+    // only place the label is chosen.
+    contentType: contentTypeForKey(objectKey ?? stored),
+    contestId,
   });
   if (!assetId) return { assetId: null, jobId: null, skipped: 'assetWriteFailed' };
 
   if (!resolved.ok) {
-    // The original is safe; the render cannot run yet. Surfaced as a skipped
-    // reason the caller reports instead of a job that would fail six times.
+    // The original is safe; the render cannot run yet. Reported as a skipped
+    // reason rather than enqueued to fail six times and pause for review.
     return { assetId, jobId: null, skipped: `${resolved.kind}: ${resolved.reason}` };
   }
 
-  const contestId = input.contestId ?? null;
   const template = contestId ? await resolveActiveTemplateForContest(contestId) : null;
+  const templateId = template?.templateId ?? null;
 
   const job = await enqueuePhotoJob({
-    runKey: buildRunKey({ sourceAssetId: assetId, templateId: template ? (template as any).id ?? null : null, renderParams: input.renderParams }),
+    runKey: buildRunKey({ sourceAssetId: assetId, templateId, renderParams: input.renderParams }),
     registrationId: input.registrationId,
     sourceAssetId: assetId,
     contestId,
-    templateId: template ? (template as any).id ?? null : null,
+    templateId,
     renderParams: input.renderParams,
   });
+
   return { assetId, jobId: job?.jobId ?? null, skipped: job ? null : 'enqueueFailed' };
 }
 ```
 
-`ResolvedTemplate` has no `id` field today (Task 1 read of `template-resolver.ts:30-35` shows `templateUrl/templateWidth/templateHeight/slot`, with `slot.id` being the slot row's id). Fix this properly instead of casting: add `templateId: string` and `templateVersion: number` to `ResolvedTemplate` and select `id, version` in that query — the resolver already fetches `id`. Cover it with one extra assertion in `registry.test.ts` that the enqueued `templateId` is the template's id and its `runKey` differs between two template ids.
+`frontend-web/src/server/registration/connect-contest-id.ts` — the slug lookup, moved verbatim out of
+`supabase-store.ts` (which now imports it; its own call site is unchanged):
 
-- [ ] **Step 4: Run to verify pass.**
-- [ ] **Step 5: Commit** — `git commit -am "feat(photo): registry records the original asset before enqueuing a render"`
+```ts
+/**
+ * slug -> `connect_contests.id`, the one lookup needed to decide whether a
+ * contest has a compositing template configured.
+ *
+ * This began as a private helper inside `supabase-store.ts`. It lives here now
+ * because the photo registry needs it and the registry is going to be called
+ * FROM `supabase-store.ts` (the submit and review paths are its only callers),
+ * which would have made the two modules import each other. A one-function
+ * module breaks the cycle without any behaviour change, and both sides arrive
+ * through the same query instead of maintaining two copies that can drift.
+ *
+ * Returns null (never throws) on any miss or error — an unresolvable contest
+ * simply means no template is consulted and the caller keeps the plain photo.
+ */
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
----
+// Lazy + memoized for the same reason as template-resolver.ts: building a
+// client at import time captures whatever env happened to be set when the
+// module was first loaded, which is never a time to construct one (vitest
+// collection, next build).
+let supabaseClient: SupabaseClient | null = null;
+function getSupabase() {
+  if (!supabaseClient) {
+    supabaseClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+      process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+      { auth: { persistSession: false } },
+    );
+  }
+  return supabaseClient;
+}
+
+export async function resolveConnectContestId(
+  slug: string | null | undefined,
+): Promise<string | null> {
+  if (!slug) return null;
+  const { data, error } = await getSupabase()
+    .from('connect_contests')
+    .select('id')
+    .eq('slug', slug)
+    .maybeSingle();
+  if (error || !data) return null;
+  return (data as { id: string }).id;
+}
+```
+
+`frontend-web/src/lib/media/asset-source.ts` — add this export above `resolveFetchableSource` and make
+that function read the key through it (`const objectKey = uploadObjectKeyFor(value);`) so "is this our
+upload route" has exactly one implementation:
+
+```ts
+/**
+ * The object key behind a stored photo value, or null when it is not our own
+ * upload route.
+ *
+ * Split out from `resolveFetchableSource` because the key is wanted even when
+ * no fetchable URL can be produced: the asset row stores the key, not the
+ * signed URL, and a machine with no R2 credentials still has to be able to
+ * record which photograph a contestant uploaded. Callers that only need a
+ * vendor source keep using `resolveFetchableSource`, which reads the value
+ * through this same function — so "is this our route" has exactly one answer.
+ */
+export function uploadObjectKeyFor(storedValue: string): string | null {
+  const value = (storedValue || '').trim();
+  if (!value) return null;
+  const absolute = httpUrl(value);
+  // The absolute form is what mobile and older rows store; both spellings
+  // name the same object.
+  return decodeUploadRouteKey(absolute ? absolute.pathname : value.startsWith('/') ? value : '');
+}
+```
+
+`frontend-web/src/server/registration/template-resolver.ts` — `ResolvedTemplate` gains the template's
+identity, the query selects it, and the return passes it through:
+
+```ts
+export interface ResolvedTemplate {
+  /**
+   * Identity of the template that was resolved, not just its pixels.
+   *
+   * The photo job queue keys each render by template, so a template edit that
+   * publishes a new version must produce a new job rather than being answered
+   * from the completed row of the version before it. That is only expressible
+   * if the resolver hands back `id` and `version` — until now it returned the
+   * URL and dimensions and dropped both, which meant callers either re-queried
+   * the table themselves or built a run key that could not tell two versions
+   * apart. Both are selected by the query below, so no caller has to cast the
+   * row or re-fetch it to learn which template a job was rendered against.
+   */
+  templateId: string;
+  templateVersion: number;
+  templateUrl: string;
+  templateWidth: number;
+  templateHeight: number;
+  slot: SlotConfig;
+}
+```
+
+```ts
+.select('id, version, template_url, width, height')
+
+// … and at the end of resolveActiveTemplateForContest:
+  return {
+    templateId: template.id,
+    templateVersion: Number(template.version),
+    templateUrl: template.template_url,
+    templateWidth: Number(template.width),
+    templateHeight: Number(template.height),
+    slot,
+  };
+```
+
+Widening the interface breaks one existing fixture that constructs a `ResolvedTemplate` literal —
+`tests/unit/registration/review-template-wiring.test.ts`, which gains `templateId: 'tpl-1'` and
+`templateVersion: 2`. `npx vitest run tests/unit/registration/template-resolver.test.ts` additionally
+pins the column list the resolver asks for, because the mock returns a whole row whatever the query
+selects and would keep passing if `version` disappeared from the `select` string.
+
+- [ ] **Step 4: Run to verify pass**
+
+Run: `npx vitest run tests/unit/photo-jobs/registry.test.ts`
+Expected: PASS — `Tests 11 passed (11)`.
+
+Run: `npx vitest run tests/unit/media/asset-source.test.ts tests/unit/registration/template-resolver.test.ts tests/unit/registration/review-template-wiring.test.ts tests/unit/photo-jobs/job-store.test.ts tests/unit/media/provider.test.ts`
+Expected: PASS — the neighbouring suites the refactor touches stay green.
+
+Run: `npm run type-check`
+Expected: exit 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend-web/src/server/photo-jobs/registry.ts \
+      frontend-web/src/server/registration/connect-contest-id.ts \
+      frontend-web/src/server/registration/template-resolver.ts \
+      frontend-web/src/lib/media/asset-source.ts \
+      frontend-web/src/server/registration/supabase-store.ts \
+      frontend-web/tests/unit/photo-jobs/registry.test.ts \
+      frontend-web/tests/unit/registration/template-resolver.test.ts \
+      frontend-web/tests/unit/registration/review-template-wiring.test.ts
+git commit -m "feat(photo): registry records the original asset before enqueuing a render"
+```
+
+**Corrections made while executing (the draft was not executable as written):**
+
+1. *The draft stored the fetched presigned URL as the asset reference.* It set `providerUrl` from
+   `resolved.url`, which for our own uploads is a signed R2 URL carrying `X-Amz-Signature`. Two
+   failures follow: the reference stops resolving when the signature expires, and the row's unique
+   index is `kind, coalesce(storage_key, provider_url)` — so re-ingesting the same photograph mints a
+   second `original` for one contestant. The delivered code stores the object key
+   (`uploadObjectKeyFor(stored)`), which needs the key even when presigning fails, hence the new
+   export. Test (a) asserts the signed URL appears nowhere in the write.
+2. *`contentType: 'image/jpeg'` was hard-coded.* A PNG original would be labelled wrongly on an
+   immutable row forever; the delivered code derives it with the repo's own `contentTypeForKey`, and
+   test (b) asserts `image/png` for a PNG object.
+3. *The draft cast `template` to `any` to read `.id`.* `ResolvedTemplate` did not carry the template's
+   identity at all, so a run key could not distinguish two versions of a template and a template edit
+   would be answered by the previous version's completed job. `templateId`/`templateVersion` are now
+   part of the resolver's contract, selected and returned.
+4. *The draft mocked the entire job store,* including the pure `buildRunKey`, which made its own
+   instruction — "assert the run key differs between two template ids" — impossible to satisfy: the
+   mock returned the same string for both. The delivered test mocks only the two functions that need a
+   database and imports the real `buildRunKey`.
+5. *The draft called `resolveConnectContestId` on the registry with a `contestSlug` while importing it
+   from `supabase-store.ts`, which is the file Tasks 9 and 10 will call the registry from* — a circular
+   import. The helper moved to its own module instead.
+6. *An absent slug fired a query anyway.* `resolveConnectContestId('')` answers null, so the draft's
+   unconditional `await` meant every photo-less call ran a database round-trip for nothing; the
+   delivered code skips it, and the last test pins that.
+
+**Note on a pre-existing failure found while verifying:** `tests/unit/registration/contest-admin-schedule-route.spec.ts` fails 2 of 8 (`No "getRegistrationContestBySlug" export is defined on the "@/src/server/registration/store" mock`). Reproduced verbatim on `origin/main` (`b926c8b4b`) in a throwaway worktree, so it is not this branch's and is left alone.
+
 
 ### Task 6: Runner — one claimed job, all-or-nothing output
 
