@@ -20064,8 +20064,8 @@ paths:
                   pattern: '^registration/[0-9a-f-]{36}/[0-9a-f-]{36}\.(jpg|jpeg|png|webp)$'
       responses:
         '200': { description: Profile photo replaced; application status is unchanged }
-        '400': { description: Invalid application ID, body, or upload key }
+        '400': { description: 'Invalid application ID, body, or upload key' }
         '401': { description: Authentication required }
         '403': { description: The application or upload belongs to another user }
         '404': { description: Application or uploaded photo not found }
-        '409': { description: Application is not in an approved, binding status }
+        '409': { description: 'Application is not in an approved, binding status' }
