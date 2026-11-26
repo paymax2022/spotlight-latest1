@@ -32,6 +32,7 @@ import {
   completePhotoJob,
   enqueuePhotoJob,
   failPhotoJob,
+  getPhotoAsset,
   getPhotoJob,
   photoJobSummary,
   renderKeyFor,
@@ -187,5 +188,42 @@ describe('getPhotoJob', () => {
 
     from.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ error: null, data: null }) }) }) });
     expect(await getPhotoJob('j1')).toBeNull();
+  });
+});
+
+describe('getPhotoAsset', () => {
+  beforeEach(() => {
+    rpc.mockReset();
+    from.mockReset();
+  });
+
+  // The runner reads the source row to find its bytes and to re-check that the
+  // photograph still exists before spending a vendor call, so the two location
+  // columns have to survive the trip. An explicit list (not `*`) is what makes
+  // a dropped column a test failure here rather than a null deep inside a job.
+  it('selects the location columns the runner reads', async () => {
+    const select = vi.fn().mockReturnValue({ eq: () => ({ maybeSingle: vi.fn().mockResolvedValue({
+      error: null,
+      data: {
+        id: 'a1', kind: 'original', storage_key: 'registration/u1/p.jpg', provider_url: null,
+        content_type: 'image/jpeg', width: 682, height: 1080, bytes: 1234, render_params: {},
+      },
+    }) }) });
+    from.mockReturnValue({ select });
+
+    const asset = await getPhotoAsset('a1');
+
+    expect(from).toHaveBeenCalledWith('contest_photo_assets');
+    expect(String(select.mock.calls[0][0])).toContain('storage_key');
+    expect(String(select.mock.calls[0][0])).toContain('provider_url');
+    expect(asset).toMatchObject({ id: 'a1', storage_key: 'registration/u1/p.jpg', bytes: 1234 });
+  });
+
+  it('answers null when the asset row is missing or the read fails', async () => {
+    from.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ error: { message: 'boom' }, data: null }) }) }) });
+    expect(await getPhotoAsset('a1')).toBeNull();
+
+    from.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ error: null, data: null }) }) }) });
+    expect(await getPhotoAsset('a1')).toBeNull();
   });
 });

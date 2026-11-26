@@ -30,8 +30,8 @@
 
 import { moderatePhoto, removeBackground } from '@/src/lib/media/cloudinary';
 import { compositeImage, type SlotConfig } from '@/src/lib/rendering/imageCompositor';
-import { uploadR2Object, getR2PublicUrl, hasR2Config } from '@/src/lib/storage/r2';
-import { randomUUID } from 'crypto';
+import { getR2PublicUrl } from '@/src/lib/storage/r2';
+import { storePhoto } from '@/src/server/photo-jobs/persist';
 
 export type PhotoPipelineResult =
   | { status: 'ready'; photoUrl: string }
@@ -50,14 +50,15 @@ export interface ProcessContestantPhotoInput {
  * Upload a composited/cutout buffer to R2 and return a stable public URL.
  * Throws if R2 isn't configured or the upload fails — callers decide what
  * that means for their status (ready vs. fallback).
+ *
+ * The write itself lives in `photo-jobs/persist.ts` so the synchronous review
+ * path and the queued runner cannot disagree about key layout or about which
+ * errors are fatal; this wrapper adds the one thing only a response needs — the
+ * public URL — and keeps the legacy contract that a stored object without a
+ * public base URL is an error rather than a silently unresolvable reference.
  */
 async function persistToR2(buffer: Buffer, mimeType: string, prefix: string): Promise<string> {
-  if (!hasR2Config()) {
-    throw new Error('R2 storage is not configured');
-  }
-  const ext = mimeType === 'image/png' ? 'png' : 'jpg';
-  const key = `contestants/${prefix}/${randomUUID()}.${ext}`;
-  await uploadR2Object({ key, body: buffer, contentType: mimeType });
+  const key = await storePhoto(buffer, mimeType, prefix);
   const publicUrl = getR2PublicUrl(key);
   if (!publicUrl) {
     throw new Error('R2 upload succeeded but no public base URL is configured (R2_PUBLIC_BASE_URL)');

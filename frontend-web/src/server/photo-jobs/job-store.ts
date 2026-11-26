@@ -227,6 +227,42 @@ export async function getPhotoJob(id: string): Promise<PhotoJob | null> {
   return { ...(job as unknown as PhotoJob), registration_user_id: embedded?.user_id ?? null };
 }
 
+/** One row of `contest_photo_assets`, in the snake_case the table uses.
+ *
+ * The runner reads the *source* asset by id, so it needs the location columns;
+ * naming them here is what stops `runner.ts` from inventing its own shape for a
+ * row it does not own. `bytes` stays `number | null` because the column is a
+ * bigint the writer may not have measured (a Cloudinary cutout URL has no local
+ * length until someone fetches it). */
+export interface PhotoAsset {
+  id: string;
+  registration_id: string | null;
+  contest_id: string | null;
+  kind: AssetKind;
+  storage_key: string | null;
+  provider_url: string | null;
+  content_type: string;
+  width: number | null;
+  height: number | null;
+  bytes: number | null;
+  template_id: string | null;
+  template_version: number | null;
+  render_params: Record<string, unknown>;
+}
+
+export async function getPhotoAsset(id: string): Promise<PhotoAsset | null> {
+  const { data, error } = await db()
+    .from('contest_photo_assets')
+    .select('id, registration_id, contest_id, kind, storage_key, provider_url, content_type, width, height, bytes, template_id, template_version, render_params')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    console.warn('[photo-jobs] asset read failed:', error.message);
+    return null;
+  }
+  return (data as PhotoAsset) ?? null;
+}
+
 export async function photoJobSummary(): Promise<Record<string, number>> {
   const { data, error } = await db().rpc('photo_job_config_summary');
   if (error || !data) return {};
