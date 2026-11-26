@@ -266,6 +266,22 @@ export const featureFlags = {
    * under NODE_ENV=production. Off by default.
    */
   filmAcademyPilotDelivery: () => envFlag('FEATURE_FILM_ACADEMY_PILOT_DELIVERY_ENABLED'),
+
+  /**
+   * Locality villages — the admin CRUD behind /api/admin/villages*, i.e. the only
+   * way to curate the village tier of the state -> LGA -> village cascade without
+   * shipping a migration per quarter.
+   *
+   * Deliberately narrower than it looks: this gates WRITES, not reads. The public
+   * pickers (/api/registration/villages, /api/registration/lgas) and the locality
+   * fields on contests and applications stay ungated, because they widen surfaces
+   * that are already live and unflagged — a default-off gate on a read would
+   * reproduce the E2E-SOC-036 class of bug (503 to an applicant because of an
+   * environment variable that only an admin feature needs). With the flag off an
+   * environment simply keeps whatever `public.villages` already holds: uncurated
+   * LGAs answer mode=free_text, so nothing anywhere can be blocked by it.
+   */
+  localityVillages: () => envFlag('FEATURE_LOCALITY_VILLAGES_ENABLED'),
 } as const;
 
 export type FeatureName = keyof typeof featureFlags;
