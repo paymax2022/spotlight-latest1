@@ -3737,155 +3737,927 @@ export async function photoQueueHealth(): Promise<{ due: number; locked: number;
    shape the test never showed.
 ### Task 8: Status, cancel and config surfaces
 
+**Executed 2026-11-26 as `d5f9a0357`** (6 files, 22 cases). The section below is
+the delivered code, not the draft; the draft's defects — including one endpoint
+that does not exist and one blocker that describes a dependency Task 3 removed —
+are listed after it.
+
 **Files:**
-- Create: `frontend-web/app/api/photo-jobs/[id]/route.ts`
-- Create: `frontend-web/app/api/admin/photo-config-status/route.ts`
-- Modify: `frontend-web/src/server/photo-jobs/job-store.ts` (add `getLatestPhotoJob`, `listPhotoAssets`)
+- Create: `frontend-web/app/api/photo-jobs/[id]/route.ts` — `GET` status **and**
+  `POST` cancel, one path (design §5; the plan's `/cancel` sub-path was invented)
+- Create: `frontend-web/app/api/photo-jobs/latest/route.ts` — `GET` newest job for
+  one of the caller's registrations
+- Create: `frontend-web/src/server/photo-jobs/status-read.ts` — the shape both
+  reads answer with, the uuid guard, the URL derivation, the drain kick
+- Create: `frontend-web/app/api/admin/photo-config-status/route.ts` — §7 payload
+- Modify: `frontend-web/src/server/photo-jobs/job-store.ts` — `getLatestPhotoJob`,
+  `listPhotoAssets`, one `ASSET_COLUMNS`, one `toPhotoJob`
 - Test: `frontend-web/tests/unit/photo-jobs/routes.test.ts`
 
 **Interfaces:**
-- Consumes: `requireUser` (`@/src/lib/auth/server`), `assertAdminPermission` (`@/src/server/admin/auth`), `successResponse`/`errorResponse` (`@/src/lib/api/responses`), `handleApiError`, `getPhotoJob`/`getLatestPhotoJob`/`listPhotoAssets` (Task 4), `photoProviderConfig` (Task 2), `hasR2Config`/`getR2PublicUrl`, `maybeDrainPhotoJobs` (Task 7).
+- Consumes: `requireUser(request)` (`@/src/lib/auth/server`, throws
+  `Error('UNAUTHORIZED')`, which `handleApiError` turns into 401),
+  `assertAdminPermission(request, 'applications:review')`,
+  `successResponse`/`errorResponse`/`handleApiError` (`@/src/lib/api/responses`),
+  `getPhotoJob`/`getLatestPhotoJob`/`listPhotoAssets`/`cancelPhotoJob`/
+  `photoJobSummary`, `photoProviderConfig()` (`{configured, name, missing}`),
+  `hasR2Config`/`getR2PublicUrl`/`createR2DownloadUrl`,
+  `IN_APP_PHOTO_TTL_SECONDS`, `maybeDrainPhotoJobs` (Task 7).
 - Produces:
-  - `GET /api/photo-jobs/[id]` → `{ job: { id, status, progress, attempt, resultAssetId, lastError, assets: { final?: string, preview?: string } } }`
-  - `GET /api/photo-jobs/latest?registrationId=…` (same shape, newest job for the caller's own registration)
-  - `POST /api/photo-jobs/[id]/cancel` → `{ cancelled: true }`
-  - `GET /api/admin/photo-config-status` → the spec §7 object, booleans and names only.
+  - `GET /api/photo-jobs/[id]` → `{ job: { id, status, progress, attempt,
+    resultAssetId, lastError, assets: { final?, preview?, thumbnail? } } }`;
+    400 non-uuid, 401 no user, 404 no row, 403 not the owner
+  - `POST /api/photo-jobs/[id]` → `{ cancelled: true, id }`, or 409 on a
+    `ready`/`cancelled` row
+  - `GET /api/photo-jobs/latest?registrationId=<uuid>` → the same `{ job }`, 404
+    when the registration has never queued one
+  - `GET /api/admin/photo-config-status` → `{ provider, storage, jobs, blockers }`
+  - `photoJobPayload(job)`, `isUuidId(value)`, `TERMINAL_FOR_CANCEL`, `kickDrain()`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test** — 22 cases, delivered verbatim:
 
 ```ts
-// frontend-web/tests/unit/photo-jobs/routes.test.ts
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+// tests/unit/photo-jobs/routes.test.ts
+/**
+ * Task 8 — the three surfaces the spec's polling contract is made of.
+ *
+ * What is under test is the promise each surface exists to keep:
+ *
+ * `GET /api/photo-jobs/[id]` is the poll target, so its one job is to never
+ * describe a half-built portrait. That is why asset URLs appear only on a `ready`
+ * row, why `listPhotoAssets` is not even called for a job that is still running,
+ * and why the ownership check reads the registration's user from the row rather
+ * than trusting the caller's id — RLS denies both tables to every non-service
+ * role (migration §RLS note), so a client-side read is not a fallback that exists.
+ *
+ * `POST` on the same route cancels. `cancel_photo_job` is `returns void` with a
+ * `where status not in ('ready','cancelled')` guard, so the route pre-reads the
+ * row and answers 409 on a terminal job instead of returning `cancelled: true`
+ * for an action that changed nothing.
+ *
+ * `GET /api/admin/photo-config-status` is the surface that has to be honest about
+ * things an env var cannot prove. It reports names and verdicts, never values:
+ * the sentinel test below injects real-shaped secrets and asserts none of them
+ * reach the body, because this payload is readable by any admin-role caller.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const store = vi.hoisted(() => ({
-  getPhotoJob: vi.fn(), getLatestPhotoJob: vi.fn(), listPhotoAssets: vi.fn(),
-  cancelPhotoJob: vi.fn(), photoJobSummary: vi.fn(), completePhotoJob: vi.fn(),
-  failPhotoJob: vi.fn(), enqueuePhotoJob: vi.fn(), claimDuePhotoJobs: vi.fn(),
-  reclaimStalePhotoJobs: vi.fn(), upsertPhotoAsset: vi.fn(), setPhotoJobProgress: vi.fn(),
-  buildRunKey: vi.fn(),
+  getPhotoJob: vi.fn(),
+  getLatestPhotoJob: vi.fn(),
+  listPhotoAssets: vi.fn(),
+  cancelPhotoJob: vi.fn(),
+  photoJobSummary: vi.fn(),
 }));
-vi.mock('@/src/server/photo-jobs/job-store', () => store);
-vi.mock('@/src/server/photo-jobs/worker', () => ({ maybeDrainPhotoJobs: vi.fn(), photoQueueHealth: vi.fn() }));
+const worker = vi.hoisted(() => ({ maybeDrainPhotoJobs: vi.fn() }));
 const auth = vi.hoisted(() => ({ requireUser: vi.fn() }));
+const adminAuth = vi.hoisted(() => ({ assertAdminPermission: vi.fn() }));
+const r2 = vi.hoisted(() => ({
+  hasR2Config: vi.fn(),
+  getR2PublicUrl: vi.fn(),
+  createR2DownloadUrl: vi.fn(),
+}));
+
+vi.mock('@/src/server/photo-jobs/job-store', () => store);
+vi.mock('@/src/server/photo-jobs/worker', () => worker);
 vi.mock('@/src/lib/auth/server', () => auth);
+vi.mock('@/src/server/admin/auth', () => adminAuth);
+vi.mock('@/src/lib/storage/r2', () => r2);
 
-import { GET } from '@/app/api/photo-jobs/[id]/route';
+import { GET, POST } from '@/app/api/photo-jobs/[id]/route';
+import { GET as LATEST } from '@/app/api/photo-jobs/latest/route';
 import { GET as CONFIG } from '@/app/api/admin/photo-config-status/route';
+import { isUuidId } from '@/src/server/photo-jobs/status-read';
 
-const request = (headers = new Headers()) =>
-  new Request('http://localhost/api/photo-jobs/j1', { headers });
+const uuid = 'b7f3f1d2-3f1c-4a5e-9c3b-2a1d0e4f5a6b';
+/** Both ids in these cases are real uuids because the routes refuse anything
+ *  else: `id` and `registration_id` are uuid columns, and a non-uuid filter value
+ *  reaches Postgres as 22P02, so the guard is a 400 here rather than a 500 there.
+ *  `jobId` is the row's id, `uuid` the registration the latest route is asked about. */
+const jobId = '6d2c9f4a-1b7e-4c3d-8a5f-0e9d1c2b3a44';
+const key = 'contestants/composited/9b1c2d3e.png';
+
+const job = (over: Record<string, unknown> = {}) => ({
+  id: jobId,
+  run_key: 'photo:orig:none:',
+  registration_id: 'r1',
+  registration_user_id: 'u1',
+  contest_id: 'c1',
+  template_id: null,
+  source_asset_id: 'a-original',
+  status: 'ready',
+  progress: 100,
+  attempt: 1,
+  max_attempts: 6,
+  last_error: null,
+  render_params: {},
+  result_asset_id: 'a-final',
+  ...over,
+});
+
+const statusRequest = (url = `http://x.test/api/photo-jobs/${jobId}`, init: RequestInit = {}) =>
+  new Request(url, init);
+const ctx = (id = jobId) => ({ params: Promise.resolve({ id }) });
+
+/** The config route reads its blockers from the environment at call time, so the
+ *  cases that flip Cloudinary between configured and unconfigured would leak into
+ *  each other — and into the next file — without this. Assigning `undefined` to
+ *  `process.env` stores the string "undefined", which is truthy to every
+ *  `!process.env.X` check in `missingCloudinaryEnv()`, so an absent variable has
+ *  to be deleted rather than unset. */
+const ENV_KEYS = [
+  'CLOUDINARY_CLOUD_NAME',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
+  'R2_PUBLIC_BASE_URL',
+  'SUPABASE_SERVICE_ROLE_KEY',
+] as const;
+const envSnapshot = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
 beforeEach(() => {
   vi.resetAllMocks();
   auth.requireUser.mockResolvedValue({ user: { id: 'u1' } });
+  adminAuth.assertAdminPermission.mockResolvedValue({ role: 'super-admin' });
+  r2.hasR2Config.mockReturnValue(true);
+  r2.getR2PublicUrl.mockImplementation((k: string) => `https://cdn.test/${k}`);
+  r2.createR2DownloadUrl.mockImplementation(async ({ key: k }: { key: string }) => `https://signed.test/${k}`);
+  store.listPhotoAssets.mockResolvedValue([]);
+  store.photoJobSummary.mockResolvedValue({ queued: 0, processing: 0, failed: 0, paused: 0, ready: 0 });
 });
 
-it('answers the owner with the published asset URLs', async () => {
-  store.getPhotoJob.mockResolvedValue({ id: 'j1', registration_id: 'r1', registration_user_id: 'u1', status: 'ready', progress: 100, attempt: 1, result_asset_id: 'a-final', last_error: null });
-  store.listPhotoAssets.mockResolvedValue([{ kind: 'final', storage_key: 'contestants/composited/x.png' }]);
-  const got = await GET(request(), { params: Promise.resolve({ id: 'j1' }) });
-  expect(got.status).toBe(200);
-  const body = await got.json();
-  expect(body.job.status).toBe('ready');
-  expect(body.job.assets.final).toBe('/api/contestant-photo/contestants/composited/x.png');
+afterEach(() => {
+  for (const k of ENV_KEYS) {
+    if (envSnapshot[k] === undefined) delete process.env[k];
+    else process.env[k] = envSnapshot[k];
+  }
 });
 
-it('refuses a job whose registration the caller does not own', async () => {
-  store.getPhotoJob.mockResolvedValue({ id: 'j1', registration_id: 'other', registration_user_id: 'u2', status: 'ready' });
-  const got = await GET(request(), { params: Promise.resolve({ id: 'j1' }) });
-  expect(got.status).toBe(403);
+describe('GET /api/photo-jobs/[id]', () => {
+  it('gives the owner the published asset URLs, through the public base when one is configured', async () => {
+    store.getPhotoJob.mockResolvedValue(job());
+    store.listPhotoAssets.mockResolvedValue([
+      { kind: 'final', storage_key: key },
+      { kind: 'preview', storage_key: 'contestants/preview/1.png' },
+      { kind: 'transparent', provider_url: 'https://res.cloudinary.com/demo/image.png' },
+    ]);
+
+    const res = await GET(statusRequest(), ctx());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.job.status).toBe('ready');
+    expect(body.job.assets.final).toBe(`https://cdn.test/${key}`);
+    // Only our own stored output is given out, and only by kind: a cutout is not
+    // something a status surface should hand to a client.
+    expect(body.job.assets.transparent).toBeUndefined();
+    expect(body.job.assets.thumbnail).toBeUndefined();
+  });
+
+  it('signs the key when no public base exists, rather than inventing a route', async () => {
+    r2.getR2PublicUrl.mockReturnValue(undefined);
+    store.getPhotoJob.mockResolvedValue(job());
+    store.listPhotoAssets.mockResolvedValue([{ kind: 'final', storage_key: key }]);
+
+    const body = await (await GET(statusRequest(), ctx())).json();
+    expect(body.job.assets.final).toBe(`https://signed.test/${key}`);
+    expect(r2.createR2DownloadUrl).toHaveBeenCalledWith(expect.objectContaining({ key }));
+  });
+
+  it('carries no asset URLs while the job is still working, and does not read assets at all', async () => {
+    store.getPhotoJob.mockResolvedValue(job({ status: 'compositing', progress: 70, result_asset_id: null }));
+
+    const body = await (await GET(statusRequest(), ctx())).json();
+    expect(body.job).toMatchObject({ status: 'compositing', progress: 70, assets: {} });
+    expect(store.listPhotoAssets).not.toHaveBeenCalled();
+  });
+
+  it('refuses a job whose registration the caller does not own, before reading its assets', async () => {
+    store.getPhotoJob.mockResolvedValue(job({ registration_user_id: 'someone-else' }));
+
+    const res = await GET(statusRequest(), ctx());
+    expect(res.status).toBe(403);
+    expect(store.listPhotoAssets).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a job that is not there, including the store saying "read failed"', async () => {
+    store.getPhotoJob.mockResolvedValue(null);
+    expect((await GET(statusRequest(), ctx())).status).toBe(404);
+  });
+
+  it('surfaces the reason only for a job that has one to show', async () => {
+    store.getPhotoJob.mockResolvedValue(job({ status: 'paused', progress: 35, last_error: 'Cloudinary timed out' }));
+    const body = await (await GET(statusRequest(), ctx())).json();
+    expect(body.job).toMatchObject({ status: 'paused', progress: 35, lastError: 'Cloudinary timed out' });
+
+    store.getPhotoJob.mockResolvedValue(job({ status: 'failed', last_error: null }));
+    const failed = await (await GET(statusRequest(), ctx())).json();
+    expect(failed.job.lastError).toBeNull();
+  });
+
+  it('kicks the drain without waiting for it, so an idle process still starts a queued job', async () => {
+    store.getPhotoJob.mockResolvedValue(job({ status: 'queued', progress: 0 }));
+    worker.maybeDrainPhotoJobs.mockImplementation(() => {
+      throw new Error('drain blew up');
+    });
+
+    const res = await GET(statusRequest(), ctx());
+    expect(res.status).toBe(200);
+    expect((await res.json()).job.status).toBe('queued');
+  });
+
+  it('answers 400 on a malformed id instead of letting Postgres raise 22P02', async () => {
+    const res = await GET(statusRequest('http://x.test/api/photo-jobs/not-a-uuid'), ctx('not-a-uuid'));
+    expect(res.status).toBe(400);
+    expect(store.getPhotoJob).not.toHaveBeenCalled();
+    // A uuid-shaped id from a path is not a uuid-shaped id from a query: the
+    // latest route filters by registration_id, and the same guard covers it.
+    expect(isUuidId(uuid)).toBe(true);
+  });
+
+  it('401s when there is no user, without touching the store', async () => {
+    auth.requireUser.mockRejectedValue(new Error('UNAUTHORIZED'));
+    expect((await GET(statusRequest(), ctx())).status).toBe(401);
+    expect(store.getPhotoJob).not.toHaveBeenCalled();
+  });
 });
 
-it('reports a not-configured provider as a blocker, never as a secret', async () => {
-  delete process.env.CLOUDINARY_CLOUD_NAME;
-  const res = await CONFIG(new Request('http://localhost/api/admin/photo-config-status', { headers: new Headers({ authorization: 'Bearer admin' }) }));
-  const text = JSON.stringify(await res.json());
-  expect(text).toContain('CLOUDINARY_CLOUD_NAME');
-  expect(text).not.toMatch(/api_secret|api_key['"]?\s*:\s*"[^"]/);
+describe('POST /api/photo-jobs/[id] cancel', () => {
+  it('cancels a job the caller owns and reports it', async () => {
+    store.getPhotoJob.mockResolvedValue(job({ status: 'extracting' }));
+    const res = await POST(statusRequest(), ctx());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ cancelled: true, id: jobId });
+    expect(store.cancelPhotoJob).toHaveBeenCalledWith(jobId, 'Cancelled by the contestant');
+  });
+
+  it('refuses a terminal job with 409 rather than claiming it changed anything', async () => {
+    store.getPhotoJob.mockResolvedValue(job({ status: 'ready' }));
+    const res = await POST(statusRequest(), ctx());
+    expect(res.status).toBe(409);
+    expect(store.cancelPhotoJob).not.toHaveBeenCalled();
+  });
+
+  it('refuses a job it does not own before calling the cancel RPC', async () => {
+    store.getPhotoJob.mockResolvedValue(job({ registration_user_id: 'someone-else', status: 'queued' }));
+    expect((await POST(statusRequest(), ctx())).status).toBe(403);
+    expect(store.cancelPhotoJob).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/photo-jobs/latest', () => {
+  const latestUrl = (id = uuid) => `http://x.test/api/photo-jobs/latest?registrationId=${id}`;
+
+  it('returns the newest job for the registration its caller owns', async () => {
+    store.getLatestPhotoJob.mockResolvedValue(job({ status: 'extracting', progress: 5 }));
+    const res = await LATEST(new Request(latestUrl(), { headers: new Headers({ authorization: 'Bearer t' }) }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).job).toMatchObject({ id: jobId, status: 'extracting' });
+    expect(store.getLatestPhotoJob).toHaveBeenCalledWith(uuid);
+  });
+
+  it('requires a registration id and refuses one that is not a uuid', async () => {
+    expect((await LATEST(new Request('http://x.test/api/photo-jobs/latest'))).status).toBe(400);
+    expect((await LATEST(new Request(latestUrl('1=1')))).status).toBe(400);
+    expect(store.getLatestPhotoJob).not.toHaveBeenCalled();
+  });
+
+  it('404s when the registration has no job, so a surface can fall back to the original', async () => {
+    store.getLatestPhotoJob.mockResolvedValue(null);
+    expect((await LATEST(new Request(latestUrl()))).status).toBe(404);
+  });
+
+  it('403s when the newest job belongs to somebody else', async () => {
+    store.getLatestPhotoJob.mockResolvedValue(job({ registration_user_id: 'someone-else' }));
+    expect((await LATEST(new Request(latestUrl()))).status).toBe(403);
+  });
+});
+
+describe('GET /api/admin/photo-config-status', () => {
+  const configRequest = () =>
+    new Request('http://x.test/api/admin/photo-config-status', {
+      headers: new Headers({ authorization: 'Bearer admin' }),
+    });
+
+  it('is gated by the admin permission the review surfaces already use', async () => {
+    adminAuth.assertAdminPermission.mockRejectedValue(new Error('FORBIDDEN'));
+    expect((await CONFIG(configRequest())).status).toBe(403);
+  });
+
+  it('names the missing provider variables as a blocker when nothing is configured', async () => {
+    delete process.env.CLOUDINARY_CLOUD_NAME;
+    delete process.env.CLOUDINARY_API_KEY;
+    delete process.env.CLOUDINARY_API_SECRET;
+
+    const body = await (await CONFIG(configRequest())).json();
+    expect(body.provider).toMatchObject({ configured: false, name: 'none', cloudNamePresent: false });
+    expect(body.blockers.join(' ')).toContain('CLOUDINARY_CLOUD_NAME');
+  });
+
+  it('reports storage truthfully: presign availability is what the provider needs', async () => {
+    process.env.CLOUDINARY_CLOUD_NAME = 'demo';
+    process.env.CLOUDINARY_API_KEY = '123456789012345';
+    process.env.CLOUDINARY_API_SECRET = 'a-secret-value';
+    delete process.env.R2_PUBLIC_BASE_URL;
+    r2.hasR2Config.mockReturnValue(false);
+
+    const body = await (await CONFIG(configRequest())).json();
+    expect(body.storage).toEqual({
+      r2Configured: false,
+      publicBaseUrlConfigured: false,
+      presignForProvider: 'unavailable',
+    });
+    expect(body.blockers.join(' ')).toContain('R2 is not configured');
+  });
+
+  it('surfaces paused work as a blocker an operator has to look at', async () => {
+    store.photoJobSummary.mockResolvedValue({ queued: 1, processing: 0, failed: 4, paused: 3, ready: 9 });
+    const body = await (await CONFIG(configRequest())).json();
+    expect(body.jobs).toEqual({ queued: 1, processing: 0, paused: 3, failed: 4 });
+    expect(body.blockers.join(' ')).toContain('3 paused');
+  });
+
+  it('never leaks a value it read from the environment', async () => {
+    process.env.CLOUDINARY_CLOUD_NAME = 'demo-cloud';
+    process.env.CLOUDINARY_API_KEY = 'SENTINEL-API-KEY';
+    process.env.CLOUDINARY_API_SECRET = 'SENTINEL-API-SECRET';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'SENTINEL-SERVICE-ROLE';
+    process.env.R2_PUBLIC_BASE_URL = 'https://cdn.test';
+
+    const res = await CONFIG(configRequest());
+    const text = JSON.stringify(await res.json());
+    expect(text).not.toContain('SENTINEL-API-KEY');
+    expect(text).not.toContain('SENTINEL-API-SECRET');
+    expect(text).not.toContain('SENTINEL-SERVICE-ROLE');
+    // The cloud name is a public identifier, not a secret: it is what the vendor
+    // URL is built from, and the surface is more useful naming it than hiding it.
+    expect(text).toContain('demo-cloud');
+  });
+
+  it('says the vendor add-on state is unprobed instead of claiming it is fine', async () => {
+    const body = await (await CONFIG(configRequest())).json();
+    expect(body.provider.extractionProbe).toBe('not_attempted');
+    expect(body.provider.moderationProbe).toBe('not_attempted');
+    expect(body.provider.probeNote).toContain('test asset');
+  });
 });
 ```
+- [x] **Step 2: Run to verify failure.** `npx vitest run
+  tests/unit/photo-jobs/routes.test.ts` → `Test Files 1 failed (1)`,
+  `Tests no tests`, `Error: Cannot find package '@/app/api/photo-jobs/[id]/route'`.
 
-The route handler needs the registration's owning user, so extend `getPhotoJob` to select `registrations(user_id)`; that join is what makes the second test a real ownership check rather than an assumed one. Both mock rows above carry `registration_user_id`, the flattened field Task 4's store produces.
-
-- [ ] **Step 2: Run to verify failure** — FAIL, routes missing.
-- [ ] **Step 3: Implement `app/api/photo-jobs/[id]/route.ts`**
+- [x] **Step 3: Implement the shared read.**
 
 ```ts
+// src/server/photo-jobs/status-read.ts
 /**
- * Status read for one photo job (spec §6). The poll target the design chose so a
- * surface can answer "processing" truthfully instead of showing a half-built
- * portrait: only a `ready` job carries asset URLs, and an unowned row answers 403
- * before any of its fields are read.
+ * The read half of the photo status surface (spec §6, §8).
  *
- * RLS denies anon/authenticated on both tables, so ownership is enforced here in
- * application code by reading the row's registration `user_id` with the service
- * role. That is the reason this handler must not be simplified into a direct
- * client-side supabase read: the client cannot see the row at all.
+ * Two endpoints — "my job by id" and "my newest job for this registration" —
+ * answer with one shape, so the shape lives here rather than being written twice
+ * and drifting. Both rest on the same two rules:
+ *
+ * 1. Ownership is decided from the row, never from the request. RLS denies
+ *    `contest_photo_jobs` and `contest_photo_assets` to every role but the
+ *    service one, so a client cannot read the row for itself and this BFF is the
+ *    only place the check can happen. The registration's user comes from the
+ *    `registrations(user_id)` embed in `job-store`.
+ * 2. A `ready` job is the only one with assets to show. Everything else answers
+ *    `assets: {}`, which is what lets a surface hold the original photograph
+ *    under `presentation: 'original'` instead of a half-drawn frame.
+ */
+import { IN_APP_PHOTO_TTL_SECONDS } from '@/src/lib/storage/contestant-photo';
+import { createR2DownloadUrl, getR2PublicUrl, hasR2Config } from '@/src/lib/storage/r2';
+import { maybeDrainPhotoJobs } from './worker';
+import { listPhotoAssets, type PhotoAsset, type PhotoJob } from './job-store';
+
+/** The kinds a contestant may be shown. `original` is their own upload and comes
+ *  from the registration's media blob, and `transparent` is a vendor cutout — an
+ *  intermediate that must not become a public image of someone's face. */
+const PUBLISHABLE_KINDS = ['final', 'preview', 'thumbnail'] as const;
+
+/** `cancel_photo_job`'s own `where status not in (...)` guard, mirrored here so
+ *  the route can tell a caller their cancel changed nothing instead of reporting
+ *  success for a statement that updated zero rows. The guard stays in SQL too:
+ *  a job that turns `ready` between this read and that call is cancelled by the
+ *  database refusing, and the next poll reports the truth either way. */
+export const TERMINAL_FOR_CANCEL = ['ready', 'cancelled'] as const;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * One uuid test for every id this feature reads from a path or a query.
+ *
+ * A malformed uuid reaches Postgres as 22P02 and comes back a 500, so it is refused
+ * here — the same guard `app/api/v1/contestants/[id]/photo` uses. It is shared rather
+ * than per-route because the by-id route, the latest route and the registration id
+ * they filter by are the same kind of value: a uuid the caller typed.
+ */
+export function isUuidId(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
+/**
+ * The URL a surface can put in an `<img>`, derived at read time and never stored.
+ *
+ * Deliberately NOT `resolveContestantPhotoUrl`: that resolver is the privacy gate
+ * for a member's own uploaded photo and admits only the `registration/` and
+ * `contestants/images/` prefixes, because handing it an arbitrary key would point
+ * a public page at the identity documents that share the member's prefix. Our
+ * rendered output lives under `contestants/composited|preview|thumbnail/`, is a
+ * different class of content, and gets here through a key read from the database
+ * by a caller who has already proved they own the registration — so it is signed
+ * directly, with the same helper that resolver uses.
+ *
+ * With no bucket configured there is no URL to give: the runner cannot have
+ * stored a composite in the first place (`storePhoto` refuses), so `ready` and
+ * "no R2" do not occur together and an empty answer is honest rather than a gap.
+ */
+async function assetUrl(key: string): Promise<string | null> {
+  if (!hasR2Config()) return null;
+  const publicBase = getR2PublicUrl(key);
+  if (publicBase) return publicBase;
+  try {
+    return await createR2DownloadUrl({
+      key,
+      fileName: key.split('/').pop() || 'photo',
+      disposition: 'inline',
+      expiresIn: IN_APP_PHOTO_TTL_SECONDS,
+    });
+  } catch (err) {
+    console.warn('[photo-jobs] asset url derivation failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/**
+ * The answer the poll target gives: status, truthful progress, the reason when
+ * there is one, and — only for a finished job — the published asset URLs.
+ */
+export async function photoJobPayload(job: PhotoJob): Promise<Record<string, unknown>> {
+  const assets: PhotoAsset[] = job.status === 'ready' ? await listPhotoAssets(job.registration_id) : [];
+  const urls: Record<string, string> = {};
+  for (const kind of PUBLISHABLE_KINDS) {
+    const row = assets.find((asset) => asset.kind === kind && asset.storage_key);
+    const url = row?.storage_key ? await assetUrl(row.storage_key) : null;
+    if (url) urls[kind] = url;
+  }
+
+  return {
+    id: job.id,
+    status: job.status,
+    // `complete_photo_job` writes progress 100 with the status in one statement,
+    // so a ready row already carries it; clamping here would hide a row that
+    // reached `ready` with a stale progress value instead of reporting it.
+    progress: job.status === 'ready' ? 100 : job.progress,
+    attempt: job.attempt,
+    resultAssetId: job.result_asset_id ?? null,
+    // A terminal verdict worth reading; nothing else, because a transient
+    // `last_error` on a job that later succeeded reads as a complaint.
+    lastError:
+      job.status === 'failed' || job.status === 'paused' || job.status === 'cancelled'
+        ? job.last_error ?? null
+        : null,
+    assets: urls,
+  };
+}
+
+/**
+ * Fire the queue at the traffic that is already looking at it, and let nothing
+ * about that kick change the answer: an idle process starts a queued job on the
+ * first poll, and a fault inside a background drain stays a background fault.
+ */
+export function kickDrain(): void {
+  try {
+    maybeDrainPhotoJobs();
+  } catch (err) {
+    console.warn('[photo-jobs] opportunistic drain kick failed:', err instanceof Error ? err.message : err);
+  }
+}
+```
+- [x] **Step 4: Implement the three routes.**
+
+```ts
+// app/api/photo-jobs/[id]/route.ts
+/**
+ * `GET`  — the poll target for one photo job (spec §6).
+ * `POST` — the contestant's own cancel, which the mobile status screen needs
+ *          because background removal can take longer than someone's patience.
+ *
+ * Design §5 puts both verbs on this one path; there is no `/cancel` sub-route.
+ * `re-render with new params` is the same file in P4 and is deliberately not
+ * here yet.
+ *
+ * Both verbs do the same three things in the same order: identify the user, read
+ * the row as the service role, and compare the row's registration owner to that
+ * user before a single field of it is described. That order is the whole
+ * authorisation model of this feature — see status-read.ts for why a client
+ * cannot read these rows by itself.
  */
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireUser } from '@/src/lib/auth/server';
-import { getR2PublicUrl, hasR2Config } from '@/src/lib/storage/r2';
-import { getPhotoJob, listPhotoAssets } from '@/src/server/photo-jobs/job-store';
+import {
+  TERMINAL_FOR_CANCEL,
+  isUuidId,
+  kickDrain,
+  photoJobPayload,
+} from '@/src/server/photo-jobs/status-read';
+import { cancelPhotoJob, getPhotoJob, type PhotoJob } from '@/src/server/photo-jobs/job-store';
 
-const ASSET_KINDS = ['final', 'preview', 'thumbnail'] as const;
+export const dynamic = 'force-dynamic';
 
-function assetPath(storageKey: string): string {
-  // Public base when configured; otherwise the existing signed-read route, which
-  // is the same resolution src/lib/storage/contestant-photo.ts already uses.
-  const publicBase = hasR2Config() ? getR2PublicUrl(storageKey) : null;
-  return publicBase || `/api/contestant-photo/${storageKey}`;
+type Owned = { ok: true; job: PhotoJob } | { ok: false; res: Response };
+
+async function ownedJob(request: Request, id: string, notFound: string): Promise<Owned> {
+  if (!isUuidId(id)) return { ok: false, res: errorResponse('Photo job id must be a uuid', 400) };
+  const { user } = await requireUser(request);
+  const job = await getPhotoJob(id);
+  if (!job) return { ok: false, res: errorResponse(notFound, 404) };
+  if (job.registration_user_id !== user.id) {
+    return { ok: false, res: errorResponse('Not allowed', 403) };
+  }
+  return { ok: true, job };
 }
 
-export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { user } = await requireUser(request);
-    const { id } = await ctx.params;
-    const job = await getPhotoJob(id);
-    if (!job) return errorResponse('Photo job not found', 404);
-    if (job.registration_user_id !== user.id) return errorResponse('Not allowed', 403);
+    const { id } = await context.params;
+    const read = await ownedJob(request, id, 'Photo job not found');
+    if (!read.ok) return read.res;
 
-    const assets = job.status === 'ready' ? await listPhotoAssets(job.registration_id) : [];
-    const urls: Record<string, string> = {};
-    for (const kind of ASSET_KINDS) {
-      const row = assets.find((a) => a.kind === kind && a.storage_key);
-      if (row?.storage_key) urls[kind] = assetPath(row.storage_key);
-    }
-
-    return successResponse({
-      job: {
-        id: job.id,
-        status: job.status,
-        progress: job.status === 'ready' ? 100 : job.progress,
-        attempt: job.attempt,
-        resultAssetId: job.result_asset_id,
-        lastError: job.status === 'paused' || job.status === 'failed' ? job.last_error : undefined,
-        assets: urls,
-      },
-    });
+    kickDrain();
+    return successResponse({ job: await photoJobPayload(read.job) });
   } catch (error) {
     return handleApiError(error, 'Failed to read photo job');
   }
 }
-```
 
-- [ ] **Step 4: Implement `app/api/admin/photo-config-status/route.ts`** returning exactly the spec §7 object. `blockers` is derived, not free text, from these five checks in this order:
+/**
+ * Cancel is refused rather than faked. `cancel_photo_job` is `returns void` and
+ * updates nothing once a row is `ready` or `cancelled`, so a route that ignored
+ * the current status would answer `{cancelled: true}` for an action with no
+ * effect — and a contestant who just got their portrait would be told the
+ * portrait they can see is gone.
+ */
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await context.params;
+    const read = await ownedJob(request, id, 'Photo job not found');
+    if (!read.ok) return read.res;
+
+    if ((TERMINAL_FOR_CANCEL as readonly string[]).includes(read.job.status)) {
+      return errorResponse(
+        read.job.status === 'ready'
+          ? 'This portrait is already finished — cancelling would throw away a result you can use'
+          : 'This job is already cancelled',
+        409,
+      );
+    }
+
+    // A fixed reason, not a client string: `last_error` is read by operators and
+    // the migration truncates it to 300 characters, so free text from a phone
+    // would be the only place a contestant could write into the admin's queue.
+    await cancelPhotoJob(read.job.id, 'Cancelled by the contestant');
+    return successResponse({ cancelled: true, id: read.job.id });
+  } catch (error) {
+    return handleApiError(error, 'Failed to cancel photo job');
+  }
+}
+```
 
 ```ts
-const blockers: string[] = [];
-if (!providerConfig.configured) blockers.push(`Photo provider credentials missing: ${providerConfig.missing.join(', ')}`);
-if (!hasR2Config()) blockers.push('R2 is not configured — composited output cannot be stored durably');
-if (!process.env.R2_PUBLIC_BASE_URL) blockers.push('R2_PUBLIC_BASE_URL is empty — composited output cannot be published to a public URL');
-if (!process.env.SITE_URL) blockers.push('SITE_URL is empty — provider-fetchable fallback URLs cannot be built');
-if (paused > 0) blockers.push(`${paused} paused job(s) need operator review`);
+// app/api/photo-jobs/latest/route.ts
+/**
+ * The newest photo job for one of the caller's own registrations.
+ *
+ * This exists because the id `POST /api/registration/applications` hands back is
+ * not durable: a contestant who closes the app, or reopens the edit screen a week
+ * later, has the registration and nothing else. Without this read a surface would
+ * have to guess from `registrations.form_data.media` whether a portrait is
+ * pending — which is exactly the ambiguity the job table was added to remove.
+ *
+ * `registrationId` is a query parameter and is treated as untrusted: the row's
+ * own registration owner is compared to the caller before anything is answered,
+ * so aiming this at somebody else's registration returns 403, not their progress.
+ */
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
+import { requireUser } from '@/src/lib/auth/server';
+import { kickDrain, photoJobPayload, isUuidId } from '@/src/server/photo-jobs/status-read';
+import { getLatestPhotoJob } from '@/src/server/photo-jobs/job-store';
+
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request) {
+  try {
+    const { user } = await requireUser(request);
+    const registrationId = new URL(request.url).searchParams.get('registrationId') ?? '';
+    // Same uuid guard as the by-id route: `registration_id` is a uuid column and
+    // a non-uuid reaches Postgres as 22P02.
+    if (!isUuidId(registrationId)) {
+      return errorResponse('registrationId must be a uuid', 400);
+    }
+
+    const job = await getLatestPhotoJob(registrationId);
+    if (!job) return errorResponse('No photo job for this registration yet', 404);
+    if (job.registration_user_id !== user.id) return errorResponse('Not allowed', 403);
+
+    kickDrain();
+    return successResponse({ job: await photoJobPayload(job) });
+  } catch (error) {
+    return handleApiError(error, 'Failed to read the latest photo job');
+  }
+}
 ```
 
-`assertAdminPermission(request, 'applications:review')` gates the route. `jobs` comes from `photoJobSummary()`. The response contains no env values; a test asserts the serialized body contains no `CLOUDINARY_API_SECRET`/`CLOUDINARY_API_KEY`/`SUPABASE_SERVICE_ROLE_KEY` value by injecting known sentinel values into those variables and checking they never appear.
+```ts
+// app/api/admin/photo-config-status/route.ts
+/**
+ * `GET /api/admin/photo-config-status` — what an operator needs to know before
+ * the first job can succeed, in the shape spec §7 fixes.
+ *
+ * This payload is names and verdicts. It never contains an environment value:
+ * `provider.missingEnv` is a list of variable NAMES from the same array the
+ * Cloudinary client checks, the queue figures come from counts, and every blocker
+ * is a derived sentence rather than free text. An admin-role caller reading this
+ * must not be able to use it as a secret dump.
+ *
+ * The reason it exists at all is defect-shaped: "the add-on is enabled on this
+ * account" is not something an env var can prove, and until the feature was built
+ * a missing prerequisite surfaced as a job that failed six times. So the surface
+ * says which of the four things it can actually see are missing, and says
+ * plainly which two it cannot see.
+ *
+ * `applications:review` is the permission this console already uses for the
+ * registration review surface — the same operator who approves a contestant is
+ * the one who needs to know why their portrait is not appearing. A narrower
+ * permission would be a new entry in the RBAC seed and a grant on three roles,
+ * which is a decision for the owner, not for this route.
+ */
+import { handleApiError, successResponse } from '@/src/lib/api/responses';
+import { photoProviderConfig } from '@/src/lib/media/provider';
+import { hasR2Config } from '@/src/lib/storage/r2';
+import { assertAdminPermission } from '@/src/server/admin/auth';
+import { photoJobSummary } from '@/src/server/photo-jobs/job-store';
 
-- [ ] **Step 5: Run to verify pass** — routes green, and the sentinel-value assertion proves no secret can leak through this surface.
-- [ ] **Step 6: Commit** — `git commit -am "feat(photo): job status, cancel and provider config endpoints"`
+export const dynamic = 'force-dynamic';
 
----
+export async function GET(request: Request) {
+  try {
+    await assertAdminPermission(request, 'applications:review');
 
+    const provider = photoProviderConfig();
+    const summary = await photoJobSummary();
+    const r2Configured = hasR2Config();
+    const publicBaseUrlConfigured = Boolean(process.env.R2_PUBLIC_BASE_URL);
+    const paused = summary.paused ?? 0;
+
+    const blockers: string[] = [];
+    if (!provider.configured) {
+      blockers.push(`Photo provider credentials missing: ${provider.missing.join(', ')}`);
+    }
+    if (!r2Configured) {
+      // The one blocker that stops the feature rather than degrading it: the
+      // runner refuses to write a composite with no bucket, so every job would
+      // fail at the store step and land on the retry ladder.
+      blockers.push('R2 is not configured — composited output cannot be stored or presigned for the provider');
+    }
+    if (r2Configured && !publicBaseUrlConfigured) {
+      blockers.push(
+        'R2_PUBLIC_BASE_URL is empty — composited output is published through a signed URL that expires, so a cached page can outlive it',
+      );
+    }
+    if (paused > 0) {
+      blockers.push(`${paused} paused job(s) exhausted their retries and need operator review`);
+    }
+
+    return successResponse({
+      provider: {
+        configured: provider.configured,
+        name: provider.name,
+        // A cloud name is a public identifier: it is inside every delivery URL
+        // the app already hands to anonymous voters. Naming it here tells an
+        // operator which account the feature will actually call.
+        cloudName: process.env.CLOUDINARY_CLOUD_NAME ?? null,
+        cloudNamePresent: !provider.missing.includes('CLOUDINARY_CLOUD_NAME'),
+        missingEnv: provider.missing,
+        extractionProbe: 'not_attempted',
+        moderationProbe: 'not_attempted',
+        probeNote:
+          "The two vendor probes need a test asset the operator chooses. They are not run from this page: a diagnostic must not spend a paid call on a photograph nobody queued, and an add-on that is not enabled answers unknown rather than ok.",
+      },
+      storage: {
+        r2Configured,
+        publicBaseUrlConfigured,
+        // What the runner's own first step needs: a URL the vendor can fetch for
+        // an object that lives in a private bucket.
+        presignForProvider: r2Configured ? 'available' : 'unavailable',
+      },
+      jobs: {
+        queued: summary.queued ?? 0,
+        processing: summary.processing ?? 0,
+        paused,
+        // Rows currently sitting on the retry ladder, not a time window: the
+        // migration's summary function counts statuses, and inventing
+        // `failedRecently` here would mean a number nothing computes.
+        failed: summary.failed ?? 0,
+      },
+      blockers,
+    });
+  } catch (error) {
+    // No special cases here: `handleApiError` already turns the FORBIDDEN and
+    // UNAUTHORIZED sentinel errors from the admin gate into 403 and 401, and a
+    // local branch for one of them would be a second policy for the same answer.
+    return handleApiError(error, 'Failed to read photo configuration');
+  }
+}
+```
+- [x] **Step 5: The store reads the routes needed** — `job-store.ts`. `getPhotoJob`
+  already selected and flattened `registrations(user_id)` (Task 4), so the draft's
+  "extend `getPhotoJob`" step was already done; what changed is that the
+  flattening and the column list became shared, because a second route and a
+  second table read now need the identical rule:
+
+```ts
+// src/server/photo-jobs/job-store.ts - the job reads
+export async function getPhotoJob(id: string): Promise<PhotoJob | null> {
+  const { data, error } = await db()
+    .from('contest_photo_jobs')
+    .select('*, registrations(user_id)')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    console.warn('[photo-jobs] read failed:', error.message);
+    return null;
+  }
+  return data ? toPhotoJob(data as Record<string, unknown>) : null;
+}
+
+/**
+ * The newest job for one registration — the read that lets a surface reopen its
+ * own progress after a page reload, when it no longer holds the id the submit
+ * response handed it.
+ *
+ * Ordered by `created_at desc` because that is what the migration's
+ * `contest_photo_jobs_registration (registration_id, created_at desc)` index is
+ * there for; re-editing a registration appends jobs rather than replacing them,
+ * so the newest row is the one the editor's state produced.
+ */
+export async function getLatestPhotoJob(registrationId: string): Promise<PhotoJob | null> {
+  const { data, error } = await db()
+    .from('contest_photo_jobs')
+    .select('*, registrations(user_id)')
+    .eq('registration_id', registrationId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn('[photo-jobs] latest read failed:', error.message);
+    return null;
+  }
+  return data ? toPhotoJob(data as Record<string, unknown>) : null;
+}
+
+/** Both reads answer the same shape, and the ownership rule the status route
+ *  depends on lives or dies on this flattening: `registrations(user_id)` arrives
+ *  as a nested object, and `job.user_id === user.id` would be `undefined` for
+ *  every row, 403-ing the only caller who is allowed in. */
+function toPhotoJob(row: Record<string, unknown>): PhotoJob {
+  const embedded = row.registrations as { user_id?: string } | null | undefined;
+  const { registrations: _dropped, ...job } = row;
+  return { ...(job as unknown as PhotoJob), registration_user_id: embedded?.user_id ?? null };
+}
+```
+
+and the asset reads:
+
+```ts
+// src/server/photo-jobs/job-store.ts - the asset reads
+/** Named once so the two asset reads cannot drift apart: a column dropped from
+ *  this list must fail a test, not surface as a null inside a job. */
+const ASSET_COLUMNS =
+  'id, registration_id, contest_id, kind, storage_key, provider_url, content_type, width, height, bytes, template_id, template_version, render_params';
+
+export async function getPhotoAsset(id: string): Promise<PhotoAsset | null> {
+  const { data, error } = await db()
+    .from('contest_photo_assets')
+    .select(ASSET_COLUMNS)
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    console.warn('[photo-jobs] asset read failed:', error.message);
+    return null;
+  }
+  return (data as PhotoAsset) ?? null;
+}
+
+/**
+ * Everything the pipeline produced for one registration, oldest first: the
+ * original, then whatever the newest successful render added.
+ *
+ * The status surface reads this only for a `ready` job, and the caller picks by
+ * `kind` — so an entry here is a stored fact, not a claim that the contestant
+ * approved it. `contest_photo_assets_registration (registration_id, kind)` backs
+ * the lookup; `created_at` orders the rare registration with two renders.
+ */
+export async function listPhotoAssets(registrationId: string): Promise<PhotoAsset[]> {
+  const { data, error } = await db()
+    .from('contest_photo_assets')
+    .select(ASSET_COLUMNS)
+    .eq('registration_id', registrationId)
+    .order('created_at', { ascending: true });
+  if (error) {
+    console.warn('[photo-jobs] asset list failed:', error.message);
+    return [];
+  }
+  return (data ?? []) as PhotoAsset[];
+}
+```
+- [x] **Step 6: Run to verify pass.** `npx vitest run
+  tests/unit/photo-jobs/routes.test.ts` → `Test Files 1 passed (1)`,
+  `Tests 22 passed (22)`. Directory run `npx vitest run tests/unit/photo-jobs/`
+  → `Test Files 7 passed (7)`, `Tests 88 passed (88)` (17 runner, 16 job-store,
+  11 registry, 7 assets, 5 variants, 10 worker, 22 routes) — the job-store column
+  refactor did not move its own assertions. `npm run type-check` → exit 0.
+  `npx eslint 'app/api/photo-jobs' app/api/admin/photo-config-status src/server/photo-jobs
+  tests/unit/photo-jobs/routes.test.ts` → no output. (The path with `[id]` needs quoting in zsh:
+  without it the glob is expanded by the shell and eslint never sees the file.)
+  Wider run `npx vitest run tests/unit/registration tests/unit/photo-jobs
+  tests/unit/media` → `Test Files 1 failed | 44 passed (45)`,
+  `Tests 2 failed | 400 passed (402)`; the two failures are
+  `contest-admin-schedule-route.spec.ts` and reproduce on `origin/main` — see
+  Task 5's note.
+
+- [x] **Step 7: Commit** — `d5f9a0357 feat(photo): job status, cancel and provider
+  config endpoints`.
+
+**Corrections to the draft** (what an executor would otherwise get wrong):
+
+1. Its `Files` list promised two route modules while its own `Produces` list
+   named three endpoints, and it gave cancel a `/cancel` sub-path that design §5
+   does not have ("`POST` cancel" on the same route). Delivered: `GET` + `POST`
+   share `app/api/photo-jobs/[id]/route.ts`, and the third endpoint is its own
+   `latest/route.ts`.
+2. It returned `assets.final` as `/api/contestant-photo/<storage key>`. No such
+   route exists in this app. The photo reader that does exist is
+   `/api/v1/contestants/[id]/photo`, which is keyed by contestant and serves
+   `contestants.photo_url` — i.e. the roster picture, not the composite. A URL
+   invented in a status payload is worse than no URL: the surface renders a broken
+   image and the job looks finished.
+3. It reused neither of the app's real derivations. `resolveContestantPhotoUrl`
+   cannot be used here — its `PHOTO_PREFIXES` allowlist admits only `registration/`
+   and `contestants/images/`, a privacy gate that exists so an arbitrary key
+   cannot point a public page at the identity documents sharing a member's prefix,
+   and this feature writes `contestants/composited|preview|thumbnail/`. Delivered:
+   the public base when `R2_PUBLIC_BASE_URL` is set, else `createR2DownloadUrl`
+   with `IN_APP_PHOTO_TTL_SECONDS` — the same signing helper, without widening a
+   security gate as a side effect of an endpoint.
+4. Its `assetPath` was synchronous and could not fail. Presigning is async and can
+   fault, so the delivered `assetUrl` is async and answers `null` on failure, which
+   leaves the kind absent from `assets` rather than promising a URL that 403s.
+5. It described `SITE_URL is empty — provider-fetchable fallback URLs cannot be
+   built` as a blocker. This app has no `SITE_URL` (the variable is
+   `NEXT_PUBLIC_SITE_URL`), and Task 3's `resolveFetchableSource` deliberately
+   takes no `siteUrl` — the comment on its parameter list says the one case that
+   would have needed it resolves better by presigning the key. So that blocker
+   reported the absence of a dependency the design had already removed.
+   Delivered: `storage.presignForProvider: 'available' | 'unavailable'` states the
+   same fact, and the `R2_PUBLIC_BASE_URL` blocker is gated on `r2Configured` so
+   one cause is not counted as two problems.
+6. Its `jobs` object promised the spec's `failedRecently`. The migration's
+   `photo_job_config_summary()` counts statuses and computes no window, so
+   inventing the field would have meant a number nothing produces. Delivered:
+   `jobs.failed`, documented as "rows currently on the retry ladder".
+7. The spec §7 sample payload has `extractionProbe`/`moderationProbe`, "evaluated
+   on demand against a known test asset". P1 cannot honour that and neither could
+   the draft, which simply omitted the fields: no known test asset was ever chosen
+   (design §10 lists the Cloudinary account state as a prerequisite nobody
+   satisfied), and firing the vendor from a page an admin happens to open would
+   spend a paid call against a contestant's photograph and could write into that
+   registration's moderation records. Delivered: both fields answer
+   `not_attempted` with a `probeNote` saying why, and the P3 template editor —
+   where the operator picks an asset on purpose — is where the probe belongs. This
+   is a stated deviation from the spec, not a silent gap.
+8. The draft's `getPhotoJob` 403 case and its fixtures used `'j1'` as a job id.
+   `id` is a uuid column, and the delivered guard answers 400 before the store is
+   called, so those cases failed as `expected 400 to be 403` — which reads like a
+   broken route and is a fixture bug. Delivered fixtures use real-shaped uuids and
+   one case pins the guard on both the path id and the query `registrationId`.
+9. It called the cancel RPC without looking at the status. `cancel_photo_job` is
+   `returns void` with `where status not in ('ready','cancelled')`, so a blind call
+   answers `cancelled: true` for a job that was already published — telling a
+   contestant the portrait they can see is gone. Delivered: 409 on a terminal row,
+   SQL guard untouched as the arbiter of the race between the read and the call.
+10. It built `assets` from every row it listed. `original` is the contestant's own
+    upload (already reachable through the registration media blob) and
+    `transparent` is a vendor cutout; a status endpoint handing either out would
+    turn an intermediate into a public image of a face. Delivered: only
+    `final | preview | thumbnail`.
+11. It never mentioned that design §5 wants the status read to kick the drain.
+    Delivered: `kickDrain()` wraps `maybeDrainPhotoJobs()` so a fault inside a
+    background drain cannot turn a successful status read into a 500 — pinned by
+    the case that makes the kick throw and still expects 200.
+12. Its 403 test asserted only the status code. Delivered: it also asserts
+    `listPhotoAssets` was not called, because "authorise before describing any
+    field" is the property; a route that checked ownership after building the
+    payload would pass the code assertion and leak asset keys.
 ### Task 9: Stop overwriting the original, in submit and in review
 
 **Files:**
