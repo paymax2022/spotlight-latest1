@@ -21,7 +21,7 @@
  * a drain that then declined to claim would have rescued those jobs for nothing.
  * `reclaimed > 0` therefore forces a claim on its own.
  */
-import { claimDuePhotoJobs, photoJobSummary, reclaimStalePhotoJobs, type PhotoJob } from './job-store';
+import { claimDuePhotoJobs, photoJobSummary, reclaimStalePhotoJobs } from './job-store';
 import { runPhotoJob } from './runner';
 
 const DEFAULT_LIMIT = 3;
@@ -52,7 +52,7 @@ export async function drainPhotoJobs(opts: { workerId?: string; limit?: number }
 
   for (const job of jobs) {
     try {
-      const outcome = await runPhotoJob(job as PhotoJob);
+      const outcome = await runPhotoJob(job);
       out[outcome] += 1;
     } catch (err) {
       // The runner records its own failures; a throw escaping it is a defect in
