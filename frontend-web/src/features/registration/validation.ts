@@ -1,5 +1,6 @@
 import type { RegistrationDraft, RegistrationField, RegistrationStep } from './types';
 import { buildRegistrationSteps, NIGERIA_CITIES_BY_STATE } from './config';
+import { NIGERIA_LGAS_BY_STATE } from './reference-data';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
 // Nigerian mobile numbers: 0 + 7/8/9 + 9 digits locally, i.e. +234 7/8/9…
@@ -205,6 +206,33 @@ export function validateStepData(step: RegistrationStep, formData: Record<string
     const allowedCities = NIGERIA_CITIES_BY_STATE[state] || [];
     if (allowedCities.length > 0 && !allowedCities.includes(city)) {
       errors[pair.cityKey] = `Please select a valid ${pair.label} for the selected state.`;
+    }
+  }
+
+  // Origin -> local government follows the same pair rule, keyed off the
+  // field's PRESENCE on this step so a step that never renders the picker
+  // cannot fail on it. Two deliberate differences from the city pairs:
+  //
+  //   * the message names the state, because "select a valid local government"
+  //     reads as if the LGA does not exist when the real problem is that it
+  //     belongs somewhere else — the applicant then re-picks an LGA they cannot
+  //     know was wrong;
+  //   * it falls open for a state with no rows, exactly like the city pairs, so
+  //     an applicant is never boxed in by a gap in the reference table.
+  //
+  // The village tier below it is NOT validated at all: only some LGAs have
+  // curated villages, the rest are free text, and locality enforcement here is
+  // display + filter — nobody is blocked from entering over how their quarter is
+  // spelled.
+  if (step.fields.some((field) => field.key === 'personal.localGovernment')) {
+    const origin = getString(formData['personal.stateOfOrigin']);
+    const lga = getString(formData['personal.localGovernment']);
+    if (origin && lga) {
+      const allowedLgas = NIGERIA_LGAS_BY_STATE[origin] || [];
+      if (allowedLgas.length > 0 && !allowedLgas.includes(lga)) {
+        errors['personal.localGovernment'] =
+          `Please select a local government that belongs to ${origin}.`;
+      }
     }
   }
 

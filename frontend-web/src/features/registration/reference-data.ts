@@ -58,6 +58,22 @@ export const NIGERIA_CITIES_BY_STATE: Record<string, string[]> = {
   Zamfara: ["Anka", "Bakura", "Birnin Magaji/Kiyaw", "Bukkuyum", "Bungudu", "Gummi", "Gusau", "Kaura Namoda", "Maradun", "Maru", "Shinkafi", "Talata Mafara", "Tsafe", "Zurmi"],
 };
 
+/**
+ * The same table, named for what it actually holds.
+ *
+ * `NIGERIA_CITIES_BY_STATE` has always been the 774 local government areas
+ * (Anambra -> Onitsha North / Onitsha South, not "Onitsha"), while the key and
+ * the wizard label said "city / town". The locality cascade needs an LGA list
+ * and the residence picker keeps using this one, so rather than duplicate 37
+ * rows under a new name, the honest name becomes an alias. Eight existing
+ * readers keep working untouched; new locality code imports this symbol.
+ *
+ * The village tier below an LGA is NOT here — it is curated data in
+ * `public.villages` and arrives over /api/registration/villages, so an admin
+ * adding a quarter does not need an app redeploy.
+ */
+export const NIGERIA_LGAS_BY_STATE: Record<string, string[]> = NIGERIA_CITIES_BY_STATE;
+
 export const DEFAULT_APPLICANT_CATEGORIES = [
   'Music',
   'Acting',

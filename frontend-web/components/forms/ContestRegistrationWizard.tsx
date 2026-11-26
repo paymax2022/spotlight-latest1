@@ -10,6 +10,16 @@ import {
   resolveContestRegistration,
 } from '@/src/features/registration/config';
 import { registrationMicrocopy } from '@/src/features/registration/microcopy';
+import {
+  LOCAL_GOVERNMENT_KEY,
+  STATE_OF_ORIGIN_KEY,
+  VILLAGE_KEY,
+  lgaOptionsFor,
+  localityResetsFor,
+  parseVillagesResponse,
+  villagesUrl,
+  type VillagesChoice,
+} from '@/src/features/registration/locality-picker';
 import type {
   RegistrationDraft,
   RegistrationStatusEvent,
@@ -26,6 +36,10 @@ const HIDDEN_AUTH_FIELDS = new Set([
   'account.password',
   'account.confirmPassword',
 ]);
+// The curated quarters of the selected LGA hang off this <datalist>, so the
+// village box stays a text input (an alternate spelling is still typeable) while
+// the published list is one keystroke away.
+const VILLAGE_SUGGESTIONS_ID = 'registration-village-suggestions';
 const FRONTEND_LOCKED_CONTEST_FIELDS = new Set([
   'contest.category',
   'contest.applicantCategory',
@@ -110,6 +124,11 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
   );
   const [loggedInUserLabel, setLoggedInUserLabel] = useState<string>('');
   const [loggedInUserAvatar, setLoggedInUserAvatar] = useState<string>('');
+  // Villages are curated server data (public.villages), not a bundle: an admin
+  // publishing a quarter must not need an app redeploy. free_text + [] is both the
+  // initial value and the failure value, because a locality that cannot be read
+  // stays typeable rather than blocking the application.
+  const [villageChoices, setVillageChoices] = useState<VillagesChoice>({ mode: 'free_text', villages: [] });
 
   const contest = useMemo(() => resolveContestRegistration(contestSlug), [contestSlug]);
   const currentStep = steps[stepIndex];
@@ -156,6 +175,38 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
       // keep local fallback catalog titles
     }
   }
+
+  // Locality pair the village list is keyed by. Derived as plain strings so the
+  // effect below re-runs when the APPLICANT MOVES A LEVEL, not on every keystroke
+  // elsewhere in the form.
+  const originState = String(formData[STATE_OF_ORIGIN_KEY] || '').trim();
+  const selectedLga = String(formData[LOCAL_GOVERNMENT_KEY] || '').trim();
+
+  // The village list follows the pair, so it refetches when either level moves.
+  // An older response must not land after a newer one, which would show one LGA's
+  // quarters under another; `isCurrent` is what the cleanup flips.
+  useEffect(() => {
+    if (!originState || !selectedLga) {
+      setVillageChoices({ mode: 'free_text', villages: [] });
+      return;
+    }
+
+    let isCurrent = true;
+    void (async () => {
+      let choice: VillagesChoice = { mode: 'free_text', villages: [] };
+      try {
+        const res = await fetch(villagesUrl(originState, selectedLga), { cache: 'no-store' });
+        choice = parseVillagesResponse(await res.json().catch(() => ({})));
+      } catch {
+        // Unreachable database / offline: stay a text box, never an error.
+      }
+      if (isCurrent) setVillageChoices(choice);
+    })();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [originState, selectedLga]);
 
   useEffect(() => {
     let isMounted = true;
@@ -287,6 +338,15 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
       const state = String(formData['personal.stateOfResidence'] || '');
       return NIGERIA_CITIES_BY_STATE[state] || [];
     }
+    // Locality tier: the LGA list follows the state of ORIGIN (the city pickers
+    // above follow residence — two different questions, two different geographies),
+    // and the village list comes from the server.
+    if (fieldKey === LOCAL_GOVERNMENT_KEY) {
+      return lgaOptionsFor(formData[STATE_OF_ORIGIN_KEY]);
+    }
+    if (fieldKey === VILLAGE_KEY) {
+      return villageChoices.mode === 'curated' ? villageChoices.villages : [];
+    }
     if (fieldKey === 'emergency.city') {
       const state = String(formData['emergency.state'] || '');
       return NIGERIA_CITIES_BY_STATE[state] || [];
@@ -398,6 +458,10 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
         next['audition.city'] = '';
       }
       if (fieldKey === 'audition.state') next['audition.city'] = '';
+      // Origin -> LGA -> village: moving a level invalidates everything below it, so
+      // a saved application can never read "Onitsha North / Ikeja" and then be
+      // counted under the wrong locality.
+      Object.assign(next, localityResetsFor(fieldKey, prev, value));
       return next;
     });
     setErrors((prev) => {
@@ -816,22 +880,64 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
                   )}
 
                   {!['textarea', 'select', 'multi_select', 'checkbox', 'file'].includes(field.type) && (
-                    <input
-                      type={field.type}
-                      name={field.key}
-                      placeholder={field.placeholder || field.label}
-                      value={stringifyFieldValue(value)}
-                      onChange={(e) => handleFieldChange(field.key, e.target.value)}
-                      disabled={field.readOnly}
-                      style={{
-                        color: formTextColor,
-                        backgroundColor: ui.fieldBg,
-                        border: `1px solid ${error ? ui.danger : ui.border}`,
-                        borderRadius: 10,
-                        minHeight: 48,
-                        padding: '0 14px',
-                      }}
-                    />
+                    <>
+                      <input
+                        type={field.type}
+                        name={field.key}
+                        placeholder={field.placeholder || field.label}
+                        value={stringifyFieldValue(value)}
+                        onChange={(e) => handleFieldChange(field.key, e.target.value)}
+                        disabled={field.readOnly}
+                        list={
+                          field.key === VILLAGE_KEY && villageChoices.mode === 'curated'
+                            ? VILLAGE_SUGGESTIONS_ID
+                            : undefined
+                        }
+                        style={{
+                          color: formTextColor,
+                          backgroundColor: ui.fieldBg,
+                          border: `1px solid ${error ? ui.danger : ui.border}`,
+                          borderRadius: 10,
+                          minHeight: 48,
+                          padding: '0 14px',
+                        }}
+                      />
+                      {field.key === VILLAGE_KEY && villageChoices.mode === 'curated' ? (
+                        <>
+                          <datalist id={VILLAGE_SUGGESTIONS_ID}>
+                            {villageChoices.villages.map((name) => (
+                              <option key={name} value={name} />
+                            ))}
+                          </datalist>
+                          {/* The published quarters of the chosen LGA, visible without
+                              opening a dropdown. Choosing one fills the field; typing
+                              something else is still allowed, which is the whole point
+                              of keeping this a text input. */}
+                          <div className="d-flex flex-wrap gap-1" style={{ marginTop: 8 }}>
+                            {villageChoices.villages.map((name) => {
+                              const picked = stringifyFieldValue(value) === name;
+                              return (
+                                <button
+                                  type="button"
+                                  key={name}
+                                  onClick={() => handleFieldChange(VILLAGE_KEY, name)}
+                                  style={{
+                                    color: picked ? '#FFFFFF' : formTextColor,
+                                    backgroundColor: picked ? ui.primary : ui.fieldBg,
+                                    border: `1px solid ${picked ? ui.primary : ui.border}`,
+                                    borderRadius: 9999,
+                                    padding: '4px 10px',
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  {name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </>
+                      ) : null}
+                    </>
                   )}
 
                   {field.helpText ? <small style={{ color: ui.subtleText, display: 'block', marginTop: 6 }}>{field.helpText}</small> : null}
