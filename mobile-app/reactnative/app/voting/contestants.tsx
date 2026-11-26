@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, Pressable, TextInput, ActivityIndicator,
 } from 'react-native';
@@ -14,16 +14,38 @@ import { useContestants } from '@/features/voting/hooks/useContestants';
 import { useVotingRealtime } from '@/features/voting/hooks/useVotingRealtime';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import ContestantCard from '@/features/voting/components/ContestantCard';
+import {
+  filterRoster,
+  hasActiveLocality,
+  localityChoices,
+  selectLocality,
+  type LocalityFilter,
+  type LocalityLevel,
+} from '@/features/voting/utils/rosterLocality';
 import { HomeMenuButton } from '@/components/HomeMenu';
+
+const LEVELS: { level: LocalityLevel; label: string; emptyHint: string }[] = [
+  { level: 'state', label: 'State', emptyHint: 'No contestant on this roster has a state.' },
+  { level: 'lga', label: 'Local government', emptyHint: 'No local government recorded yet.' },
+  { level: 'village', label: 'Village / quarter', emptyHint: 'No village recorded for this area.' },
+];
 
 export default function ContestantGridScreen() {
   const { contestId } = useLocalSearchParams<{ contestId: string }>();
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<LocalityFilter>({});
+  const [showFilter, setShowFilter] = useState(false);
 
   const { data: contest } = useContestDetails(contestId ?? '');
-  const { data, isLoading, isError, refetch, isRefetching } = useContestants(contestId ?? '', { search });
+  // No `search` in the query params: Go's roster endpoint answers the whole roster and
+  // ignores query filters, so the box used to refetch on every keystroke and change
+  // nothing. Both the box and the locality panel now narrow the rows in hand.
+  const { data, isLoading, isError, refetch, isRefetching } = useContestants(contestId ?? '');
   // Live: an admin approving an entry adds a contestant here without a reload.
   useVotingRealtime(contestId);
+
+  const rows = useMemo(() => filterRoster(data ?? [], filter, search), [data, filter, search]);
+  const localityOn = hasActiveLocality(filter);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -48,13 +70,62 @@ export default function ContestantGridScreen() {
           placeholderTextColor={Colors.outline}
           value={search}
           onChangeText={setSearch}
+          accessibilityLabel="Search contestants"
         />
         {search.length > 0 && (
-          <Pressable onPress={() => setSearch('')}>
+          <Pressable onPress={() => setSearch('')} accessibilityLabel="Clear search">
             <X size={16} color={Colors.outline} strokeWidth={2} />
           </Pressable>
         )}
+        <Pressable
+          onPress={() => setShowFilter((v) => !v)}
+          accessibilityLabel="Filter by locality"
+          accessibilityState={{ selected: showFilter }}
+          style={[styles.filterBtn, (localityOn || showFilter) && styles.filterBtnOn]}
+        >
+          <SlidersHorizontal size={16} color={localityOn || showFilter ? Colors.onPrimary : Colors.onSurfaceVariant} strokeWidth={2} />
+          {localityOn && <View style={styles.filterDot} />}
+        </Pressable>
       </View>
+
+      {showFilter && (
+        <View style={styles.filterPanel}>
+          {LEVELS.map(({ level, label, emptyHint }) => {
+            const choices = localityChoices(data ?? [], level, filter);
+            const picked = String(filter[level] ?? '');
+            return (
+              <View key={level} style={styles.filterGroup}>
+                <Text style={styles.filterLabel}>{label}</Text>
+                {choices.length === 0 ? (
+                  <Text style={styles.filterHint}>{picked ? 'Nothing at this level under the current choice.' : emptyHint}</Text>
+                ) : (
+                  <View style={styles.chipWrap}>
+                    {choices.map((value) => {
+                      const on = picked === value;
+                      return (
+                        <Pressable
+                          key={value}
+                          onPress={() => setFilter((prev) => selectLocality(prev, level, value))}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: on }}
+                          style={[styles.chip, on && styles.chipOn]}
+                        >
+                          <Text style={[styles.chipText, on && styles.chipTextOn]}>{value}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            );
+          })}
+          {localityOn && (
+            <Pressable onPress={() => setFilter({})} accessibilityRole="button" style={styles.clearBtn}>
+              <Text style={styles.clearText}>Clear locality filter</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
 
       {isLoading ? (
         <View style={styles.loader}><ActivityIndicator size="large" color={Colors.primary} /></View>
@@ -71,7 +142,7 @@ export default function ContestantGridScreen() {
         </View>
       ) : (
         <FlatList
-          data={data ?? []}
+          data={rows}
           keyExtractor={(c) => c.id}
           numColumns={2}
           columnWrapperStyle={styles.row}
@@ -87,11 +158,28 @@ export default function ContestantGridScreen() {
           onRefresh={refetch}
           refreshing={isRefetching}
           ListEmptyComponent={
+            // A filtered-out roster is not an empty contest. Saying "no contestants
+            // have been added" while a filter is on sends the voter to look for a
+            // different contest, when the answer is to widen this one.
             <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>No contestants found</Text>
+              <Text style={styles.emptyTitle}>{localityOn || search ? 'No contestants match' : 'No contestants found'}</Text>
               <Text style={styles.emptySub}>
-                {search ? 'Try a different search.' : 'No contestants have been added to this contest yet.'}
+                {localityOn
+                  ? [filter.state, filter.lga, filter.village].filter(Boolean).join(' · ')
+                  : search
+                    ? 'Try a different search.'
+                    : 'No contestants have been added to this contest yet.'}
               </Text>
+              {localityOn && (
+                <Pressable onPress={() => setFilter({})} style={styles.clearBtn}>
+                  <Text style={styles.clearText}>Clear locality filter</Text>
+                </Pressable>
+              )}
+              {!localityOn && search && (
+                <Pressable onPress={() => setSearch('')} style={styles.clearBtn}>
+                  <Text style={styles.clearText}>Clear search</Text>
+                </Pressable>
+              )}
             </View>
           }
         />
@@ -119,6 +207,30 @@ const styles = StyleSheet.create({
     marginBottom:     Spacing.md,
   },
   searchInput: { flex: 1, ...Typography.bodyMd, color: Colors.onSurface, padding: 0 },
+  filterBtn: {
+    width: 34, height: 34, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.surfaceContainer, position: 'relative',
+  },
+  filterBtnOn: { backgroundColor: Colors.primary },
+  filterDot: { position: 'absolute', top: 4, right: 4, width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.secondary },
+  filterPanel: {
+    marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md, padding: Spacing.md, gap: Spacing.md,
+    backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg,
+    borderWidth: 1, borderColor: Colors.surfaceContainerHigh,
+  },
+  filterGroup: { gap: Spacing.xs },
+  filterLabel: { ...Typography.labelSm, color: Colors.onSurface },
+  filterHint: { ...Typography.caption, color: Colors.outline },
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  chip: {
+    paddingVertical: 7, paddingHorizontal: 12, borderRadius: Radius.full,
+    backgroundColor: Colors.surfaceContainerLow, borderWidth: 1.5, borderColor: Colors.outlineVariant,
+  },
+  chipOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  chipText: { ...Typography.labelSm, color: Colors.onSurface },
+  chipTextOn: { color: Colors.onPrimary },
+  clearBtn: { alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 12, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.outlineVariant },
+  clearText: { ...Typography.labelSm, color: Colors.primary },
   loader:  { flex: 1, alignItems: 'center', justifyContent: 'center' },
   list:    { paddingHorizontal: Spacing.containerMargin, paddingBottom: 100 },
   row:     { gap: Spacing.sm, marginBottom: Spacing.sm },

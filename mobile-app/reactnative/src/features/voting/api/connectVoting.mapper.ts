@@ -27,6 +27,14 @@ export interface BackendRosterEntry {
   stage_name: string;
   category: string;
   state: string;
+  /**
+   * The village tier of the state -> LGA -> village cascade (migration
+   * 20272000000000). Present-but-empty on a contestant who left the level blank;
+   * absent entirely from a backend deployed before that migration, so both stay
+   * optional here rather than pretending the old shape cannot arrive.
+   */
+  lga?: string;
+  village?: string;
   bio: string;
   photo_url: string;
   media_url: string;
@@ -192,6 +200,13 @@ export function mapContestant(raw: BackendRosterEntry, contestId: string): Conte
     stageName: raw.stage_name || undefined,
     category: raw.category || undefined,
     state: raw.state || undefined,
+    // Locality below the state. The roster emits both keys on every row (repo.go), so
+    // a missing one means the applicant left that level blank, not that the field
+    // does not exist — which is why they map to `undefined` and the card drops them
+    // instead of rendering an empty segment. Optional on the entry type because a
+    // backend deployed before 20272000000000 sends neither key at all.
+    lga: raw.lga || undefined,
+    village: raw.village || undefined,
     photo: raw.photo_url || undefined,
     mediaUrl: raw.media_url || undefined,
     bio: raw.bio || undefined,

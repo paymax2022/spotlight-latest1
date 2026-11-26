@@ -27,6 +27,7 @@ import ContestantStatsCard from '@/features/voting/components/ContestantStatsCar
 import VoteConfirmationSheet from '@/features/voting/components/VoteConfirmationSheet';
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
 import { formatVoteCount } from '@/features/voting/utils/voteFormatters';
+import { localityLine } from '@/features/voting/utils/rosterLocality';
 import SongPlayer from '@/features/openmic/components/SongPlayer';
 import { isPlayableHttpUrl } from '@/features/openmic/absolute-url';
 import { mediaUrl } from '@/features/openmic/media';
@@ -160,6 +161,10 @@ export default function ContestantProfileScreen() {
   // only truthful for the second one. Substituting a zero allowance would show a
   // countdown to a date the server never sent.
   const displayPackages: VotePackage[] = packages ?? [];
+  // Where they are from, most specific part first. On a local contest the quarter is
+  // what a voter is checking, and the state on its own is what a roster from before
+  // the village tier can offer.
+  const locality = localityLine(contestant);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -231,10 +236,10 @@ export default function ContestantProfileScreen() {
             </View>
             <Text style={styles.realName}>{contestant.name}</Text>
             <View style={styles.tagsRow}>
-              {contestant.state && (
+              {locality && (
                 <View style={styles.tag}>
                   <MapPin size={12} color={Colors.onSurfaceVariant} strokeWidth={2} />
-                  <Text style={styles.tagText}>{contestant.state}</Text>
+                  <Text style={styles.tagText}>{locality}</Text>
                 </View>
               )}
               {contestant.category && (

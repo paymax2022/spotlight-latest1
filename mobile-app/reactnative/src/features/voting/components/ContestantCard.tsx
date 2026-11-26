@@ -10,6 +10,7 @@ import RankBadge from './RankBadge';
 import VoteButton from './VoteButton';
 import RankMovementBadge from './RankMovementBadge';
 import { formatVoteCount } from '../utils/voteFormatters';
+import { cardLocality } from '../utils/rosterLocality';
 import type { Contestant } from '../types/voting.types';
 
 interface Props {
@@ -20,6 +21,9 @@ interface Props {
 }
 
 export default function ContestantCard({ contestant, onPress, onVote, isVoting }: Props) {
+  // Most specific locality the row carries: on a local contest the voter is checking
+  // the quarter, and a roster from before the village tier falls back to the state.
+  const locality = cardLocality(contestant);
   return (
     <Pressable
       onPress={onPress}
@@ -54,15 +58,15 @@ export default function ContestantCard({ contestant, onPress, onVote, isVoting }
         </View>
         <Text style={styles.realName} numberOfLines={1}>{contestant.name}</Text>
 
-        {(contestant.state || contestant.category) && (
+        {(locality || contestant.category) && (
           <View style={styles.infoRow}>
-            {contestant.state && (
+            {locality && (
               <>
                 <MapPin size={11} color={Colors.onSurfaceVariant} strokeWidth={2} />
-                <Text style={styles.infoText}>{contestant.state}</Text>
+                <Text style={styles.infoText} numberOfLines={1}>{locality}</Text>
               </>
             )}
-            {contestant.category && contestant.state && <Text style={styles.dot}>·</Text>}
+            {contestant.category && locality && <Text style={styles.dot}>·</Text>}
             {contestant.category && <Text style={styles.infoText}>{contestant.category}</Text>}
           </View>
         )}

@@ -74,6 +74,15 @@ export interface Contestant {
   stageName?: string;
   category?: string;
   state?: string;
+  /**
+   * Locality below the state, from the state-of-origin cascade the applicant
+   * answered (migration 20272000000000). Both are optional twice over: a contestant
+   * may leave either level blank, and a backend deployed before that migration
+   * doesn't send the keys at all. Locality filters and displays — it never gates
+   * entry or voting — so an absent value costs a card a word, not a submission.
+   */
+  lga?: string;
+  village?: string;
   photo?: string;
   mediaUrl?: string;
   /**
