@@ -934,7 +934,18 @@ function CreateCompetitionContent() {
             </div>
             {form.regionScope === 'village' && (
               <div>
-                <label style={labelStyle}>Contest village</label>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+                  <label style={labelStyle}>Contest village</label>
+                  {/* Same affordance as Category's "Manage": the list here is curated
+                      content in public.villages, so the fix for a missing quarter is to
+                      publish it, not to file a migration. */}
+                  <Link
+                    href="/admin/competitions/villages"
+                    style={{ fontSize: 11, color: colors.primary, textDecoration: 'none' }}
+                  >
+                    Manage
+                  </Link>
+                </div>
                 {villageMode === 'curated' ? (
                   <select
                     aria-label="Contest village"
