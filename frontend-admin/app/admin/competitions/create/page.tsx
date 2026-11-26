@@ -18,6 +18,7 @@ import {
 } from '@/services/votePackagesService';
 import type { StageEvictionInfo } from '@/types/competitions';
 import { listContestCategories, type ContestCategoryRow } from '@/services/contestCategoriesService';
+import { listLocalGovernments, listVillages, type LocalityMode } from '@/services/localityAdminService';
 
 // Real contest create/edit — POST/PATCH /api/admin/contests[/[slug]], the
 // same route SME Pitch's console already uses. Previously this page was a
@@ -55,6 +56,29 @@ const NIGERIA_STATES = [
   'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto',
   'Taraba', 'Yobe', 'Zamfara',
 ];
+
+/*
+  'lga' and 'village' are the local contest the operator asked for: an edition open
+  only to one defined local government, optionally narrowed to one village or quarter
+  inside it (Onitsha North's Isiokwe, Mgbelekeke, Obikporo …). Both are display +
+  filter scopes — nobody is blocked from entering or voting because of where they
+  live — so the values decide what the app shows and can group by, not who is
+  allowed in.
+
+  Labels are deliberately longer than the four existing single words. `state` alone
+  would read as the same choice as the new `lga` on a screen where the difference
+  (a whole state vs one government area) is the whole point.
+*/
+const REGION_SCOPES: { value: RegionScope; label: string }[] = [
+  { value: 'state', label: 'state' },
+  { value: 'regional', label: 'regional' },
+  { value: 'national', label: 'national' },
+  { value: 'international', label: 'international' },
+  { value: 'lga', label: 'lga — one local government' },
+  { value: 'village', label: 'village — one village or quarter' },
+];
+
+const LOCAL_SCOPES: RegionScope[] = ['lga', 'village'];
 
 function toSlug(raw: string) {
   return raw.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
@@ -100,6 +124,9 @@ function initialForm(): FormState {
     requiresMedical: false, requiresBootcampReadiness: false, auditionStates: [], applicantCategories: [],
     rulesText: '', bannerImageUrl: '', logoUrl: '',
     startDate: '', endDate: '', prizePool: '',
+    // Sent empty on create so the route sees "no locality" as a decision rather
+    // than as the caller not managing the schedule's sibling fields.
+    localityState: '', localityLga: '', localityVillage: '',
   };
 }
 
@@ -109,6 +136,18 @@ function initialForm(): FormState {
 // deadline somebody set precisely.
 function dayPart(value: string | undefined): string {
   return value && value.length >= 10 ? value.slice(0, 10) : '';
+}
+
+/*
+  Options for a locality select: the curated list, plus whatever the form already
+  holds. An LGA or village the reference data does not know — renamed, typed while the
+  list was unreachable, or simply never curated — has to stay selectable, or opening a
+  contest to fix its title would blank its locality on save. Same rule the Type select
+  uses for a contestType that is not in TYPES.
+*/
+function localityOptions(current: string, values: string[]): string[] {
+  return [...new Set([current, ...values].map((v) => v.trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
 }
 
 function CreateCompetitionContent() {
@@ -156,6 +195,67 @@ function CreateCompetitionContent() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  /*
+    The two fetched tiers of the locality cascade. Both default to 'free_text' before a
+    fetch resolves, so the worst case an admin can hit is typing a name into a box —
+    never an empty dropdown, and never a blocked save. That is the same degradation the
+    server answers with for an LGA nobody has curated villages under, which is why the
+    mode comes from the payload instead of from "did the array come back non-empty": an
+    in-flight fetch and a genuinely empty list must not look identical.
+  */
+  const [lgas, setLgas] = useState<string[]>([]);
+  const [lgaMode, setLgaMode] = useState<LocalityMode>('free_text');
+  const [villages, setVillages] = useState<string[]>([]);
+  const [villageMode, setVillageMode] = useState<LocalityMode>('free_text');
+
+  const isLocal = LOCAL_SCOPES.includes(form.regionScope);
+  const localityState = (form.localityState ?? '').trim();
+  const localityLga = (form.localityLga ?? '').trim();
+
+  useEffect(() => {
+    if (!isLocal || !localityState) { setLgas([]); setLgaMode('free_text'); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await listLocalGovernments(localityState);
+        if (cancelled) return;
+        setLgas(list.lgas);
+        setLgaMode(list.mode);
+      } catch {
+        // A reference-data outage is not a reason to lose an edit: fall back to the
+        // text box and let the admin type the LGA they know.
+        if (cancelled) return;
+        setLgas([]);
+        setLgaMode('free_text');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isLocal, localityState]);
+
+  useEffect(() => {
+    // Only a village-scoped contest needs the third tier; an 'lga' contest stores no
+    // village at all, so fetching one would offer a field the route rejects.
+    if (form.regionScope !== 'village' || !localityState || !localityLga) {
+      setVillages([]);
+      setVillageMode('free_text');
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await listVillages(localityState, localityLga);
+        if (cancelled) return;
+        setVillages(list.villages);
+        setVillageMode(list.mode);
+      } catch {
+        if (cancelled) return;
+        setVillages([]);
+        setVillageMode('free_text');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [form.regionScope, localityState, localityLga]);
 
 
   // Stages — persisted (loaded from the API once the contest exists) plus a
@@ -235,6 +335,13 @@ function CreateCompetitionContent() {
         startDate: c.startDate ?? '',
         endDate: c.endDate ?? '',
         prizePool: c.prizePool ?? '',
+        // Same omission class as the schedule above: loadContest is a field
+        // whitelist, and a key it does not copy is a key the save never resends.
+        // A local contest would then read back with its locality on the server and
+        // none in the form — and the next unrelated edit would clear it.
+        localityState: c.localityState ?? '',
+        localityLga: c.localityLga ?? '',
+        localityVillage: c.localityVillage ?? '',
       });
       if (c.status) setStatusState(c.status as ContestPublishStatus);
       if (c.id) setContestId(c.id);
@@ -745,11 +852,116 @@ function CreateCompetitionContent() {
           </div>
           <div>
             <label style={labelStyle}>Region scope</label>
-            <select style={selectStyle} value={form.regionScope} onChange={(e) => setForm((f) => ({ ...f, regionScope: e.target.value as RegionScope }))}>
-              {(['state', 'regional', 'national', 'international'] as const).map((s) => <option key={s} value={s}>{s}</option>)}
+            <select
+              aria-label="Region scope"
+              style={selectStyle}
+              value={form.regionScope}
+              onChange={(e) => {
+                const next = e.target.value as RegionScope;
+                // Leaving a local scope clears the triple rather than leaving it
+                // stranded: /api/admin/contests wipes it for a non-local scope
+                // anyway, so keeping the picks here would show the admin values
+                // that were never stored.
+                setForm((f) => LOCAL_SCOPES.includes(next)
+                  ? { ...f, regionScope: next }
+                  : { ...f, regionScope: next, localityState: '', localityLga: '', localityVillage: '' });
+              }}
+            >
+              {REGION_SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </div>
         </div>
+
+        {/*
+          The locality of a local contest: state, then its local government, then the
+          village. These are what /api/admin/contests refuses to store without — an
+          'lga'/'village' scope with no place on it would publish a contest the apps
+          cannot label — so the fields appear exactly when the scope needs them and the
+          save carries them as bare strings (contests.locality_state/_lga/_village).
+
+          The village tier is the reason this exists: quarters like Ogbendida or
+          Owelle Ebo are curated content in public.villages, so publishing one must not
+          need a redeploy, and an LGA with no curated list still takes a typed name.
+        */}
+        {isLocal && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+            <div>
+              <label style={labelStyle}>Contest state of origin</label>
+              <select
+                aria-label="Contest state of origin"
+                style={selectStyle}
+                value={form.localityState ?? ''}
+                // A new state invalidates both deeper picks, so they reset with it —
+                // otherwise "Anambra / Lagos" is a place that does not exist.
+                onChange={(e) => setForm((f) => ({
+                  ...f,
+                  localityState: e.target.value,
+                  localityLga: '',
+                  localityVillage: '',
+                }))}
+              >
+                <option value="">Select a state</option>
+                {localityOptions(form.localityState ?? '', NIGERIA_STATES).map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Contest local government</label>
+              {lgaMode === 'curated' ? (
+                <select
+                  aria-label="Contest local government"
+                  style={selectStyle}
+                  value={form.localityLga ?? ''}
+                  onChange={(e) => setForm((f) => ({ ...f, localityLga: e.target.value, localityVillage: '' }))}
+                >
+                  <option value="">Select a local government</option>
+                  {localityOptions(form.localityLga ?? '', lgas).map((v) => (
+                    <option key={v} value={v}>{v}</option>
+                  ))}
+                </select>
+              ) : (
+                <Input
+                  aria-label="Contest local government"
+                  style={{ width: '100%' }}
+                  type="text"
+                  placeholder="e.g. Onitsha North"
+                  maxLength={80}
+                  value={form.localityLga ?? ''}
+                  onChange={(e) => setForm((f) => ({ ...f, localityLga: e.target.value, localityVillage: '' }))}
+                />
+              )}
+            </div>
+            {form.regionScope === 'village' && (
+              <div>
+                <label style={labelStyle}>Contest village</label>
+                {villageMode === 'curated' ? (
+                  <select
+                    aria-label="Contest village"
+                    style={selectStyle}
+                    value={form.localityVillage ?? ''}
+                    onChange={(e) => setForm((f) => ({ ...f, localityVillage: e.target.value }))}
+                  >
+                    <option value="">Select a village</option>
+                    {localityOptions(form.localityVillage ?? '', villages).map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    aria-label="Contest village"
+                    style={{ width: '100%' }}
+                    type="text"
+                    placeholder="Type the village or quarter"
+                    maxLength={80}
+                    value={form.localityVillage ?? ''}
+                    onChange={(e) => setForm((f) => ({ ...f, localityVillage: e.target.value }))}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div>
