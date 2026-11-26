@@ -32,7 +32,7 @@ type TabKey = 'batches' | 'applications' | 'tuition' | 'curriculum' | 'progress'
 
 const TABS: Array<{ key: TabKey; label: string; hint: string }> = [
   { key: 'batches',     label: 'Batches',      hint: 'Cohorts the app offers on /film-academy' },
-  { key: 'applications',label: 'Applications', hint: 'View applicants and their interest areas' },
+  { key: 'applications',label: 'Applications', hint: 'Approve or reject the pending intake — approval enrols' },
   { key: 'tuition',     label: 'Tuition',      hint: 'Plans shown on /film-academy/tuition' },
   { key: 'curriculum',  label: 'Curriculum',   hint: 'Modules, lessons and the week 1-4 assignment timeline' },
   { key: 'progress',    label: 'Progress',     hint: 'Who has sent which part, and who is behind' },
@@ -110,7 +110,7 @@ export default function FilmAcademyAdminPage() {
       </div>
 
       {tab === 'batches'      ? <BatchesTab onNotice={setNotice} /> : null}
-      {tab === 'applications' ? <ApplicationsTab /> : null}
+      {tab === 'applications' ? <ApplicationsTab onNotice={setNotice} /> : null}
       {tab === 'tuition'      ? <TuitionTab onNotice={setNotice} /> : null}
       {tab === 'curriculum'   ? <CurriculumTab onNotice={setNotice} /> : null}
       {tab === 'progress'     ? <ProgressTab onNotice={setNotice} /> : null}
@@ -470,10 +470,38 @@ function BatchAreaAccordion({ area, busy, checked, onCheck, onSavePricing }: {
   );
 }
 
-function ApplicationsTab() {
+function ApplicationsTab({ onNotice }: NoticeProp) {
   const batches = useAsync(() => svc.listBatches(), []);
   const [batchId, setBatchId] = useState('');
-  const apps = useAsync(() => svc.listApplications({ batchId: batchId || undefined }), [batchId]);
+  const [statusFilter, setStatusFilter] = useState('');
+  const apps = useAsync(
+    () => svc.listApplications({ batchId: batchId || undefined, status: statusFilter || undefined }),
+    [batchId, statusFilter],
+  );
+  const [busy, setBusy] = useState<string | null>(null);
+
+  /**
+   * A decision, not a label. PATCH /api/admin/academy/applications/[id] is what
+   * the mobile applicant waits on (GET /api/academy/application returns this
+   * status): approving creates the instalment plan and enrolls the learner —
+   * where tuition is due, enrolment still waits for the first instalment — and
+   * rejecting mails the applicant. Both are irreversible-looking enough to the
+   * applicant that they get a confirm.
+   */
+  const decide = async (id: string, next: 'approved' | 'rejected', who: string) => {
+    const what = who || 'this applicant';
+    const detail = next === 'approved'
+      ? 'This creates the instalment plan and enrols the applicant.'
+      : 'The applicant is notified by email.';
+    if (!window.confirm(`${next === 'approved' ? 'Approve' : 'Reject'} ${what}?\n\n${detail}`)) return;
+    setBusy(id);
+    try {
+      await svc.decideApplication(id, { status: next });
+      onNotice(`${what} ${next}.`);
+      void apps.reload();
+    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  };
 
   const list = apps.data ?? [];
 
@@ -487,6 +515,15 @@ function ApplicationsTab() {
             {(batches.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.batch_name}</option>)}
           </select>
         </div>
+        <div style={{ minWidth: 170 }}>
+          <span style={label()}>Status</span>
+          <select style={select()} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="">All statuses</option>
+            <option value="pending">pending — awaiting you</option>
+            <option value="approved">approved</option>
+            <option value="rejected">rejected</option>
+          </select>
+        </div>
         <button style={btn()} onClick={() => void apps.reload()}>Refresh</button>
       </FilterBar>
 
@@ -497,6 +534,7 @@ function ApplicationsTab() {
             <thead><tr>
               <th style={th()}>Applicant</th><th style={th()}>Batch</th><th style={th()}>Areas</th>
               <th style={th()}>App. fee paid</th><th style={th()}>Applied</th>
+              <th style={th()}>Status</th><th style={th()}>Decision</th>
             </tr></thead>
             <tbody>
               {list.map((a) => (
@@ -510,6 +548,23 @@ function ApplicationsTab() {
                   <td style={td()}>{(a.areas_of_interest ?? []).join(', ') || '—'}</td>
                   <td style={td()}>{naira(a.application_fee_paid)}</td>
                   <td style={td()}>{fmtDate(a.created_at)}</td>
+                  <td style={td()}><Badge status={a.status ?? '—'} /></td>
+                  <td style={td()}>
+                    {a.status === 'pending' ? (
+                      <span style={{ display: 'inline-flex', gap: '0.4rem' }}>
+                        <button style={btnPrimary()} disabled={busy === a.id}
+                          onClick={() => void decide(a.id, 'approved', a.full_name || a.email || 'Applicant')}>
+                          {busy === a.id ? 'Working…' : 'Approve'}
+                        </button>
+                        <button style={btnDanger()} disabled={busy === a.id}
+                          onClick={() => void decide(a.id, 'rejected', a.full_name || a.email || 'Applicant')}>
+                          Reject
+                        </button>
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: '0.75rem', color: colors.muted }}>No action needed</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -517,7 +572,9 @@ function ApplicationsTab() {
         </div>
       </StateBlock>
       <AuditNote>
-        Applicants gain immediate access to learning materials after payment. No admin approval needed.
+        Pending applications are the queue the Operations dashboard sends you here for. Approving
+        creates the instalment plan and enrols the learner; where tuition is due, access opens on the
+        first instalment rather than on approval.
       </AuditNote>
     </Card>
   );

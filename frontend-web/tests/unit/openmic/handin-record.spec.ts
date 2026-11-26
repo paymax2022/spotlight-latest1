@@ -19,6 +19,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  handinFieldSeeds,
   handinFieldsOnRecord,
   inheritanceFromFormData,
   resolveHandinInheritance,
@@ -53,9 +54,18 @@ describe('Open Mic hand-in inheritance', () => {
   });
 
   it('is empty-safe: no row, no answers', () => {
-    expect(inheritanceFromFormData(null)).toEqual({ email: '', state: '', lga: '' });
-    expect(inheritanceFromFormData({})).toEqual({ email: '', state: '', lga: '' });
-    expect(inheritanceFromFormData(undefined)).toEqual({ email: '', state: '', lga: '' });
+    expect(inheritanceFromFormData(null)).toEqual({ email: '', state: '', lga: '', instagram: '', tiktok: '' });
+    expect(inheritanceFromFormData({})).toEqual({ email: '', state: '', lga: '', instagram: '', tiktok: '' });
+    expect(inheritanceFromFormData(undefined)).toEqual({ email: '', state: '', lga: '', instagram: '', tiktok: '' });
+  });
+
+  it('reads both handles and tolerates the older key spelling', () => {
+    expect(inheritanceFromFormData({ 'social.instagram': '@ada', 'social.tiktok': '@ada_tk' }))
+      .toMatchObject({ instagram: '@ada', tiktok: '@ada_tk' });
+    expect(inheritanceFromFormData({ 'social.instagramHandle': '  @legacy  ' }))
+      .toMatchObject({ instagram: '@legacy' });
+    expect(inheritanceFromFormData({ 'social.tiktokHandle': '@legacy_tk' }))
+      .toMatchObject({ tiktok: '@legacy_tk' });
   });
 
   it('takes the email from the application when it carries one', () => {
@@ -73,6 +83,7 @@ describe('Open Mic hand-in inheritance', () => {
       expect(handinFieldsOnRecord({ state: 'Anambra', lga: 'Awka North' })).toEqual({
         email: false,
         location: true,
+        socials: false,
       });
     });
 
@@ -103,9 +114,62 @@ describe('Open Mic hand-in inheritance', () => {
       expect(handinFieldsOnRecord({ state: 'Abia', lga: 'Umuahia' }).location).toBe(false);
     });
 
+    it('confirms only handles the application actually answered', () => {
+      // The registration asks for Instagram and TikTok and requires neither, while
+      // the hand-in endpoint refuses a submission with no handle at all. So one
+      // recorded handle answers the question and an empty entry must not: hiding
+      // the fields on an entry that carries neither would block a recorded song.
+      expect(handinFieldsOnRecord({ instagram: '@ada', tiktok: '@ada_tk' }).socials).toBe(true);
+      expect(handinFieldsOnRecord({ instagram: '@ada', tiktok: '' }).socials).toBe(true);
+      expect(handinFieldsOnRecord({ instagram: '', tiktok: 'ada_tk' }).socials).toBe(true);
+      expect(handinFieldsOnRecord({ instagram: '   ', tiktok: '' }).socials).toBe(false);
+      expect(handinFieldsOnRecord({ instagram: '', tiktok: '' }).socials).toBe(false);
+      expect(handinFieldsOnRecord({}).socials).toBe(false);
+      // A file value is not a handle. The real shape only ever arrives through the
+      // form-data read, so the refusal is tested there and then re-asserted on the
+      // answer it produces.
+      const asFile = inheritanceFromFormData({ 'social.instagram': { url: 'https://x/y', fileName: 'y.mp3' } });
+      expect(asFile.instagram).toBe('');
+      expect(handinFieldsOnRecord(asFile).socials).toBe(false);
+    });
+
     it('is undefined-safe', () => {
-      expect(handinFieldsOnRecord(null)).toEqual({ email: false, location: false });
-      expect(handinFieldsOnRecord(undefined, undefined)).toEqual({ email: false, location: false });
+      expect(handinFieldsOnRecord(null)).toEqual({ email: false, location: false, socials: false });
+      expect(handinFieldsOnRecord(undefined, undefined)).toEqual({ email: false, location: false, socials: false });
+    });
+  });
+
+  describe('handinFieldSeeds', () => {
+    // The invariant this exists for: the value a confirmed row displays is the
+    // value the form body carries. Mobile shipped a bug where the row advertised an
+    // answer the state never received (#1134), so the pairing is tested here rather
+    // than trusted to two ternaries in a component.
+    it('seeds exactly what the rows will claim', () => {
+      expect(handinFieldSeeds({
+        state: 'Anambra', lga: 'Awka North', instagram: '@adaforce', tiktok: '@ada_tk',
+      })).toEqual({
+        state: 'Anambra', lga: 'Awka North', instagramHandle: '@adaforce', tiktokHandle: '@ada_tk',
+      });
+    });
+
+    it('seeds a handle the entry answered with only one of the two', () => {
+      expect(handinFieldSeeds({ instagram: '  @adaforce  ', tiktok: '' })).toEqual({
+        state: '', lga: '', instagramHandle: '@adaforce', tiktokHandle: '',
+      });
+    });
+
+    it('refuses to seed an answer it would not confirm', () => {
+      // An LGA outside the state’s list stays a question, and an entry that
+      // answered neither handle leaves both fields empty rather than seeding a
+      // blank the artist then cannot be told to fill.
+      expect(handinFieldSeeds({ state: 'Abia', lga: 'Ikeja', instagram: '', tiktok: '   ' })).toEqual({
+        state: '', lga: '', instagramHandle: '', tiktokHandle: '',
+      });
+    });
+
+    it('is undefined-safe', () => {
+      expect(handinFieldSeeds(null)).toEqual({ state: '', lga: '', instagramHandle: '', tiktokHandle: '' });
+      expect(handinFieldSeeds(undefined)).toEqual({ state: '', lga: '', instagramHandle: '', tiktokHandle: '' });
     });
   });
 
@@ -140,6 +204,18 @@ describe('Open Mic hand-in inheritance', () => {
         .toMatchObject({ state: 'Anambra', lga: 'Awka North', source: 'open-mic' });
       expect(resolveHandinInheritance([{ contestSlug: 'reality-tv-show', updatedAt: '2026-11-19T00:00:00.000Z', formData: {} }], 'open-mic'))
         .toMatchObject({ state: '', source: 'none' });
+    });
+
+    it('carries the chosen application’s handles, and no other contest’s', () => {
+      // ANAMBRA_APPLICATION records an Instagram handle, so the edition picked for
+      // this artist brings it along; a row from another contest is not a source,
+      // handles included, which is what keeps the pair a question there.
+      expect(resolveHandinInheritance(applications, 'spotlight-open-mic-2026-11'))
+        .toMatchObject({ instagram: '@testartist', tiktok: '' });
+      expect(resolveHandinInheritance(
+        [{ contestSlug: 'reality-tv-show', updatedAt: '2026-11-19T00:00:00.000Z', formData: { 'social.instagram': '@other' } }],
+        'open-mic',
+      )).toMatchObject({ instagram: '', source: 'none' });
     });
 
     it('reports no answers at all when the account has no Open Mic application', () => {
