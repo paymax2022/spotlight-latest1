@@ -25,8 +25,14 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 // inserted straight into connect_contests (fixtures, mirrors with no contest
 // record) have none, and the admin console needs to distinguish "no slug" from
 // an unreadable row rather than scanning a NULL into a string.
+//
+// The locality triple is NOT NULL DEFAULT '' on the table (20272000000000), so it
+// scans straight into strings. It must stay in contestColumns: connect_contests is
+// the only table this repository reads, so a locality the console saved on
+// public.contests reaches a phone only through these three names.
 const contestColumns = `id, title, description, status, paid_vote_kobo,
 	free_votes_per_user, velocity_per_minute, opens_at, closes_at, created_at, rules_text, banner_image_url, logo_url,
+	locality_state, locality_lga, locality_village,
 	COALESCE(slug, '') AS slug`
 
 // prizeTextColumn reads the contest's headline "price to be won". The column lives
@@ -145,7 +151,9 @@ func scanContestDetail(s rowScanner) (*Contest, error) {
 	if err := s.Scan(
 		&c.ID, &c.Title, &c.Description, &c.Status, &c.PaidVoteKobo,
 		&c.FreeVotesPerUser, &c.VelocityPerMinute, &c.OpensAt, &c.ClosesAt, &c.CreatedAt,
-		&c.RulesText, &c.BannerImageURL, &c.LogoURL, &c.Slug, &c.PrizeText,
+		&c.RulesText, &c.BannerImageURL, &c.LogoURL,
+		&c.LocalityState, &c.LocalityLGA, &c.LocalityVillage,
+		&c.Slug, &c.PrizeText,
 	); err != nil {
 		return nil, err
 	}
@@ -160,7 +168,9 @@ func scanContestWithCounts(s rowScanner) (*Contest, error) {
 	if err := s.Scan(
 		&c.ID, &c.Title, &c.Description, &c.Status, &c.PaidVoteKobo,
 		&c.FreeVotesPerUser, &c.VelocityPerMinute, &c.OpensAt, &c.ClosesAt, &c.CreatedAt,
-		&c.RulesText, &c.BannerImageURL, &c.LogoURL, &c.Slug, &c.ContestantCount, &c.TotalVotes,
+		&c.RulesText, &c.BannerImageURL, &c.LogoURL,
+		&c.LocalityState, &c.LocalityLGA, &c.LocalityVillage,
+		&c.Slug, &c.ContestantCount, &c.TotalVotes,
 	); err != nil {
 		return nil, err
 	}
@@ -347,19 +357,26 @@ type RosterEntry struct {
 	StageName    string `json:"stage_name"`
 	Category     string `json:"category"`
 	State        string `json:"state"`
-	Bio          string `json:"bio"`
-	PhotoURL     string `json:"photo_url"`
-	MediaURL     string `json:"media_url"`
-	Status       string `json:"status"`
-	IsActive     bool   `json:"is_active"`
-	ContestID    string `json:"contest_id,omitempty"`
-	FreeVotes    int64  `json:"free_votes"`
-	PaidVotes    int64  `json:"paid_votes"`
-	TotalVotes   int64  `json:"total_votes"`
-	Rank         int    `json:"rank"`
-	LikeCount    int64  `json:"like_count"`
-	ShareCount   int64  `json:"share_count"`
-	LikedByMe    bool   `json:"liked_by_me"`
+	// Locality, from the state-of-origin cascade the applicant answered
+	// (20272000000000). Unlike the contest's locality these keys are always
+	// present — the roster's locality filter compares them on every row, and a
+	// key that disappears when empty makes "no village" indistinguishable from
+	// "no such field" in a shipped phone build.
+	LGA        string `json:"lga"`
+	Village    string `json:"village"`
+	Bio        string `json:"bio"`
+	PhotoURL   string `json:"photo_url"`
+	MediaURL   string `json:"media_url"`
+	Status     string `json:"status"`
+	IsActive   bool   `json:"is_active"`
+	ContestID  string `json:"contest_id,omitempty"`
+	FreeVotes  int64  `json:"free_votes"`
+	PaidVotes  int64  `json:"paid_votes"`
+	TotalVotes int64  `json:"total_votes"`
+	Rank       int    `json:"rank"`
+	LikeCount  int64  `json:"like_count"`
+	ShareCount int64  `json:"share_count"`
+	LikedByMe  bool   `json:"liked_by_me"`
 	// The contestant's Open Mic song, when they have handed one in. The roster
 	// query finds the submission, the read boundary (Service.withSong) turns its
 	// id into this deployment's reader URL — so SongURL is empty on any entry
@@ -446,7 +463,7 @@ func rosterSongJoin(statusParam string) string {
 // to false rather than erroring).
 func (r *Repository) ListRoster(ctx context.Context, contestID string, includeInactive bool, viewerID string) ([]RosterEntry, error) {
 	q := `
-		SELECT c.id::text, c.name, c.stage_name, c.category, c.state, c.bio,
+		SELECT c.id::text, c.name, c.stage_name, c.category, c.state, c.lga, c.village, c.bio,
 		       c.photo_url, c.media_url, c.status::text, c.is_active,
 		       COALESCE(v.free_votes, 0), COALESCE(v.paid_votes, 0),
 		       COALESCE(cl.like_count, 0), COALESCE(cs.share_count, 0),
@@ -484,6 +501,7 @@ func (r *Repository) ListRoster(ctx context.Context, contestID string, includeIn
 	for rows.Next() {
 		var e RosterEntry
 		if err := rows.Scan(&e.ContestantID, &e.Name, &e.StageName, &e.Category, &e.State,
+			&e.LGA, &e.Village,
 			&e.Bio, &e.PhotoURL, &e.MediaURL,
 			&e.Status, &e.IsActive, &e.FreeVotes, &e.PaidVotes,
 			&e.LikeCount, &e.ShareCount, &e.LikedByMe,
@@ -523,7 +541,7 @@ func (r *Repository) IsOnRoster(ctx context.Context, contestID, optionRef string
 // unauthenticated resolve path — it degrades to false, never errors).
 func (r *Repository) GetRosterEntry(ctx context.Context, contestantID, viewerID string) (*RosterEntry, error) {
 	q := `
-		SELECT c.id::text, c.name, c.stage_name, c.category, c.state, c.bio,
+		SELECT c.id::text, c.name, c.stage_name, c.category, c.state, c.lga, c.village, c.bio,
 		       c.photo_url, c.media_url, c.status::text, c.is_active,
 		       COALESCE(v.free_votes, 0), COALESCE(v.paid_votes, 0),
 		       COALESCE(c.connect_contest_id::text, ''),
@@ -552,7 +570,7 @@ func (r *Repository) GetRosterEntry(ctx context.Context, contestantID, viewerID 
 	var e RosterEntry
 	var contestID string
 	err := r.db.QueryRow(ctx, q, contestantID, viewerID, publiclyPlayableSongStatuses).Scan(
-		&e.ContestantID, &e.Name, &e.StageName, &e.Category, &e.State, &e.Bio,
+		&e.ContestantID, &e.Name, &e.StageName, &e.Category, &e.State, &e.LGA, &e.Village, &e.Bio,
 		&e.PhotoURL, &e.MediaURL, &e.Status, &e.IsActive,
 		&e.FreeVotes, &e.PaidVotes, &contestID,
 		&e.LikeCount, &e.ShareCount, &e.LikedByMe,

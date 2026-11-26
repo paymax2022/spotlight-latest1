@@ -720,6 +720,14 @@ type Contest struct {
 	// "N contestants / M votes" (which would be an N+1 across the list).
 	ContestantCount int   `json:"contestant_count"`
 	TotalVotes      int64 `json:"total_votes"`
+
+	// Locality: where a local contest belongs. '' on every contest that is not
+	// local, and omitted from the payload so an unrelated card gains no keys.
+	// These ride the mirror (20272000000000 carries them into
+	// connect_contests), which is the only table this repository reads.
+	LocalityState   string `json:"locality_state,omitempty"`
+	LocalityLGA     string `json:"locality_lga,omitempty"`
+	LocalityVillage string `json:"locality_village,omitempty"`
 }
 
 // ContestPrize is one row of public.voting_contest_prizes: what finishing at
