@@ -15,8 +15,17 @@ import PrimaryButton from '@/components/PrimaryButton';
 import FieldRenderer from '@/features/registration/components/FieldRenderer';
 import WizardProgress from '@/features/registration/components/WizardProgress';
 import { useDraft, useSaveStep, useUploadFile } from '@/features/registration/hooks/useRegistration';
+import { regGet } from '@/features/registration/api/registration.client';
 import { isLockedForEditing } from '@/features/registration/utils/status';
 import { withCityOptions, dependentCityKey } from '@/features/registration/utils/cityOptions';
+import {
+  LOCAL_GOVERNMENT_KEY,
+  STATE_OF_ORIGIN_KEY,
+  loadVillageChoices,
+  localityResetsFor,
+  withLocalityOptions,
+  type VillagesChoice,
+} from '@/features/registration/utils/localityOptions';
 import { validateRequiredFields } from '@/features/registration/lib/validation';
 import type { RegistrationStep } from '@/features/registration/types/registration.types';
 
@@ -53,6 +62,10 @@ export default function RegistrationWizardScreen() {
   // Local edits for the active step; merged into the draft on Save/Next.
   const [edits, setEdits] = React.useState<Record<string, unknown>>({});
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+  // The curated quarters of the selected LGA, read from the server. It starts and
+  // stays free_text on any gap, because an unreadable reference table must degrade a
+  // box to typing, never block a submission (see localityOptions.ts rule 3).
+  const [villageChoices, setVillageChoices] = React.useState<VillagesChoice>({ mode: 'free_text', villages: [] });
 
   const draft = draftQuery.data?.draft;
   const steps: RegistrationStep[] = draftQuery.data?.steps ?? [];
@@ -65,6 +78,27 @@ export default function RegistrationWizardScreen() {
   }, [stepIndex]);
 
   const valueFor = (key: string) => (key in edits ? edits[key] : draft?.formData?.[key]);
+
+  // The village list follows the whole pair, so it reloads when either level moves.
+  // Derived as plain strings so the effect re-runs on a real change only.
+  const originState = String(valueFor(STATE_OF_ORIGIN_KEY) ?? '').trim();
+  const selectedLga = String(valueFor(LOCAL_GOVERNMENT_KEY) ?? '').trim();
+
+  React.useEffect(() => {
+    let isCurrent = true;
+    if (!originState || !selectedLga) {
+      setVillageChoices({ mode: 'free_text', villages: [] });
+      return () => { isCurrent = false; };
+    }
+    (async () => {
+      const choice = await loadVillageChoices(originState, selectedLga, (url) => regGet(url));
+      // An older response must not land after a newer one, which would offer one
+      // LGA's quarters under another LGA's name.
+      if (isCurrent) setVillageChoices(choice);
+    })();
+    return () => { isCurrent = false; };
+  }, [originState, selectedLga]);
+
   const onChange = (key: string, value: unknown) => {
     setEdits((prev) => {
       const next = { ...prev, [key]: value };
@@ -72,6 +106,14 @@ export default function RegistrationWizardScreen() {
       // previous state can't linger (the city options are recomputed below).
       const cityKey = dependentCityKey(key);
       if (cityKey) next[cityKey] = '';
+      // Origin -> LGA -> village: moving a level invalidates everything below it, so
+      // a saved row never reads "Onitsha North / Ikeja" and gets counted under the
+      // wrong locality on every filter and leaderboard.
+      const read = (fieldKey: string) => (fieldKey in prev ? prev[fieldKey] : draft?.formData?.[fieldKey]);
+      Object.assign(next, localityResetsFor(key, {
+        [STATE_OF_ORIGIN_KEY]: read(STATE_OF_ORIGIN_KEY),
+        [LOCAL_GOVERNMENT_KEY]: read(LOCAL_GOVERNMENT_KEY),
+      }, value));
       return next;
     });
     setErrors((prev) => (prev[key] ? { ...prev, [key]: '' } : prev));
@@ -194,7 +236,7 @@ export default function RegistrationWizardScreen() {
             .map((field) => (
               <FieldRenderer
                 key={field.key}
-                field={withCityOptions(field, valueFor)}
+                field={withLocalityOptions(withCityOptions(field, valueFor), valueFor, villageChoices)}
                 value={valueFor(field.key)}
                 error={errors[field.key]}
                 onChange={onChange}
