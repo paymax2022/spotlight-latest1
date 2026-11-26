@@ -1010,15 +1010,29 @@ unconfigured vendor fails *moderation* closed, not open.
 - Test: `frontend-web/tests/unit/media/asset-source.test.ts`
 
 **Interfaces:**
-- Consumes: `createR2DownloadUrl({ key, fileName, disposition })`, `hasR2Config()` from `@/src/lib/storage/r2`; base64url object keys as produced by `app/api/registration/uploads/route.ts`.
-- Produces: `type FetchableSource = { ok: true; url: string; objectKey: string; ttlSeconds: number } | { ok: false; reason: string; kind: 'relative' | 'notFetchable' | 'noProviderUrl' }`, `resolveFetchableSource(storedValue: string, opts?: { siteUrl?: string; ttlSeconds?: number }): Promise<FetchableSource>`, `decodeUploadRouteKey(value: string): string | null`.
+- Consumes: `createR2DownloadUrl({ key, fileName, disposition, expiresIn })`, `hasR2Config()` from `@/src/lib/storage/r2`; base64url object keys as produced by `app/api/registration/uploads/route.ts:97` (`registration/<user id>/<uuid>.<ext>`).
+- Produces: `type FetchableSource = { ok: true; url: string; objectKey: string | null; ttlSeconds: number } | { ok: false; reason: string; kind: 'relative' | 'notFetchable' | 'noProviderUrl' }`, `resolveFetchableSource(storedValue: string, opts?: { ttlSeconds?: number }): Promise<FetchableSource>`, `decodeUploadRouteKey(value: string): string | null`, `DEFAULT_PROVIDER_TTL_SECONDS = 600`.
 
 This is the unit that fixes spec §2 defect 4: today `form_data['media.photoUrl']` holds the *relative* route `/api/registration/uploads/<base64url(key)>`, and Cloudinary's upload-by-fetch-URL cannot fetch a path.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// frontend-web/tests/unit/media/asset-source.test.ts
+/**
+ * @file tests/unit/media/asset-source.test.ts
+ *
+ * Spec §2 defect 4, pinned down. What is stored in `form_data['media.photoUrl']`
+ * today is the *relative* in-app route `/api/registration/uploads/<base64url(key)>`
+ * (app/api/registration/uploads/route.ts:97). Cloudinary's upload API is handed a
+ * URL and downloads it itself, server-side, so a path is not a source: the call
+ * cannot resolve it, the moderation result comes back as a refusal, and the
+ * fail-closed pipeline publishes nothing while the job says "moderation rejected".
+ *
+ * This unit is the only place that turns a stored value into something a vendor
+ * can fetch, so the two things it must never do are under test: hand back a
+ * non-fetchable value as if it were usable, and mint a permanent public link to a
+ * contestant's original photograph.
+ */
 import { describe, expect, it, vi } from 'vitest';
 
 const r2 = vi.hoisted(() => ({ hasConfig: false, downloadUrl: vi.fn() }));
@@ -1029,39 +1043,88 @@ vi.mock('@/src/lib/storage/r2', () => ({
 
 import { decodeUploadRouteKey, resolveFetchableSource } from '@/src/lib/media/asset-source';
 
-const key = 'registration/user-1/abc.jpg';
+// The shape the upload route really mints: registration/<user id>/<uuid>.<ext>.
+const key = 'registration/user-1/8f14e45f-ea29-4b88-9f3c-0a1b2c3d4e5f.jpg';
 const route = `/api/registration/uploads/${Buffer.from(key, 'utf8').toString('base64url')}`;
 
-describe('resolveFetchableSource', () => {
+describe('decodeUploadRouteKey', () => {
   it('recognises the upload route and recovers the object key', () => {
     expect(decodeUploadRouteKey(route)).toBe(key);
     expect(decodeUploadRouteKey('https://other.test/x.jpg')).toBeNull();
   });
 
+  it('refuses a base64url body that does not decode to an upload key', () => {
+    // A payload that decodes to arbitrary text must not become a storage key:
+    // this function's output is what gets presigned.
+    const junk = `/api/registration/uploads/${Buffer.from('../../etc/passwd', 'utf8').toString('base64url')}`;
+    expect(decodeUploadRouteKey(junk)).toBeNull();
+    const notBase64url = '/api/registration/uploads/!!!not-base64!!!';
+    expect(decodeUploadRouteKey(notBase64url)).toBeNull();
+  });
+});
+
+describe('resolveFetchableSource', () => {
   it('presigns the key into an absolute https URL the vendor can fetch', async () => {
     r2.hasConfig = true;
     r2.downloadUrl.mockResolvedValue(`https://bucket.r2.dev/${key}?X-Amz-Signature=sig`);
-    const out = await resolveFetchableSource(route, { siteUrl: 'https://www.spotlightng.com' });
-    expect(out).toMatchObject({ ok: true, objectKey: key });
-    expect(out.ok && /^https:\/\/.+\.jpg\?/.test(out.url)).toBe(true);
-    expect(r2.downloadUrl).toHaveBeenCalledWith(expect.objectContaining({ disposition: 'inline' }));
+    const out = await resolveFetchableSource(route);
+    expect(out).toMatchObject({ ok: true, objectKey: key, ttlSeconds: 600 });
+    if (out.ok) expect(out.url).toMatch(/^https:\/\/.+\.jpg\?/);
+    expect(r2.downloadUrl).toHaveBeenCalledWith(
+      expect.objectContaining({ key, disposition: 'inline', expiresIn: 600 }),
+    );
+  });
+
+  // The original is never made public: what the vendor gets is a time-boxed
+  // presigned read, and a caller asking for a shorter window must not be ignored.
+  it('honours a shorter ttl and never returns a permanent link', async () => {
+    r2.hasConfig = true;
+    r2.downloadUrl.mockResolvedValue('https://bucket.r2.dev/x?sig=1');
+    const out = await resolveFetchableSource(route, { ttlSeconds: 120 });
+    expect(out.ok && out.ttlSeconds).toBe(120);
+    expect(r2.downloadUrl).toHaveBeenLastCalledWith(expect.objectContaining({ expiresIn: 120 }));
   });
 
   it('reports a relative route as unusable when there is no R2 to presign', async () => {
     r2.hasConfig = false;
     const out = await resolveFetchableSource(route);
     expect(out).toMatchObject({ ok: false, kind: 'notFetchable' });
-    expect(out.ok === false && out.reason).toMatch(/presign|public base/i);
+    if (!out.ok) expect(out.reason).toMatch(/presign/i);
   });
 
   it('passes an already-absolute public url through untouched', async () => {
     const out = await resolveFetchableSource('https://pub-xyz.r2.dev/contestants/images/a.png');
     expect(out).toMatchObject({ ok: true, url: 'https://pub-xyz.r2.dev/contestants/images/a.png' });
+    expect(r2.downloadUrl).not.toHaveBeenCalled();
+  });
+
+  // Mobile and old rows store the same route as an absolute URL. It is the same
+  // object, so it must resolve the same way rather than being fetched (it is
+  // owner-gated, so a vendor fetch of it would 401).
+  it('presigns our own upload route when it arrives absolute', async () => {
+    r2.hasConfig = true;
+    r2.downloadUrl.mockResolvedValue('https://bucket.r2.dev/signed?sig=1');
+    const out = await resolveFetchableSource(`https://www.spotlightng.com${route}`);
+    expect(out).toMatchObject({ ok: true, objectKey: key });
+    expect(r2.downloadUrl).toHaveBeenLastCalledWith(expect.objectContaining({ key }));
   });
 
   it('refuses a non-https or host-less value rather than handing it to the vendor', async () => {
     expect(await resolveFetchableSource('file:///tmp/x.jpg')).toMatchObject({ ok: false, kind: 'noProviderUrl' });
     expect(await resolveFetchableSource('')).toMatchObject({ ok: false, kind: 'noProviderUrl' });
+    expect(await resolveFetchableSource('javascript:alert(1)')).toMatchObject({ ok: false, kind: 'noProviderUrl' });
+    // A path that is not our upload route is its own kind of bad: there is no
+    // key to presign and no host to fetch from, so guessing a site URL here
+    // would only send the vendor to a 404 with a confident-looking reason.
+    expect(await resolveFetchableSource('/uploads/other.png')).toMatchObject({ ok: false, kind: 'relative' });
+  });
+
+  it('preserves a presigning failure as an unusable source, not a crash', async () => {
+    r2.hasConfig = true;
+    r2.downloadUrl.mockRejectedValue(new Error('R2 credentials expired'));
+    const out = await resolveFetchableSource(route);
+    expect(out).toMatchObject({ ok: false, kind: 'notFetchable' });
+    if (!out.ok) expect(out.reason).toMatch(/R2 credentials expired/);
   });
 });
 ```
@@ -1075,72 +1138,157 @@ describe('resolveFetchableSource', () => {
 ```ts
 /**
  * Resolves a stored photo value into something a vendor can fetch itself.
- * Cloudinary's upload API is given a URL and downloads it server-side, so a
- * relative in-app route or a file: path is not a source — it is a guaranteed
- * vendor failure that today surfaces as a fail-closed moderation rejection.
  *
- * The presigned branch is deliberate: the original is never made public, so the
- * URL handed to the vendor is time-boxed (ttl below) and derived from the object
- * key at call time. It is never stored on a row and never logged.
+ * Cloudinary's upload API is given a URL and downloads it server-side, so a
+ * relative in-app route (`/api/registration/uploads/<base64url key>`, which is
+ * exactly what `form_data['media.photoUrl']` holds today) or a `file:` path is
+ * not a source — it is a guaranteed vendor failure that surfaces as a
+ * fail-closed moderation rejection, i.e. the worst possible error message for
+ * what is really a plumbing problem.
+ *
+ * The presigned branch is deliberate. The original photograph is never made
+ * public: what the vendor receives is a time-boxed read derived from the object
+ * key at call time, with the shortest window that survives a slow upload. It is
+ * never stored on a row and never logged, which is also why nothing here
+ * returns a permanent `getR2PublicUrl` link.
+ *
+ * Our own route is presigned whether it arrives relative or absolute — the
+ * absolute form is what mobile and older rows store, and fetching it would hit
+ * the owner check on `app/api/registration/uploads/[fileKey]` and fail.
+ *
+ * Consequence worth stating for whoever runs this locally: with no R2
+ * credentials in the environment there is nothing to presign, so the answer is
+ * an honest `notFetchable` rather than a guessed URL. Dev photo jobs therefore
+ * need R2 creds (or the stub provider in Task 6) to reach a vendor at all.
  */
 import { createR2DownloadUrl, hasR2Config } from '@/src/lib/storage/r2';
 
+/** The route the upload endpoint mints, relative. */
 const UPLOAD_ROUTE = /^\/api\/registration\/uploads\/([A-Za-z0-9_-]+)$/;
+
+/** Ten minutes matches R2's own default download TTL and is long enough for a
+ * large PNG to leave Cloudinary's origin fetch before the signature expires. */
 export const DEFAULT_PROVIDER_TTL_SECONDS = 600;
 
 export type FetchableSource =
   | { ok: true; url: string; objectKey: string | null; ttlSeconds: number }
   | { ok: false; reason: string; kind: 'relative' | 'notFetchable' | 'noProviderUrl' };
 
+/**
+ * base64url -> object key, accepting only the shape the upload route actually
+ * writes (`registration/<user id>/<uuid>.<ext>`). The return value is what gets
+ * presigned, so a payload that decodes to traversal or to anything else is
+ * refused rather than normalised.
+ */
 export function decodeUploadRouteKey(value: string): string | null {
-  const match = UPLOAD_ROUTE.exec(value.trim());
+  const match = UPLOAD_ROUTE.exec((value || '').trim());
   if (!match) return null;
+  let decoded: string;
   try {
-    const decoded = Buffer.from(match[1], 'base64url').toString('utf8');
-    // Only accept the shape the upload route actually mints.
-    return /^registration\/[^/]+\/[^/]+\.\w+$/.test(decoded) ? decoded : null;
+    decoded = Buffer.from(match[1], 'base64url').toString('utf8');
+  } catch {
+    return null;
+  }
+  return /^registration\/[^/]+\/[^/]+\.\w+$/.test(decoded) ? decoded : null;
+}
+
+function httpUrl(value: string): URL | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url : null;
   } catch {
     return null;
   }
 }
 
-function absoluteHttp(value: string): boolean {
+async function presign(objectKey: string, ttlSeconds: number): Promise<FetchableSource> {
+  if (!hasR2Config()) {
+    return {
+      ok: false,
+      kind: 'notFetchable',
+      reason:
+        `Object ${objectKey} needs a URL a vendor can fetch, but R2 is not configured to presign one ` +
+        '(set R2_ENDPOINT or R2_ACCOUNT_ID with R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET_NAME)',
+    };
+  }
   try {
-    const u = new URL(value);
-    return u.protocol === 'https:' || u.protocol === 'http:';
-  } catch {
-    return false;
+    const url = await createR2DownloadUrl({
+      key: objectKey,
+      fileName: objectKey.split('/').pop() || 'photo',
+      disposition: 'inline',
+      expiresIn: ttlSeconds,
+    });
+    return { ok: true, url, objectKey, ttlSeconds };
+  } catch (err) {
+    // A failed presign is a usable answer, not a crash: the job records it and
+    // retries on the normal ladder instead of faulting the request that asked.
+    return {
+      ok: false,
+      kind: 'notFetchable',
+      reason: `Could not presign ${objectKey}: ${err instanceof Error ? err.message : 'unknown R2 error'}`,
+    };
   }
 }
 
 export async function resolveFetchableSource(
   storedValue: string,
-  opts: { siteUrl?: string; ttlSeconds?: number } = {},
+  // No `siteUrl`: the one case that would have needed it is our own upload
+  // route, and that resolves better by presigning the key than by prefixing a
+  // host onto a path the owner check would refuse to serve to the vendor.
+  opts: { ttlSeconds?: number } = {},
 ): Promise<FetchableSource> {
   const value = (storedValue || '').trim();
   const ttlSeconds = opts.ttlSeconds ?? DEFAULT_PROVIDER_TTL_SECONDS;
 
-  if (!value || value.startsWith('file:') || value.startsWith('/')) {
-    const objectKey = value.startsWith('/') ? decodeUploadRouteKey(value) : null;
-    if (!objectKey) {
-      return { ok: false, kind: 'noProviderUrl', reason: value ? 'Stored photo value is not a resolvable upload reference' : 'No photo URL stored' };
-    }
-    if (!hasR2Config()) {
-      return { ok: false, kind: 'notFetchable', reason: `Object ${objectKey} needs a provider-fetchable URL, but R2 is not configured to presign one (set R2_ENDPOINT/R2_BUCKET_NAME, or R2_PUBLIC_BASE_URL for a public read)` };
-    }
-    const url = await createR2DownloadUrl({ key: objectKey, fileName: objectKey.split('/').pop() || 'photo', disposition: 'inline' });
-    return { ok: true, url, objectKey, ttlSeconds };
+  if (!value) {
+    return { ok: false, kind: 'noProviderUrl', reason: 'No photo URL stored' };
   }
 
-  if (absoluteHttp(value)) {
-    return { ok: true, url: value, objectKey: decodeUploadRouteKey(value), ttlSeconds };
+  const absolute = httpUrl(value);
+  const objectKey = absolute
+    ? decodeUploadRouteKey(absolute.pathname)
+    : value.startsWith('/')
+      ? decodeUploadRouteKey(value)
+      : null;
+
+  if (objectKey) return presign(objectKey, ttlSeconds);
+
+  if (absolute) {
+    // Already a public/CDN URL from somewhere else: pass it through untouched.
+    return { ok: true, url: value, objectKey: null, ttlSeconds };
   }
-  return { ok: false, kind: 'noProviderUrl', reason: 'Stored photo value is not an absolute http(s) URL' };
+
+  if (value.startsWith('/')) {
+    return {
+      ok: false,
+      kind: 'relative',
+      reason: `Stored value ${value} is a relative path that is not a Spotlight upload route, so there is no object key to presign`,
+    };
+  }
+
+  return {
+    ok: false,
+    kind: 'noProviderUrl',
+    reason: 'Stored photo value is neither an absolute http(s) URL nor a Spotlight upload route',
+  };
 }
 ```
 
 - [ ] **Step 4: Run to verify pass** — the five cases above green.
 - [ ] **Step 5: Commit** — `git commit -am "feat(photo): resolve a provider-fetchable source URL from a stored photo value"` (add the new test file explicitly in the same call).
+
+Corrections applied while executing this task, now reflected in the blocks above:
+the delivered unit is nine cases rather than five — an absolute upload-route URL
+is presigned instead of fetched (the `[fileKey]` route is owner-gated, so the
+vendor would be refused), a rejected presign degrades to `notFetchable` rather
+than throwing, a non-route relative path reports the distinct `relative` kind the
+interface declared but the draft never returned, and base64url bodies that do not
+decode to a real key are refused. `objectKey` is `string | null` (a passthrough
+public URL has no key), and the draft's `siteUrl` option is gone: the only case
+that would have used it is the absolute-route case, and that resolves better by
+presigning the key than by prefixing a host onto a path we refuse to serve to a
+vendor. The TTL is forwarded to R2 as `expiresIn`, which is what the presigner
+actually reads.
 
 ---
 
@@ -1163,16 +1311,46 @@ export async function resolveFetchableSource(
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// frontend-web/tests/unit/photo-jobs/job-store.test.ts
+/**
+ * @file tests/unit/photo-jobs/job-store.test.ts
+ *
+ * The store is a translation layer, so what is under test is the translation —
+ * not the ladder, which lives in SQL where it can be enforced. Three things a
+ * reader of the runner must be able to trust from here:
+ *
+ *   1. every call uses the exact snake_case parameter names the migration's
+ *      functions declare. A typo in a `p_` name is not a TypeScript error and
+ *      PostgREST answers it as a rejected call at runtime, in production, during
+ *      an admin's approval click;
+ *   2. a failed RPC returns a value (null / [] / false) instead of throwing, so
+ *      the job runner keeps its own error path and the submit endpoint cannot be
+ *      faulted by storage trouble; and
+ *   3. `getPhotoJob` flattens PostgREST's nested `registrations(user_id)` embed
+ *      into `registration_user_id`. The status route's ownership check compares
+ *      against that field; if the nesting were left in place the check would
+ *      compare `undefined !== user.id` and answer 403 to every legitimate owner.
+ */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const rpc = vi.hoisted(() => vi.fn());
+const from = vi.hoisted(() => vi.fn());
 vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({ rpc, auth: {} }),
+  createClient: () => ({ rpc, from, auth: {} }),
 }));
 
 import {
-  buildRunKey, enqueuePhotoJob, failPhotoJob, renderKeyFor, reclaimStalePhotoJobs,
+  buildRunKey,
+  cancelPhotoJob,
+  claimDuePhotoJobs,
+  completePhotoJob,
+  enqueuePhotoJob,
+  failPhotoJob,
+  getPhotoJob,
+  photoJobSummary,
+  renderKeyFor,
+  reclaimStalePhotoJobs,
+  setPhotoJobProgress,
+  upsertPhotoAsset,
 } from '@/src/server/photo-jobs/job-store';
 
 describe('run key', () => {
@@ -1187,6 +1365,17 @@ describe('run key', () => {
 
   it('orders keys canonically so a re-serialised payload cannot mint a second job', () => {
     expect(renderKeyFor({ b: 2, a: 1 })).toBe(renderKeyFor({ a: 1, b: 2 }));
+  });
+
+  it('names a template differently from no template at the same settings', () => {
+    const bare = buildRunKey({ sourceAssetId: 's1', templateId: null, renderParams: { scale: 1 } });
+    const templated = buildRunKey({ sourceAssetId: 's1', templateId: 't9', renderParams: { scale: 1 } });
+    expect(templated.startsWith('photo:s1:t9:')).toBe(true);
+    expect(templated).not.toBe(bare);
+  });
+
+  it('separates a null value from an absent key, which are different renders', () => {
+    expect(renderKeyFor({ x: null })).not.toBe(renderKeyFor({}));
   });
 });
 
@@ -1209,7 +1398,59 @@ describe('enqueuePhotoJob', () => {
   });
 });
 
+describe('the rest of the surface uses the migration names exactly', () => {
+  beforeEach(() => rpc.mockReset().mockResolvedValue({ data: null, error: null }));
+
+  it('passes claim, progress, complete, fail, cancel, reclaim, asset and summary', async () => {
+    await claimDuePhotoJobs('w1', 2);
+    expect(rpc).toHaveBeenLastCalledWith('claim_due_photo_jobs', { p_worker_id: 'w1', p_limit: 2 });
+
+    await setPhotoJobProgress('j1', 'compositing', 55);
+    expect(rpc).toHaveBeenLastCalledWith('set_photo_job_progress', { p_job_id: 'j1', p_status: 'compositing', p_progress: 55 });
+
+    await completePhotoJob('j1', 'a-final');
+    expect(rpc).toHaveBeenLastCalledWith('complete_photo_job', { p_job_id: 'j1', p_result_asset_id: 'a-final' });
+
+    await failPhotoJob('j1', 'vendor timeout');
+    expect(rpc).toHaveBeenLastCalledWith('fail_photo_job', { p_job_id: 'j1', p_error: 'vendor timeout' });
+
+    await cancelPhotoJob('j1', 'template unpublished');
+    expect(rpc).toHaveBeenLastCalledWith('cancel_photo_job', { p_job_id: 'j1', p_reason: 'template unpublished' });
+
+    await reclaimStalePhotoJobs(300);
+    expect(rpc).toHaveBeenLastCalledWith('reclaim_stale_photo_jobs', { p_lock_ttl_seconds: 300 });
+
+    await upsertPhotoAsset({ registrationId: 'reg', kind: 'original', storageKey: 'k' });
+    expect(rpc).toHaveBeenLastCalledWith('upsert_contest_photo_asset', {
+      p_registration_id: 'reg', p_kind: 'original', p_storage_key: 'k', p_provider_url: null,
+      p_content_type: 'image/png', p_width: null, p_height: null, p_bytes: null,
+      p_template_id: null, p_template_version: null, p_render_params: {}, p_contest_id: null,
+    });
+
+    await photoJobSummary();
+    expect(rpc).toHaveBeenLastCalledWith('photo_job_config_summary');
+  });
+
+  it('degrades to empty answers rather than throwing on RPC trouble', async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: 'down' } });
+    expect(await claimDuePhotoJobs('w1')).toEqual([]);
+    expect(await completePhotoJob('j1', 'a')).toBe(false);
+    expect(await failPhotoJob('j1', 'x')).toBeNull();
+    expect(await reclaimStalePhotoJobs()).toBe(0);
+    expect(await upsertPhotoAsset({ kind: 'final', providerUrl: 'https://cdn/y.png' })).toBeNull();
+    expect(await photoJobSummary()).toEqual({});
+    await expect(setPhotoJobProgress('j1', 'ready')).resolves.toBeUndefined();
+  });
+
+  it('claims nothing when PostgREST answers with a null payload', async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    expect(await claimDuePhotoJobs('w1', 3)).toEqual([]);
+  });
+});
+
 describe('failPhotoJob', () => {
+  beforeEach(() => rpc.mockReset());
+
   it('truncates the error before storage and surfaces the new status', async () => {
     rpc.mockResolvedValue({ data: 'failed', error: null });
     const status = await failPhotoJob('j1', 'x'.repeat(900));
@@ -1222,12 +1463,43 @@ describe('failPhotoJob', () => {
     rpc.mockResolvedValue({ data: 'cancelled', error: null });
     expect(await failPhotoJob('j1', 'rejected by moderation')).toBe('cancelled');
   });
+
+  // The column is NOT NULL in the migration and the ladder reason is what an
+  // operator reads, so an empty error must still arrive as something.
+  it('never sends an empty error string', async () => {
+    rpc.mockResolvedValue({ data: 'failed', error: null });
+    await failPhotoJob('j1', '');
+    expect(rpc.mock.calls[0][1].p_error).toBe('unknown error');
+  });
 });
 
-describe('reclaimStalePhotoJobs', () => {
-  it('returns the reclaimed count', async () => {
-    rpc.mockResolvedValue({ data: 2, error: null });
-    expect(await reclaimStalePhotoJobs(300)).toBe(2);
+describe('getPhotoJob', () => {
+  beforeEach(() => {
+    rpc.mockReset();
+    from.mockReset();
+  });
+
+  it('flattens the registration embed into registration_user_id for the ownership check', async () => {
+    const select = vi.fn().mockReturnValue({ eq: () => ({ maybeSingle: maybeSingle }) });
+    const maybeSingle = vi.fn().mockResolvedValue({
+      error: null,
+      data: { id: 'j1', status: 'ready', registration_id: 'r1', registrations: { user_id: 'u1' } },
+    });
+    from.mockReturnValue({ select });
+
+    const job = await getPhotoJob('j1');
+
+    expect(from).toHaveBeenCalledWith('contest_photo_jobs');
+    expect(select).toHaveBeenCalledWith('*, registrations(user_id)');
+    expect(job).toMatchObject({ id: 'j1', status: 'ready', registration_user_id: 'u1' });
+  });
+
+  it('answers null, not a half-row, when the read fails or the job is gone', async () => {
+    from.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ error: { message: 'no' }, data: null }) }) }) });
+    expect(await getPhotoJob('j1')).toBeNull();
+
+    from.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ error: null, data: null }) }) }) });
+    expect(await getPhotoJob('j1')).toBeNull();
   });
 });
 ```
@@ -1240,52 +1512,103 @@ describe('reclaimStalePhotoJobs', () => {
 
 ```ts
 /**
- * Job store: the only Node-side knowledge of the photo job tables. Deliberately
- * thin — the claim lock, backoff ladder and pause-on-exhaust live in the
- * migration's functions (Task 1). Re-deriving them here is how two implementations
- * of one policy start to disagree, which is the failure the Go scheduler avoided
- * by keeping the ladder in service.go alone.
+ * Job store: the only Node-side knowledge of the photo job tables.
+ *
+ * Deliberately thin. The claim lock, the backoff ladder and pause-on-exhaust
+ * live in the migration's functions (Task 1), and re-deriving any of them here
+ * is how two implementations of one policy start to disagree — the failure the
+ * Go durable scheduler avoided by keeping the ladder in `service.go` alone. What
+ * this file owns is the *translation*: PostgREST's snake_case parameter names,
+ * camelCase in, and a value-not-exception contract out.
+ *
+ * Every function returns something on failure (null / [] / false / 0) instead of
+ * throwing. A submit endpoint that faulted because storage was briefly unhappy
+ * would lose the applicant's upload, and the runner needs to tell "the store
+ * said no" apart from "the vendor said no" — the first retries on the ladder,
+ * the second may cancel the job.
+ *
+ * The Supabase client is created lazily and memoized exactly as
+ * `src/server/registration/template-resolver.ts` does, because `createClient`
+ * throws at module scope when env is unset — which is vitest collection time and
+ * `next build` time.
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createHash } from 'crypto';
 
-let client: SupabaseClient | null = null;
+let supabaseClient: SupabaseClient | null = null;
 function db(): SupabaseClient {
-  if (!client) {
-    client = createClient(
+  if (!supabaseClient) {
+    supabaseClient = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL || '',
       process.env.SUPABASE_SERVICE_ROLE_KEY || '',
       { auth: { persistSession: false } },
     );
   }
-  return client;
+  return supabaseClient;
 }
 
-export type JobStatus = 'queued' | 'extracting' | 'compositing' | 'ready' | 'failed' | 'cancelled' | 'paused';
+export type JobStatus =
+  | 'queued'
+  | 'extracting'
+  | 'compositing'
+  | 'ready'
+  | 'failed'
+  | 'cancelled'
+  | 'paused';
+
+export type AssetKind = 'original' | 'transparent' | 'final' | 'preview' | 'thumbnail';
 
 export interface PhotoJob {
-  id: string; run_key: string; registration_id: string; contest_id: string | null;
-  template_id: string | null; source_asset_id: string; status: JobStatus;
-  progress: number; attempt: number; max_attempts: number; last_error: string | null;
-  render_params: Record<string, unknown>; result_asset_id: string | null;
+  id: string;
+  run_key: string;
+  registration_id: string;
+  /** From the `registrations(user_id)` embed in `getPhotoJob`; the status route's
+   * ownership check is only real if this is a flattened value rather than a
+   * nested row, because `undefined !== user.id` would 403 every legitimate owner. */
+  registration_user_id?: string | null;
+  contest_id: string | null;
+  template_id: string | null;
+  source_asset_id: string;
+  status: JobStatus;
+  progress: number;
+  attempt: number;
+  max_attempts: number;
+  last_error: string | null;
+  render_params: Record<string, unknown>;
+  result_asset_id: string | null;
 }
 
+/** Matches the migration's `left(..., 300)` so nothing is silently cut twice. */
 const ERROR_LIMIT = 300;
 
-/** Canonical key order: JSON.stringify({a,b}) !== stringify({b,a}) otherwise. */
+/**
+ * Canonical key order: `JSON.stringify({a,b}) !== JSON.stringify({b,a})` would
+ * otherwise let the same editor state mint a second job every time a client
+ * re-serialised its payload in a different order.
+ */
 export function renderKeyFor(params: Record<string, unknown> = {}): string {
-  const canonical = Object.keys(params).sort()
-    .map((k) => `${k}=${JSON.stringify(params[k] ?? null)}`).join('&');
+  const canonical = Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${JSON.stringify(params[k] ?? null)}`)
+    .join('&');
   return createHash('sha256').update(canonical).digest('hex').slice(0, 12);
 }
 
-export function buildRunKey(input: { sourceAssetId: string; templateId: string | null; renderParams?: Record<string, unknown> }): string {
+export function buildRunKey(input: {
+  sourceAssetId: string;
+  templateId: string | null;
+  renderParams?: Record<string, unknown>;
+}): string {
   return `photo:${input.sourceAssetId}:${input.templateId ?? 'none'}:${renderKeyFor(input.renderParams ?? {})}`;
 }
 
 export async function enqueuePhotoJob(input: {
-  runKey: string; registrationId: string; sourceAssetId: string;
-  contestId?: string | null; templateId?: string | null; renderParams?: Record<string, unknown>;
+  runKey: string;
+  registrationId: string;
+  sourceAssetId: string;
+  contestId?: string | null;
+  templateId?: string | null;
+  renderParams?: Record<string, unknown>;
 }): Promise<{ jobId: string; status: JobStatus; alreadyExisted: boolean } | null> {
   const { data, error } = await db().rpc('enqueue_photo_job', {
     p_run_key: input.runKey,
@@ -1299,67 +1622,122 @@ export async function enqueuePhotoJob(input: {
     console.warn('[photo-jobs] enqueue failed:', error?.message);
     return null;
   }
-  return { jobId: data.job_id as string, status: data.status as JobStatus, alreadyExisted: Boolean(data.already_existed) };
+  const payload = data as Record<string, unknown>;
+  return {
+    jobId: String(payload.job_id),
+    status: payload.status as JobStatus,
+    alreadyExisted: Boolean(payload.already_existed),
+  };
 }
 
 export async function claimDuePhotoJobs(workerId: string, limit = 3): Promise<PhotoJob[]> {
   const { data, error } = await db().rpc('claim_due_photo_jobs', { p_worker_id: workerId, p_limit: limit });
-  if (error) { console.warn('[photo-jobs] claim failed:', error.message); return []; }
+  if (error) {
+    console.warn('[photo-jobs] claim failed:', error.message);
+    return [];
+  }
   return (data ?? []) as PhotoJob[];
 }
 
 export async function setPhotoJobProgress(id: string, status: JobStatus, progress?: number): Promise<void> {
-  const { error } = await db().rpc('set_photo_job_progress', { p_job_id: id, p_status: status, p_progress: progress ?? null });
+  const { error } = await db().rpc('set_photo_job_progress', {
+    p_job_id: id,
+    p_status: status,
+    p_progress: progress ?? null,
+  });
   if (error) console.warn('[photo-jobs] status write failed:', error.message);
 }
 
 export async function completePhotoJob(id: string, resultAssetId: string): Promise<boolean> {
   const { error } = await db().rpc('complete_photo_job', { p_job_id: id, p_result_asset_id: resultAssetId });
-  if (error) { console.warn('[photo-jobs] complete failed:', error.message); return false; }
+  if (error) {
+    console.warn('[photo-jobs] complete failed:', error.message);
+    return false;
+  }
   return true;
 }
 
 export async function upsertPhotoAsset(input: {
-  registrationId?: string | null; kind: 'original' | 'transparent' | 'final' | 'preview' | 'thumbnail';
-  storageKey?: string | null; providerUrl?: string | null; contentType?: string;
-  width?: number | null; height?: number | null; bytes?: number | null;
-  templateId?: string | null; templateVersion?: number | null;
-  renderParams?: Record<string, unknown>; contestId?: string | null;
+  registrationId?: string | null;
+  kind: AssetKind;
+  storageKey?: string | null;
+  providerUrl?: string | null;
+  contentType?: string;
+  width?: number | null;
+  height?: number | null;
+  bytes?: number | null;
+  templateId?: string | null;
+  templateVersion?: number | null;
+  renderParams?: Record<string, unknown>;
+  contestId?: string | null;
 }): Promise<string | null> {
   const { data, error } = await db().rpc('upsert_contest_photo_asset', {
-    p_registration_id: input.registrationId ?? null, p_kind: input.kind,
-    p_storage_key: input.storageKey ?? null, p_provider_url: input.providerUrl ?? null,
-    p_content_type: input.contentType ?? 'image/png', p_width: input.width ?? null,
-    p_height: input.height ?? null, p_bytes: input.bytes ?? null,
-    p_template_id: input.templateId ?? null, p_template_version: input.templateVersion ?? null,
-    p_render_params: input.renderParams ?? {}, p_contest_id: input.contestId ?? null,
+    p_registration_id: input.registrationId ?? null,
+    p_kind: input.kind,
+    p_storage_key: input.storageKey ?? null,
+    p_provider_url: input.providerUrl ?? null,
+    p_content_type: input.contentType ?? 'image/png',
+    p_width: input.width ?? null,
+    p_height: input.height ?? null,
+    // bigint column; PostgREST answers a number, and the migration never
+    // re-derives it, so pass whatever the caller measured.
+    p_bytes: input.bytes ?? null,
+    p_template_id: input.templateId ?? null,
+    p_template_version: input.templateVersion ?? null,
+    p_render_params: input.renderParams ?? {},
+    p_contest_id: input.contestId ?? null,
   });
-  if (error) { console.warn('[photo-jobs] asset write failed:', error.message); return null; }
-  return (data as string) ?? null;
+  if (error) {
+    console.warn('[photo-jobs] asset write failed:', error.message);
+    return null;
+  }
+  return data ? String(data) : null;
 }
 
 export async function failPhotoJob(id: string, errorText: string): Promise<JobStatus | null> {
   const { data, error } = await db().rpc('fail_photo_job', {
-    p_job_id: id, p_error: (errorText || 'unknown error').slice(0, ERROR_LIMIT),
+    p_job_id: id,
+    p_error: (errorText || 'unknown error').slice(0, ERROR_LIMIT),
   });
-  if (error) { console.warn('[photo-jobs] fail write failed:', error.message); return null; }
+  if (error) {
+    console.warn('[photo-jobs] fail write failed:', error.message);
+    return null;
+  }
   return (data as JobStatus) ?? null;
 }
 
 export async function cancelPhotoJob(id: string, reason: string): Promise<void> {
-  await db().rpc('cancel_photo_job', { p_job_id: id, p_reason: (reason || '').slice(0, ERROR_LIMIT) });
+  const { error } = await db().rpc('cancel_photo_job', {
+    p_job_id: id,
+    p_reason: (reason || '').slice(0, ERROR_LIMIT),
+  });
+  if (error) console.warn('[photo-jobs] cancel failed:', error.message);
 }
 
 export async function reclaimStalePhotoJobs(ttlSeconds = 300): Promise<number> {
   const { data, error } = await db().rpc('reclaim_stale_photo_jobs', { p_lock_ttl_seconds: ttlSeconds });
-  if (error || typeof data !== 'number') return 0;
+  if (error || typeof data !== 'number') {
+    if (error) console.warn('[photo-jobs] reclaim failed:', error.message);
+    return 0;
+  }
   return data;
 }
 
 export async function getPhotoJob(id: string): Promise<PhotoJob | null> {
-  const { data, error } = await db().from('contest_photo_jobs').select('*').eq('id', id).maybeSingle();
-  if (error) { console.warn('[photo-jobs] read failed:', error.message); return null; }
-  return (data as PhotoJob) ?? null;
+  const { data, error } = await db()
+    .from('contest_photo_jobs')
+    .select('*, registrations(user_id)')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    console.warn('[photo-jobs] read failed:', error.message);
+    return null;
+  }
+  if (!data) return null;
+  const row = data as Record<string, unknown>;
+  const embedded = row.registrations as { user_id?: string } | null | undefined;
+  const { registrations: _dropped, ...job } = row;
+  return { ...(job as unknown as PhotoJob), registration_user_id: embedded?.user_id ?? null };
 }
 
 export async function photoJobSummary(): Promise<Record<string, number>> {
@@ -1371,6 +1749,17 @@ export async function photoJobSummary(): Promise<Record<string, number>> {
 
 - [ ] **Step 4: Run to verify pass** — all `job-store.test.ts` cases green.
 - [ ] **Step 5: Commit** — `git commit -am "feat(photo): job store wrapping the SQL claim/backoff functions"`
+
+Corrections applied while executing this task: `PhotoJob` gained
+`registration_user_id` and `getPhotoJob` now selects
+`*, registrations(user_id)` and flattens the embed, because Task 8's ownership
+check reads `job.registration_user_id` -- the draft's `select('*')` would have
+made that comparison `undefined !== user.id` and 403 every legitimate owner.
+`AssetKind` is exported so the registry and the runner share one list of the
+five kinds instead of each spelling the CHECK constraint's values. The delivered
+suite is 14 cases: the draft's five, plus the exact parameter shape of the other
+six RPCs, the empty-error floor (`last_error` is what an operator reads), a null
+claim payload, and the two null answers of `getPhotoJob`.
 
 ---
 
@@ -1974,7 +2363,7 @@ beforeEach(() => {
 });
 
 it('answers the owner with the published asset URLs', async () => {
-  store.getPhotoJob.mockResolvedValue({ id: 'j1', registration_id: 'r1', user_id: 'u1', status: 'ready', progress: 100, attempt: 1, result_asset_id: 'a-final', last_error: null });
+  store.getPhotoJob.mockResolvedValue({ id: 'j1', registration_id: 'r1', registration_user_id: 'u1', status: 'ready', progress: 100, attempt: 1, result_asset_id: 'a-final', last_error: null });
   store.listPhotoAssets.mockResolvedValue([{ kind: 'final', storage_key: 'contestants/composited/x.png' }]);
   const got = await GET(request(), { params: Promise.resolve({ id: 'j1' }) });
   expect(got.status).toBe(200);
@@ -1984,7 +2373,7 @@ it('answers the owner with the published asset URLs', async () => {
 });
 
 it('refuses a job whose registration the caller does not own', async () => {
-  store.getPhotoJob.mockResolvedValue({ id: 'j1', registration_id: 'other', user_id: 'u2', status: 'ready' });
+  store.getPhotoJob.mockResolvedValue({ id: 'j1', registration_id: 'other', registration_user_id: 'u2', status: 'ready' });
   const got = await GET(request(), { params: Promise.resolve({ id: 'j1' }) });
   expect(got.status).toBe(403);
 });
@@ -1998,7 +2387,7 @@ it('reports a not-configured provider as a blocker, never as a secret', async ()
 });
 ```
 
-The route handler needs the registration's owning user, so extend `getPhotoJob` to select `registrations(user_id)`; that join is what makes the second test a real ownership check rather than an assumed one. Both mock rows above carry `user_id` for that reason.
+The route handler needs the registration's owning user, so extend `getPhotoJob` to select `registrations(user_id)`; that join is what makes the second test a real ownership check rather than an assumed one. Both mock rows above carry `registration_user_id`, the flattened field Task 4's store produces.
 
 - [ ] **Step 2: Run to verify failure** — FAIL, routes missing.
 - [ ] **Step 3: Implement `app/api/photo-jobs/[id]/route.ts`**
