@@ -2354,158 +2354,431 @@ git commit -m "feat(photo): registry records the original asset before enqueuing
 
 ### Task 6: Runner — one claimed job, all-or-nothing output
 
+**Executed 2026-11-26 as `b1f68c225`** (11 files, 882 insertions). The section
+below is the delivered code, not the draft: the draft's own defects are listed
+after it so an executor re-deriving this task reads the corrections instead of
+re-introducing them.
+
 **Files:**
 - Create: `frontend-web/src/server/photo-jobs/runner.ts`
-- Test: `frontend-web/tests/unit/photo-jobs/runner.test.ts`
+- Create: `frontend-web/src/server/photo-jobs/persist.ts` — the shared writer
+- Create: `frontend-web/src/server/photo-jobs/assets.ts` — read bytes for a row
+- Create: `frontend-web/src/server/photo-jobs/variants.ts` — real sharp resize
+- Create: `frontend-web/tests/unit/photo-jobs/runner.test.ts`
+- Create: `frontend-web/tests/unit/photo-jobs/assets.test.ts`
+- Create: `frontend-web/tests/unit/photo-jobs/variants.test.ts`
+- Modify: `frontend-web/src/server/photo-jobs/job-store.ts` — `getPhotoAsset`
+  and the `PhotoAsset` type the runner reads
+- Modify: `frontend-web/src/lib/storage/r2.ts` — `readR2Object`
+- Modify: `frontend-web/src/server/registration/photo-pipeline.ts` — its
+  `persistToR2` now delegates the write so review and runner share one writer
+- Modify: `frontend-web/tests/unit/photo-jobs/job-store.test.ts` — `getPhotoAsset`
 
 **Interfaces:**
-- Consumes: `getPhotoProvider()` (Task 2), `resolveFetchableSource`, `compositeImage` + `SlotConfig` (existing compositor), `getPhotoJob`/`setPhotoJobProgress`/`completePhotoJob`/`failPhotoJob`/`cancelPhotoJob`/`upsertPhotoAsset` (Task 4), `runModerationGate` behaviour via the provider (existing semantics: approved, or dev-only skip when `notConfigured`).
-- Produces: `runPhotoJob(job: PhotoJob): Promise<'ready' | 'failed' | 'cancelled'>`, `readOriginalBytes(asset): Promise<Buffer | null>`
+- Consumes: `getPhotoProvider()` (Task 2, shape `{name, configured, missing,
+  extractBackground, moderate}`), `resolveFetchableSource` (existing),
+  `compositeImage` + `SlotConfig` (existing compositor),
+  `resolveActiveTemplateForContest` returning `ResolvedTemplate` with
+  `templateId`/`templateVersion` (Task 5), `getPhotoAsset`/`upsertPhotoAsset`/
+  `setPhotoJobProgress`/`completePhotoJob`/`failPhotoJob`/`cancelPhotoJob`
+  (Tasks 4-6).
+- Produces: `runPhotoJob(job: PhotoJob): Promise<RunOutcome>` where
+  `RunOutcome = 'ready' | 'failed' | 'cancelled'`; `storePhoto(buffer, mimeType,
+  prefix): Promise<string>` returning an **object key**; `readAssetBytes(asset:
+  AssetLocation): Promise<Buffer | null>`; `renderVariant(image, name): Promise<
+  VariantImage>` with `VARIANT_MAX_WIDTH = {preview: 1080, thumbnail: 320}`;
+  `readR2Object(key): Promise<Buffer | null>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test** — 17 cases, delivered verbatim:
 
 ```ts
-// frontend-web/tests/unit/photo-jobs/runner.test.ts
+// tests/unit/photo-jobs/runner.test.ts
+/**
+ * Task 6 — the runner: turn one claimed job into a complete portrait, or into
+ * nothing at all (spec §6, §7, acceptance criteria 4, 5 and 17).
+ *
+ * The asymmetry these tests defend is the one the spec calls out: a `ready`
+ * job must guarantee a finished composite, while any failure publishes no
+ * `final` row. A reader that finds a ready job therefore never has to guess
+ * whether the portrait is half-built, and a failed job leaves the original
+ * exactly where the registry put it.
+ *
+ * Every dependency is mocked at its module boundary, including `variants`,
+ * because the compositor stub hands back `Buffer.from('final')` — not an image
+ * sharp could decode. The resize itself is real and tested in variants.test.ts.
+ */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const deps = vi.hoisted(() => ({
-  extractBackground: vi.fn(), moderate: vi.fn(), getPhotoProvider: vi.fn(),
-  resolveFetchableSource: vi.fn(), compositeImage: vi.fn(), persistToR2: vi.fn(),
-  upsertPhotoAsset: vi.fn(), completePhotoJob: vi.fn(), failPhotoJob: vi.fn(),
-  cancelPhotoJob: vi.fn(), setPhotoJobProgress: vi.fn(), getPhotoJob: vi.fn(),
+  getPhotoProvider: vi.fn(),
+  moderate: vi.fn(),
+  extractBackground: vi.fn(),
+  resolveFetchableSource: vi.fn(),
+  compositeImage: vi.fn(),
+  storePhoto: vi.fn(),
   readAssetBytes: vi.fn(),
+  renderVariant: vi.fn(),
+  getPhotoAsset: vi.fn(),
+  upsertPhotoAsset: vi.fn(),
+  setPhotoJobProgress: vi.fn(),
+  completePhotoJob: vi.fn(),
+  failPhotoJob: vi.fn(),
+  cancelPhotoJob: vi.fn(),
+  resolveActiveTemplateForContest: vi.fn(),
 }));
-vi.mock('@/src/lib/media/provider', () => deps.getPhotoProvider);
+
+vi.mock('@/src/lib/media/provider', () => ({ getPhotoProvider: deps.getPhotoProvider }));
 vi.mock('@/src/lib/media/asset-source', () => ({ resolveFetchableSource: deps.resolveFetchableSource }));
 vi.mock('@/src/lib/rendering/imageCompositor', () => ({ compositeImage: deps.compositeImage }));
-vi.mock('@/src/server/photo-jobs/job-store', () => ({
-  upsertPhotoAsset: deps.upsertPhotoAsset, completePhotoJob: deps.completePhotoJob,
-  failPhotoJob: deps.failPhotoJob, cancelPhotoJob: deps.cancelPhotoJob,
-  setPhotoJobProgress: deps.setPhotoJobProgress, getPhotoJob: deps.getPhotoJob,
-}));
-vi.mock('@/src/server/photo-jobs/persist', () => ({ persistToR2: deps.persistToR2 }));
+vi.mock('@/src/server/photo-jobs/persist', () => ({ storePhoto: deps.storePhoto }));
 vi.mock('@/src/server/photo-jobs/assets', () => ({ readAssetBytes: deps.readAssetBytes }));
+vi.mock('@/src/server/photo-jobs/variants', () => ({ renderVariant: deps.renderVariant }));
+vi.mock('@/src/server/registration/template-resolver', () => ({
+  resolveActiveTemplateForContest: deps.resolveActiveTemplateForContest,
+}));
+vi.mock('@/src/server/photo-jobs/job-store', () => ({
+  getPhotoAsset: deps.getPhotoAsset,
+  upsertPhotoAsset: deps.upsertPhotoAsset,
+  setPhotoJobProgress: deps.setPhotoJobProgress,
+  completePhotoJob: deps.completePhotoJob,
+  failPhotoJob: deps.failPhotoJob,
+  cancelPhotoJob: deps.cancelPhotoJob,
+}));
 
 import { runPhotoJob } from '@/src/server/photo-jobs/runner';
 
 const job = {
-  id: 'j1', run_key: 'r', registration_id: 'reg1', contest_id: 'c1', template_id: 't1',
-  source_asset_id: 's1', status: 'extracting', progress: 5, attempt: 1, max_attempts: 6,
-  last_error: null, render_params: {}, result_asset_id: null,
-} as any;
+  id: 'job-1',
+  run_key: 'photo:asset-o:tpl-1:abc',
+  registration_id: 'reg-1',
+  contest_id: 'contest-1',
+  template_id: 'tpl-1',
+  source_asset_id: 'asset-original',
+  status: 'queued',
+  progress: 0,
+  attempt: 1,
+  max_attempts: 6,
+  last_error: null,
+  render_params: { offsetX: 12 },
+  result_asset_id: null,
+};
+
+const ORIGINAL = {
+  id: 'asset-original',
+  kind: 'original',
+  storage_key: 'registration/u-1/photo.jpg',
+  provider_url: null,
+  content_type: 'image/jpeg',
+  width: 682,
+  height: 1080,
+  bytes: 123456,
+  render_params: {},
+};
+
+function slot(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'slot-1', slot_name: 'Main', slot_type: 'contestant', slot_order: 0,
+    x: 10, y: 20, width: 300, height: 400, rotation: 0, z_index: 1, scale: 1,
+    crop_mode: 'cover', border_radius: 0, opacity: 1, ...overrides,
+  };
+}
+
+function template(overrides: Record<string, unknown> = {}) {
+  return {
+    templateId: 'tpl-1',
+    templateVersion: 4,
+    templateUrl: 'https://cdn.test/template.png',
+    templateWidth: 1080,
+    templateHeight: 1350,
+    slot: slot(),
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
   vi.resetAllMocks();
-  deps.getPhotoProvider.mockReturnValue({ name: 'cloudinary', configured: true, missing: [], extractBackground: deps.extractBackground, moderate: deps.moderate });
+  deps.getPhotoProvider.mockReturnValue({
+    name: 'cloudinary',
+    configured: true,
+    missing: [],
+    extractBackground: deps.extractBackground,
+    moderate: deps.moderate,
+  });
   deps.moderate.mockResolvedValue({ approved: true });
-  deps.extractBackground.mockResolvedValue({ ok: true, resultUrl: 'https://cut/x.png' });
-  deps.resolveFetchableSource.mockResolvedValue({ ok: true, url: 'https://orig/a.jpg', objectKey: 'registration/u/a.jpg', ttlSeconds: 600 });
-  deps.upsertPhotoAsset.mockResolvedValue('asset-x');
-  deps.compositeImage.mockResolvedValue({ buffer: Buffer.from('png'), mimeType: 'image/png', width: 1080, height: 1350 });
-  deps.persistToR2.mockResolvedValue('contestants/composited/j1.png');
-  deps.readAssetBytes.mockResolvedValue(Buffer.from('raw'));
+  deps.extractBackground.mockResolvedValue({ ok: true, resultUrl: 'https://cut.test/x.png' });
+  deps.resolveFetchableSource.mockResolvedValue({
+    ok: true, url: 'https://signed.test/photo.jpg', objectKey: ORIGINAL.storage_key, ttlSeconds: 600,
+  });
+  deps.getPhotoAsset.mockResolvedValue(ORIGINAL);
+  deps.readAssetBytes.mockResolvedValue(Buffer.from('raw-bytes'));
+  deps.resolveActiveTemplateForContest.mockResolvedValue(template());
+  deps.compositeImage.mockResolvedValue({
+    buffer: Buffer.from('final'), mimeType: 'image/png', width: 1080, height: 1350,
+  });
+  deps.storePhoto.mockResolvedValue('contestants/composited/uuid.png');
+  deps.upsertPhotoAsset.mockResolvedValue('asset-new');
   deps.completePhotoJob.mockResolvedValue(true);
-});
-
-it('publishes transparent + final + preview + thumbnail and completes', async () => {
-  const out = await runPhotoJob(job);
-  expect(out).toBe('ready');
-  const kinds = deps.upsertPhotoAsset.mock.calls.map((c: any) => c[0].kind);
-  expect(kinds).toEqual(expect.arrayContaining(['transparent', 'final', 'preview', 'thumbnail']));
-  expect(deps.completePhotoJob).toHaveBeenCalledWith('j1', expect.any(String));
-});
-
-it('never publishes a final asset when extraction fails', async () => {
-  deps.extractBackground.mockResolvedValue({ ok: false, reason: 'add-on disabled' });
   deps.failPhotoJob.mockResolvedValue('failed');
-  const out = await runPhotoJob(job);
-  expect(out).toBe('failed');
-  expect(deps.compositeImage).not.toHaveBeenCalled();
-  expect(deps.upsertPhotoAsset.mock.calls.some((c: any) => c[0].kind === 'final')).toBe(false);
-  expect(deps.failPhotoJob).toHaveBeenCalledWith('j1', expect.stringContaining('add-on disabled'));
+  deps.renderVariant.mockResolvedValue({
+    buffer: Buffer.from('variant'), mimeType: 'image/png', width: 320, height: 400,
+  });
 });
 
-it('cancels on a moderation rejection and stores no composite', async () => {
-  deps.moderate.mockResolvedValue({ approved: false, reason: 'Rejected: nudity' });
-  const out = await runPhotoJob(job);
-  expect(out).toBe('cancelled');
-  expect(deps.cancelPhotoJob).toHaveBeenCalledWith('j1', 'Rejected: nudity');
-  expect(deps.completePhotoJob).not.toHaveBeenCalled();
-  expect(deps.extractBackground).not.toHaveBeenCalled();
-});
+const kinds = () => deps.upsertPhotoAsset.mock.calls.map((call) => call[0].kind);
 
-it('keeps rendering with the original when moderation is unconfigured (dev parity)', async () => {
-  deps.moderate.mockResolvedValue({ approved: false, notConfigured: true, reason: 'not configured' });
-  const out = await runPhotoJob(job);
-  expect(out).toBe('ready');
-  expect(deps.extractBackground).toHaveBeenCalled();
-});
+describe('runPhotoJob', () => {
+  it('publishes transparent, final and both variants, then completes with the final id', async () => {
+    expect(await runPhotoJob(job as never)).toBe('ready');
 
-it('reports the original bytes are unreadable as a failure, not an empty composite', async () => {
-  deps.readAssetBytes.mockResolvedValue(null);
-  deps.failPhotoJob.mockResolvedValue('failed');
-  await expect(runPhotoJob(job)).resolves.toBe('failed');
-  expect(deps.compositeImage).not.toHaveBeenCalled();
-});
+    expect(kinds()).toEqual(['transparent', 'final', 'preview', 'thumbnail']);
+    expect(deps.completePhotoJob).toHaveBeenCalledWith('job-1', 'asset-new');
 
-it('a compositor throw becomes a failed job with the message', async () => {
-  deps.compositeImage.mockRejectedValue(new Error('template 404'));
-  deps.failPhotoJob.mockResolvedValue('failed');
-  await expect(runPhotoJob(job)).resolves.toBe('failed');
-  expect(deps.failPhotoJob.mock.calls[0][1]).toContain('template 404');
+    // The composite must be built from the cutout, not the original, or the
+    // whole feature is a rectangle pasted on a rectangle.
+    const composited = deps.compositeImage.mock.calls[0][0];
+    expect(composited.slots).toHaveLength(1);
+    expect(composited.slots[0].photo_url).toBe('https://cut.test/x.png');
+    expect(composited.templateUrl).toBe('https://cdn.test/template.png');
+    expect(composited.templateWidth).toBe(1080);
+  });
+
+  it('records the template identity and the requested params on the final asset', async () => {
+    await runPhotoJob(job as never);
+    const final = deps.upsertPhotoAsset.mock.calls.find((call) => call[0].kind === 'final')![0];
+    expect(final).toMatchObject({
+      registrationId: 'reg-1',
+      contestId: 'contest-1',
+      templateId: 'tpl-1',
+      templateVersion: 4,
+      renderParams: { offsetX: 12 },
+      storageKey: 'contestants/composited/uuid.png',
+      contentType: 'image/png',
+      width: 1080,
+      height: 1350,
+    });
+  });
+
+  it('fails without publishing a final asset when extraction fails', async () => {
+    deps.extractBackground.mockResolvedValue({ ok: false, reason: 'background_removal add-on is disabled' });
+    expect(await runPhotoJob(job as never)).toBe('failed');
+    expect(deps.compositeImage).not.toHaveBeenCalled();
+    expect(kinds()).not.toContain('final');
+    expect(deps.failPhotoJob).toHaveBeenCalledWith('job-1', expect.stringContaining('add-on is disabled'));
+    expect(deps.completePhotoJob).not.toHaveBeenCalled();
+  });
+
+  it('cancels on a moderation rejection and stores nothing', async () => {
+    deps.moderate.mockResolvedValue({ approved: false, reason: 'Rejected: nudity' });
+    expect(await runPhotoJob(job as never)).toBe('cancelled');
+    expect(deps.cancelPhotoJob).toHaveBeenCalledWith('job-1', 'Rejected: nudity');
+    expect(kinds()).toEqual([]);
+    expect(deps.extractBackground).not.toHaveBeenCalled();
+    expect(deps.failPhotoJob).not.toHaveBeenCalled();
+  });
+
+  it('keeps rendering when moderation is unconfigured, because that is a dev fault, not a verdict', async () => {
+    deps.moderate.mockResolvedValue({ approved: false, notConfigured: true, reason: 'Cloudinary is not configured' });
+    expect(await runPhotoJob(job as never)).toBe('ready');
+    expect(deps.extractBackground).toHaveBeenCalled();
+    expect(deps.cancelPhotoJob).not.toHaveBeenCalled();
+  });
+
+  it('cancels an ambiguous moderation answer instead of passing it to the vendor', async () => {
+    // The distinction is the content-safety gate: `notConfigured` is the only
+    // non-rejection that may pass, so a configured-but-unclear verdict must
+    // never reach the compositor.
+    deps.moderate.mockResolvedValue({ approved: false, reason: 'Moderation status not final/recognized: pending' });
+    expect(await runPhotoJob(job as never)).toBe('cancelled');
+    expect(deps.cancelPhotoJob).toHaveBeenCalledWith('job-1', 'Moderation status not final/recognized: pending');
+    expect(deps.extractBackground).not.toHaveBeenCalled();
+  });
+
+  it('fails when the original asset row cannot be read', async () => {
+    deps.getPhotoAsset.mockResolvedValue(null);
+    expect(await runPhotoJob(job as never)).toBe('failed');
+    expect(deps.failPhotoJob).toHaveBeenCalledWith('job-1', expect.stringContaining('source asset'));
+    expect(deps.moderate).not.toHaveBeenCalled();
+  });
+
+  it('fails when the stored original has no bytes behind it', async () => {
+    deps.readAssetBytes.mockResolvedValue(null);
+    expect(await runPhotoJob(job as never)).toBe('failed');
+    expect(deps.compositeImage).not.toHaveBeenCalled();
+    expect(deps.failPhotoJob).toHaveBeenCalledWith('job-1', expect.stringContaining('unreadable'));
+  });
+
+  it('fails when the source cannot be given to the vendor, quoting the reason', async () => {
+    deps.resolveFetchableSource.mockResolvedValue({ ok: false, kind: 'notFetchable', reason: 'R2 is not configured' });
+    expect(await runPhotoJob(job as never)).toBe('failed');
+    expect(deps.failPhotoJob).toHaveBeenCalledWith('job-1', expect.stringContaining('R2 is not configured'));
+  });
+
+  it('fails when the contest no longer resolves the template the job was queued for', async () => {
+    deps.resolveActiveTemplateForContest.mockResolvedValue(template({ templateId: 'tpl-9', templateVersion: 1 }));
+    expect(await runPhotoJob(job as never)).toBe('failed');
+    expect(deps.compositeImage).not.toHaveBeenCalled();
+    expect(deps.failPhotoJob).toHaveBeenCalledWith('job-1', expect.stringContaining('changed'));
+    expect(kinds()).not.toContain('final');
+  });
+
+  it('fails when the contest has no template at all rather than publishing an unstyled portrait', async () => {
+    deps.resolveActiveTemplateForContest.mockResolvedValue(null);
+    expect(await runPhotoJob(job as never)).toBe('failed');
+    expect(deps.failPhotoJob).toHaveBeenCalledWith('job-1', expect.stringContaining('no active template'));
+  });
+
+  it('a compositor throw becomes a failed job carrying the message', async () => {
+    deps.compositeImage.mockRejectedValue(new Error('Failed to fetch image: template (404)'));
+    expect(await runPhotoJob(job as never)).toBe('failed');
+    expect(deps.failPhotoJob).toHaveBeenCalledWith('job-1', expect.stringContaining('template (404)'));
+    expect(kinds()).toEqual(['transparent']);
+  });
+
+  it('fails when the final row cannot be recorded, even though the bytes were stored', async () => {
+    deps.storePhoto.mockResolvedValue('contestants/composited/uuid.png');
+    deps.upsertPhotoAsset
+      .mockResolvedValueOnce('asset-transparent')
+      .mockResolvedValueOnce(null);
+    expect(await runPhotoJob(job as never)).toBe('failed');
+    expect(deps.completePhotoJob).not.toHaveBeenCalled();
+    expect(kinds()).not.toContain('preview');
+  });
+
+  it('a variant failure does not destroy a complete portrait', async () => {
+    deps.renderVariant.mockRejectedValue(new Error('sharp refused the buffer'));
+    expect(await runPhotoJob(job as never)).toBe('ready');
+    expect(deps.completePhotoJob).toHaveBeenCalledWith('job-1', 'asset-new');
+    expect(kinds()).toEqual(['transparent', 'final']);
+  });
+
+  it('walks the status sequence the mobile client is documented to show', async () => {
+    await runPhotoJob(job as never);
+    // No `ready` here: complete_photo_job sets status and progress in one
+    // write, and a runner that also announced it would put two updates on the
+    // row the client is watching — a flicker and a lost race for no gain.
+    expect(deps.setPhotoJobProgress.mock.calls.map((call) => call.slice(1))).toEqual([
+      ['extracting', 5],
+      ['extracting', 35],
+      ['compositing', 70],
+    ]);
+  });
+
+  it('never reports ready when the completion write was refused', async () => {
+    deps.completePhotoJob.mockResolvedValue(false);
+    expect(await runPhotoJob(job as never)).toBe('failed');
+    expect(deps.failPhotoJob).toHaveBeenCalledWith('job-1', expect.stringContaining('could not be marked ready'));
+  });
+
+  it('uses the provider name in errors so an operator can tell a vendor fault from ours', async () => {
+    deps.getPhotoProvider.mockReturnValue({
+      name: 'none', configured: false, missing: ['CLOUDINARY_API_KEY'],
+      extractBackground: vi.fn().mockResolvedValue({ ok: false, notConfigured: true, reason: 'no provider' }),
+      moderate: deps.moderate,
+    });
+    deps.moderate.mockResolvedValue({ approved: false, notConfigured: true });
+    expect(await runPhotoJob(job as never)).toBe('failed');
+    expect(deps.failPhotoJob.mock.calls[0][1]).toMatch(/provider|Cloudinary/);
+  });
 });
 ```
+- [x] **Step 2: Run to verify failure.** `Test Files 1 failed (1)` /
+  `Tests  no tests` — `Cannot find module '@/src/server/photo-jobs/runner'`
+  (and `persist`, `assets`, `variants`), which is the red the task asked for.
 
-- [ ] **Step 2: Run to verify failure** — FAIL, `runner` and `persist`/`assets` modules missing.
-
-- [ ] **Step 3: Implement the two helpers first**
-
-`frontend-web/src/server/photo-jobs/persist.ts` — lift the existing `persistToR2` body out of `photo-pipeline.ts` so the runner and the pipeline share one writer, and make it return the **object key** rather than a public URL, because publishing is a separate concern from storing (spec §11):
+- [x] **Step 3: Implement the helpers.**
 
 ```ts
+// src/server/photo-jobs/persist.ts
+/**
+ * Storing a rendered image — the write half of the pipeline (spec §11).
+ *
+ * Deliberately returns the object KEY, not a URL. The existing
+ * `photo-pipeline.ts` helper returns a public URL because that is all a
+ * synchronous response needs; an asset row that has to outlive the request
+ * needs the key, from which a URL (public or signed) is derived at read time.
+ * Recording a derived value as the reference is what makes references rot, so
+ * the two are kept as separate functions with different names rather than one
+ * function with a flag.
+ *
+ * Throws on any failure. In P1 the only caller is the job runner, where a
+ * storage fault is a retryable job failure on the normal backoff ladder — and
+ * swallowing it into a `null` would mean a job that looks finished while the
+ * bytes it points at were never written.
+ */
 import { randomUUID } from 'crypto';
 import { hasR2Config, uploadR2Object } from '@/src/lib/storage/r2';
 
-/** Throws when R2 is absent or the PUT fails — the caller turns that into a failed job. */
-export async function persistToR2(buffer: Buffer, mimeType: string, prefix: string): Promise<string> {
-  if (!hasR2Config()) throw new Error('R2 storage is not configured');
+/** Same layout `photo-pipeline.ts` has always used, so composites from both
+ *  code paths land in one place instead of two near-identical prefixes. */
+export function photoObjectKey(mimeType: string, prefix: string): string {
   const ext = mimeType === 'image/png' ? 'png' : 'jpg';
-  const key = `contestants/${prefix}/${randomUUID()}.${ext}`;
+  return `contestants/${prefix}/${randomUUID()}.${ext}`;
+}
+
+export async function storePhoto(buffer: Buffer, mimeType: string, prefix: string): Promise<string> {
+  if (!hasR2Config()) throw new Error('R2 storage is not configured');
+  const key = photoObjectKey(mimeType, prefix);
   await uploadR2Object({ key, body: buffer, contentType: mimeType });
   return key;
 }
 ```
 
-`frontend-web/src/server/photo-jobs/assets.ts`:
-
 ```ts
-import { createR2DownloadUrl, hasR2Config } from '@/src/lib/storage/r2';
+// src/server/photo-jobs/assets.ts
+/**
+ * Reading an asset's bytes back from whichever store holds them (spec §11).
+ *
+ * Two locations, because the table has two: `storage_key` is an object in our
+ * own bucket or, on a machine with no R2 credentials, a file under the local
+ * upload root; `provider_url` is somebody else's URL — a Cloudinary cutout the
+ * vendor handed back, or a photo a client submitted by link.
+ *
+ * The value-not-exception contract is deliberate. This runs inside a claimed
+ * job, and a job that throws is indistinguishable from a bug in the runner,
+ * while a job that answers "unreadable" with the reason is something an operator
+ * can act on. The one case that must never be papered over is reported in the
+ * log, not the row: the runner already has a single message for "the bytes were
+ * not there", and putting the vendor's URL inside it would copy a signed link
+ * into the job ledger.
+ *
+ * A stored URL is only fetched when its host is on the allowlist the compositor
+ * already uses (`isAllowedRemoteImageUrl`). A background job with no user in the
+ * loop reading an arbitrary URL from a database row is an SSRF primitive, and an
+ * allowlist is the policy this app already enforces for exactly that reason.
+ */
+import { isAllowedRemoteImageUrl } from '@/lib/config';
+import { hasR2Config, readR2Object } from '@/src/lib/storage/r2';
 import { readLocalUpload } from '@/src/lib/storage/local-uploads';
 
-/**
- * Bytes for one asset row, from whichever store holds them. `readLocalUpload` is
- * only consulted when R2 is unconfigured, because that is the only case in which
- * a registration/upload key exists on disk (see local-uploads.ts:136, which
- * returns `Buffer | null` and already swallows the missing-file case).
- */
-export async function readAssetBytes(asset: {
-  storage_key: string | null; provider_url: string | null;
-}): Promise<Buffer | null> {
+export interface AssetLocation {
+  storage_key: string | null;
+  provider_url: string | null;
+}
+
+async function fetchAllowed(url: string, context: string): Promise<Buffer | null> {
+  if (!isAllowedRemoteImageUrl(url)) {
+    console.warn(`[photo-jobs] refusing to fetch a ${context} whose host is not allowlisted: ${url}`);
+    return null;
+  }
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) {
+    console.warn(`[photo-jobs] ${context} fetch answered ${res.status}`);
+    return null;
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+export async function readAssetBytes(asset: AssetLocation): Promise<Buffer | null> {
   try {
     if (asset.storage_key) {
+      // No R2 credentials means the key can only name a local upload — which is
+      // the only thing that ever wrote one (see local-uploads.ts:136, itself
+      // `Buffer | null`).
       if (!hasR2Config()) return await readLocalUpload(asset.storage_key);
-      const url = await createR2DownloadUrl({
-        key: asset.storage_key,
-        fileName: asset.storage_key.split('/').pop() || 'photo',
-        disposition: 'inline',
-      });
-      const res = await fetch(url, { cache: 'no-store' });
-      return res.ok ? Buffer.from(await res.arrayBuffer()) : null;
+      return await readR2Object(asset.storage_key);
     }
-    if (asset.provider_url) {
-      const res = await fetch(asset.provider_url, { cache: 'no-store' });
-      return res.ok ? Buffer.from(await res.arrayBuffer()) : null;
-    }
+    if (asset.provider_url) return await fetchAllowed(asset.provider_url, 'provider_url');
+    console.warn('[photo-jobs] asset row has neither a storage key nor a provider URL');
   } catch (err) {
     console.warn('[photo-jobs] asset read failed:', err instanceof Error ? err.message : err);
   }
@@ -2513,90 +2786,580 @@ export async function readAssetBytes(asset: {
 }
 ```
 
-`readLocalUpload(key)` is `async (key: string) => Promise<Buffer | null>` — verified at `src/lib/storage/local-uploads.ts:136` — so no `fs.readFile` wrapper and no cast belong here.
+```ts
+// src/server/photo-jobs/variants.ts
+/**
+ * Display variants of a finished composite (spec §8: "consistent presentation
+ * across surfaces … with variants").
+ *
+ * One resize, driven by the composite that was just built, not a second render
+ * pass. Re-compositing at thumbnail size would put a second copy of the layout
+ * rules in this file, and the two would drift — the same reason the compositor
+ * owns slot geometry and nothing below it re-derives it.
+ *
+ * PNG throughout. A JPEG thumbnail would be smaller, but the composite can
+ * legitimately have transparent pixels (a template whose background is a cutout
+ * shape), and `sharp`'s implicit matte for a flattened alpha channel is a
+ * visible colour shift on a contestant's portrait — a byte saving is not worth
+ * an unexpected background. Format choice belongs with P2's styling pass, where
+ * there is a designed background to flatten onto.
+ */
+import sharp from 'sharp';
 
-- [ ] **Step 4: Implement the runner**
+export type VariantName = 'preview' | 'thumbnail';
 
-`frontend-web/src/server/photo-jobs/runner.ts`:
+/** Max widths, not fixed sizes: portrait aspect ratios vary by template, and a
+ *  surface that crops to a square crops in CSS where the rule is visible. */
+export const VARIANT_MAX_WIDTH: Record<VariantName, number> = {
+  preview: 1080,
+  thumbnail: 320,
+};
+
+export interface VariantImage {
+  buffer: Buffer;
+  mimeType: string;
+  width: number;
+  height: number;
+}
+
+export async function renderVariant(image: Buffer, name: VariantName): Promise<VariantImage> {
+  const maxWidth = VARIANT_MAX_WIDTH[name];
+  if (!maxWidth) throw new Error(`Unknown photo variant "${name}"`);
+
+  const resized = await sharp(image)
+    .resize({ width: maxWidth, fit: 'inside', withoutEnlargement: true })
+    .png()
+    .toBuffer({ resolveWithObject: true });
+
+  return {
+    buffer: resized.data,
+    mimeType: 'image/png',
+    width: resized.info.width,
+    height: resized.info.height,
+  };
+}
+```
+
+Plus the additions the modules above call. `src/lib/storage/r2.ts` gains the read mirror of the `uploadR2Object` that already lives there (the rest of that file is untouched):
 
 ```ts
+// src/lib/storage/r2.ts - the added export only
 /**
- * Executes one claimed job (spec §6, §7). All-or-nothing by construction: a
- * `final` asset row is written only after compositing and persistence both
- * succeeded, so a reader that finds a ready job is guaranteed a complete
- * portrait and a failed job publishes nothing at all.
+ * Direct server-side read of an object's bytes.
  *
- * Content safety keeps the existing fail-closed semantics. `notConfigured`
- * continues the documented dev-only relaxation in photo-pipeline.ts: it fires
- * only when the provider reports literally absent credentials, never for an
- * ambiguous vendor answer, which Task 6's unconfigured test pins in place.
+ * The mirror of `uploadR2Object` above: a job runner that already holds the
+ * bucket credentials does not need to presign a URL in order to fetch it back
+ * from itself. `null` means the object is not in the bucket — the one answer a
+ * caller can act on — while a credential, network or SDK fault throws so the
+ * caller can tell "gone" apart from "storage was briefly unhappy" instead of
+ * treating a transient failure as a deleted photograph.
+ */
+export async function readR2Object(key: string): Promise<Buffer | null> {
+  const { bucket, client } = getR2Config();
+  try {
+    const object = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const base64 = await object.Body?.transformToString('base64');
+    return base64 ? Buffer.from(base64, 'base64') : null;
+  } catch (err) {
+    const name = err instanceof Error ? err.name : '';
+    if (name === 'NoSuchKey' || name === 'NotFound') return null;
+    throw err;
+  }
+}
+```
+
+`src/server/photo-jobs/job-store.ts` gains the row type and read the runner consumes:
+
+```ts
+// src/server/photo-jobs/job-store.ts - the added type and read
+/** One row of `contest_photo_assets`, in the snake_case the table uses.
+ *
+ * The runner reads the *source* asset by id, so it needs the location columns;
+ * naming them here is what stops `runner.ts` from inventing its own shape for a
+ * row it does not own. `bytes` stays `number | null` because the column is a
+ * bigint the writer may not have measured (a Cloudinary cutout URL has no local
+ * length until someone fetches it). */
+export interface PhotoAsset {
+  id: string;
+  registration_id: string | null;
+  contest_id: string | null;
+  kind: AssetKind;
+  storage_key: string | null;
+  provider_url: string | null;
+  content_type: string;
+  width: number | null;
+  height: number | null;
+  bytes: number | null;
+  template_id: string | null;
+  template_version: number | null;
+  render_params: Record<string, unknown>;
+}
+
+export async function getPhotoAsset(id: string): Promise<PhotoAsset | null> {
+  const { data, error } = await db()
+    .from('contest_photo_assets')
+    .select('id, registration_id, contest_id, kind, storage_key, provider_url, content_type, width, height, bytes, template_id, template_version, render_params')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    console.warn('[photo-jobs] asset read failed:', error.message);
+    return null;
+  }
+  return (data as PhotoAsset) ?? null;
+}
+```
+
+and the review path now shares the writer, so its own wrapper is the only change in it:
+
+```ts
+// src/server/registration/photo-pipeline.ts
+/**
+ * Contestant photo pipeline — moderation + background removal + optional
+ * template compositing, orchestrated from Cloudinary (src/lib/media/cloudinary.ts)
+ * and the existing Sharp compositor (src/lib/rendering/imageCompositor.ts).
+ *
+ * Test-plan: G-IMG / TS-3 (docs/qa/voting-contest-test-plan.md).
+ *
+ * ── Template compositing reachability ───────────────────────────────────────
+ * `compositeImage` needs a `CompositorInput` (templateUrl/templateWidth/
+ * templateHeight/slot). `contest_templates`/`template_slots`
+ * (supabase/migrations/20260405700000_contest_image_templates.sql) is the
+ * only template concept in the schema, but `contest_templates.contest_id`
+ * references the LEGACY `public.contests` table — not `connect_contests`,
+ * which is what registrations resolve via `registrations.contest_slug`
+ * (see promote_registration_to_contestant in
+ * supabase/migrations/20260812010000_registration_contestant_seam.sql).
+ * There is no bridge row/column linking a connect_contests contest to a
+ * contest_templates row today, and no admin UI to create one (AD-003/CS-004,
+ * explicitly out of scope here). So a real registration approval has no way
+ * to resolve which template+slot to composite onto.
+ *
+ * `processContestantPhoto` (full pipeline, moderation + bg-removal +
+ * compositing) is still implemented and unit-tested here for when that link
+ * exists, but the registration review wiring
+ * (app/api/admin/registration/applications/[id]/review/route.ts) uses
+ * `processContestantPhotoNoTemplate` — moderation + optional background-removal
+ * cutout only, no compositing — because that's what's actually reachable from
+ * today's data model.
+ */
+
+import { moderatePhoto, removeBackground } from '@/src/lib/media/cloudinary';
+import { compositeImage, type SlotConfig } from '@/src/lib/rendering/imageCompositor';
+import { getR2PublicUrl } from '@/src/lib/storage/r2';
+import { storePhoto } from '@/src/server/photo-jobs/persist';
+
+export type PhotoPipelineResult =
+  | { status: 'ready'; photoUrl: string }
+  | { status: 'rejected'; reason: string }
+  | { status: 'fallback'; photoUrl: string; reason: string };
+
+export interface ProcessContestantPhotoInput {
+  rawPhotoUrl: string;
+  templateUrl: string;
+  templateWidth: number;
+  templateHeight: number;
+  slot: SlotConfig;
+}
+
+/**
+ * Upload a composited/cutout buffer to R2 and return a stable public URL.
+ * Throws if R2 isn't configured or the upload fails — callers decide what
+ * that means for their status (ready vs. fallback).
+ *
+ * The write itself lives in `photo-jobs/persist.ts` so the synchronous review
+ * path and the queued runner cannot disagree about key layout or about which
+ * errors are fatal; this wrapper adds the one thing only a response needs — the
+ * public URL — and keeps the legacy contract that a stored object without a
+ * public base URL is an error rather than a silently unresolvable reference.
+ */
+async function persistToR2(buffer: Buffer, mimeType: string, prefix: string): Promise<string> {
+  const key = await storePhoto(buffer, mimeType, prefix);
+  const publicUrl = getR2PublicUrl(key);
+  if (!publicUrl) {
+    throw new Error('R2 upload succeeded but no public base URL is configured (R2_PUBLIC_BASE_URL)');
+  }
+  return publicUrl;
+}
+
+/**
+ * Run moderation on a raw photo URL. Returns null if approved (or dev-mode
+ * skip), or a rejected PhotoPipelineResult to return immediately.
+ *
+ * IMPORTANT: the `notConfigured` skip below is a DEV-ONLY relaxation. It must
+ * NEVER trigger when Cloudinary creds ARE configured — it only fires when
+ * `moderatePhoto` explicitly reports `notConfigured: true` (i.e. env vars are
+ * literally absent), never as a default-open fallback for an ambiguous or
+ * malformed moderation response. Every other non-approved outcome
+ * (including HTTP/parse errors, which `moderatePhoto` itself fails closed on)
+ * rejects here.
+ */
+async function runModerationGate(rawPhotoUrl: string): Promise<PhotoPipelineResult | null> {
+  const moderation = await moderatePhoto(rawPhotoUrl);
+
+  if (moderation.approved) return null;
+
+  if (moderation.notConfigured) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[photo-pipeline] Cloudinary is not configured — skipping content moderation for this photo. ' +
+        'This path must only ever be reached in local/dev environments with no CLOUDINARY_* env vars set. ' +
+        'It must never be treated as a default-open fallback for a configured-but-ambiguous moderation result.'
+    );
+    return null;
+  }
+
+  return { status: 'rejected', reason: moderation.reason || 'Photo failed content moderation' };
+}
+
+/**
+ * Full pipeline: moderate -> background-remove -> composite onto template ->
+ * upload to R2. See module doc for why this is not currently reachable from
+ * the real registration-review flow (no contest_templates<->connect_contests
+ * link), but it is fully implemented + tested for when that link exists.
+ */
+export async function processContestantPhoto(
+  input: ProcessContestantPhotoInput
+): Promise<PhotoPipelineResult> {
+  const { rawPhotoUrl, templateUrl, templateWidth, templateHeight, slot } = input;
+
+  const gated = await runModerationGate(rawPhotoUrl);
+  if (gated) return gated;
+
+  const bgResult = await removeBackground(rawPhotoUrl);
+
+  // Fallback preference: if background removal fails, prefer compositing the
+  // RAW photo onto the template over skipping compositing entirely — the
+  // template framing/branding is more valuable to preserve than a clean
+  // cutout, and the compositor handles a non-transparent source photo fine
+  // (it just won't look "cut out"). Only fall back further, to the
+  // fully-uncomposited raw URL, if compositing itself also fails (e.g. the
+  // template asset is unreachable) — at that point there's nothing left to
+  // safely combine, so return the one URL guaranteed to be a real image.
+  const photoUrlForSlot = bgResult.ok ? bgResult.resultUrl : rawPhotoUrl;
+  const usedCutout = bgResult.ok;
+
+  try {
+    const composited = await compositeImage({
+      templateUrl,
+      templateWidth,
+      templateHeight,
+      slots: [{ ...slot, photo_url: photoUrlForSlot }],
+    });
+    const uploadedUrl = await persistToR2(composited.buffer, composited.mimeType, 'composited');
+
+    if (usedCutout) {
+      return { status: 'ready', photoUrl: uploadedUrl };
+    }
+    return {
+      status: 'fallback',
+      photoUrl: uploadedUrl,
+      reason: `Background removal failed (${!bgResult.ok ? bgResult.reason : 'unknown'}); composited with raw photo instead`,
+    };
+  } catch (compositeErr) {
+    const compositeReason = compositeErr instanceof Error ? compositeErr.message : 'Unknown compositing error';
+    // Compositing itself failed — fall all the way back to the raw photo URL,
+    // which is at least a real, viewable image.
+    return {
+      status: 'fallback',
+      photoUrl: rawPhotoUrl,
+      reason: `Compositing failed (${compositeReason}); using raw photo with no template`,
+    };
+  }
+}
+
+/**
+ * No-template pipeline: moderate, then (best-effort) background-remove,
+ * returning the Cloudinary cutout URL directly with no compositing. This is
+ * the function actually wired into registration approval today — see module
+ * doc for why full template compositing isn't reachable from real data yet.
+ */
+export async function processContestantPhotoNoTemplate(rawPhotoUrl: string): Promise<PhotoPipelineResult> {
+  const gated = await runModerationGate(rawPhotoUrl);
+  if (gated) return gated;
+
+  const bgResult = await removeBackground(rawPhotoUrl);
+  if (bgResult.ok) {
+    return { status: 'ready', photoUrl: bgResult.resultUrl };
+  }
+
+  // No template to fall back to compositing onto here — the only fallback
+  // available is the original, unprocessed photo URL.
+  return {
+    status: 'fallback',
+    photoUrl: rawPhotoUrl,
+    reason: `Background removal failed (${bgResult.reason}); using raw photo`,
+  };
+}
+```
+- [x] **Step 4: Implement the runner.**
+
+```ts
+// src/server/photo-jobs/runner.ts
+/**
+ * Executes one claimed job (spec §6, §7).
+ *
+ * All-or-nothing by construction: a `final` asset row is written only after the
+ * composite has been built and stored, and the job is only marked `ready` after
+ * that row exists. So a reader that finds a ready job is guaranteed a complete
+ * portrait, and any failure leaves the original exactly where the registry put
+ * it and publishes nothing under the template's name.
+ *
+ * The order of the checks is a cost order, not a convenience one. Read the row,
+ * prove the photograph is still there, get the vendor a URL it can fetch,
+ * moderate, confirm the template is still the one the job was queued for, and
+ * only then spend the paid calls (extraction, compositing). Two of those steps
+ * exist purely to avoid a misleading later failure: an unreadable original comes
+ * back from the vendor as a moderation-shaped rejection, and a template that was
+ * republished mid-queue would otherwise render the contestant onto the wrong
+ * frame and record it against the job's stale template id.
+ *
+ * Content safety keeps the fail-closed semantics already documented in
+ * `registration/photo-pipeline.ts`: `notConfigured` — literally absent
+ * credentials — is the only non-approval that may pass, and an ambiguous answer
+ * from a configured vendor never reaches the compositor.
+ *
+ * Nothing here catches an exception to keep going. Variants are the single
+ * exception, and only because a thumbnail is decoration on a portrait that is
+ * already finished and stored; losing them must not un-publish a result.
  */
 import { resolveFetchableSource } from '@/src/lib/media/asset-source';
 import { getPhotoProvider } from '@/src/lib/media/provider';
-import { compositeImage, type SlotConfig } from '@/src/lib/rendering/imageCompositor';
-import { cancelPhotoJob, completePhotoJob, failPhotoJob, getPhotoJob, setPhotoJobProgress, upsertPhotoAsset } from './job-store';
-import { readAssetBytes } from './assets';
-import { persistToR2 } from './persist';
+import { compositeImage } from '@/src/lib/rendering/imageCompositor';
 import { resolveActiveTemplateForContest } from '@/src/server/registration/template-resolver';
+import { readAssetBytes } from './assets';
+import {
+  cancelPhotoJob,
+  completePhotoJob,
+  failPhotoJob,
+  getPhotoAsset,
+  setPhotoJobProgress,
+  upsertPhotoAsset,
+  type PhotoJob,
+} from './job-store';
+import { storePhoto } from './persist';
+import { renderVariant, type VariantName } from './variants';
 
 export type RunOutcome = 'ready' | 'failed' | 'cancelled';
+
+const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 export async function runPhotoJob(job: PhotoJob): Promise<RunOutcome> {
   const provider = getPhotoProvider();
 
-  const source = await resolveFetchableSourceForJob(job);
-  if (!source) return finishFail(job, 'Original photo is not fetchable for the provider');
+  // The mobile sequence starts at `extracting` here: from this point the job is
+  // ours (claimed with a lock) and every later write is either a progress value,
+  // a terminal `ready`, or a terminal `failed`/`cancelled`.
+  await setPhotoJobProgress(job.id, 'extracting', 5);
 
-  // 1. Moderation, fail-closed.
-  const verdict = await provider.moderate(source.url);
+  const source = await getPhotoAsset(job.source_asset_id);
+  if (!source) return fail(job, `Could not read the source asset ${job.source_asset_id} for this job`);
+
+  // A deleted or unreachable original must not reach the vendor: the answer that
+  // comes back is a moderation-shaped refusal that describes neither the fault
+  // nor the fix. In P2 this same read becomes the pixel source.
+  if (!(await readAssetBytes(source))) {
+    return fail(job, 'The stored original photograph is unreadable — its bytes could not be fetched');
+  }
+
+  const stored = source.storage_key ?? source.provider_url ?? '';
+  const fetchable = await resolveFetchableSource(stored);
+  if (!fetchable.ok) {
+    return fail(job, `Original photo is not fetchable for the provider: ${fetchable.reason}`);
+  }
+
+  const verdict = await provider.moderate(fetchable.url);
   if (!verdict.approved && !verdict.notConfigured) {
     await cancelPhotoJob(job.id, verdict.reason || 'Photo failed content moderation');
     return 'cancelled';
   }
-  await setPhotoJobProgress(job.id, 'extracting', 20);
 
-  // 2. Transparent extraction.
-  const cutout = await provider.extractBackground(source.url);
-  if (!cutout.ok) return finishFail(job, cutout.reason || 'Background removal failed');
+  // Resolve before the paid calls, and against the identity the job carries: a
+  // job queued for template A must not render onto template B because an admin
+  // published a new one while the queue was backed up.
+  const template = job.contest_id ? await resolveActiveTemplateForContest(job.contest_id) : null;
+  if (!template) {
+    return fail(job, 'The contest has no active template to composite onto');
+  }
+  if (job.template_id && template.templateId !== job.template_id) {
+    return fail(
+      job,
+      `The active template changed since this job was queued (queued for ${job.template_id}, contest now resolves ${template.templateId})`,
+    );
+  }
+
+  await setPhotoJobProgress(job.id, 'extracting', 35);
+  const cutout = await provider.extractBackground(fetchable.url);
+  if (!cutout.ok) {
+    return fail(job, `Background removal failed via the ${provider.name} provider: ${cutout.reason || 'no reason given'}`);
+  }
+
   const transparentId = await upsertPhotoAsset({
-    registrationId: job.registration_id, kind: 'transparent',
-    providerUrl: cutout.resultUrl, contentType: 'image/png', contestId: job.contest_id,
+    registrationId: job.registration_id,
+    kind: 'transparent',
+    providerUrl: cutout.resultUrl,
+    contentType: 'image/png',
+    contestId: job.contest_id,
+    templateId: template.templateId,
+    templateVersion: template.templateVersion,
+    renderParams: job.render_params,
   });
-  if (!transparentId) return finishFail(job, 'Could not record the extracted cutout');
+  if (!transparentId) return fail(job, 'Could not record the transparent cutout asset');
 
-  // 3. Composite + publish. Only here can a `final` row appear.
-  await setPhotoJobProgress(job.id, 'compositing', 55);
+  await setPhotoJobProgress(job.id, 'compositing', 70);
+
+  let composited: { key: string; buffer: Buffer; mimeType: string; width: number; height: number };
   try {
-    const template = job.template_id ? await resolveActiveTemplateForContestForJob(job) : null;
-    const rendered = await compositeImage({ ...templateOrThrow(template), slots: [slotWithSource(template, cutout.resultUrl || source.url)] });
-    const finalKey = await persistToR2(rendered.buffer, rendered.mimeType, 'composited');
-    const finalId = await upsertPhotoAsset({
-      registrationId: job.registration_id, kind: 'final', storageKey: finalKey,
-      contentType: rendered.mimeType, width: rendered.width, height: rendered.height,
-      templateId: job.template_id, renderParams: job.render_params, contestId: job.contest_id,
+    // The cutout, never the original, is what goes into the slot — otherwise the
+    // feature is a rectangle pasted onto a rectangle. Falling back to the
+    // original only when there is no cutout URL is `photo-pipeline.ts:122`'s
+    // existing preference, kept identical so both code paths agree.
+    const rendered = await compositeImage({
+      templateUrl: template.templateUrl,
+      templateWidth: template.templateWidth,
+      templateHeight: template.templateHeight,
+      slots: [{ ...template.slot, photo_url: cutout.resultUrl || fetchable.url }],
     });
-    const previewId = await writeVariant(job, rendered, 'preview', 1080);
-    await writeVariant(job, rendered, 'thumbnail', 320);
-    await completePhotoJob(job.id, finalId ?? previewId ?? transparentId);
-    return 'ready';
+    composited = { ...rendered, key: await storePhoto(rendered.buffer, rendered.mimeType, 'composited') };
   } catch (err) {
-    return finishFail(job, err instanceof Error ? err.message : 'Compositing failed');
+    return fail(job, `Compositing failed: ${messageOf(err)}`);
+  }
+
+  const finalId = await upsertPhotoAsset({
+    registrationId: job.registration_id,
+    kind: 'final',
+    storageKey: composited.key,
+    contentType: composited.mimeType,
+    width: composited.width,
+    height: composited.height,
+    bytes: composited.buffer.byteLength,
+    templateId: template.templateId,
+    templateVersion: template.templateVersion,
+    renderParams: job.render_params,
+    contestId: job.contest_id,
+  });
+  if (!finalId) {
+    return fail(job, 'The composite was stored but its asset row could not be recorded');
+  }
+
+  await writeVariants(job, composited.buffer, template);
+
+  if (!(await completePhotoJob(job.id, finalId))) {
+    // The bytes exist and the row exists, so this is a job-table fault, and an
+    // operator has to be able to tell that apart from "the portrait failed".
+    return fail(job, 'The composite is stored but the job could not be marked ready');
+  }
+  return 'ready';
+}
+
+/** Preview and thumbnail. A failure here is logged and skipped: the portrait is
+ *  already stored and recorded, and the surfaces that want a variant fall back
+ *  to the `final` asset rather than showing nothing. */
+async function writeVariants(
+  job: PhotoJob,
+  finalBuffer: Buffer,
+  template: { templateId: string; templateVersion: number },
+): Promise<void> {
+  for (const name of ['preview', 'thumbnail'] as VariantName[]) {
+    try {
+      const variant = await renderVariant(finalBuffer, name);
+      const key = await storePhoto(variant.buffer, variant.mimeType, name);
+      await upsertPhotoAsset({
+        registrationId: job.registration_id,
+        kind: name,
+        storageKey: key,
+        contentType: variant.mimeType,
+        width: variant.width,
+        height: variant.height,
+        bytes: variant.buffer.byteLength,
+        templateId: template.templateId,
+        templateVersion: template.templateVersion,
+        renderParams: job.render_params,
+        contestId: job.contest_id,
+      });
+    } catch (err) {
+      console.warn(`[photo-jobs] ${name} variant failed for job ${job.id}:`, messageOf(err));
+    }
   }
 }
 
-async function finishFail(job: PhotoJob, reason: string): Promise<'failed'> {
+async function fail(job: PhotoJob, reason: string): Promise<'failed'> {
   await failPhotoJob(job.id, reason);
   return 'failed';
 }
 ```
+- [x] **Step 5: Run to verify pass.**
+  `npx vitest run tests/unit/photo-jobs/ tests/unit/registration/photo-pipeline.test.ts`
+  → `Test Files 6 passed (6)`, `Tests 66 passed (66)` — 17 runner, 16 job-store,
+  11 registry, 7 assets, 5 variants, 10 existing pipeline cases (unchanged, which
+  is the proof that sharing the writer did not alter the review path).
+  Wider run `npx vitest run tests/unit/registration tests/unit/photo-jobs` →
+  `Test Files 1 failed | 38 passed (39)`, `Tests 2 failed | 318 passed (320)`; the
+  two failures are `contest-admin-schedule-route.spec.ts` and reproduce on
+  `origin/main` (`b926c8b4b`) in a throwaway worktree — see Task 5's note.
+  `npm run type-check` → exit 0.
 
-Fill the four small helpers the skeleton names — `resolveFetchableSourceForJob` (loads the source asset row with `getPhotoJob`/`select` on `contest_photo_assets`, then `resolveFetchableSource(asset.storage_key ?? asset.provider_url)`), `templateOrThrow` (throws `No active template for this contest` when unresolvable, which is a *failed* job rather than a silent un-composited publish), `slotWithSource` (spreads `template.slot` with `photo_url` set, exactly as `photo-pipeline.ts:130` does today), and `writeVariant` (sharp-resize the rendered buffer to the variant's max width, persist, `upsertPhotoAsset(kind, storageKey)`). All four are ten-line functions with the behaviour pinned by the tests above; the no-template case must keep `photo-pipeline.ts`'s documented preference (composite the original when extraction fails is P2's concern — in P1 a template-less job fails loudly rather than publishing an unstyled portrait under a template's name).
+- [x] **Step 6: Commit** — `b1f68c225 feat(photo): job runner publishes assets only when a composite is complete`.
 
-- [ ] **Step 5: Run to verify pass** — the six runner cases green; `compositeImage` is never called on any failure path (asserted).
-- [ ] **Step 6: Commit** — `git commit -am "feat(photo): job runner publishes assets only when a composite is complete"`
+**Corrections to the draft** (what an executor would otherwise get wrong):
 
----
-
+1. The draft's mock line `vi.mock('@/src/lib/media/provider', () =>
+   deps.getPhotoProvider)` hands the factory a bare function, so the module has
+   no `getPhotoProvider` export. Delivered: `() => ({ getPhotoProvider:
+   deps.getPhotoProvider })`.
+2. `persistToR2` is **not** lifted as-is. It returned a public URL, and an asset
+   row must store the object key (a URL is derived at read time). Delivered:
+   `storePhoto(buffer, mimeType, prefix) -> key` in `photo-jobs/persist.ts`, and
+   `photo-pipeline.ts` keeps a same-file `persistToR2` wrapper that adds
+   `getR2PublicUrl` on top. Two names for two different returns, deliberately:
+   one name with two returns is how a caller starts storing the wrong half.
+3. The draft read the source row with `getPhotoJob`; the job already carries
+   `source_asset_id`. Delivered: a new `getPhotoAsset(id)` in `job-store.ts`
+   selecting an explicit column list, so dropping `storage_key`/`provider_url`
+   from the select fails a test instead of surfacing as a null inside a job.
+4. The draft's `Produces` named `readOriginalBytes(asset)` on the runner; the
+   delivered module is `photo-jobs/assets.ts` with `readAssetBytes` — the name
+   its own mock already used.
+5. Variants became a module of their own with a **real-pixel** test. The runner's
+   compositor stub returns `Buffer.from('final')`, which sharp cannot decode, so
+   the resize could never be exercised from `runner.test.ts`; `variants.test.ts`
+   builds 1080x1350 PNGs with sharp and re-opens the output to measure width,
+   height and `hasAlpha`.
+6. The draft's `templateOrThrow` threw *inside* the compositing `try`, so a
+   missing template would have been reported as "Compositing failed". Delivered:
+   the template is resolved and checked inline before the paid calls, a stale
+   `template_id` fails with a message naming both ids, and no template fails with
+   `no active template` — the job is reported, not re-labelled.
+7. The draft announced progress `['extracting', 20]` and `['compositing', 55]`.
+   Delivered ladder is `5 / 35 / 70` and **no `ready` write**: the migration's
+   `complete_photo_job` sets `status='ready', progress=100` in one statement, so
+   a runner that also announced ready would put two updates on the very row the
+   client is polling.
+8. The draft called `completePhotoJob(job.id, finalId ?? previewId ??
+   transparentId)`. That marks a job `ready` whose `final` row was refused, and
+   points `result_asset_id` at a cutout. Delivered: a refused `final` row fails
+   the job before any variant is written, and a refused completion says the
+   composite is stored but "could not be marked ready" — an operator can tell a
+   job-table fault from a portrait failure.
+9. The draft read bucket bytes by presigning a URL and fetching it from itself.
+   Delivered: `readR2Object(key)` in `src/lib/storage/r2.ts`, the mirror of the
+   `uploadR2Object` that already exists there; `null` means the object is not
+   there, and credential/network faults throw so the two stay distinguishable.
+10. The draft fetched any stored `provider_url`. Delivered: only hosts on
+    `allowedRemoteImageHostnames` (the same predicate `imageCompositor` uses),
+    because a background job with no user in the loop reading an arbitrary URL
+    from a row is an SSRF primitive. `assets.test.ts` asserts `fetch` was **not**
+    called, not merely that the result was null.
+11. Two test expectations were corrected against the migration and the existing
+    pipeline after the draft was written: the ambiguous-moderation case is
+    `cancelled` (a configured vendor's non-approval is a verdict, and
+    `photo-pipeline.ts`'s `runModerationGate` already rejects everything that is
+    not `approved` or `notConfigured`), and its title now says so; and
+    `complete_photo_job`'s own status write removed the `['ready', 100]` entry
+    from the expected progress sequence.
+12. The draft's final line told the implementer to "fill the four small helpers"
+    without writing them. That is a plan failure by the skill's own rule, so the
+    delivered bodies above replace the skeleton; the behaviour each one was
+    supposed to have is pinned by the named case in `runner.test.ts`.
 ### Task 7: The worker — opportunistic drain with one loop per process
 
 **Files:**
