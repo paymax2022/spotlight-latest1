@@ -6,7 +6,7 @@
 // Who calls it: the admin console (frontend-admin/app/admin/competitions/create),
 // which has to offer the same LGA list the contest's own applicants see. The web
 // wizard reads the table directly — it lives in this bundle — so this route is a
-// distribution point, not a second source of truth. Copying the 774 rows into the
+// distribution point, not a second source of truth. Copying the whole table into the
 // console would be the alternative, and the third copy in the repo after the mobile
 // app's own table.
 //

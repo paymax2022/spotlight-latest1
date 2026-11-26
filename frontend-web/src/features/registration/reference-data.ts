@@ -61,7 +61,7 @@ export const NIGERIA_CITIES_BY_STATE: Record<string, string[]> = {
 /**
  * The same table, named for what it actually holds.
  *
- * `NIGERIA_CITIES_BY_STATE` has always been the 774 local government areas
+ * `NIGERIA_CITIES_BY_STATE` has always been the list of local government areas
  * (Anambra -> Onitsha North / Onitsha South, not "Onitsha"), while the key and
  * the wizard label said "city / town". The locality cascade needs an LGA list
  * and the residence picker keeps using this one, so rather than duplicate 37
