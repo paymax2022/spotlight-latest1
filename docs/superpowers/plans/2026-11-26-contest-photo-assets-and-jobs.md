@@ -4660,130 +4660,1387 @@ export async function listPhotoAssets(registrationId: string): Promise<PhotoAsse
     payload would pass the code assertion and leak asset keys.
 ### Task 9: Stop overwriting the original, in submit and in review
 
+**Executed 2026-11-27 as `b78cd150d`** (14 files, 1250 insertions / 158
+deletions; **78 cases green** across the six test files it touched — 17
+`review-no-overwrite`, 5 `submit-photo-hook`, 7 `review-template-wiring`, 15
+`asset-source`, 12 `registry`, 22 `consent-gating`). The section below is the
+delivered code, not the draft; the draft's defects — a call site that could
+still write a photo value, a drain that made the admin wait on a vendor, a
+key list that named no field the current forms emit, and markers nobody reads —
+are listed after it.
+
 **Files:**
-- Modify: `frontend-web/src/server/registration/supabase-store.ts:1032-1081` (the review branch), plus `submitRegistrationApplication` near :540
-- Create: `frontend-web/src/server/photo-jobs/presentation.ts`
-- Test: `frontend-web/tests/unit/photo-jobs/review-no-overwrite.test.ts`
-- Modify: `frontend-web/src/server/registration/photo-pipeline.ts:8-29` (stale module doc)
-- Modify: `frontend-web/src/server/registration/template-resolver.ts` (`ResolvedTemplate.templateId`, `templateVersion`)
+- Create: `frontend-web/src/server/photo-jobs/presentation.ts` — the whole
+  decision: which field is the applicant's photograph, what to show, what to
+  record, and the rule that none of it may be written.
+- Modify: `frontend-web/src/server/registration/supabase-store.ts` — the review
+  branch (was the synchronous pipeline call plus the overwrite at :1001-1073,
+  now :1016-1086) and the submission hook (now :596-621).
+- Modify: `frontend-web/src/lib/media/asset-source.ts` — `uploadObjectKeyFor`
+  now delegates to `contestantPhotoObjectKey`, so "does this value name an
+  object in our bucket" has one answer (the ranking in Step 3 depends on it).
+- Modify: `frontend-web/src/server/photo-jobs/persist.ts` — exports
+  `RENDERED_PHOTO_PREFIXES`, the single list that names rendered output.
+- Modify: `frontend-web/src/server/photo-jobs/registry.ts` — a contest with no
+  active template records the original and queues nothing (`skipped:
+  'noTemplate'`) instead of paying for a render that cannot succeed.
+- Modify: `frontend-web/src/server/photo-jobs/status-read.ts` — `latestOfKind`
+  (newest-first) and `publishedPortraitFor(registrationId)`, which derives the
+  composite's URL by the rule Task 8 established.
+- Modify: `frontend-web/src/server/registration/photo-pipeline.ts` and
+  `frontend-web/src/server/registration/template-resolver.ts` — module docs
+  corrected to state who calls them now.
+- Test: `frontend-web/tests/unit/photo-jobs/review-no-overwrite.test.ts` (new, 17)
+- Test: `frontend-web/tests/unit/registration/submit-photo-hook.test.ts` (new, 5)
+- Test: `frontend-web/tests/unit/registration/review-template-wiring.test.ts`
+  (rewritten around the new seam, 7)
+- Test: `frontend-web/tests/unit/media/asset-source.test.ts`,
+  `tests/unit/photo-jobs/registry.test.ts`,
+  `tests/unit/registration/consent-gating.test.ts` (extended / re-mocked)
 
 **Interfaces:**
-- Consumes: `registerOriginalAndEnqueue` (Task 5), `getLatestPhotoJob` (Task 8), `drainPhotoJobs`/`maybeDrainPhotoJobs` (Task 7).
-- Produces: `resolveReviewPhotoOutcome(rawPhotoUrl: string | undefined, registrationId: string, nextFormData: Record<string, unknown>): Promise<PhotoPresentation>` where `PhotoPresentation` is `{ mode: 'composite' | 'processing' | 'original' | 'rejected'; photoUrl: string; photoAssetId?: string; reason?: string }`.
+- Consumes: `registerOriginalAndEnqueue` (Task 5), `getLatestPhotoJob` and
+  `listPhotoAssets` (Task 8), `kickDrain` (Task 8), `uploadObjectKeyFor`,
+  `RENDERED_PHOTO_PREFIXES`, `ApiError` and `PROMOTING_STATUSES`
+  (`supabase-store.ts`).
+- Produces:
+  - `type PhotoMode = 'composite' | 'processing' | 'original' | 'rejected'`
+  - `interface PhotoPresentation { mode: PhotoMode; photoUrl: string; photoAssetId?: string; originalAssetId?: string; reason?: string }`
+  - `storedPhotoValueFor(formData: Record<string, unknown> | null | undefined): string | undefined`
+  - `resolveReviewPhotoOutcome(input: { rawPhotoUrl?: string | null; registrationId: string; contestSlug?: string | null }): Promise<PhotoPresentation>`
+  - `startPhotoForSubmission(input: { registrationId: string; contestSlug?: string | null; formData: Record<string, unknown> | null | undefined }): Promise<{ started: boolean }>`
+  - `RENDERED_PHOTO_PREFIXES: readonly ['composited', 'preview', 'thumbnail', 'transparent']`
+  - `publishedPortraitFor(registrationId: string): Promise<{ url: string; assetId: string } | null>`
+  - the `form_data` markers every later surface reads: `media.presentation`
+    (the mode), `media.photoAssetId` (the `final` asset),
+    `media.originalAssetId` (the immutable upload), `media.presentationReason`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test** — 17 cases, delivered verbatim:
 
 ```ts
-// frontend-web/tests/unit/photo-jobs/review-no-overwrite.test.ts
+/**
+ * Spec §6 + §10: approving an application must never rewrite the stored
+ * photograph, and the reviewer's answer must say which portrait they are
+ * looking at.
+ *
+ * The defect this replaces (`supabase-store.ts:1067`) assigned the pipeline
+ * output over `form_data['media.photoUrl']`. That key held the only pointer to
+ * the uploaded original, so a failed re-render had nothing to retry from and a
+ * reviewer could not tell a composite from an upload. These cases pin the four
+ * answers the review path may take, and — the part that is easy to get wrong —
+ * which of them are allowed to talk to the vendor at all.
+ *
+ * Nothing here waits on a vendor: the review request only ever reads the job
+ * store and, at most, enqueues. That is design §6's "nothing in this flow
+ * blocks a request on a vendor call", and it is why the drain is kicked and not
+ * awaited.
+ */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const registry = vi.hoisted(() => ({ registerOriginalAndEnqueue: vi.fn() }));
 vi.mock('@/src/server/photo-jobs/registry', () => registry);
-const store = vi.hoisted(() => ({ getLatestPhotoJob: vi.fn(), listPhotoAssets: vi.fn() }));
+
+const store = vi.hoisted(() => ({ getLatestPhotoJob: vi.fn() }));
 vi.mock('@/src/server/photo-jobs/job-store', () => store);
-const worker = vi.hoisted(() => ({ drainPhotoJobs: vi.fn() }));
-vi.mock('@/src/server/photo-jobs/worker', () => worker);
-vi.mock('@/src/server/photo-jobs/presentation', async (importOriginal) => ({ ...(await importOriginal() as object) }));
 
-import { resolveReviewPhotoOutcome } from '@/src/server/photo-jobs/presentation';
+const statusRead = vi.hoisted(() => ({ publishedPortraitFor: vi.fn(), kickDrain: vi.fn() }));
+vi.mock('@/src/server/photo-jobs/status-read', () => statusRead);
 
-const ORIGINAL = '/api/registration/uploads/abc123';
+
+import {
+  resolveReviewPhotoOutcome,
+  startPhotoForSubmission,
+  storedPhotoValueFor,
+} from '@/src/server/photo-jobs/presentation';
+
+/** A stored value of the shape the upload route mints, kept byte-for-byte
+ *  comparable so every assertion below can prove the original is untouched. */
+// base64url of `registration/u-9/face.jpg`: a route the upload endpoint would
+// really mint, so it is recognisable as one of our own objects.
+const ORIGINAL = '/api/registration/uploads/cmVnaXN0cmF0aW9uL3UtOS9mYWNlLmpwZw';
+const COMPOSITE = 'https://pub.r2.test/contestants/composited/final.png';
+
+const job = (over: Record<string, unknown> = {}) => ({
+  id: 'job-1',
+  run_key: 'photo:asset-1:tpl-1:deadbeefcafe',
+  registration_id: 'reg-1',
+  source_asset_id: 'asset-original-1',
+  result_asset_id: 'asset-final-1',
+  status: 'ready',
+  progress: 100,
+  attempt: 1,
+  max_attempts: 6,
+  last_error: null,
+  render_params: {},
+  ...over,
+});
 
 beforeEach(() => {
   vi.resetAllMocks();
-  registry.registerOriginalAndEnqueue.mockResolvedValue({ assetId: 'a1', jobId: 'j1', skipped: null });
-  worker.drainPhotoJobs.mockResolvedValue({ claimed: 1, ready: 1, failed: 0, cancelled: 0, reclaimed: 0, errors: [] });
-});
-
-it('leaves the original value byte-identical when a composite is ready', async () => {
-  store.getLatestPhotoJob.mockResolvedValue({ id: 'j1', status: 'ready', result_asset_id: 'a-final', last_error: null });
-  store.listPhotoAssets.mockResolvedValue([{ kind: 'final', storage_key: 'contestants/composited/x.png', id: 'a-final' }]);
-  const out = await resolveReviewPhotoOutcome(ORIGINAL, 'reg-1', {});
-  expect(out).toMatchObject({ mode: 'composite', photoAssetId: 'a-final' });
-  expect(out.photoUrl).not.toBe(ORIGINAL);
-});
-
-it('records the original and reports processing when nothing is ready yet', async () => {
+  registry.registerOriginalAndEnqueue.mockResolvedValue({
+    assetId: 'asset-original-1',
+    jobId: 'job-1',
+    skipped: null,
+  });
   store.getLatestPhotoJob.mockResolvedValue(null);
-  const out = await resolveReviewPhotoOutcome(ORIGINAL, 'reg-1', {});
-  expect(registry.registerOriginalAndEnqueue).toHaveBeenCalledWith(expect.objectContaining({ registrationId: 'reg-1', storedPhotoValue: ORIGINAL }));
-  expect(worker.drainPhotoJobs).toHaveBeenCalled();
-  expect(out.mode).toBe('processing');
-  expect(out.photoUrl).toBe(ORIGINAL);
+  statusRead.publishedPortraitFor.mockResolvedValue({ url: COMPOSITE, assetId: 'asset-final-1' });
 });
 
-it('never blocks an approval on a vendor failure', async () => {
-  store.getLatestPhotoJob.mockResolvedValue({ id: 'j1', status: 'paused', last_error: 'Cloudinary returned 503', result_asset_id: null });
-  const out = await resolveReviewPhotoOutcome(ORIGINAL, 'reg-1', {});
-  expect(out).toMatchObject({ mode: 'original', photoUrl: ORIGINAL, reason: 'Cloudinary returned 503' });
+describe('resolveReviewPhotoOutcome: the composite is only ever reported, never written back', () => {
+  it('answers composite from the finished asset and leaves the original value alone', async () => {
+    store.getLatestPhotoJob.mockResolvedValue(job());
+
+    const out = await resolveReviewPhotoOutcome({ rawPhotoUrl: ORIGINAL, registrationId: 'reg-1' });
+
+    expect(out).toEqual({
+      mode: 'composite',
+      photoUrl: COMPOSITE,
+      photoAssetId: 'asset-final-1',
+      originalAssetId: 'asset-original-1',
+    });
+    // A job already exists, so a second approval must not mint another one.
+    expect(registry.registerOriginalAndEnqueue).not.toHaveBeenCalled();
+    expect(statusRead.kickDrain).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a composite when its bytes cannot be turned into a URL', async () => {
+    store.getLatestPhotoJob.mockResolvedValue(job());
+    statusRead.publishedPortraitFor.mockResolvedValue(null);
+
+    const out = await resolveReviewPhotoOutcome({ rawPhotoUrl: ORIGINAL, registrationId: 'reg-1' });
+
+    expect(out.mode).toBe('original');
+    expect(out.photoUrl).toBe(ORIGINAL);
+    expect(out.reason).toContain('no URL could be derived');
+  });
+
+  it('reads a job that already exists instead of minting a second one', async () => {
+    // `failed` and `paused` are deliberately not re-armed here: the ladder owns
+    // when the next vendor call happens, and an approval click that reset
+    // `available_at` would retry a down vendor once per review. Exhaustion is
+    // reported as an operator blocker by /api/admin/photo-config-status instead.
+    const cases: [string, string][] = [
+      ['queued', 'processing'],
+      ['extracting', 'processing'],
+      ['compositing', 'processing'],
+      ['failed', 'original'],
+      ['paused', 'original'],
+    ];
+    for (const [status, mode] of cases) {
+      vi.resetAllMocks();
+      store.getLatestPhotoJob.mockResolvedValue(
+        job({ status, progress: 5, result_asset_id: null, last_error: 'vendor said no' }),
+      );
+
+      const out = await resolveReviewPhotoOutcome({ rawPhotoUrl: ORIGINAL, registrationId: 'reg-1' });
+
+      expect(registry.registerOriginalAndEnqueue).not.toHaveBeenCalled();
+      expect(statusRead.kickDrain).not.toHaveBeenCalled();
+      expect(out.mode).toBe(mode);
+      // Either way the reviewer is shown the upload, byte-identical.
+      expect(out.photoUrl).toBe(ORIGINAL);
+      if (mode === 'original') expect(out.reason).toBe('vendor said no');
+    }
+  });
+
+  it('never blocks an approval on a vendor failure: a paused job presents the original', async () => {
+    store.getLatestPhotoJob.mockResolvedValue(
+      job({ status: 'paused', progress: 5, result_asset_id: null, last_error: 'Cloudinary returned 503' }),
+    );
+
+    const out = await resolveReviewPhotoOutcome({ rawPhotoUrl: ORIGINAL, registrationId: 'reg-1' });
+
+    expect(out).toEqual({
+      mode: 'original',
+      photoUrl: ORIGINAL,
+      originalAssetId: 'asset-original-1',
+      reason: 'Cloudinary returned 503',
+    });
+  });
+
+  it('surfaces a moderation verdict as rejected, so the caller can refuse the approval', async () => {
+    store.getLatestPhotoJob.mockResolvedValue(
+      job({ status: 'cancelled', progress: 5, result_asset_id: null, last_error: 'Rejected: violence' }),
+    );
+
+    const out = await resolveReviewPhotoOutcome({ rawPhotoUrl: ORIGINAL, registrationId: 'reg-1' });
+
+    expect(out.mode).toBe('rejected');
+    expect(out.reason).toBe('Rejected: violence');
+    // Still the original: a refusal must not leave the application with no photo.
+    expect(out.photoUrl).toBe(ORIGINAL);
+  });
 });
 
-it('surfaces a moderation verdict as rejected', async () => {
-  store.getLatestPhotoJob.mockResolvedValue({ id: 'j1', status: 'cancelled', last_error: 'Rejected: violence', result_asset_id: null });
-  expect(await resolveReviewPhotoOutcome(ORIGINAL, 'reg-1', {})).toMatchObject({ mode: 'rejected' });
+describe('resolveReviewPhotoOutcome: the first approval records the original and starts a render', () => {
+  it('registers the original, kicks the queue without waiting, and says processing', async () => {
+    const out = await resolveReviewPhotoOutcome({
+      rawPhotoUrl: ORIGINAL,
+      registrationId: 'reg-1',
+      contestSlug: 'open-mic-competition',
+    });
+
+    expect(registry.registerOriginalAndEnqueue).toHaveBeenCalledWith({
+      registrationId: 'reg-1',
+      contestSlug: 'open-mic-competition',
+      storedPhotoValue: ORIGINAL,
+    });
+    expect(statusRead.kickDrain).toHaveBeenCalledTimes(1);
+    expect(out).toEqual({
+      mode: 'processing',
+      photoUrl: ORIGINAL,
+      originalAssetId: 'asset-original-1',
+    });
+  });
+
+  it('says original, not processing, when the contest has nothing to composite onto', async () => {
+    registry.registerOriginalAndEnqueue.mockResolvedValue({
+      assetId: 'asset-original-1',
+      jobId: null,
+      skipped: 'noTemplate',
+    });
+
+    const out = await resolveReviewPhotoOutcome({ rawPhotoUrl: ORIGINAL, registrationId: 'reg-1' });
+
+    expect(out.mode).toBe('original');
+    expect(out.photoUrl).toBe(ORIGINAL);
+    expect(out.originalAssetId).toBe('asset-original-1');
+    expect(out.reason).toContain('template');
+    // No job exists, so kicking a drain would query an empty queue for nothing.
+    expect(statusRead.kickDrain).not.toHaveBeenCalled();
+  });
+
+  it('carries a source problem into the reason instead of inventing a job', async () => {
+    registry.registerOriginalAndEnqueue.mockResolvedValue({
+      assetId: 'asset-original-1',
+      jobId: null,
+      skipped: 'notFetchable: R2 is not configured to presign one',
+    });
+
+    const out = await resolveReviewPhotoOutcome({ rawPhotoUrl: ORIGINAL, registrationId: 'reg-1' });
+
+    expect(out.mode).toBe('original');
+    expect(out.reason).toContain('R2 is not configured');
+  });
+
+  it('will not register rendered output as somebody\'s original photograph', async () => {
+    // The registry call is what mints the immutable `original` asset row, so a
+    // value under a rendered prefix has to be displayed without being
+    // recorded: approving a legacy row that only ever held a composite keeps
+    // showing that portrait, but it must not become the source every later
+    // re-render reads.
+    const outcome = await resolveReviewPhotoOutcome({
+      rawPhotoUrl: COMPOSITE,
+      registrationId: 'reg-1',
+      contestSlug: 'open-mic-competition',
+    });
+    expect(outcome).toEqual({
+      mode: 'original',
+      photoUrl: COMPOSITE,
+      reason: expect.stringContaining('rendered'),
+    });
+    expect(registry.registerOriginalAndEnqueue).not.toHaveBeenCalled();
+    expect(statusRead.kickDrain).not.toHaveBeenCalled();
+  });
+
+  it('an application with no photo needs no job and no vendor at all', async () => {
+    const out = await resolveReviewPhotoOutcome({ registrationId: 'reg-1' });
+
+    expect(out).toEqual({ mode: 'original', photoUrl: '', reason: 'noPhoto' });
+    expect(store.getLatestPhotoJob).not.toHaveBeenCalled();
+    expect(registry.registerOriginalAndEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('a store that cannot answer is reported as processing, never as a composite', async () => {
+    store.getLatestPhotoJob.mockRejectedValue(new Error('db down'));
+
+    const out = await resolveReviewPhotoOutcome({ rawPhotoUrl: ORIGINAL, registrationId: 'reg-1' });
+
+    expect(out.mode).toBe('original');
+    expect(out.photoUrl).toBe(ORIGINAL);
+    expect(out.reason).toContain('db down');
+  });
 });
 
-it('a no-photo approval needs no job at all', async () => {
-  const out = await resolveReviewPhotoOutcome(undefined, 'reg-1', {});
-  expect(out.mode).toBe('processing');
-  expect(registry.registerOriginalAndEnqueue).not.toHaveBeenCalled();
+describe('storedPhotoValueFor: one rule for which value is this applicant’s photo', () => {
+  it('prefers the legacy keys, then the key every current form collects', () => {
+    expect(
+      storedPhotoValueFor({ 'media.photoUrl': 'a', 'media.headshotUrl': 'b', 'media.profilePhoto': 'c' }),
+    ).toBe('a');
+    expect(storedPhotoValueFor({ 'media.headshotUrl': 'b', 'media.profilePhoto': 'c' })).toBe('b');
+    expect(storedPhotoValueFor({ 'media.profilePhoto': 'c' })).toBe('c');
+    expect(storedPhotoValueFor({ 'media.profilePhoto': '   ' })).toBeUndefined();
+    expect(storedPhotoValueFor({})).toBeUndefined();
+  });
+
+  it('flattens the object the mobile client stores into a value the registry can read', () => {
+    expect(
+      storedPhotoValueFor({
+        media: {},
+        'media.profilePhoto': { fileName: 'me.jpg', previewUrl: '/api/registration/uploads/eA', storageKey: 'registration/u1/me.jpg' },
+      }),
+    ).toBe('registration/u1/me.jpg');
+    expect(storedPhotoValueFor({ 'media.profilePhoto': { previewUrl: '/api/registration/uploads/eA' } })).toBe(
+      '/api/registration/uploads/eA',
+    );
+    // An object with neither field is not a photo; stringifying it would store
+    // "[object Object]" as the contestant's portrait.
+    expect(storedPhotoValueFor({ 'media.profilePhoto': { fileName: 'me.jpg' } })).toBeUndefined();
+  });
+  it('refuses to mistake a rendered portrait for the photograph it was made from', () => {
+    // The old review path overwrote `media.photoUrl` with the composite, so a
+    // legacy row can hold output under the key that used to hold the upload
+    // while `media.profilePhoto` still holds the upload. Taking the first key
+    // that is merely non-empty would register the composite as this
+    // contestant's "original" and render a face onto a frame onto a face.
+    const composited = 'https://pub.r2.test/contestants/composited/9f14e45f.png';
+    expect(storedPhotoValueFor({ 'media.photoUrl': composited, 'media.profilePhoto': ORIGINAL })).toBe(ORIGINAL);
+    expect(storedPhotoValueFor({ 'media.photoUrl': 'contestants/preview/x.png' })).toBeUndefined();
+    expect(storedPhotoValueFor({ 'media.profilePhoto': { storageKey: 'contestants/thumbnail/x.png' } })).toBeUndefined();
+    // Same recovery for the other overwrite: the no-template fallback stored
+    // the vendor's own cutout URL. That string is not recognisable as rendered
+    // output by shape, but it is not one of our objects either, so the ranking
+    // prefers the upload sitting in the next key.
+    expect(
+      storedPhotoValueFor({
+        'media.photoUrl': 'https://res.cloudinary.com/dxxx/image/upload/e_background_removal/cut.png',
+        'media.profilePhoto': ORIGINAL,
+      }),
+    ).toBe(ORIGINAL);
+    // A named limit: when nothing of ours exists the external value is still
+    // presented. Refusing to show any portrait is worse for the reviewer than
+    // showing one that has been used over, and the asset row records which
+    // value was actually the source.
+    expect(storedPhotoValueFor({ 'media.photoUrl': 'https://cdn.example.com/headshot.jpg' })).toBe(
+      'https://cdn.example.com/headshot.jpg',
+    );
+  });
+  });
+
+
+describe('startPhotoForSubmission: rendering starts at submit, and never fails the submit', () => {
+  it('enqueues with the contest slug and kicks the queue', async () => {
+    await startPhotoForSubmission({
+      registrationId: 'reg-1',
+      contestSlug: 'open-mic-competition',
+      formData: { 'media.profilePhoto': ORIGINAL },
+    });
+
+    expect(registry.registerOriginalAndEnqueue).toHaveBeenCalledWith({
+      registrationId: 'reg-1',
+      contestSlug: 'open-mic-competition',
+      storedPhotoValue: ORIGINAL,
+    });
+    expect(statusRead.kickDrain).toHaveBeenCalledTimes(1);
+  });
+
+  it('swallows a registry failure — a broken pipeline must not undo a submission', async () => {
+    registry.registerOriginalAndEnqueue.mockRejectedValue(new Error('enqueue exploded'));
+
+    await expect(
+      startPhotoForSubmission({ registrationId: 'reg-1', formData: { 'media.profilePhoto': ORIGINAL } }),
+    ).resolves.toEqual({ started: false });
+    expect(statusRead.kickDrain).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the application has no photo', async () => {
+    await expect(
+      startPhotoForSubmission({ registrationId: 'reg-1', formData: { 'personal.bio': 'hi' } }),
+    ).resolves.toEqual({ started: false });
+    expect(registry.registerOriginalAndEnqueue).not.toHaveBeenCalled();
+  });
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — FAIL, `presentation.ts` missing.
-- [ ] **Step 3: Write `presentation.ts`** as the pure-ish orchestrator above: look for an existing job, and if none exists call `registerOriginalAndEnqueue({ registrationId, storedPhotoValue })`, attempt one bounded drain (`drainPhotoJobs({ limit: 1 })`) so the common case returns a composite in the same request, then read the newest job again and map `ready → composite`, `queued/extracting/compositing → processing`, `failed/paused → original`, `cancelled → rejected`. `photoUrl` is the *published* URL for composite mode and **always the untouched original** otherwise. It must never write into `nextFormData`.
 
-- [ ] **Step 4: Change the call site.** Replace the block at `supabase-store.ts:1032-1081` so that the four outcome modes drive behaviour, and delete the assignment that destroys the original:
+- [x] **Step 2: Run it to verify failure.** Red as expected:
+  `Cannot find module '@/src/server/photo-jobs/presentation'` — the module this
+  task creates did not exist, and the review path it replaces had no seam to
+  test through. One red came out of the test itself rather than the source and
+  is worth recording: the draft's fixture `/api/registration/uploads/abc123`
+  never matches the "names an object of ours" test, because `abc123` is not a
+  decodable object key (the delivered fixture uses the base64url of
+  `registration/u-9/face.jpg`, which is what the upload route really mints). A
+  scratch probe proved the split — `uploadObjectKeyFor` answered correctly while
+  `storedPhotoValueFor` still returned a vendor URL — which is why the ranking
+  and the rendered-output filter in Step 3 exist.
+
+- [x] **Step 3: Write `presentation.ts`**, delivered verbatim. Read it for the
+  two rules that are not in the draft: nothing in this file writes, and a
+  promotion never waits on a vendor.
 
 ```ts
-// BEFORE (spec §2 defect 1) — the composite overwrote the only reference to the
-// uploaded file:
-//   if (nextFormData['media.photoUrl'] !== undefined) {
-//     nextFormData['media.photoUrl'] = pipelineResult.photoUrl;
-//   } else {
-//     nextFormData['media.headshotUrl'] = pipelineResult.photoUrl;
-//   }
+/**
+ * Decides which portrait a promotion should present — and guarantees that
+ * deciding never rewrites the one the contestant uploaded (spec §6).
+ *
+ * This module exists because the code it replaces did the same job by
+ * assignment: `supabase-store.ts:1067` wrote the pipeline's output over
+ * `form_data['media.photoUrl']`, which was the only pointer to the original
+ * upload. Two things went wrong with that. The original became unrecoverable —
+ * no asset row, no key, nothing to re-render from — and the value a reader saw
+ * stopped telling them which of the two it was. Both are the same defect seen
+ * from different ends: one column was asked to be both the input and the output.
+ *
+ * So the rule here is that nothing in this file can write. It reads the newest
+ * job, asks for the published asset when a job is ready, and returns a *mode*
+ * for the caller to record. The caller's job is to store that mode next to the
+ * untouched original, which is what lets every later surface say "this is the
+ * composite" or "this is still the upload" without guessing.
+ *
+ * The second rule is that a promotion is never held up by a vendor. Only the
+ * branch where no job exists yet touches the pipeline, and it enqueues rather
+ * than renders: the queue's own ladder, lock and pause-on-exhaust do the work
+ * later. An approval that 500s because Cloudinary timed out loses a decision the
+ * admin already made; an approval that says "portrait pending" loses nothing.
+ */
+import { uploadObjectKeyFor } from '@/src/lib/media/asset-source';
+import { RENDERED_PHOTO_PREFIXES } from './persist';
+import { registerOriginalAndEnqueue } from './registry';
+import { getLatestPhotoJob, type PhotoJob } from './job-store';
+import { kickDrain, publishedPortraitFor } from './status-read';
 
-const outcome = await resolveReviewPhotoOutcome(rawPhotoUrl, current.id, nextFormData);
+export type PhotoMode = 'composite' | 'processing' | 'original' | 'rejected';
 
-if (outcome.mode === 'rejected') {
-  throw new ApiError(
-    `Cannot approve: contestant photo failed content moderation (${outcome.reason}). Ask the applicant for a different photo — set the application to "More information requested".`,
-    409,
-    'photo_moderation_rejected',
-  );
+/**
+ * What a reviewer is looking at, and what to record about it.
+ *
+ * `photoUrl` is the contract: for `composite` it is the rendered portrait's URL,
+ * and in every other mode it is the stored original value, unchanged — so a
+ * caller that displays `photoUrl` is never shown a half-finished render and never
+ * handed a rewritten blob. The two ids are separate because they name different
+ * rows: `originalAssetId` is the immutable upload (the re-render source),
+ * `photoAssetId` is the `final` composite that only exists in `composite` mode.
+ */
+export interface PhotoPresentation {
+  mode: PhotoMode;
+  photoUrl: string;
+  photoAssetId?: string;
+  originalAssetId?: string;
+  reason?: string;
 }
 
-nextFormData['media.photoOriginalUrl'] = rawPhotoUrl;
-if (outcome.photoAssetId) nextFormData['media.photoAssetId'] = outcome.photoAssetId;
-nextFormData['media.photoPresentation'] = outcome.mode;
-// `media.photoUrl` keeps its original value. Surfaces read the composite through
-// `media.photoAssetId`; the original stays retrievable forever, which is what the
-// spec's "never overwrite" rule and any future re-render both need.
+/**
+ * Every key a registration has ever used for its photo, oldest first.
+ *
+ * The order is a compatibility rule, not a preference: rows written while
+ * `20260812010000_registration_contestant_seam.sql` was current hold their photo
+ * in `media.photoUrl`, and the review path has always read that key. Current
+ * forms (`src/features/registration/forms/*.ts`) collect `media.profilePhoto` and
+ * `promote_registration_to_contestant()` has read *that* key since
+ * `20260812020001:78`. Checking only the legacy names — which is what the block
+ * this file replaces did — meant a photo job was never created for any
+ * application submitted through a form in the repo today. One function now owns
+ * the answer, so the submit hook and the review hook cannot disagree about which
+ * field is the applicant's photograph.
+ */
+const PHOTO_KEYS = ['media.photoUrl', 'media.headshotUrl', 'media.profilePhoto'] as const;
+
+const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** `registry` reports why it skipped a render; a reviewer needs the same fact in
+ *  the application's own record rather than only in a log line. Anything with a
+ *  vendor message attached (`notFetchable: …`, `relative: …`) is passed through
+ *  verbatim — rewriting it here would lose the variable name the operator needs. */
+function skipReason(skipped: string): string {
+  if (skipped === 'noTemplate') return 'This contest has no active photo template yet — the original photograph is presented';
+  if (skipped === 'assetWriteFailed') return 'The original photograph could not be recorded in the asset ledger';
+  if (skipped === 'enqueueFailed') return 'The portrait render could not be queued';
+  if (skipped === 'noPhoto') return 'noPhoto';
+  return skipped;
+}
+
+/**
+ * Is this value something we *made* rather than something the contestant took?
+ *
+ * A rendered portrait is stored under one of `RENDERED_PHOTO_PREFIXES`, either
+ * as a bare object key or as the public URL derived from that key; both
+ * spellings name output. This is a shape test rather than a provenance record
+ * because the superseded review path left no provenance: it overwrote
+ * `media.photoUrl` with the composite, so a legacy row holds a rendered image
+ * under the very key that used to hold the upload, while `media.profilePhoto`
+ * still holds the upload. Registering the composite as the "original" would
+ * make every later re-render start from a face already pasted onto a frame, and
+ * would burn the one asset row that exists to be the immutable source.
+ */
+const RENDERED_KEY = new RegExp(`(?:^|/)contestants/(?:${RENDERED_PHOTO_PREFIXES.join('|')})/`);
+
+function isRenderedPortrait(value: string): boolean {
+  return RENDERED_KEY.test(value);
+}
+
+/**
+ * The applicant's photograph, exactly as the registration row stores it.
+ *
+ * `PHOTO_KEYS` order stays the scan order — legacy first, which is what the
+ * review path has always presented — but the scan is not the answer. The
+ * answer is a ranking of what the scan collects, and the ranking exists for the
+ * overwrite problem described above:
+ *
+ *  1. A candidate that names an object in our own bucket wins. The upload route
+ *     writes originals there and rendered output lives under a different
+ *     prefix, so "is this ours" is the strongest provenance claim obtainable
+ *     from a stored string — and it is what recovers the untouched photograph
+ *     for a legacy row whose `media.photoUrl` holds a vendor cutout.
+ *  2. Anything matching a rendered prefix is dropped before ranking at all, so
+ *     a row that holds *only* output is reported as having no photograph rather
+ *     than as having one it can re-render from.
+ *
+ * The mobile client stores the whole upload response (`{fileName, previewUrl,
+ * storageKey}`) while the web wizard stores the `previewUrl` route;
+ * `validation.ts:41` documents both shapes as valid and `contestant-photo.ts`
+ * reads them the same way, so the scan normalises them here rather than
+ * pretending one shape exists.
+ *
+ * A genuine limit is worth naming: an external URL we did not mint — the
+ * Cloudinary cutout the old no-template fallback returned, for instance — is
+ * indistinguishable by shape from an external original. Such a value is still
+ * presented when nothing of ours exists, because showing a reviewer no portrait
+ * is worse than showing a slightly-used-over one, and the asset row records
+ * exactly which value was the source.
+ */
+export function storedPhotoValueFor(
+  formData: Record<string, unknown> | null | undefined,
+): string | undefined {
+  if (!formData) return undefined;
+  const candidates: string[] = [];
+  for (const key of PHOTO_KEYS) {
+    const value = formData[key];
+    const text = typeof value === 'string' ? value.trim() : objectPhotoValue(value);
+    if (text && !isRenderedPortrait(text)) candidates.push(text);
+  }
+  return candidates.find((text) => uploadObjectKeyFor(text) !== null) ?? candidates[0];
+}
+
+/**
+ * A stored upload response reduced to the one string that names the file.
+ *
+ * Preferring `storageKey` over `previewUrl` keeps the durable object name
+ * instead of an in-app route that only the uploader may fetch. An object with
+ * neither field is not a photograph: `String(value)` would produce
+ * `[object Object]`, which the registry would then faithfully record as the
+ * contestant's portrait.
+ */
+function objectPhotoValue(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const blob = value as { storageKey?: unknown; previewUrl?: unknown };
+  for (const field of [blob.storageKey, blob.previewUrl]) {
+    if (typeof field === 'string' && field.trim()) return field.trim();
+  }
+  return undefined;
+}
+
+/**
+ * The presentation a promotion should record for one registration.
+ *
+ * Reads the newest job first: an application that has already been through the
+ * pipeline has a row, and minting a second one for the same photo+template is
+ * what the run key exists to prevent — but calling the registry anyway spends
+ * two writes and a vendor presign to be told `already_existed`.
+ *
+ * Never throws. A registration whose job store is unreachable is approved with
+ * its original photograph and the reason recorded, because the alternative is
+ * the admin seeing a 500 for a decision they are entitled to make.
+ */
+export async function resolveReviewPhotoOutcome(input: {
+  rawPhotoUrl?: string | null;
+  registrationId: string;
+  contestSlug?: string | null;
+}): Promise<PhotoPresentation> {
+  const stored = (input.rawPhotoUrl ?? '').trim();
+  if (!stored) return { mode: 'original', photoUrl: '', reason: 'noPhoto' };
+
+  let existing: PhotoJob | null;
+  try {
+    existing = await getLatestPhotoJob(input.registrationId);
+  } catch (err) {
+    // `job-store` answers null for a failed query, so reaching here means the
+    // client itself could not be built — a misconfigured deployment, not a
+    // vendor problem, and still not a reason to fail the review.
+    return { mode: 'original', photoUrl: stored, reason: messageOf(err) };
+  }
+  if (existing) return fromJob(existing, stored);
+
+  if (isRenderedPortrait(stored)) {
+    // Belt-and-braces for callers that hand over a raw column value instead of
+    // `storedPhotoValueFor`'s answer: a rendered portrait is displayed, and is
+    // never registered. Minting the immutable `original` asset row from it
+    // would make a composite the source of every later re-render, which is the
+    // one thing spec §11's separate-assets rule forbids. The job was still
+    // checked first, so a row that *does* have a job answers from its assets.
+    return {
+      mode: 'original',
+      photoUrl: stored,
+      reason: 'The stored value is a rendered portrait, so there is no upload to register as the original',
+    };
+  }
+
+  const outcome = await registerOriginalAndEnqueue({
+    registrationId: input.registrationId,
+    contestSlug: input.contestSlug ?? null,
+    storedPhotoValue: stored,
+  });
+
+  if (outcome.jobId) {
+    // Fire-and-forget: the queue may already be drained by another request, and
+    // either way this approval is not waiting on it.
+    kickDrain();
+    return { mode: 'processing', photoUrl: stored, originalAssetId: defined(outcome.assetId) };
+  }
+
+  return {
+    mode: 'original',
+    photoUrl: stored,
+    originalAssetId: defined(outcome.assetId),
+    reason: skipReason(outcome.skipped ?? 'unknown'),
+  };
+}
+
+async function fromJob(job: PhotoJob, stored: string): Promise<PhotoPresentation> {
+  const originalAssetId = defined(job.source_asset_id);
+
+  switch (job.status) {
+    case 'ready': {
+      const published = await publishedPortraitFor(job.registration_id).catch((err) => {
+        console.warn('[photo-jobs] published portrait read failed:', messageOf(err));
+        return null;
+      });
+      if (published) {
+        return { mode: 'composite', photoUrl: published.url, photoAssetId: published.assetId, originalAssetId };
+      }
+      // `ready` proves the runner stored bytes; a null URL therefore means this
+      // deployment cannot serve them (no public base, no presign). Report the
+      // original rather than an empty `photoUrl` that would render a broken frame.
+      return {
+        mode: 'original',
+        photoUrl: stored,
+        originalAssetId,
+        reason: 'The finished portrait is recorded but no URL could be derived for it (storage is not configured on this deployment)',
+      };
+    }
+    case 'queued':
+    case 'extracting':
+    case 'compositing':
+      return { mode: 'processing', photoUrl: stored, originalAssetId };
+    case 'cancelled':
+      // The runner cancels a job only on a content-moderation verdict, so this
+      // is the one mode the review path must refuse rather than present.
+      return { mode: 'rejected', photoUrl: stored, originalAssetId, reason: job.last_error || 'content moderation' };
+    default:
+      // `failed` and `paused`: the ladder owns the retry, and the original is a
+      // usable portrait meanwhile.
+      return { mode: 'original', photoUrl: stored, originalAssetId, reason: job.last_error || undefined };
+  }
+}
+
+const defined = (value: string | null): string | undefined => value ?? undefined;
+
+/**
+ * Start rendering at submission, so a contestant can be shown a preview before
+ * anyone reviews them (spec §6).
+ *
+ * Returns `{ started }` instead of throwing: this runs after a submission has
+ * already been booked, and a photo pipeline that cannot start must not turn a
+ * successful application into a failed request. The caller logs `started: false`
+ * and moves on; nothing about the submission itself depends on the answer.
+ */
+export async function startPhotoForSubmission(input: {
+  registrationId: string;
+  contestSlug?: string | null;
+  formData: Record<string, unknown> | null | undefined;
+}): Promise<{ started: boolean }> {
+  const stored = storedPhotoValueFor(input.formData);
+  if (!stored) return { started: false };
+  try {
+    const outcome = await registerOriginalAndEnqueue({
+      registrationId: input.registrationId,
+      contestSlug: input.contestSlug ?? null,
+      storedPhotoValue: stored,
+    });
+    if (!outcome.jobId) return { started: false };
+    kickDrain();
+    return { started: true };
+  } catch (err) {
+    console.warn('[photo-jobs] submission enqueue failed:', messageOf(err));
+    return { started: false };
+  }
+}
 ```
 
-`rawPhotoUrl` is defined at :1032-1034 and the guard at :1036 stays; `processContestantPhoto`/`processContestantPhotoNoTemplate` keep their exports and their existing tests so the synchronous path remains available to callers that need it, while nothing in the live review path waits on it. `PROMOTING_STATUSES` still owns the whole branch.
 
-- [ ] **Step 5: Enqueue at submission** (spec §6): in `submitRegistrationApplication`, immediately after the row is updated to `submitted` and before the function returns, add
+- [x] **Step 4: Change the call site.** The delivered review branch, verbatim
+  from `supabase-store.ts:1016-1086`. It is the whole of the change: `outcome.photoUrl`
+  is used for the decision it represents and is never assigned into `form_data`,
+  so "does not overwrite" is structural rather than a convention the next
+  edit has to remember.
 
 ```ts
-// Rendering starts here, not at approval, so a contestant can be shown a
-// preview while the reviewer is still queueing. Fire-and-forget: a photo job
-// must never turn a successful submission into a failed request.
-const photoValue = (draft.formData['media.photoUrl'] as string | undefined)
-  || (draft.formData['media.headshotUrl'] as string | undefined);
-if (photoValue) {
-  void registerOriginalAndEnqueue({ registrationId: draft.id, contestSlug: draft.contestSlug, storedPhotoValue: photoValue })
-    .then(() => maybeDrainPhotoJobs())
-    .catch((err) => console.warn('[photo-jobs] submission enqueue failed:', err instanceof Error ? err.message : err));
-}
+  // G-IMG / TS-3 (IMG-001/SEC-010): when this decision promotes the applicant to
+  // a public contestant, the photograph is still consulted — but it is no longer
+  // rendered inside this request, and it is no longer written. Both halves of
+  // that change are deliberate (spec §6).
+  //
+  // What happened here before: `processContestantPhoto()` composed the portrait
+  // synchronously and its output was assigned over
+  // `form_data['media.photoUrl']` — the only pointer to the uploaded file. The
+  // original became unrecoverable (no asset row, no object key, nothing to
+  // re-render from), and the value a reader saw stopped telling them which of
+  // the two it was. One column had been asked to be both the input and the
+  // output.
+  //
+  // Something the old comment got wrong, and it is worth recording: since
+  // 20260812020001_contestants_profile_columns.sql:78 the promotion RPC reads
+  // `media.profilePhoto` into `contestants.photo_url`, so the composite written
+  // to `media.photoUrl` never reached the roster any more. The overwrite was
+  // destroying the source image on every approval while presenting the raw
+  // upload — which means dropping it here changes nothing a contestant or an
+  // admin can see. Surfacing the composite is P4's job, through the asset id.
+  //
+  // Now `presentation.ts` decides what a reviewer is looking at, and the row
+  // records the *decision* (`media.presentation`) plus the asset ids beside an
+  // untouched original value. It never calls a vendor: an application without a
+  // job gets one queued and the reviewer is told the portrait is pending, since
+  // an approval that 500s on a Cloudinary timeout loses a decision the admin
+  // already made. Content moderation stays fail-closed — a job whose verdict was
+  // `cancelled` still refuses the approval with 409 `photo_moderation_rejected`;
+  // what changed is that the verdict is read from the job row instead of being
+  // fetched live inside the click.
+  //
+  // The template lookup that used to sit here is gone as a caller, not as a
+  // behaviour: template resolution happens in the registry when the job is
+  // queued (and a contest with no active template queues nothing, rather than
+  // paying six times for a job that cannot succeed), and the operator-facing
+  // answer to "which contests have a template" is
+  // `/api/admin/photo-config-status`.
+  if (PROMOTING_STATUSES.includes(input.status)) {
+    const { resolveReviewPhotoOutcome, storedPhotoValueFor } = await import(
+      '@/src/server/photo-jobs/presentation'
+    );
+    const storedPhoto = storedPhotoValueFor(nextFormData);
+
+    if (storedPhoto) {
+      const outcome = await resolveReviewPhotoOutcome({
+        rawPhotoUrl: storedPhoto,
+        registrationId: applicationId,
+        contestSlug: current.contestSlug,
+      });
+
+      if (outcome.mode === 'rejected') {
+        // IMG-001/SEC-010 content-safety gate: refuse the approval outright
+        // rather than silently promoting with no/unsafe photo. The admin
+        // sees this as a failed review action and must resolve the photo
+        // (e.g. request a new one) before retrying.
+        throw new ApiError(
+          `Cannot approve: contestant photo failed content moderation (${outcome.reason}). Ask the applicant for a different photo — set the application to "More information requested".`,
+          409,
+          'photo_moderation_rejected',
+        );
+      }
+
+      // Markers only. `media.photoUrl` keeps its original value in every mode,
+      // which is what lets the asset ledger, a later re-render, and a reader
+      // asking "is this the composite?" all still answer correctly.
+      nextFormData['media.presentation'] = outcome.mode;
+      if (outcome.photoAssetId) nextFormData['media.photoAssetId'] = outcome.photoAssetId;
+      if (outcome.originalAssetId) nextFormData['media.originalAssetId'] = outcome.originalAssetId;
+      if (outcome.reason) nextFormData['media.presentationReason'] = outcome.reason;
+    }
+  }
 ```
 
-Add a matching assertion to the existing submission test file so a regression that drops the enqueue fails: assert `registerOriginalAndEnqueue` was called with the stored photo value, and assert the returned promise still resolves when the enqueue rejects.
 
-- [ ] **Step 6: Fix the stale docs.** `photo-pipeline.ts:8-29` claims no `contest_templates`↔`connect_contests` link exists and that compositing is unreachable. It exists (`20270212000000_contest_templates_connect_bridge.sql`) and `template-resolver.ts` uses it. Rewrite that paragraph to state the current reachability, name `supabase/photo-jobs` as the async caller, and keep `processContestantPhoto` documented as the synchronous path. Add `templateId: string` and `templateVersion: number` to `ResolvedTemplate` (the query already selects `id, version` per the review at :52) and set them from the row.
-- [ ] **Step 7: Run the whole registration suite** — `npx vitest run tests/unit/registration tests/unit/photo-jobs`. The pre-existing `review-template-wiring.test.ts` will fail on the removed synchronous call; update it to assert the new behaviour (review reads the job store, no `processContestantPhoto` call) rather than deleting it, since it is the file that documents this wiring.
-- [ ] **Step 8: Commit** — `git commit -am "fix(photo): stop overwriting the contestant original; render via jobs"`
+  `rawPhotoUrl` is no longer a local read of `media.photoUrl` at :1032 — that
+  read is what the draft inherited, and it is the wrong field for every form in
+  the repo today (correction 2). `processContestantPhoto` and
+  `processContestantPhotoNoTemplate` keep their exports and their tests; nothing
+  under `src/` calls either one now, which Step 6's doc says plainly.
+
+- [x] **Step 5: Enqueue at submission** (spec §6), delivered verbatim from
+  `supabase-store.ts:596-621`:
+
+```ts
+  // Spec §6: the render starts here, not at approval, so a contestant can be
+  // shown a preview while the reviewer is still queueing — and so the first
+  // approval of a real application is not the first time the pipeline ever
+  // looked at the photograph (which is also where the moderation verdict now
+  // comes from, rather than from a vendor call inside the admin's click).
+  //
+  // Fire-and-forget on purpose. The row above is the applicant's submission and
+  // it has already succeeded: a photo queue that is down, an R2 deployment with
+  // no credentials, or a contest with no template yet must not turn that into a
+  // failed request, so the whole call is detached and its rejection swallowed.
+  // `startPhotoForSubmission` never throws and queues nothing when the
+  // application has no photograph; the check is not duplicated here so there is
+  // one rule for "what is this applicant's photo" in the file.
+  if (nextStatus === 'submitted') {
+    void import('@/src/server/photo-jobs/presentation')
+      .then(({ startPhotoForSubmission }) =>
+        startPhotoForSubmission({
+          registrationId: applicationId,
+          contestSlug: draft.contestSlug ?? null,
+          formData: draft.formData,
+        }),
+      )
+      .catch((err) =>
+        console.warn('[photo-jobs] submission enqueue failed:', err instanceof Error ? err.message : String(err)),
+      );
+  }
+```
+
+
+  and its guard, `tests/unit/registration/submit-photo-hook.test.ts`, verbatim
+  (5 cases: the hook's arguments; `awaiting_payment` queues nothing; a rejected
+  enqueue still submits and logs; a hook that throws still submits; a hook that
+  never settles still submits):
+
+```ts
+/**
+ * SPEC §6 — the render starts at SUBMISSION, not at approval.
+ *
+ * Why the hook is here rather than only in the review path: the first time any
+ * code looked at a contestant's photograph used to be the admin's approval
+ * click, which meant the moderation verdict, the background removal and the
+ * compositing all happened (or failed) inside one request, and a contestant
+ * could not be shown a processed portrait before a human had decided to promote
+ * them. Queuing at submission moves the vendor off both critical paths; the
+ * review then reads whatever the queue concluded (see
+ * `review-template-wiring.test.ts` and `photo-jobs/review-no-overwrite.test.ts`).
+ *
+ * The three properties this file exists to protect are about the hook being
+ * *detached*:
+ *
+ *  1. A successful submission stays successful when the photo queue is broken.
+ *     The row is the applicant's submission; a pipeline outage must not be
+ *     reported to them as "your application failed", so nothing here is awaited
+ *     and the rejection is swallowed with a warning.
+ *  2. A submission that has not actually happened yet (awaiting payment) starts
+ *     nothing — no vendor spend on an entry that may never exist.
+ *  3. A slow queue does not slow the applicant down. The test that makes this
+ *     provable hands the hook a promise that never settles.
+ *
+ * Harness shape is copied from `submission-lock.spec.ts`: one store import at
+ * module scope, the row under test read through a closure at query time.
+ * Re-importing per test re-transforms the whole module graph and times the file
+ * out under a full-suite run.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const APP_ID = '8977dc4a-630c-4658-9967-120dfbad1e44';
+// The route the upload endpoint mints, i.e. what today's wizard really stores.
+const PHOTO_ROUTE = '/api/registration/uploads/cmVnaXN0cmF0aW9uL3UtOS9mYWNlLmpwZw';
+
+let currentFormData: Record<string, unknown> = { 'media.rightsConfirmed': true };
+const captured: { inserts: any[]; updates: any[] } = { inserts: [], updates: [] };
+
+function draftRow() {
+  return {
+    id: APP_ID,
+    reference: 'OPENMI-000001-XXXX',
+    // A free contest on purpose: `open-mic-competition` charges a fee, so its
+    // submit lands on `awaiting_payment` and the hook would correctly not fire,
+    // which is the other test below rather than the subject of this one.
+    contest_slug: 'stem-contest',
+    status: 'draft',
+    role: 'public_user',
+    user_id: 'user-1',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    submitted_at: null,
+    completion_percent: 80,
+    current_step: 'review_submit',
+    fraud_flags: [],
+    form_data: currentFormData,
+  };
+}
+
+function chainFor(table: string, row: () => any, maybeRow: any): any {
+  const chain: any = {};
+  chain.select = () => chain;
+  chain.eq = () => chain;
+  chain.not = () => chain;
+  chain.order = () => chain;
+  chain.update = (vals: any) => {
+    captured.updates.push({ table, vals });
+    return chain;
+  };
+  chain.insert = (rows: any) => {
+    for (const r of Array.isArray(rows) ? rows : [rows]) captured.inserts.push({ table, row: r });
+    return chain;
+  };
+  chain.single = () => {
+    const data = row();
+    return Promise.resolve({ data, error: data ? null : { code: 'PGRST116', message: 'nf' } });
+  };
+  chain.maybeSingle = () => Promise.resolve({ data: maybeRow, error: null });
+  chain.then = (resolve: any) => resolve({ data: null, error: null });
+  return chain;
+}
+
+vi.mock('@supabase/supabase-js', () => ({
+  createClient: vi.fn(() => ({
+    from: (table: string) =>
+      table === 'registrations' ? chainFor(table, draftRow, null) : chainFor(table, () => null, null),
+    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+  })),
+}));
+
+vi.mock('@/src/server/voting/payment/paystack', () => ({
+  verifyPaystackPayment: vi.fn().mockResolvedValue({ success: false, amountKobo: 0 }),
+}));
+
+// One always-valid step, so the only thing that can stop the submit is the
+// hook itself — which is what these tests would be measuring.
+vi.mock('@/src/features/registration/config', async (importOriginal) => {
+  const real = (await importOriginal()) as any;
+  return {
+    ...real,
+    buildRegistrationSteps: () => [
+      {
+        key: 'category_specific',
+        title: 'Contest Requirements',
+        description: '',
+        fields: [{ key: 'media.rightsConfirmed', label: 'Rights', type: 'checkbox', required: true }],
+      },
+    ],
+  };
+});
+
+const presentation = vi.hoisted(() => ({
+  startPhotoForSubmission: vi.fn(),
+  storedPhotoValueFor: vi.fn(),
+  resolveReviewPhotoOutcome: vi.fn(),
+}));
+vi.mock('@/src/server/photo-jobs/presentation', () => presentation);
+
+const store = await import('@/src/server/registration/supabase-store');
+
+beforeEach(() => {
+  currentFormData = { 'media.rightsConfirmed': true, 'media.profilePhoto': PHOTO_ROUTE };
+  captured.inserts.length = 0;
+  captured.updates.length = 0;
+  presentation.startPhotoForSubmission.mockResolvedValue({ started: true });
+});
+
+describe('spec §6: submitting an application starts its photo render', () => {
+  it('hands the hook the registration id, the contest and the stored form data', async () => {
+    await store.submitRegistrationApplication(APP_ID);
+
+    // The hook is deliberately detached, so it lands a microtask after the
+    // response rather than before it. `waitFor` is the honest way to assert a
+    // side effect that is not on the request's critical path — and the test
+    // below that hands it a never-settling promise is what proves the
+    // detachment is real rather than merely fast.
+    await vi.waitFor(() => expect(presentation.startPhotoForSubmission).toHaveBeenCalledTimes(1));
+    expect(presentation.startPhotoForSubmission).toHaveBeenCalledWith({
+      registrationId: APP_ID,
+      contestSlug: 'stem-contest',
+      formData: expect.objectContaining({ 'media.profilePhoto': PHOTO_ROUTE }),
+    });
+  });
+
+  it('queues nothing for an entry that is still waiting to be paid for', async () => {
+    // `awaiting_payment` is not a submission: the row exists, the money does
+    // not, and a contest fee that is never paid would otherwise have spent
+    // vendor calls on an entry that never becomes a contestant.
+    currentFormData = { 'media.rightsConfirmed': true, 'media.profilePhoto': PHOTO_ROUTE, 'payment.paymentStatus': 'pending' };
+
+    const result = await store.submitRegistrationApplication(APP_ID);
+
+    expect(result.draft.status).toBe('awaiting_payment');
+    expect(presentation.startPhotoForSubmission).not.toHaveBeenCalled();
+  });
+
+  it('a broken photo queue does not fail the applicant’s submission', async () => {
+    presentation.startPhotoForSubmission.mockRejectedValue(new Error('job store unreachable'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await store.submitRegistrationApplication(APP_ID);
+
+    expect(result.success).toBe(true);
+    expect(result.draft.status).toBe('submitted');
+    // The rejection is detached, so the warning is what proves it was caught
+    // rather than simply never reached yet.
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith('[photo-jobs] submission enqueue failed:', 'job store unreachable'));
+    warn.mockRestore();
+  });
+
+  it('an unreachable presentation module is not a failed submission either', async () => {
+    // The module arrives through a dynamic import, so its failure is a
+    // rejection of the import itself, outside `startPhotoForSubmission`'s own
+    // never-throws promise. Same rule, different leg of the chain.
+    presentation.startPhotoForSubmission.mockImplementation(() => {
+      throw new Error('module evaluation exploded');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(store.submitRegistrationApplication(APP_ID)).resolves.toMatchObject({ success: true });
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    warn.mockRestore();
+  });
+
+  it('does not make the applicant wait for the queue', async () => {
+    // A promise that never settles: if the hook were awaited, this test would
+    // hit vitest's timeout rather than fail an assertion, which is the point.
+    presentation.startPhotoForSubmission.mockReturnValue(new Promise(() => {}));
+
+    await expect(store.submitRegistrationApplication(APP_ID)).resolves.toMatchObject({
+      success: true,
+      draft: { status: 'submitted' },
+    });
+  });
+});
+```
+
+
+- [x] **Step 6: Fix the stale docs.** `photo-pipeline.ts` no longer claims that
+  no `contest_templates`↔`connect_contests` link exists (it does —
+  `20270212000000_contest_templates_connect_bridge.sql`, read by
+  `template-resolver.ts`) and states the current reachability: compositing is
+  reachable, the job runner is the live caller, the synchronous entry points are
+  kept for P3's template studio, and nothing in `src/` calls them today — the
+  only remaining callers are `tests/unit/registration/photo-pipeline.test.ts`.
+  `template-resolver.ts` names `photo-jobs/registry.ts` as its caller and
+  explains why the queue asks for a template before it renders.
+  `ResolvedTemplate.templateId` / `templateVersion` were already delivered with
+  Task 5 (verified present at `template-resolver.ts:46-47`), so Step 6's ask was
+  a no-op (correction 11).
+
+- [x] **Step 7: Run the suites.** Recorded on the delivered tree:
+  - `npx tsc --noEmit` — zero errors.
+  - `npx eslint` over the 14 touched paths — 0 errors, 1 warning
+    (`photo-pipeline.ts:97` unused `eslint-disable no-console`; the identical
+    warning reproduces at :87 with this task's change reverted, so it is
+    pre-existing and was left alone rather than bundled).
+  - `npx vitest run tests/unit/photo-jobs` — 106 passed.
+  - `npx vitest run tests/unit/registration tests/unit/photo-jobs tests/unit/media`
+    — 433 passed / 2 failed (435). Both failures are
+    `contest-admin-schedule-route.spec.ts`, already recorded as pre-existing in
+    Task 5.
+  - `npx vitest run tests/unit` — 3025 passed / 5 failed / 3 skipped / 1 todo
+    (298 files). The five were attributed rather than assumed: re-running the
+    full suite with this task's `src/` and `tests/` changes reverted still
+    failed `contest-admin-schedule-route` ×2 **and** `wallet/bank.spec.ts` ×2,
+    while `beat-download-origin.spec.ts` was green in that run — and all five
+    pass in isolation on both the clean and the delivered tree. So the three
+    non-`contest-admin-schedule` failures are cross-file interference at
+    full-suite scale, not this branch's.
+
+  and the file that documents the wiring, rewritten around the new seam and
+  delivered verbatim (7 cases: the arguments the presentation layer is consulted with;
+  the decision recorded beside an untouched original; a pending render marked
+  `processing`; a moderated verdict that writes nothing at all; neither synchronous
+  pipeline called in either direction; a non-promoting decision that never reaches the
+  photo code; an application with no photograph that is not even queried):
+
+```ts
+/**
+ * AD-003/CS-004 → spec §6 — the wiring between `reviewRegistrationApplication`
+ * and the photo pipeline.
+ *
+ * This file used to guard the opposite arrangement, and it is worth keeping the
+ * shape of that history in words: when the template bridge
+ * (`contest_templates.connect_contest_id`, migration
+ * 20270212000000_contest_templates_connect_bridge.sql) resolved a template, the
+ * review request called `processContestantPhoto` synchronously and assigned the
+ * composite over `form_data['media.photoUrl']` — the only pointer to the
+ * uploaded file. What that guard was protecting was a defect: every approval
+ * destroyed the original it had just promoted.
+ *
+ * So the three things asserted here are the new contract:
+ *
+ *  1. An approval consults `presentation.ts` with the stored photo value, the
+ *     registration id and the contest slug, and calls neither synchronous
+ *     pipeline function. The vendor is not on the critical path of a decision
+ *     the admin has already made (spec §6).
+ *  2. The row that gets written carries the *decision* — `media.presentation`
+ *     plus the asset ids — and `media.photoUrl` is byte-identical to what was
+ *     read. That is the regression guard for the overwrite: it is checked on
+ *     the payload handed to the UPDATE, because a test that only asserts the
+ *     returned outcome would still pass if the assignment came back.
+ *  3. A non-promoting decision never reaches the photo code at all.
+ *
+ * Mocks `@supabase/supabase-js` directly — supabase-store.ts builds its own
+ * lazy client via createClient the same way template-resolver.ts does, not
+ * through @/lib/supabase/server.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const RAW_PHOTO = 'https://cdn.test/raw-photo.jpg';
+const COMPOSITE = 'https://pub.r2.test/contestants/composited/final.png';
+
+const registrationsRow = {
+  id: '11111111-1111-4111-8111-111111111111',
+  reference: 'OPENMI-000001-ABCD',
+  contest_slug: 'open-mic-competition',
+  status: 'under_review',
+  role: 'public_user',
+  user_id: 'user-1',
+  created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-01T00:00:00Z',
+  submitted_at: '2026-01-01T00:00:00Z',
+  completion_percent: 100,
+  current_step: 'review',
+  fraud_flags: [],
+  form_data: { 'media.photoUrl': RAW_PHOTO },
+};
+
+/** Every payload handed to a `.update()` during the review, cloned at call
+ *  time: `nextFormData` is mutated after the call is built, so a captured
+ *  reference would show the post-mutation object and prove nothing. */
+const updatePayloads: Array<Record<string, unknown>> = [];
+
+function makeChain(table: string) {
+  const chain: any = {
+    select: () => chain,
+    eq: () => chain,
+    update: (payload: Record<string, unknown>) => {
+      updatePayloads.push(structuredClone(payload));
+      return chain;
+    },
+    single: () => Promise.resolve({ data: registrationsRow, error: null }),
+    maybeSingle: () => Promise.resolve({ data: { id: 'connect-contest-1' }, error: null }),
+  };
+  if (table === 'registrations') {
+    // in the notes-write step; .then is provided so `await` on the chain itself resolves.
+    chain.then = (resolve: any) => resolve({ data: null, error: null });
+  }
+  return chain;
+}
+
+const rpcMock = vi.fn().mockResolvedValue({ data: null, error: null });
+
+vi.mock('@supabase/supabase-js', () => ({
+  createClient: vi.fn(() => ({
+    from: (table: string) => makeChain(table),
+    rpc: rpcMock,
+  })),
+}));
+
+// The synchronous pipeline stays mocked so that an accidental call is visible
+// as a call to a mock rather than a real vendor round trip — and so the
+// "neither one is called" assertion below has something to be false about.
+vi.mock('@/src/server/registration/photo-pipeline', () => ({
+  processContestantPhoto: vi.fn(),
+  processContestantPhotoNoTemplate: vi.fn(),
+}));
+
+const presentation = vi.hoisted(() => ({
+  storedPhotoValueFor: vi.fn(),
+  resolveReviewPhotoOutcome: vi.fn(),
+  startPhotoForSubmission: vi.fn(),
+}));
+vi.mock('@/src/server/photo-jobs/presentation', () => presentation);
+
+import { reviewRegistrationApplication } from '@/src/server/registration/supabase-store';
+import { processContestantPhoto, processContestantPhotoNoTemplate } from '@/src/server/registration/photo-pipeline';
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  updatePayloads.length = 0;
+  rpcMock.mockResolvedValue({ data: null, error: null });
+  presentation.storedPhotoValueFor.mockReturnValue(RAW_PHOTO);
+  presentation.resolveReviewPhotoOutcome.mockResolvedValue({
+    mode: 'composite',
+    photoUrl: COMPOSITE,
+    photoAssetId: 'asset-final-1',
+    originalAssetId: 'asset-original-1',
+  });
+});
+
+describe('spec §6: the review path asks the job-backed presentation layer, and writes no photo value', () => {
+  it('consults the presentation layer with the stored value, the id and the slug', async () => {
+    await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' });
+
+    expect(presentation.resolveReviewPhotoOutcome).toHaveBeenCalledWith({
+      rawPhotoUrl: RAW_PHOTO,
+      registrationId: '11111111-1111-4111-8111-111111111111',
+      contestSlug: 'open-mic-competition',
+    });
+  });
+
+  it('records the decision beside an untouched original', async () => {
+    await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' });
+
+    // The review writes notes/form_data in one UPDATE before the status RPC;
+    // that payload is where an overwrite would show up.
+    const written = updatePayloads.map((p) => p.form_data).filter((f) => f && typeof f === 'object');
+    expect(written.length).toBeGreaterThan(0);
+    for (const formData of written as Array<Record<string, unknown>>) {
+      expect(formData['media.photoUrl']).toBe(RAW_PHOTO);
+    }
+    expect(written.at(-1)).toMatchObject({
+      'media.presentation': 'composite',
+      'media.photoAssetId': 'asset-final-1',
+      'media.originalAssetId': 'asset-original-1',
+    });
+  });
+
+  it('marks the row with the mode it actually got, including a pending render', async () => {
+    presentation.resolveReviewPhotoOutcome.mockResolvedValue({
+      mode: 'processing',
+      photoUrl: RAW_PHOTO,
+      originalAssetId: 'asset-original-1',
+    });
+
+    await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' });
+
+    const written = updatePayloads.at(-1)?.form_data as Record<string, unknown>;
+    expect(written['media.presentation']).toBe('processing');
+    expect(written['media.photoAssetId']).toBeUndefined();
+    expect(written['media.photoUrl']).toBe(RAW_PHOTO);
+  });
+
+  it('still refuses an approval whose job came back moderated, and writes nothing', async () => {
+    presentation.resolveReviewPhotoOutcome.mockResolvedValue({
+      mode: 'rejected',
+      photoUrl: RAW_PHOTO,
+      reason: 'adult_content',
+    });
+
+    const err = await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', {
+      status: 'approved',
+    }).then(
+      () => null,
+      (e) => e,
+    );
+
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { status?: number }).status).toBe(409);
+    expect((err as { code?: string }).code).toBe('photo_moderation_rejected');
+    expect(updatePayloads).toHaveLength(0);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('does not call the synchronous pipeline in either direction', async () => {
+    await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' });
+
+    expect(processContestantPhoto).not.toHaveBeenCalled();
+    expect(processContestantPhotoNoTemplate).not.toHaveBeenCalled();
+  });
+
+  it('leaves the photo code alone for a non-promoting decision', async () => {
+    await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'rejected' });
+
+    expect(presentation.storedPhotoValueFor).not.toHaveBeenCalled();
+    expect(presentation.resolveReviewPhotoOutcome).not.toHaveBeenCalled();
+    expect(processContestantPhoto).not.toHaveBeenCalled();
+    expect(processContestantPhotoNoTemplate).not.toHaveBeenCalled();
+  });
+
+  it('does not consult a job for an application with no photograph at all', async () => {
+    presentation.storedPhotoValueFor.mockReturnValue(undefined);
+
+    await reviewRegistrationApplication('11111111-1111-4111-8111-111111111111', { status: 'approved' });
+
+    expect(presentation.resolveReviewPhotoOutcome).not.toHaveBeenCalled();
+    const written = updatePayloads.at(-1)?.form_data as Record<string, unknown>;
+    expect(written['media.presentation']).toBeUndefined();
+  });
+});
+```
+
+- [x] **Step 8: Commit** — `b78cd150d fix(photo): stop overwriting the
+  contestant original; render via jobs`, staged by explicit path (the three new
+  files included).
+
+**Durability of these guards** — five mutants, each run against the delivered
+tests and then restored byte-for-byte (`git diff --quiet HEAD` clean afterwards):
+
+| Mutant | Result |
+|---|---|
+| re-add `nextFormData['media.photoUrl'] = outcome.photoUrl;` | 1 failed / 28 passed — `review-template-wiring` catches the overwrite on the UPDATE payload |
+| disable the submission hook (`if (false)`) | 3 failed / 2 passed |
+| disable the post-job rendered-portrait guard | 1 failed / 16 passed |
+| `storedPhotoValueFor` returns `candidates[0]` (no ours-first ranking) | 1 failed / 16 passed |
+| `storedPhotoValueFor` stops filtering rendered output | 1 failed / 16 passed |
+
+**Corrections to the draft** (what an executor would otherwise get wrong):
+
+1. Its `Produces` signature took `nextFormData` as a third argument, which
+   asks the presentation layer to write into the caller's object — the exact
+   capability this task exists to remove. Delivered: an input object of
+   `{rawPhotoUrl, registrationId, contestSlug}`, no form data in sight. The
+   caller keeps only the markers, so the no-overwrite property is structural.
+2. It read only `media.photoUrl` and `media.headshotUrl`. `PHOTO_KEYS` is
+   `['media.photoUrl', 'media.headshotUrl', 'media.profilePhoto']`: the forms in
+   `src/features/registration/forms/*.ts` collect `media.profilePhoto`, so under
+   the draft — and under the code it replaced — **no photo job would ever have
+   been created for a live submission**, and the review path would have spent
+   its whole life presenting nothing.
+3. It attempted a bounded drain inside the request
+   (`drainPhotoJobs({ limit: 1 })`) "so the common case returns a composite in
+   the same request". Delivered: fire-and-forget `kickDrain()`, and the review
+   answers `processing`. An approval that waits on — or fails because of — a
+   vendor call loses a decision the admin already made; an approval that says
+   "portrait pending" loses nothing, and the row already says which is true.
+4. Its marker names (`media.photoOriginalUrl`, `media.photoPresentation`) match
+   nothing in the app. Delivered names are `media.presentation` (the mode),
+   `media.photoAssetId`, `media.originalAssetId`, `media.presentationReason`.
+   Its `media.photoOriginalUrl = rawPhotoUrl` was also redundant by its own
+   logic: once `media.photoUrl` stops being overwritten it *is* the original, so
+   a second copy is a second value that can disagree.
+5. Its fifth test asserted `mode === 'processing'` for an application with no
+   photograph while also asserting the registry was not called — contradictory,
+   since `processing` means "a job is running". Delivered:
+   `{mode: 'original', photoUrl: '', reason: 'noPhoto'}`, and the caller skips
+   the whole branch when `storedPhotoValueFor` has no answer, so a photograph-less
+   application gets no `media.presentation` at all rather than a marker claiming
+   one.
+6. `PhotoPresentation` had no `originalAssetId`, but spec §11's separate-assets
+   rule is exactly the promise that an `original` asset row exists to re-render
+   from. Delivered returns both ids, and the doc names why they are different
+   rows.
+7. The draft never handled the case the old code created: a stored value that
+   **is** already a rendered portrait. Without two independent guards —
+   rendered output filtered from the candidates in `storedPhotoValueFor`, and
+   the post-job-read check in `resolveReviewPhotoOutcome` — a legacy row whose
+   `media.photoUrl` holds a composite would register that composite as its
+   immutable `original`, and every later re-render would start from a face
+   already pasted onto a frame.
+8. Its moderation branch threw only after describing the write, so a test could
+   still pass with the notes UPDATE emitted. Delivered asserts the refusal
+   writes **nothing**: zero `.update()` payloads and no status RPC.
+9. Its Step 5 read the photo keys inline in `submitRegistrationApplication` and
+   called `registerOriginalAndEnqueue` directly, duplicating the "which field is
+   this applicant's photograph" rule in a second file — with the same wrong keys
+   as correction 2. Delivered calls `startPhotoForSubmission` with the form data
+   and lets `presentation.ts` own the answer, which is also what makes the
+   submit and review hooks impossible to disagree.
+10. Its Step 5 said "add a matching assertion to the existing submission test
+    file". Not executable as written: the existing submission specs import the
+    store through module mocks whose shape a detached dynamic import leaks
+    across, and `tests/unit/registration` runs in no CI lane (so a rewrite that
+    silently stopped asserting would not be caught). Delivered: a dedicated
+    `submit-photo-hook.test.ts` with one module-scope import, module-scope
+    mutable holders, and `vi.waitFor` — the honest way to assert a deliberately
+    detached side effect.
+11. Its Step 6 asked for `ResolvedTemplate.templateId` / `templateVersion`;
+    those were delivered with Task 5 and verified present. Nothing to add.
+12. `registry.ts` gained the `noTemplate` short-circuit this draft assumed was
+    someone else's problem: `runPhotoJob` discovers a missing template *after*
+    reading the original's bytes, presigning for the vendor and paying for a
+    moderation pass — so queueing it would spend one paid call six times and
+    park the job in `paused`, which the config surface correctly reports as
+    needing an operator. In P1 that is the normal state of a contest (the
+    template studio is P3), so the original is recorded and nothing is queued.
+13. A consequence the draft inherited wrongly: the composite written to
+    `media.photoUrl` **never reached the roster**. Since
+    `20260812020001_contestants_profile_columns.sql:78` the promotion RPC reads
+    `media.profilePhoto` into `contestants.photo_url`. So the overwrite was
+    destroying the source image on every approval while voters kept seeing the
+    raw upload — which is why this change alters no surface anyone can see, and
+    why surfacing the composite is P4's job through the asset id.
+14. Its status read was invented (`/api/contestant-photo/<key>`, Task 8
+    correction 2) and no draft step owned deriving the composite URL for a
+    *registration*. Delivered: `publishedPortraitFor(registrationId)` in
+    `status-read.ts` — the `final` asset, newest first, URL by the same rule as
+    Task 8 — so `presentation.ts` never re-implements storage derivation.
+15. The provenance test needs one rule, not a copy: `uploadObjectKeyFor` now
+    delegates to `contestantPhotoObjectKey` (15 cases in
+    `tests/unit/media/asset-source.test.ts`), which is what lets the ours-first
+    ranking recover the untouched upload from `media.profilePhoto` for a legacy
+    row.
+
 
 ---
 
