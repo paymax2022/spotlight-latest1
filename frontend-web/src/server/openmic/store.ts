@@ -149,6 +149,7 @@ export function createContest(input: Partial<OpenMicContest>, actorId?: string) 
     year,
     season: input.season || `Season ${year}`,
     description,
+    bannerImageUrl: input.bannerImageUrl || '',
     objective: input.objective,
     theme: input.theme,
     hashtag: input.hashtag || '#SpotlightOpenMic',

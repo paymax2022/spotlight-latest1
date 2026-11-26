@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Image, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Image, ActivityIndicator, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { CheckCircle } from 'lucide-react-native';
+import { CheckCircle, CheckCircle2, Circle, ShieldCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
@@ -13,6 +13,10 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { resolveUploadUrl } from '@/features/registration/api/registration.client';
 import { useDraft, useSubmitApplication } from '@/features/registration/hooks/useRegistration';
+import {
+  getEditionRulesBySlug, getMyRulesAcceptanceBySlug, acceptEditionRulesBySlug,
+} from '@/features/voting/api/edition.api';
+import type { EditionRules } from '@/features/voting/types/edition.types';
 import type { RegistrationField, RegistrationStep, UploadedFileValue } from '@/features/registration/types/registration.types';
 
 export default function RegistrationSubmitScreen() {
@@ -25,6 +29,37 @@ export default function RegistrationSubmitScreen() {
 
   const draft = draftQuery.data?.draft;
   const steps: RegistrationStep[] = draftQuery.data?.steps ?? [];
+
+  // ── §5 rules-acceptance gate ────────────────────────────────────────────────
+  // The edition is resolved from the draft's contestSlug (the connect_contests
+  // slug). If that edition has PUBLISHED rules, registration cannot complete
+  // until the authenticated user ticks the box; ticking + submitting records the
+  // exact rules version accepted (user + edition + version, immutable). An
+  // edition with no published rules shows no gate, so existing registration is
+  // unchanged (criterion #15).
+  const contestSlug = (draft?.contestSlug ?? '') as string;
+  const [rules, setRules] = React.useState<EditionRules | null>(null);
+  const [alreadyAccepted, setAlreadyAccepted] = React.useState(false);
+  const [accepted, setAccepted] = React.useState(false);
+  const [acceptError, setAcceptError] = React.useState<string | undefined>();
+
+  React.useEffect(() => {
+    let alive = true;
+    if (!contestSlug) { return; }
+    void (async () => {
+      const [r, prior] = await Promise.all([
+        getEditionRulesBySlug(contestSlug),
+        getMyRulesAcceptanceBySlug(contestSlug),
+      ]);
+      if (!alive) return;
+      setRules(r);
+      setAlreadyAccepted(!!prior);
+    })();
+    return () => { alive = false; };
+  }, [contestSlug]);
+
+  // A gate is required only when rules are published AND not already accepted.
+  const requiresAcceptance = !!rules && !alreadyAccepted;
 
   // Payment state derived from formData (set by the payment screens).
   const feeNgn       = Number(draft?.formData['payment.feeAmount'] ?? 0);
@@ -53,12 +88,36 @@ export default function RegistrationSubmitScreen() {
     );
   }
 
-  const onSubmit = () => {
-    setSubmitError(undefined);
+  const doSubmit = () => {
     submit.mutate(undefined, {
       onSuccess: () => router.replace(`/registration/${appId}/success` as never),
       onError: () => setSubmitError('Some required fields are still incomplete. Go back and complete every step, then try again.'),
     });
+  };
+
+  const onSubmit = async () => {
+    setSubmitError(undefined);
+    setAcceptError(undefined);
+
+    // §5 gate: when this edition has published rules the user has not yet
+    // accepted, submission is blocked until the box is ticked, and the acceptance
+    // is recorded (user + edition + rules version) BEFORE the application submits.
+    // A failure to record is fatal — we never submit an unaccepted application.
+    if (requiresAcceptance) {
+      if (!accepted) {
+        setAcceptError('You must read and accept the contest rules before submitting your application.');
+        return;
+      }
+      try {
+        await acceptEditionRulesBySlug(contestSlug, appId, rules?.id);
+        setAlreadyAccepted(true);
+      } catch (e) {
+        setAcceptError(e instanceof Error ? e.message : 'Could not record your rules acceptance. Please try again.');
+        return;
+      }
+    }
+
+    doSubmit();
   };
 
   const goToPayment = () => {
@@ -105,6 +164,51 @@ export default function RegistrationSubmitScreen() {
           </View>
         ))}
 
+        {/* ── §5 Rules acceptance gate ─────────────────────────────────────── */}
+        {rules && (
+          <View style={[styles.rulesCard, shadow1]}>
+            <View style={styles.rulesHead}>
+              <ShieldCheck size={18} color={Colors.primary} strokeWidth={2} />
+              <Text style={styles.rulesHeadText}>Contest Rules & Regulations</Text>
+            </View>
+            <Text style={styles.rulesMeta}>
+              Version {rules.version}
+              {rules.published_at ? ` · Published ${new Date(rules.published_at).toLocaleDateString()}` : ''}
+            </Text>
+
+            {alreadyAccepted ? (
+              <View style={styles.rulesAcceptedRow}>
+                <CheckCircle2 size={18} color={Colors.teal} strokeWidth={2} />
+                <Text style={styles.rulesAcceptedText}>You have accepted these rules.</Text>
+              </View>
+            ) : (
+              <>
+                <Pressable
+                  style={styles.rulesCheckRow}
+                  onPress={() => setAccepted((a) => !a)}
+                  disabled={submit.isPending}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: accepted }}
+                >
+                  {accepted
+                    ? <CheckCircle2 size={22} color={Colors.primary} />
+                    : <Circle size={22} color={Colors.onSurfaceVariant} />}
+                  <Text style={styles.rulesCheckText}>
+                    I have read, understood and agree to the Spotlight Rising Star contest rules and regulations for this edition.
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => router.push(`/voting/edition-rules?slug=${encodeURIComponent(contestSlug)}&applicationId=${encodeURIComponent(appId)}&contestTitle=${encodeURIComponent(String(draft.formData['contest.title'] ?? 'Spotlight Rising Star'))}` as never)}
+                >
+                  <Text style={styles.rulesReadLink}>Read the full rules</Text>
+                </Pressable>
+              </>
+            )}
+
+            {!!acceptError && <Text style={styles.acceptErrorText}>{acceptError}</Text>}
+          </View>
+        )}
+
         {submitError && (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{submitError}</Text>
@@ -118,12 +222,14 @@ export default function RegistrationSubmitScreen() {
             label={`Pay ₦${feeNgn.toLocaleString('en-NG')} & Continue`}
             onPress={goToPayment}
             loading={false}
+            disabled={requiresAcceptance && !accepted}
           />
         ) : (
           <PrimaryButton
             label="Submit application"
             onPress={onSubmit}
             loading={submit.isPending}
+            disabled={requiresAcceptance && !accepted}
           />
         )}
       </View>
@@ -238,6 +344,20 @@ const styles = StyleSheet.create({
 
   errorBox:  { backgroundColor: Colors.errorContainer, borderRadius: Radius.md, padding: Spacing.md },
   errorText: { ...Typography.labelMd, color: Colors.error },
+
+  rulesCard: {
+    backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl,
+    padding: Spacing.lg, borderWidth: 1, borderColor: Colors.outlineVariant, gap: Spacing.sm,
+  },
+  rulesHead:     { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  rulesHeadText: { ...Typography.titleMd, color: Colors.onSurface, flex: 1 },
+  rulesMeta:     { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  rulesAcceptedRow:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  rulesAcceptedText: { ...Typography.labelMd, color: Colors.teal },
+  rulesCheckRow:  { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
+  rulesCheckText: { ...Typography.bodySm, color: Colors.onSurface, flex: 1, lineHeight: 20 },
+  rulesReadLink:  { ...Typography.labelMd, color: Colors.primary, fontWeight: '600' },
+  acceptErrorText: { ...Typography.labelMd, color: Colors.error },
 
   footer: {
     paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.md,

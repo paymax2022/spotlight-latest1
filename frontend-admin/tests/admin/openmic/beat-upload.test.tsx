@@ -9,9 +9,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 const uploadOpenMicBeat = vi.fn();
 const createOpenMicContest = vi.fn();
+const uploadContestBanner = vi.fn();
 vi.mock('@/services/openMicAdminService', () => ({
   uploadOpenMicBeat: (...a: unknown[]) => uploadOpenMicBeat(...a),
   createOpenMicContest: (...a: unknown[]) => createOpenMicContest(...a),
+}));
+vi.mock('@/services/contestsAdminService', () => ({
+  uploadContestBanner: (...a: unknown[]) => uploadContestBanner(...a),
+  adminMediaUrl: (url: string) => `http://localhost:3001${url}`,
 }));
 
 // Vite does not resolve a Next route *directory*, so the page must be imported by
@@ -36,6 +41,7 @@ const READER = '/api/open-mic/beats/b3Blbm1pYy1iZWF0cy91bmFzc2lnbmVkL2EubXAz';
 beforeEach(() => {
   uploadOpenMicBeat.mockReset();
   createOpenMicContest.mockReset();
+  uploadContestBanner.mockReset();
 });
 afterEach(() => cleanup());
 
@@ -51,8 +57,8 @@ function set(container: HTMLElement, id: string, value: string) {
 }
 
 /**
- * `errors` (page.tsx:69-86) gates title, slug, description, month, year, the two
- * weights, state, city, venue name and beat title. A submit-path case must satisfy
+ * `errors` gates title, slug, description, month, year, the two weights and beat title.
+ * A submit-path case must satisfy
  * all of them except the beat, or it proves nothing: `createOpenMicContest` would go
  * uncalled for an unrelated empty field and the blocked case would pass for the wrong
  * reason. The weights default to 30/70 (`:55`) and already sum to 100. Fields are
@@ -66,9 +72,6 @@ function fillRequiredExceptBeat(container: HTMLElement) {
   set(container, 'open-mic-month', '11');
   set(container, 'open-mic-year', '2026');
   set(container, 'open-mic-beat-title', 'Spotlight Beat');
-  set(container, 'open-mic-venue-name', 'The Bridge');
-  set(container, 'open-mic-state', 'Lagos');
-  set(container, 'open-mic-city', 'Ikeja');
 }
 
 // Every case below renders the whole contest form (~0.4s per render in jsdom, 2s per
@@ -156,5 +159,29 @@ describe('Open Mic beat upload in the admin console', () => {
     const sent = createOpenMicContest.mock.calls[0][0] as { beat: { downloadUrl: string; previewUrl: string } };
     expect(sent.beat.downloadUrl).toBe(`${READER}?download=1`);
     expect(sent.beat.previewUrl).toBe(READER);
+    expect('finale' in sent).toBe(false);
+  }, 20_000);
+
+  it('creates without a finale venue and includes an uploaded banner', async () => {
+    uploadContestBanner.mockResolvedValue('/api/admin/contests/banner/YmFubmVyLWtleQ');
+    createOpenMicContest.mockResolvedValue({ success: true });
+    const { container } = render(<NewOpenMicContestPage />);
+    expect(screen.queryByText('Finale Venue')).toBeNull();
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'banner.png', { type: 'image/png' });
+    fireEvent.change(screen.getByLabelText('Contest banner image'), { target: { files: [file] } });
+    await waitFor(() => expect(uploadContestBanner).toHaveBeenCalledWith(file));
+    expect(await screen.findByRole('img', { name: 'Contest banner preview' })).toHaveAttribute(
+      'src',
+      'http://localhost:3001/api/admin/contests/banner/YmFubmVyLWtleQ',
+    );
+
+    fillRequiredExceptBeat(container);
+    set(container, 'open-mic-beat-download-url', READER);
+    fireEvent.click(screen.getByRole('button', { name: /Create Monthly Contest/i }));
+    await waitFor(() => expect(createOpenMicContest).toHaveBeenCalledTimes(1));
+    const sent = createOpenMicContest.mock.calls[0][0] as { bannerImageUrl: string; finale?: unknown };
+    expect(sent.bannerImageUrl).toBe('/api/admin/contests/banner/YmFubmVyLWtleQ');
+    expect('finale' in sent).toBe(false);
   }, 20_000);
 });

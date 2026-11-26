@@ -15,16 +15,9 @@
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import { createOpenMicContest, uploadOpenMicBeat, type CreateOpenMicContestInput } from '@/services/openMicAdminService';
+import { adminMediaUrl, uploadContestBanner } from '@/services/contestsAdminService';
 import { beatUrlProblem } from '@/features/openmic/beat-url';
 import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
-
-const NIGERIA_STATES = [
-  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
-  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT', 'Gombe', 'Imo',
-  'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa',
-  'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba',
-  'Yobe', 'Zamfara',
-];
 
 function slugify(input: string) {
   return input.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
@@ -42,6 +35,8 @@ export default function NewOpenMicContestPage() {
   const [message, setMessage] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [beatBusy, setBeatBusy] = useState(false);
+  const [bannerBusy, setBannerBusy] = useState(false);
+  const [bannerNote, setBannerNote] = useState<{ text: string; tone: 'ok' | 'bad' } | null>(null);
   // This one line says both "uploaded" and "refused", so it carries its own tone:
   // `tone` drives colour *and* ARIA role, which keeps the distinction true for a
   // screen reader without putting a hex value in the test.
@@ -53,7 +48,7 @@ export default function NewOpenMicContestPage() {
     registrationFeeNgn: 0, entryFeeRequired: false,
     repeatMonths: 1, autoCreateNext: false, requireNewBeatEveryMonth: true,
     finalistsTarget: 10, judgeWeight: 30, publicVoteWeight: 70,
-    venueName: '', venueType: 'lounge', address: '', city: '', state: '',
+    bannerImageUrl: '',
     beatTitle: '', beatProducerName: '', beatDownloadUrl: '', beatPreviewUrl: '',
     beatUsageRules: 'Beat is provided for this Spotlight Open Mic contest only.',
   });
@@ -74,9 +69,6 @@ export default function NewOpenMicContestPage() {
     if (!form.month || form.month < 1 || form.month > 12) e.month = 'Month must be between 1 and 12.';
     if (!form.year || form.year < 2020) e.year = 'Year must be valid.';
     if (form.judgeWeight + form.publicVoteWeight !== 100) e.weights = 'Judge weight and public vote weight must add up to 100%.';
-    if (!form.state.trim()) e.state = 'State is required.';
-    if (!form.city.trim()) e.city = 'City is required.';
-    if (!form.venueName.trim()) e.venueName = 'Finale venue name is required.';
     if (!form.beatTitle.trim()) e.beatTitle = 'Official beat title is required.';
     if (!form.beatDownloadUrl.trim()) e.beatDownloadUrl = 'Upload the official beat mp3.';
     else if (beatUrlProblem(form.beatDownloadUrl) !== null) {
@@ -100,6 +92,19 @@ export default function NewOpenMicContestPage() {
     }
   }
 
+  async function uploadBanner(file: File) {
+    setBannerBusy(true);
+    setBannerNote(null);
+    try {
+      setField('bannerImageUrl', await uploadContestBanner(file));
+      setBannerNote({ text: 'Banner uploaded. It will be added when you create the contest.', tone: 'ok' });
+    } catch (e) {
+      setBannerNote({ text: e instanceof Error ? e.message : String(e), tone: 'bad' });
+    } finally {
+      setBannerBusy(false);
+    }
+  }
+
   async function submit() {
     setError('');
     setMessage('');
@@ -114,6 +119,7 @@ export default function NewOpenMicContestPage() {
       const payload: CreateOpenMicContestInput = {
         title: form.title, slug: form.slug, description: form.description,
         month: form.month, year: form.year, season: form.season, status: form.status,
+        bannerImageUrl: form.bannerImageUrl,
         registrationFeeNgn: form.registrationFeeNgn, entryFeeRequired: form.entryFeeRequired,
         recurrence: {
           enabled: form.repeatMonths > 1 || form.autoCreateNext,
@@ -130,7 +136,6 @@ export default function NewOpenMicContestPage() {
           explicitLyricsAllowed: false,
         },
         finalistsTarget: form.finalistsTarget, judgeWeight: form.judgeWeight, publicVoteWeight: form.publicVoteWeight,
-        finale: { venueName: form.venueName, venueType: form.venueType, address: form.address, city: form.city, state: form.state, playbackMode: 'top_10' },
       };
       const result = await createOpenMicContest(payload);
       if (!result.success) {
@@ -149,7 +154,7 @@ export default function NewOpenMicContestPage() {
 
   return (
     <Page>
-      <PageHeader title="Create Monthly Open Mic Contest" subtitle="Configure month, recurrence, fees, voting weights, and finale venue for a new Open Mic edition." />
+      <PageHeader title="Create Monthly Open Mic Contest" subtitle="Configure month, recurrence, fees, voting weights, and the official beat for a new Open Mic edition." />
 
       <Card style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 780 }}>
         <section>
@@ -170,6 +175,53 @@ export default function NewOpenMicContestPage() {
               style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${colors.inputBorder}`, fontSize: 13 }} />
             {fieldErrors.description && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.description}</p>}
           </div>
+        </section>
+
+        <section>
+          <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Contest Banner</h3>
+          <p style={{ fontSize: 12, color: colors.muted, marginTop: -6, marginBottom: 10 }}>
+            Optional. Upload a JPG, PNG, or WebP image up to 8 MB.
+          </p>
+          {form.bannerImageUrl ? (
+            <img
+              src={adminMediaUrl(form.bannerImageUrl)}
+              alt="Contest banner preview"
+              style={{ display: 'block', width: '100%', maxHeight: 240, objectFit: 'cover', borderRadius: 8, marginBottom: 12 }}
+            />
+          ) : null}
+          <div style={{ ...fieldWrap, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <label style={{ ...labelStyle, margin: 0 }} htmlFor="open-mic-banner-file">
+              {bannerBusy ? 'Uploading banner…' : form.bannerImageUrl ? 'Replace banner' : 'Add banner'}
+            </label>
+            <Input
+              id="open-mic-banner-file"
+              aria-label="Contest banner image"
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+              disabled={bannerBusy || busy}
+              onChange={(e) => {
+                const selected = e.target.files?.[0];
+                e.target.value = '';
+                if (selected) void uploadBanner(selected);
+              }}
+            />
+            {form.bannerImageUrl ? (
+              <Button variant="danger" disabled={bannerBusy || busy} onClick={() => {
+                setField('bannerImageUrl', '');
+                setBannerNote(null);
+              }}>
+                Remove banner
+              </Button>
+            ) : null}
+          </div>
+          {bannerNote ? (
+            <p
+              role={bannerNote.tone === 'ok' ? 'status' : 'alert'}
+              style={{ fontSize: 12, color: bannerNote.tone === 'ok' ? colors.success : colors.danger, margin: '4px 0 0' }}
+            >
+              {bannerNote.text}
+            </p>
+          ) : null}
         </section>
 
         <section>
@@ -299,44 +351,6 @@ export default function NewOpenMicContestPage() {
         </section>
 
         <section>
-          <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Finale Venue</h3>
-          <div style={fieldWrap}>
-            <label style={labelStyle} htmlFor="open-mic-venue-name">Finale Venue Name</label>
-            <Input id="open-mic-venue-name" value={form.venueName} onChange={(e) => setField('venueName', e.target.value)} style={{ width: '100%' }} />
-            {fieldErrors.venueName && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.venueName}</p>}
-          </div>
-          <div style={fieldWrap}>
-            <label style={labelStyle}>Venue Type</label>
-            <select value={form.venueType} onChange={(e) => setField('venueType', e.target.value)} style={selectStyle}>
-              <option value="lounge">Lounge</option>
-              <option value="club">Club</option>
-              <option value="event_center">Event Center</option>
-              <option value="campus_venue">Campus Venue</option>
-              <option value="virtual">Virtual</option>
-            </select>
-          </div>
-          <div style={fieldWrap}>
-            <label style={labelStyle}>Address</label>
-            <Input value={form.address} onChange={(e) => setField('address', e.target.value)} style={{ width: '100%' }} />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div style={fieldWrap}>
-              <label style={labelStyle} htmlFor="open-mic-state">State</label>
-              <select id="open-mic-state" value={form.state} onChange={(e) => setField('state', e.target.value)} style={selectStyle}>
-                <option value="">Select state</option>
-                {NIGERIA_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-              {fieldErrors.state && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.state}</p>}
-            </div>
-            <div style={fieldWrap}>
-              <label style={labelStyle} htmlFor="open-mic-city">City</label>
-              <Input id="open-mic-city" value={form.city} onChange={(e) => setField('city', e.target.value)} style={{ width: '100%' }} />
-              {fieldErrors.city && <p style={{ color: colors.danger, fontSize: 12, margin: '4px 0 0' }}>{fieldErrors.city}</p>}
-            </div>
-          </div>
-        </section>
-
-        <section>
           <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Automation Settings</h3>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 8 }}>
             <input type="checkbox" checked={form.entryFeeRequired} onChange={(e) => setField('entryFeeRequired', e.target.checked)} /> Paid registration required
@@ -350,7 +364,7 @@ export default function NewOpenMicContestPage() {
         </section>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Button variant="primary" onClick={submit} disabled={busy}>{busy ? 'Creating…' : 'Create Monthly Contest'}</Button>
+          <Button variant="primary" onClick={submit} disabled={busy || bannerBusy}>{busy ? 'Creating…' : 'Create Monthly Contest'}</Button>
           {error && <p style={{ color: colors.danger, margin: 0, fontSize: 13 }}>{error}</p>}
           {message && <p style={{ color: colors.success, margin: 0, fontSize: 13 }}>{message}</p>}
         </div>

@@ -19,8 +19,12 @@ import {
   mapContest,
   mapContestant,
   mapLeaderboardEntry,
+  mapVotePackage,
+  toVoteTransaction,
   type BackendContest,
   type BackendRosterEntry,
+  type BackendVotePackage,
+  type ConnectVoteRow,
 } from './connectVoting.mapper';
 import {
   MOCK_CONTESTS,
@@ -324,10 +328,12 @@ function movementFromTrend(
  * on every call. Nothing noticed because the mock branch above short-circuited
  * before the request was ever made — the endpoint had never actually run.
  *
- * The real route returns { id, votes, bonusVotes, priceKobo, label, popular },
- * which is not the client's VotePackage shape, so it is mapped here rather than
- * cast. `amount` is KOBO on this side: payment-method.tsx passes it straight to
- * the gateway as amountKobo.
+ * The real route answers with the BFF's server DTO — camelCase, one row per
+ * active package, and `amount` in NAIRA — so it is mapped here rather than cast:
+ * see BackendVotePackage and mapVotePackage in connectVoting.mapper.ts, which
+ * carry the naira→kobo rule. `amount` is KOBO on this side: payment-method.tsx
+ * passes it straight to the gateway as amountKobo and to formatAmount, which
+ * divides by 100.
  *
  * No packages is a legitimate answer — a contest with paid voting off has none —
  * so an empty array is returned rather than treated as an error.
@@ -337,24 +343,9 @@ export async function getVotePackages(contestId?: string): Promise<VotePackage[]
   if (!contestId) return [];
 
   const res = await api.get(`/api/v1/contests/${contestId}/vote-packages`);
-  const rows = (res.data?.data ?? res.data ?? []) as Array<{
-    id: string;
-    votes: number;
-    bonusVotes?: number;
-    priceKobo: number;
-    label?: string;
-    popular?: boolean;
-  }>;
+  const rows = (res.data?.data ?? res.data ?? []) as BackendVotePackage[];
 
-  return rows.map((r) => ({
-    id: r.id,
-    votes: Number(r.votes ?? 0),
-    amount: Number(r.priceKobo ?? 0),
-    currency: 'NGN' as const,
-    label: r.label,
-    bonusVotes: r.bonusVotes ? Number(r.bonusVotes) : undefined,
-    isPopular: Boolean(r.popular),
-  }));
+  return rows.map(mapVotePackage);
 }
 
 // Each voter gets 1 free vote per day for EACH contestant (admin-configurable).
@@ -563,49 +554,6 @@ export async function getMyVotes(params?: {
   });
   const rows = (res.data?.data ?? res.data ?? []) as ConnectVoteRow[];
   return rows.map(toVoteTransaction);
-}
-
-/** A row of connect_votes as the Go connect module returns it. */
-interface ConnectVoteRow {
-  id: string;
-  contest_id: string;
-  contest_title: string;
-  contestant_id: string;
-  contestant_name: string;
-  photo_url: string;
-  paid: boolean;
-  quantity: number;
-  amount_kobo: number;
-  created_at: string;
-}
-
-/**
- * connect_votes is an immutable log of votes that HAPPENED, so there is no
- * pending or failed row to represent: anything the caller can see already
- * counted. Mapping every row to SUCCESSFUL is the honest translation, not a
- * default — a status field that could only ever hold one value would invite the
- * screen to render a filter that never changes anything.
- *
- * amount_kobo is kobo; the screen's `amount` is naira, which is the conversion
- * this seam exists to do.
- */
-function toVoteTransaction(r: ConnectVoteRow): VoteTransaction {
-  return {
-    id: r.id,
-    contestId: r.contest_id,
-    contestantId: r.contestant_id,
-    contestantName: r.contestant_name,
-    contestTitle: r.contest_title,
-    /** Already a renderable URL: the server signs the stored object key at read. */
-    contestantPhoto: r.photo_url || undefined,
-    voteType: r.paid ? 'PAID' : 'FREE',
-    votes: r.quantity,
-    amount: r.paid ? r.amount_kobo / 100 : undefined,
-    currency: 'NGN',
-    status: 'SUCCESSFUL',
-    reference: r.id,
-    createdAt: r.created_at,
-  };
 }
 
 /** One person who voted for a contestant. Contestant-only; see the Go service. */

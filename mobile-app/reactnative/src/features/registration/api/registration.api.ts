@@ -11,6 +11,7 @@
 
 import {
   REGISTRATION_USE_MOCK, waitMock, regGet, regPost, regPatch, regUpload,
+  newRegistrationIdempotencyKey,
 } from './registration.client';
 import { MOCK_CONTESTS, buildMockSteps } from './registration.mock';
 import type {
@@ -263,6 +264,7 @@ export async function getRegistrationVoting(id: string): Promise<RegistrationVot
     // inventing a votable contest the tester cannot actually vote in.
     return waitMock<RegistrationVoting>({
       votable: false,
+      shareable: false,
       reason: 'not_promoted',
       applicationStatus: 'submitted',
       contest: null,
@@ -411,6 +413,28 @@ export async function uploadFile(file: PickedUpload): Promise<UploadedFileValue>
   }
   const res = await regUpload<UploadResponse>(`${REG_BASE}/uploads`, file);
   return { previewUrl: res.upload.previewUrl, fileName: res.upload.fileName, storageKey: res.upload.storageKey };
+}
+
+export async function replaceProfilePhoto(id: string, photo: UploadedFileValue): Promise<void> {
+  if (REGISTRATION_USE_MOCK) {
+    const entry = mockDrafts.get(id);
+    if (!entry) throw new Error('Application not found');
+    const draft = {
+      ...entry.draft,
+      formData: { ...entry.draft.formData, 'media.profilePhoto': photo },
+      updatedAt: new Date().toISOString(),
+    };
+    mockDrafts.set(id, { ...entry, draft });
+    saveMockDrafts();
+    return waitMock(undefined);
+  }
+
+  if (!photo.storageKey) throw new Error('Uploaded profile photo is missing its storage key');
+  await regPost(
+    `${REG_BASE}/applications/${id}/profile-photo`,
+    { storageKey: photo.storageKey },
+    { 'Idempotency-Key': newRegistrationIdempotencyKey('profile-photo') },
+  );
 }
 
 // Backs the contest screen's decision between "Apply" and "Manage application".

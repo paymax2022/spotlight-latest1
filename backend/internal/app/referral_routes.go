@@ -52,6 +52,15 @@ import (
 // narrow function the auth handler needs. Registration is where attribution has
 // to happen — the web route did it and the Go route did not, which is one of the
 // reasons the two implementations could not simply be merged.
+//
+// It also files the new account's OWN referral code. Codes used to appear only when
+// an owner first opened their referral screen, which meant a registered account that
+// never did had nothing to show: the admin user record reported "No referral code
+// yet" for a user the product considers registered, and the profile screen had
+// nothing to share. Registration is the one moment every account is guaranteed to
+// pass through, so the mint belongs here (startReferralCodeSweep covers the accounts
+// that predate it). Best-effort, like attribution: an account that cannot be issued
+// a code still gets registered.
 // Returns nil on a nil pool, and the handler then skips attribution rather than
 // failing signup.
 func NewSignupAttributor(pool *pgxpool.Pool) handlers.ReferralAttributor {
@@ -59,8 +68,17 @@ func NewSignupAttributor(pool *pgxpool.Pool) handlers.ReferralAttributor {
 		return nil
 	}
 	svc := newAttributionService(pool)
+	rewards := referrals.NewRewardService(pool, ledger.NewService(ledger.NewRepository(pool), nil))
 	return func(ctx context.Context, userID, referralCode string) error {
 		_, err := svc.ResolveReferrer(ctx, userID, attribution.ResolveOpts{CodeEntered: referralCode})
+		// After attribution, never before it: the code issued here is the new user's
+		// own, and attribution resolves the typed code to whoever holds it — minting
+		// first would put a second code in the namespace the same signup is being
+		// resolved against (and if the two ever matched, the account would refer
+		// itself).
+		if _, mErr := rewards.GetOrCreateLink(ctx, userID); mErr != nil {
+			log.Printf("[auth] register: referral code mint failed for %s: %v", userID, mErr)
+		}
 		return err
 	}
 }
@@ -254,6 +272,7 @@ func RegisterReferralRewards(
 	// milestone/tier writes are idempotent so a double-run is safe but wasteful.
 	startReferralRecalcScheduler(context.Background(), svc, 24*time.Hour)
 	startReferralHouseSweep(context.Background(), pool, svc, 5*time.Minute)
+	startReferralCodeSweep(context.Background(), svc, 5*time.Minute)
 
 	log.Println("[referral-rewards] engine routes registered — /v1/referrals + /v1/admin/referrals + /internal/referrals; nightly recalc ticker started")
 	return svc
@@ -357,6 +376,52 @@ func startReferralHouseSweep(ctx context.Context, pool *pgxpool.Pool, svc *refer
 		}
 		if n > 0 {
 			log.Printf("[referral-rewards] house sweep connected %d unattributed users to the house account", n)
+		}
+	}
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				run()
+			}
+		}
+	}()
+}
+
+// startReferralCodeSweep issues a referral code for every registered account that
+// has none, five minutes at a time.
+//
+// New signups get their code from NewSignupAttributor; this covers the accounts that
+// predate that and the signup paths that never ran it. Without it the admin user
+// record keeps reporting "No referral code yet" for a registered user, and the
+// profile screen has nothing to share — which reads as a broken feature rather than
+// as an unissued code.
+//
+// Same shape as the house sweep on purpose: bounded pass, age floor so it cannot
+// beat an in-flight registration, no first tick at boot. Kill switch:
+// REFERRAL_CODE_SWEEP_ENABLED=false.
+func startReferralCodeSweep(ctx context.Context, svc *referrals.RewardService, every time.Duration) {
+	if strings.EqualFold(os.Getenv("REFERRAL_CODE_SWEEP_ENABLED"), "false") {
+		log.Println("[referral-rewards] code sweep disabled by REFERRAL_CODE_SWEEP_ENABLED=false")
+		return
+	}
+	run := func() {
+		n, err := svc.EnsureMissingCodes(ctx, referrals.CodeSweepOpts{
+			MinAge: 15 * time.Minute,
+			Limit:  2000,
+		})
+		if err != nil {
+			// The pass continues past a single account, so report the count it did
+			// manage rather than pretending nothing happened.
+			log.Printf("[referral-rewards] code sweep: minted %d before failing: %v", n, err)
+			return
+		}
+		if n > 0 {
+			log.Printf("[referral-rewards] code sweep issued referral codes to %d accounts", n)
 		}
 	}
 	go func() {

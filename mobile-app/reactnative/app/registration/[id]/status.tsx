@@ -12,7 +12,7 @@
 // endpoint, the vote button asks the voting endpoint (which refuses while no song
 // is on record), and the extra history steps ask the workflow endpoint. Each is a
 // separate route because the legacy `/status` route is brownfield-protected.
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -30,6 +30,8 @@ import {
   useWithdraw,
   useRegistrationVoting,
   useApplicationWorkflow,
+  useUploadFile,
+  useReplaceProfilePhoto,
 } from '@/features/registration/hooks/useRegistration';
 import ContestVotingCard from '@/features/registration/components/ContestVotingCard';
 import ProfilePhotoAvatar from '@/features/registration/components/ProfilePhotoAvatar';
@@ -39,6 +41,8 @@ import OpenMicBanner from '@/features/openmic/components/OpenMicBanner';
 import { isOpenMicApplication } from '@/features/openmic/edition';
 import { formatStamp } from '@/features/openmic/state';
 import { useOpenMicPhase } from '@/features/openmic/hooks';
+import { submissionBindingNotice } from '@/features/registration/utils/submission-lock';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 const TERMINAL = ['withdrawn', 'rejected', 'disqualified', 'eliminated', 'winner'];
@@ -46,9 +50,13 @@ const TERMINAL = ['withdrawn', 'rejected', 'disqualified', 'eliminated', 'winner
 export default function RegistrationStatusScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const appId = id ?? '';
+  const [profilePhotoMissing, setProfilePhotoMissing] = useState(false);
+  const onProfilePhotoMissing = useCallback(() => setProfilePhotoMissing(true), []);
 
   const statusQuery = useStatus(appId);
   const withdraw = useWithdraw(appId);
+  const uploadProfilePhoto = useUploadFile();
+  const replaceProfilePhoto = useReplaceProfilePhoto(appId);
   // Voting context is loaded separately from a NEW endpoint: the status route
   // is brownfield-protected, so it could not grow these fields.
   const votingQuery = useRegistrationVoting(appId);
@@ -62,8 +70,9 @@ export default function RegistrationStatusScreen() {
   const isOpenMic = isOpenMicApplication({
     contestSlug: draft?.contestSlug,
     formData: draft?.formData,
+    workflowIsOpenMic: workflow?.isOpenMic,
   });
-  const contestSlug = String(draft?.contestSlug ?? '').trim();
+  const contestSlug = String(draft?.contestSlug || workflow?.edition?.slug || '').trim();
   // An empty slug leaves the query disabled, so a non-Open-Mic application costs
   // this page nothing.
   const phase = useOpenMicPhase(isOpenMic ? contestSlug : '');
@@ -81,6 +90,22 @@ export default function RegistrationStatusScreen() {
     withdraw.mutate(undefined, {
       onError: () => alertAsync({ title: 'Couldn’t withdraw', message: 'Please try again.' }),
     });
+  };
+
+  const onReplaceProfilePhoto = async () => {
+    const file = await pickFileForField('.jpg,.jpeg,.png,.webp');
+    if (!file) return;
+    try {
+      const uploaded = await uploadProfilePhoto.mutateAsync(file);
+      await replaceProfilePhoto.mutateAsync(uploaded);
+      setProfilePhotoMissing(false);
+      await statusQuery.refetch();
+    } catch (error) {
+      await alertAsync({
+        title: 'Couldn’t replace profile photo',
+        message: error instanceof Error ? error.message : 'Please try again.',
+      });
+    }
   };
 
   if (statusQuery.isLoading) {
@@ -104,6 +129,7 @@ export default function RegistrationStatusScreen() {
   const canWithdraw = !TERMINAL.includes(draft.status);
   const awaitingPayment = draft.status === 'awaiting_payment';
   const needsInfo = draft.status === 'more_information_requested';
+  const bindingNotice = submissionBindingNotice(draft.status);
 
   const contestant = votingQuery.data?.contestant ?? null;
   const displayName =
@@ -144,12 +170,21 @@ export default function RegistrationStatusScreen() {
               formData={draft.formData}
               rosterPhoto={contestant?.photoUrl}
               name={displayName}
+              onMissingPhoto={onProfilePhotoMissing}
             />
             <View style={styles.identityText}>
               <Text style={styles.name}>{displayName}</Text>
               <Text style={styles.contest}>{String(draft.formData['contest.title'] || draft.contestSlug)}</Text>
             </View>
           </View>
+          {profilePhotoMissing && Boolean(bindingNotice) && (
+            <PrimaryButton
+              label="Replace profile photo"
+              variant="secondary"
+              onPress={onReplaceProfilePhoto}
+              loading={uploadProfilePhoto.isPending || replaceProfilePhoto.isPending}
+            />
+          )}
           <StatusChip status={draft.status} />
           <Text style={styles.ref}>Reference: {draft.reference}</Text>
         </View>
@@ -165,6 +200,11 @@ export default function RegistrationStatusScreen() {
               The review team requested more information.
               {draft.formData['admin.reviewNote'] ? ` ${String(draft.formData['admin.reviewNote'])}` : ''}
             </Text>
+          </View>
+        )}
+        {bindingNotice && (
+          <View style={[styles.notice, styles.noticeBinding]}>
+            <Text style={styles.noticeText}>{bindingNotice}</Text>
           </View>
         )}
 
@@ -244,6 +284,7 @@ const styles = StyleSheet.create({
   ref: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   notice: { borderRadius: Radius.md, padding: Spacing.md },
   noticeWarn: { backgroundColor: Colors.iconBgGold },
+  noticeBinding: { backgroundColor: Colors.iconBgTeal },
   noticeText: { ...Typography.labelMd, color: Colors.onSurface },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.sm },
   empty: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },

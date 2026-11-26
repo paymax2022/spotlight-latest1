@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Platform,
   Pressable,
+  Share,
   ActivityIndicator,
   RefreshControl,
   KeyboardAvoidingView,
@@ -30,6 +31,9 @@ import {
   KeyRound,
   Building2,
   LayoutGrid,
+  Copy,
+  Check,
+  Share2,
 } from 'lucide-react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import TextInputField from '@/components/TextInputField';
@@ -61,6 +65,9 @@ import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { useProviderCapabilities } from '@/features/providerPortal/useProviderCapabilities';
 import { PORTAL_ROUTES, portalRoute } from '@/features/providerPortal/portals';
 import { PortalIcon } from '@/features/providerPortal/PortalIcon';
+import { useMyCode } from '@/features/referral/home/hooks';
+import { referralShare } from '@/features/referral/constants/share';
+import { shareMessage } from '@/features/referral/rewards/constants';
 
 type ProfileForm = {
   firstName: string;
@@ -209,6 +216,30 @@ function statusStyle(status?: string) {
   }
 }
 
+/**
+ * Copy that works on every target the app ships to. expo-clipboard is a dependency,
+ * but the referral screens all guard the require and fall back to the share sheet,
+ * which is the behaviour a user expects if the clipboard is refused.
+ */
+async function copyToClipboard(value: string): Promise<boolean> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Clipboard = require('expo-clipboard');
+    if (Clipboard?.setStringAsync) {
+      await Clipboard.setStringAsync(value);
+      return true;
+    }
+  } catch {
+    /* fall through to the share sheet */
+  }
+  try {
+    await Share.share({ message: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function ProfileScreen() {
   const qc = useQueryClient();
   const { user, logout, setUser } = useAuthStore();
@@ -236,6 +267,33 @@ export default function ProfileScreen() {
   // profile renders exactly as before.
   const providerQuery = useProviderCapabilities();
   const providerAccounts = providerQuery.data ?? [];
+
+  // The signed-in user's OWN referral code, so the profile can hand it out without the
+  // walk to the referral hub. Read-only and fail-quiet like the provider rows: while
+  // the dashboard is loading, or if it refuses, this screen looks exactly as it did.
+  const myCodeQuery = useMyCode();
+  const referral = referralShare(myCodeQuery.data?.code, myCodeQuery.data?.link);
+  const [referralCopied, setReferralCopied] = useState(false);
+
+  const copyReferralCode = async () => {
+    if (!referral) return;
+    if (await copyToClipboard(referral.code)) {
+      setReferralCopied(true);
+      setTimeout(() => setReferralCopied(false), 1800);
+    }
+  };
+
+  const shareReferralCode = async () => {
+    if (!referral) return;
+    const message = shareMessage(referral.code, referral.link);
+    try {
+      // iOS attaches the link; Android and web only show the message, so the link has
+      // to stay inside it for the recipient to be attributed.
+      await Share.share(Platform.OS === 'ios' ? { message, url: referral.link } : { message });
+    } catch {
+      /* the share sheet was dismissed */
+    }
+  };
 
   useEffect(() => {
     if (!profileQuery.data) return;
@@ -346,6 +404,7 @@ export default function ProfileScreen() {
     void profileQuery.refetch();
     void kycQuery.refetch();
     void providerQuery.refetch();
+    void myCodeQuery.refetch();
   };
 
   const handleSaveProfile = () => {
@@ -758,6 +817,39 @@ export default function ProfileScreen() {
             <ChevronRight size={18} color={Colors.onPrimary} strokeWidth={2} />
           </Pressable>
 
+          {referral ? (
+            <View style={[styles.settingsRow, shadow1]} testID="profile-referral-row">
+              <View style={styles.settingsIcon}>
+                <Share2 size={20} color={Colors.primary} strokeWidth={2} />
+              </View>
+              <View style={styles.merchantBody}>
+                <Text style={styles.settingsTitle}>Referral code</Text>
+                <Text style={styles.referralCodeValue} testID="profile-referral-code">{referral.code}</Text>
+                <Text style={styles.settingsSub} numberOfLines={1}>{referral.link}</Text>
+              </View>
+              <Pressable
+                onPress={() => void copyReferralCode()}
+                testID="profile-referral-copy"
+                accessibilityRole="button"
+                accessibilityLabel={referralCopied ? 'Referral code copied' : 'Copy referral code'}
+                style={({ pressed }) => [styles.referralAction, pressed && { opacity: 0.85 }]}
+              >
+                {referralCopied
+                  ? <Check size={18} color={Colors.tertiaryContainer} strokeWidth={2.4} />
+                  : <Copy size={18} color={Colors.primary} strokeWidth={2} />}
+              </Pressable>
+              <Pressable
+                onPress={() => void shareReferralCode()}
+                testID="profile-referral-share"
+                accessibilityRole="button"
+                accessibilityLabel="Share your referral code and link"
+                style={({ pressed }) => [styles.referralAction, styles.referralActionPrimary, pressed && { opacity: 0.9 }]}
+              >
+                <Share2 size={18} color={Colors.onPrimary} strokeWidth={2} />
+              </Pressable>
+            </View>
+          ) : null}
+
           <Pressable
             onPress={() => router.push('/profile/business')}
             style={({ pressed }) => [styles.settingsRow, shadow1, pressed && { opacity: 0.9 }]}
@@ -825,6 +917,9 @@ const styles = StyleSheet.create({
   merchantCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.primary, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginTop: Spacing.md, marginBottom: Spacing.sm },
   merchantIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
   settingsRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginTop: Spacing.sm, marginBottom: Spacing.sm, borderWidth: 1, borderColor: Colors.outlineVariant },
+  referralCodeValue: { ...Typography.titleMd, color: Colors.onSurface, fontWeight: '800' as const, letterSpacing: 1 },
+  referralAction: { width: 40, height: 40, borderRadius: Radius.full, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
+  referralActionPrimary: { backgroundColor: Colors.primary },
   providerList: { gap: Spacing.sm },
   providerRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.outlineVariant, padding: Spacing.sm },
   settingsIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },

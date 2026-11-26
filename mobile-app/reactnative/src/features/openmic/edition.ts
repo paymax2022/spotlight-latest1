@@ -26,6 +26,7 @@ import {
 export interface OpenMicApplicationInput {
   contestSlug?: string | null;
   formData?: Record<string, unknown> | null;
+  workflowIsOpenMic?: boolean;
 }
 
 function normalized(value: unknown): string {
@@ -35,6 +36,7 @@ function normalized(value: unknown): string {
 /** Is this application running in an Open Mic edition, however it came to be typed? */
 export function isOpenMicApplication(input?: OpenMicApplicationInput | null): boolean {
   if (!input) return false;
+  if (input.workflowIsOpenMic === true) return true;
 
   // Stored answers first: they describe the contest the applicant actually
   // chose, even when the edition was given a slug nobody predicted.

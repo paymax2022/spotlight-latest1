@@ -19,6 +19,7 @@ import { Spacing } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import type { RegistrationField, UploadedFileValue } from '../types/registration.types';
 import { pickFileForField } from '../utils/filePicker';
+import { uploadFailureMessage } from '../utils/uploadFailureMessage';
 
 interface Props {
   field: RegistrationField;
@@ -218,8 +219,8 @@ function FileField({ field, value, error, onUpload, onChange }: { field: Registr
     try {
       const uploaded = await onUpload(picked);
       onChange(uploaded);
-    } catch {
-      setLocalError('Upload failed. Please try again.');
+    } catch (error) {
+      setLocalError(uploadFailureMessage(error));
     } finally {
       setBusy(false);
     }

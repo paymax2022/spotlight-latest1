@@ -370,6 +370,10 @@ func Register(member gin.IRouter, svc *Service, cfg config.Config, redis *platfo
 	h := NewHandler(svc)
 	member.GET("/contests", h.ListContests)
 	member.GET("/contests/:id", h.GetContest)
+	// Rising Star edition configuration reads + the registration rules-acceptance
+	// gate (rules, winners, positions, prizes). Registered before the eviction
+	// early-return below so they stay live regardless of that feature flag.
+	RegisterEditionRoutes(member, h)
 	member.POST("/contests/:id/vote",
 		middleware.PerUserRateLimit(redis, "connect-vote-free", cfg.ConnectFreeVoteRatePerMin),
 		h.FreeVote) // free
@@ -433,6 +437,11 @@ func RegisterAdmin(admin gin.IRouter, svc *Service, guard PermissionGuard, cfg c
 	// The admin console lists contests including drafts, which the member
 	// endpoint deliberately never returns.
 	g.GET("", guard("connect.contests.view"), h.ListContestsAdmin)
+
+	// Rising Star edition administration: winning positions, prizes, versioned
+	// rules, winner declaration and the results-status lifecycle. Registered
+	// before the eviction early-return so they are live regardless of that flag.
+	RegisterEditionAdminRoutes(g, h, guard)
 
 	if !cfg.FeatureContestStageEvictionEnabled {
 		log.Println("[connect-voting-admin] FEATURE_CONTEST_STAGE_EVICTION_ENABLED is off — skipping admin eviction routes")

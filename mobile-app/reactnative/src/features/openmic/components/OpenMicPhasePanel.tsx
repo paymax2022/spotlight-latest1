@@ -108,6 +108,17 @@ export default function OpenMicPhasePanel({ phase, contestSlug, onChanged }: Pro
         </View>
       )}
 
+      {stage.kind === 'song_approved' && (
+        <View style={[styles.card, shadow1]}>
+          <Text style={styles.kicker}>Approved submission</Text>
+          <Text style={styles.approvedTitle}>{stage.submission.songTitle || 'Your song'}</Text>
+          <Text style={styles.hint}>You do not need to submit this song again.</Text>
+          {stage.submission.submittedAt ? (
+            <Text style={styles.hint}>Received {formatStamp(stage.submission.submittedAt)}.</Text>
+          ) : null}
+        </View>
+      )}
+
       {showUpload && (
         <SongUploadCard stage={stage} contestSlug={contestSlug} allowed={allowed} onSubmitted={changed} />
       )}
@@ -144,6 +155,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.outlineVariant,
   },
   kicker: { ...Typography.labelSm, color: Colors.primary, textTransform: 'uppercase', letterSpacing: 0.6 },
+  approvedTitle: { ...Typography.titleMd, color: Colors.onSurface },
   hint: { ...Typography.caption, color: Colors.onSurfaceVariant },
   warn: { ...Typography.bodySm, color: Colors.error },
 });

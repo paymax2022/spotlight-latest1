@@ -44,6 +44,17 @@ describe('Open Mic application identity', () => {
     );
   });
 
+  it('recognises Open Mic from the application workflow when draft metadata is incomplete', () => {
+    assert.equal(
+      isOpenMicApplication({
+        contestSlug: 'open-mic-dev',
+        formData: {},
+        workflowIsOpenMic: true,
+      }),
+      true,
+    );
+  });
+
   it('is not case-sensitive about the stored type or category', () => {
     assert.equal(
       isOpenMicApplication({

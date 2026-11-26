@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -183,23 +184,76 @@ func (b *otpAuthBridge) SetPassword(ctx context.Context, email, newPassword stri
 	if email == "" || newPassword == "" {
 		return false, nil
 	}
-	// The lockout gate applies here too. A suspended account must not be able to
-	// take a new password and walk back in.
-	if _, err := b.gate(ctx, email); err != nil {
-		return false, err
-	}
-
-	id, _, err := authUserByEmail(ctx, b.db, email)
+	user, err := b.gatePasswordReset(ctx, email)
 	if err != nil {
 		return false, err
 	}
-	if id == "" {
-		return false, nil // no account — an ordinary outcome
+	if user.ID == "" {
+		return false, fmt.Errorf("%w: platform user id missing", ErrAccountUnavailable)
 	}
-	if err := b.svc.supabase.AdminSetPassword(ctx, id, newPassword); err != nil {
+	if err := b.svc.supabase.AdminSetPassword(ctx, user.ID, newPassword); err != nil {
 		return false, err
 	}
+
+	if user.Status == "locked" {
+		if err := b.clearAutoLockout(ctx, email, user); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
+}
+
+// Password reset has already proved control of the account's email. Let that
+// proof recover a timed login lockout, but keep suspended, deleted, and manual
+// (non-expiring) locks closed.
+func (b *otpAuthBridge) gatePasswordReset(ctx context.Context, email string) (*platformUser, error) {
+	user, err := b.svc.findPlatformUserByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, fmt.Errorf("%w: platform user not found", ErrAccountUnavailable)
+	}
+	if user.DeletedAt == nil && user.Status == "locked" && user.LockedUntil != nil {
+		return user, nil
+	}
+	if err := b.svc.validateLoginStatus(user); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrAccountUnavailable, err)
+	}
+	return user, nil
+}
+
+func (b *otpAuthBridge) clearAutoLockout(ctx context.Context, email string, user *platformUser) error {
+	var updated []map[string]any
+	err := b.svc.supabase.RESTReturn(ctx, http.MethodPatch, "platform_users", map[string]string{
+		"id":           "eq." + user.ID,
+		"status":       "eq.locked",
+		"locked_until": "not.is.null",
+		"select":       "id",
+	}, map[string]any{
+		"status":                "active",
+		"failed_login_attempts": 0,
+		"locked_until":          nil,
+	}, &updated)
+	if err != nil {
+		return err
+	}
+	if len(updated) > 0 {
+		return nil
+	}
+
+	// Do not overwrite a suspension or manual lock that raced the reset.
+	current, err := b.svc.findPlatformUserByEmail(ctx, email)
+	if err != nil {
+		return err
+	}
+	if current == nil {
+		return fmt.Errorf("%w: platform user not found", ErrAccountUnavailable)
+	}
+	if err := b.svc.validateLoginStatus(current); err != nil {
+		return fmt.Errorf("%w: %w", ErrAccountUnavailable, err)
+	}
+	return nil
 }
 
 // AccountExists reports whether a live account exists for email.

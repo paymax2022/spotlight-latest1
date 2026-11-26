@@ -37,6 +37,8 @@ export type OpenMicStage =
   | { kind: 'ready_to_upload'; beat: OpenMicBeat; submission: OpenMicSubmissionSummary | null }
   /** Bytes are stored but the submission is still `draft` — voters cannot hear it until it is submitted. */
   | { kind: 'needs_submit'; beat: OpenMicBeat; submission: OpenMicSubmissionSummary }
+  /** The review team approved the song, but it has not been published for voters. */
+  | { kind: 'song_approved'; beat: OpenMicBeat; submission: OpenMicSubmissionSummary }
   /** A song is on record and playable by voters. */
   | { kind: 'song_live'; beat: OpenMicBeat; submission: OpenMicSubmissionSummary };
 
@@ -67,6 +69,7 @@ export function deriveStage(input: StageInput): OpenMicStage {
     // asserting a non-null the server never promised.
     const beat = eligibility.beat ?? EMPTY_BEAT;
     if (submission.status === 'draft') return { kind: 'needs_submit', beat, submission };
+    if (submission.status === 'approved') return { kind: 'song_approved', beat, submission };
     return { kind: 'song_live', beat, submission };
   }
 
@@ -114,6 +117,20 @@ export function canPreviewBeat(eligibility: OpenMicEligibility | null): boolean 
  */
 export function canSubmitSong(eligibility: OpenMicEligibility | null): boolean {
   return eligibility?.canSubmitSong === true;
+}
+
+/** Already playable or approved songs must not show the upload form again. */
+export function shouldShowSongUpload(stage: OpenMicStage): boolean {
+  switch (stage.kind) {
+    case 'ready_to_upload':
+    case 'needs_submit':
+    case 'window_closed':
+      return true;
+    case 'song_live':
+      return !isPlayableSongStatus(stage.submission.status);
+    default:
+      return false;
+  }
 }
 
 /**
@@ -201,6 +218,11 @@ export function describeStage(stage: OpenMicStage): { title: string; body: strin
       return {
         title: 'Uploaded — one step left',
         body: 'Your file is stored but no voter can hear it until you submit the song. Finish the details below and press submit.',
+      };
+    case 'song_approved':
+      return {
+        title: 'Your song is approved',
+        body: 'The review team approved your submission. You do not need to submit it again; it will be available to voters once published for voting.',
       };
     case 'song_live':
       return {

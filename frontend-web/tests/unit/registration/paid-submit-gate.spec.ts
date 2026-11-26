@@ -13,13 +13,29 @@
  * registration_payment_intents row for the application, or the recorded
  * reference re-verifying with Paystack for at least the server-quoted fee.
  * Anything else lands at 'awaiting_payment' (retryable, no data loss).
+ *
+ * SHAPE NOTE: the store used to be re-imported per test behind
+ * `vi.resetModules()`, which re-transforms its whole module graph every time.
+ * Measured on a cold cache: the first test needed 4.8 s against vitest's 5 s
+ * default. It passed alone and timed out under a directory run, and because the
+ * abandoned `await import()` kept going after the abort, its Paystack call
+ * landed inside the NEXT test — `expect(verifyMock).not.toHaveBeenCalled()`
+ * then failed on a reference ('SPOT-FAKE-123') that test never passed. Same
+ * eight assertions, one import: the status and intent rows the stub answers with
+ * are read through the module-scope holders below.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const APPLICATION_ID = '33333333-3333-4333-8333-333333333333';
 const verifyMock = vi.fn();
 
-function makeSupabaseStub(draftRow: any, intentRow: any, captured: { inserts: any[]; updates: any[] }) {
-  const chainFor = (table: string, singleRow: any, maybeRow: any): any => {
+/** What the stubbed tables answer for the running test. */
+let currentDraftRow: any = null;
+let currentIntentRow: any = null;
+const captured: { inserts: any[]; updates: any[] } = { inserts: [], updates: [] };
+
+function makeSupabaseStub() {
+  const chainFor = (table: string, row: () => any, maybeRow: () => any): any => {
     const chain: any = {};
     chain.select = () => chain;
     chain.eq = () => chain;
@@ -33,25 +49,32 @@ function makeSupabaseStub(draftRow: any, intentRow: any, captured: { inserts: an
       for (const r of Array.isArray(rows) ? rows : [rows]) captured.inserts.push({ table, row: r });
       return chain;
     };
-    chain.single = () => Promise.resolve({ data: singleRow, error: singleRow ? null : { code: 'PGRST116', message: 'nf' } });
-    chain.maybeSingle = () => Promise.resolve({ data: maybeRow, error: null });
+    // Read per call, so a test that changes the holders above is answered here.
+    chain.single = () => {
+      const data = row();
+      return Promise.resolve({ data, error: data ? null : { code: 'PGRST116', message: 'nf' } });
+    };
+    chain.maybeSingle = () => {
+      const data = maybeRow();
+      return Promise.resolve({ data, error: null });
+    };
     chain.then = (resolve: any) => resolve({ data: null, error: null });
     return chain;
   };
   return {
     from: (table: string) =>
       table === 'registrations'
-        ? chainFor(table, draftRow, null)
+        ? chainFor(table, () => currentDraftRow, () => null)
         : table === 'registration_payment_intents'
-          ? chainFor(table, intentRow, intentRow)
-          : chainFor(table, null, null),
+          ? chainFor(table, () => currentIntentRow, () => currentIntentRow)
+          : chainFor(table, () => null, () => null),
     rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
   };
 }
 
 function makeDraftRow(formData: Record<string, unknown>, contestSlug = 'open-mic-competition') {
   return {
-    id: '33333333-3333-4333-8333-333333333333',
+    id: APPLICATION_ID,
     reference: 'OPENMI-000001-XXXX',
     contest_slug: contestSlug,
     status: 'draft',
@@ -71,44 +94,50 @@ function makeDraftRow(formData: Record<string, unknown>, contestSlug = 'open-mic
   };
 }
 
+vi.mock('@supabase/supabase-js', () => ({
+  createClient: vi.fn(() => makeSupabaseStub()),
+}));
+vi.mock('@/src/server/voting/payment/paystack', () => ({ verifyPaystackPayment: verifyMock }));
+// Keep the real contest catalog (resolveAnyContest needs it for the fee/
+// isPaid lookup) but shrink the step list so validation stays minimal.
+vi.mock('@/src/features/registration/config', async (importOriginal) => {
+  const real = (await importOriginal()) as any;
+  return {
+    ...real,
+    buildRegistrationSteps: () => [
+      {
+        key: 'category_specific',
+        title: 'Contest Requirements',
+        description: '',
+        fields: [
+          { key: 'media.rightsConfirmed', label: 'Rights', type: 'checkbox', required: true },
+          { key: 'publicProfile.publicVotingConsent', label: 'Voting consent', type: 'checkbox', required: false },
+        ],
+      },
+    ],
+  };
+});
+vi.mock('@/src/server/registration/photo-pipeline', () => ({
+  processContestantPhotoNoTemplate: vi.fn().mockResolvedValue({ status: 'ready', photoUrl: 'https://cdn.test/cutout.png' }),
+}));
+vi.mock('@/src/server/registration/template-resolver', () => ({
+  resolveActiveTemplateForContest: vi.fn().mockResolvedValue(null),
+}));
+
+const { submitRegistrationApplication } = await import('@/src/server/registration/supabase-store');
+
+beforeEach(() => {
+  currentDraftRow = null;
+  currentIntentRow = null;
+  captured.inserts.length = 0;
+  captured.updates.length = 0;
+});
+
 async function runSubmit(draftRow: any, intentRow: any) {
-  vi.resetModules();
-  const captured = { inserts: [] as any[], updates: [] as any[] };
-
-  vi.doMock('@supabase/supabase-js', () => ({
-    createClient: vi.fn(() => makeSupabaseStub(draftRow, intentRow, captured)),
-  }));
-  vi.doMock('@/src/server/voting/payment/paystack', () => ({ verifyPaystackPayment: verifyMock }));
-  // Keep the real contest catalog (resolveAnyContest needs it for the fee/
-  // isPaid lookup) but shrink the step list so validation stays minimal.
-  vi.doMock('@/src/features/registration/config', async (importOriginal) => {
-    const real = (await importOriginal()) as any;
-    return {
-      ...real,
-      buildRegistrationSteps: () => [
-        {
-          key: 'category_specific',
-          title: 'Contest Requirements',
-          description: '',
-          fields: [
-            { key: 'media.rightsConfirmed', label: 'Rights', type: 'checkbox', required: true },
-            { key: 'publicProfile.publicVotingConsent', label: 'Voting consent', type: 'checkbox', required: false },
-          ],
-        },
-      ],
-    };
-  });
-  vi.doMock('@/src/server/registration/photo-pipeline', () => ({
-    processContestantPhotoNoTemplate: vi.fn().mockResolvedValue({ status: 'ready', photoUrl: 'https://cdn.test/cutout.png' }),
-  }));
-  vi.doMock('@/src/server/registration/template-resolver', () => ({
-    resolveActiveTemplateForContest: vi.fn().mockResolvedValue(null),
-  }));
-
-  const { submitRegistrationApplication } = await import('@/src/server/registration/supabase-store');
-  const result = await submitRegistrationApplication('33333333-3333-4333-8333-333333333333');
+  currentDraftRow = draftRow;
+  currentIntentRow = intentRow;
+  const result = await submitRegistrationApplication(APPLICATION_ID);
   const regUpdate = captured.updates.find((u) => u.table === 'registrations');
-  vi.doUnmock('@/src/features/registration/config');
   return { result, captured, regUpdate };
 }
 
@@ -135,7 +164,7 @@ describe('AUD-BILL-002: paid-contest submit requires proven payment', () => {
     verifyMock.mockReset();
     const { regUpdate } = await runSubmit(
       makeDraftRow({ 'payment.paymentStatus': 'paid' }),
-      { id: 'intent-1', application_id: '33333333-3333-4333-8333-333333333333', amount_kobo: 200000, status: 'completed', reference: 'PAYSTACK-REF-1', idempotency_key: 'k', method: 'PAYSTACK', created_at: 'x', updated_at: 'x' },
+      { id: 'intent-1', application_id: APPLICATION_ID, amount_kobo: 200000, status: 'completed', reference: 'PAYSTACK-REF-1', idempotency_key: 'k', method: 'PAYSTACK', created_at: 'x', updated_at: 'x' },
     );
     expect(regUpdate.vals.status).toBe('submitted');
     expect(verifyMock).not.toHaveBeenCalled();

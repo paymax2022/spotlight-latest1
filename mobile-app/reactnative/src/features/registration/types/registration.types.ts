@@ -209,6 +209,13 @@ export interface RegistrationVotingContestant {
 
 export interface RegistrationVoting {
   votable: boolean;
+  /**
+   * The applicant can already campaign for votes. Weaker than `votable`: it
+   * ignores the contest window, because reaching out to contacts before
+   * `opens_at` is the only time canvassing helps. Never true without a playable
+   * song and an active roster entry — see `votingCta`.
+   */
+  shareable: boolean;
   /** Why voting is unavailable, so the screen can say something specific. */
   reason: RegistrationVotingReason | null;
   applicationStatus: string;

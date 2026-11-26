@@ -53,6 +53,12 @@ beforeEach(() => {
       stored = { ...stored, ...(JSON.parse(body) as Record<string, unknown>) };
       return new Response(JSON.stringify({ success: true, contest: stored }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
+    if (method === 'POST' && url.endsWith('/api/admin/contests/banner')) {
+      return new Response(JSON.stringify({
+        success: true,
+        upload: { url: '/api/admin/contests/banner/YmFubmVyLWtleQ' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
     if (url.endsWith('/api/admin/open-mic/contests/c1')) {
       return new Response(JSON.stringify({ success: true, contest: stored }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
@@ -116,5 +122,35 @@ describe('the submission window in the contest editor', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/not after the open date/i);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(calls.some((call) => call.method === 'PATCH')).toBe(false);
+  });
+
+  it('uploads and saves a replacement banner', async () => {
+    stored = contest({ bannerImageUrl: '/api/admin/contests/banner/b2xkLWtleQ' });
+    await renderConsole();
+    const file = new File(['image'], 'new-banner.webp', { type: 'image/webp' });
+    fireEvent.change(screen.getByLabelText('Contest banner image'), { target: { files: [file] } });
+
+    expect(await screen.findByRole('img', { name: 'Contest banner preview' })).toHaveAttribute(
+      'src',
+      expect.stringContaining('/api/admin/contests/banner/YmFubmVyLWtleQ'),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Save Changes/i }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'PATCH')).toBe(true));
+    const patch = JSON.parse(calls.find((call) => call.method === 'PATCH')!.body) as Record<string, unknown>;
+    expect(patch.bannerImageUrl).toBe('/api/admin/contests/banner/YmFubmVyLWtleQ');
+  });
+
+  it('removes the banner from the contest when changes are saved', async () => {
+    stored = contest({ bannerImageUrl: '/api/admin/contests/banner/YmFubmVyLWtleQ' });
+    await renderConsole();
+
+    fireEvent.click(screen.getByRole('button', { name: /Remove banner/i }));
+    expect(screen.getByText(/No banner is set for this edition/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Save Changes/i }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'PATCH')).toBe(true));
+    const patch = JSON.parse(calls.find((call) => call.method === 'PATCH')!.body) as Record<string, unknown>;
+    expect(patch.bannerImageUrl).toBe('');
   });
 });

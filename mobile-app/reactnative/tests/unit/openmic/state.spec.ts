@@ -15,6 +15,7 @@ import {
   formatStamp,
   playableSongUrl,
   resumableObjectKey,
+  shouldShowSongUpload,
   type OpenMicStage,
 } from '@/features/openmic/state';
 import type { OpenMicBeat, OpenMicEligibility, OpenMicSubmissionSummary, OpenMicWindow } from '@/features/openmic/types';
@@ -109,6 +110,26 @@ describe('deriveStage — a song on record wins', () => {
       const stage = deriveStage({ eligibility: eligibility({ submission: draftSong({ status }) }) });
       assert.equal(stage.kind, 'song_live', status);
     }
+  });
+
+  it('does not ask for another upload after submission or approval', () => {
+    const submitted = deriveStage({
+      eligibility: eligibility({ submission: draftSong({ status: 'submitted' }) }),
+    });
+    const approved = deriveStage({
+      eligibility: eligibility({ submission: draftSong({ status: 'approved' }) }),
+    });
+
+    assert.equal(submitted.kind, 'song_live');
+    assert.equal(approved.kind, 'song_approved');
+    assert.equal(shouldShowSongUpload(submitted), false);
+    assert.equal(shouldShowSongUpload(approved), false);
+    assert.match(describeStage(approved).body, /do not need to submit it again/i);
+
+    const needsSubmit = deriveStage({ eligibility: eligibility({ submission: draftSong() }) });
+    const ready = deriveStage({ eligibility: eligibility() });
+    assert.equal(shouldShowSongUpload(needsSubmit), true);
+    assert.equal(shouldShowSongUpload(ready), true);
   });
 
   it('keeps the entry visible when the window closed after the hand-in', () => {
@@ -268,6 +289,7 @@ describe('describeStage', () => {
     { kind: 'window_closed', beat: BEAT, window: CLOSED_WINDOW, submission: null },
     { kind: 'ready_to_upload', beat: BEAT, submission: null },
     { kind: 'needs_submit', beat: BEAT, submission: draftSong() },
+    { kind: 'song_approved', beat: BEAT, submission: draftSong({ status: 'approved' }) },
     { kind: 'song_live', beat: BEAT, submission: draftSong({ status: 'submitted' }) },
   ];
 

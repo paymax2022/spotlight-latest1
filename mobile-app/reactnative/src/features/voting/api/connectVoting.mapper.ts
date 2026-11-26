@@ -6,7 +6,7 @@
 // without touching the append-only vote table. Everything below assumes that
 // convention and nothing else.
 
-import type { Contest, Contestant, ContestStatus, LeaderboardEntry } from '../types/voting.types';
+import type { Contest, Contestant, ContestStatus, LeaderboardEntry, VotePackage, VoteTransaction } from '../types/voting.types';
 import { formatAmount } from '../utils/voteFormatters';
 
 /**
@@ -48,6 +48,34 @@ export interface BackendRosterEntry {
   song_submission_id?: string;
   song_status?: string;
   song_url?: string;
+}
+
+/**
+ * One row of the BFF's GET /api/v1/contests/:id/vote-packages, which answers
+ * with the server's own camelCase DTO straight from `public.vote_packages`.
+ *
+ * The units are the whole reason this type exists: `amount` is NAIRA, because
+ * `vote_packages.amount` is a `numeric(12,2)` major-unit column that the admin
+ * console writes in naira (its editor shows `amount × 100` kobo to the operator).
+ * `VotePackage.amount` on this side is KOBO — payment-method.tsx hands it to
+ * `checkout.start({ amountKobo })` and to `formatAmount`, which divides by 100 —
+ * so the two only meet correctly through `nairaToKobo`.
+ */
+export interface BackendVotePackage {
+  id: string;
+  contestId?: string;
+  name: string;
+  description?: string | null;
+  votes: number;
+  bonusVotes?: number | null;
+  totalVotes?: number | null;
+  /** Naira major units. Absent or unreadable means "no price", not "free". */
+  amount?: number | null;
+  currency?: string;
+  isActive?: boolean;
+  isRecommended?: boolean;
+  promoLabel?: string | null;
+  displayOrder?: number;
 }
 
 /** One row of GET /api/v1/connect/contests. */
@@ -186,4 +214,93 @@ export function mapLeaderboardEntry(raw: BackendRosterEntry, contestId: string):
     contestant: mapContestant(raw, contestId),
     votes: raw.total_votes,
   } as LeaderboardEntry;
+}
+
+/**
+ * Naira (major units) → kobo, the only conversion between the two money columns
+ * in this product. Rounds rather than truncates so a `numeric(12,2)` value like
+ * 1999.99 stays 199,999 kobo, and returns 0 for anything unparseable: a broken
+ * price must not reach the gateway as NaN.
+ */
+function nairaToKobo(amount: number | null | undefined): number {
+  const naira = Number(amount ?? 0);
+  if (!Number.isFinite(naira) || naira <= 0) return 0;
+  return Math.round(naira * 100);
+}
+
+export function mapVotePackage(raw: BackendVotePackage): VotePackage {
+  const bonusVotes = Number(raw.bonusVotes ?? 0);
+  return {
+    id: raw.id,
+    // Base votes only: VotePackageCard prints `votes + bonusVotes` itself, so
+    // folding the server's totalVotes in here would count the bonus twice.
+    votes: Number(raw.votes ?? 0),
+    amount: nairaToKobo(raw.amount),
+    currency: 'NGN',
+    // The DTO has no `label`; `name` is the pack title the console operator set.
+    label: raw.name || undefined,
+    bonusVotes: bonusVotes > 0 ? bonusVotes : undefined,
+    // And no `popular`: the console's "Recommended" switch is `isRecommended`.
+    isPopular: Boolean(raw.isRecommended),
+  };
+}
+
+/** A row of connect_votes as the Go connect module returns it. */
+export interface ConnectVoteRow {
+  id: string;
+  contest_id: string;
+  contest_title: string;
+  contestant_id: string;
+  contestant_name: string;
+  photo_url: string;
+  paid: boolean;
+  quantity: number;
+  amount_kobo: number;
+  created_at: string;
+}
+
+/**
+ * connect_votes is an immutable log of votes that HAPPENED, so there is no
+ * pending or failed row to represent: anything the caller can see already
+ * counted. Mapping every row to SUCCESSFUL is the honest translation, not a
+ * default — a status field that could only ever hold one value would invite the
+ * screen to render a filter that never changes anything.
+ *
+ * amount_kobo is kobo and VoteTransaction.amount is kobo — the same client unit
+ * as VotePackage.amount (#1170), what MOCK_VOTE_TRANSACTIONS writes, and what
+ * formatAmount expects. This seam therefore passes the figure through. It used
+ * to divide by 100 here, which the two screens that render it undid a second
+ * time: my-votes.tsx and VoteReceiptCard.tsx both call formatAmount(tx.amount),
+ * so a ₦500 vote printed "₦5". Do not "fix" that by changing the renderers to
+ * treat amount as naira — the payment path reads the same field as kobo.
+ *
+ * Relocated here from voting.api.ts unchanged, so the money line is testable by
+ * execution: voting.api.ts imports react-native-url-polyfill through the api
+ * client and cannot load under `node --test`, which is why this suite's older
+ * specs fell back to asserting source text. A number that renders 100× wrong is
+ * not something a regex should be trusted to catch.
+ */
+export function toVoteTransaction(r: ConnectVoteRow): VoteTransaction {
+  return {
+    id: r.id,
+    contestId: r.contest_id,
+    contestantId: r.contestant_id,
+    contestantName: r.contestant_name,
+    contestTitle: r.contest_title,
+    /**
+     * Already a renderable URL, but not a signature: since #1172 Go names
+     * frontend-web's reader (/api/v1/contestants/<id>/photo), which resolves the
+     * stored key against its own bucket or disk. A pasted external URL comes
+     * through unchanged; a value the reader cannot serve comes through empty,
+     * and the screens fall back to their initials placeholder.
+     */
+    contestantPhoto: r.photo_url || undefined,
+    voteType: r.paid ? 'PAID' : 'FREE',
+    votes: r.quantity,
+    amount: r.paid ? r.amount_kobo : undefined,
+    currency: 'NGN',
+    status: 'SUCCESSFUL',
+    reference: r.id,
+    createdAt: r.created_at,
+  };
 }

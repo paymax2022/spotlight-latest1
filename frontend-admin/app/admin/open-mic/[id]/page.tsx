@@ -47,6 +47,8 @@ import {
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 import { submissionWindowNotice, toDateTimeLocalInput } from '@/features/openmic/submission-window';
 import OpenMicSubmissionReviewPanel from '@/features/openmic/song-review-panel';
+import { adminMediaUrl, uploadContestBanner } from '@/services/contestsAdminService';
+import { beatDownloadCells, winnerPrizeCell } from './open-mic-cells';
 
 const TABS = [
   'Edit Contest', 'Applications', 'Submissions', 'Finalists', 'Winners', 'Payments',
@@ -77,7 +79,7 @@ const fieldWrap: CSSProperties = { marginBottom: 14 };
 const selectStyle: CSSProperties = { width: '100%', padding: '8px 10px', borderRadius: 6, border: `1px solid ${colors.inputBorder}`, fontSize: 13 };
 
 type EditFormState = {
-  title: string; description: string; status: string; visibility: string;
+  title: string; description: string; bannerImageUrl: string; status: string; visibility: string;
   registrationFeeNgn: number; entryFeeRequired: boolean;
   votePrice: number; freeVotesPerDay: number; votingEnabled: boolean;
   freeVoting: boolean; paidVoting: boolean; leaderboardVisible: boolean; voteCountPublic: boolean;
@@ -91,7 +93,8 @@ type EditFormState = {
 
 function formFromContest(c: OpenMicContest): EditFormState {
   return {
-    title: c.title, description: c.description ?? '', status: c.status, visibility: c.visibility ?? 'public',
+    title: c.title, description: c.description ?? '', bannerImageUrl: c.bannerImageUrl ?? '',
+    status: c.status, visibility: c.visibility ?? 'public',
     registrationFeeNgn: c.registrationFeeNgn, entryFeeRequired: c.entryFeeRequired ?? false,
     votePrice: c.votingConfig.votePrice, freeVotesPerDay: c.votingConfig.freeVotesPerDay,
     votingEnabled: c.votingConfig.enabled ?? true, freeVoting: c.votingConfig.freeVoting ?? true,
@@ -336,6 +339,8 @@ export default function OpenMicContestAdminPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState('');
+  const [bannerBusy, setBannerBusy] = useState(false);
+  const [bannerError, setBannerError] = useState<string | null>(null);
 
   function setEditField<K extends keyof EditFormState>(key: K, value: EditFormState[K]) {
     setEditForm((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -378,6 +383,7 @@ export default function OpenMicContestAdminPage() {
       const patch: OpenMicContestEditInput = {
         title: editForm.title,
         description: editForm.description,
+        bannerImageUrl: editForm.bannerImageUrl.trim(),
         status: editForm.status,
         visibility: editForm.visibility,
         registrationFeeNgn: editForm.registrationFeeNgn,
@@ -415,6 +421,33 @@ export default function OpenMicContestAdminPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function uploadBanner(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+
+    setBannerBusy(true);
+    setBannerError(null);
+    setSaveError(null);
+    setSaveMessage('');
+    try {
+      const bannerImageUrl = await uploadContestBanner(file);
+      setEditField('bannerImageUrl', bannerImageUrl);
+      setSaveMessage('Banner uploaded. Save changes to apply it to this edition.');
+    } catch (e) {
+      setBannerError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBannerBusy(false);
+    }
+  }
+
+  function removeBanner() {
+    setEditField('bannerImageUrl', '');
+    setBannerError(null);
+    setSaveError(null);
+    setSaveMessage('Banner removal is pending. Save changes to apply it.');
   }
 
   const [loading, setLoading] = useState(true);
@@ -471,12 +504,11 @@ export default function OpenMicContestAdminPage() {
         case 'Edit Contest': break;
         case 'Applications': setRows(await listOpenMicApplications(contestId)); break;
         case 'Submissions': {
-          // One request feeds both the table and the review panel:
-          // /api/admin/open-mic/submissions returns whole submission objects,
-          // so songUrl/songObjectKey/reviewNote are already in the payload.
-          const list = await listOpenMicSubmissions(contestId);
-          setRows(list);
-          setSubmissionRows(list);
+          // /api/admin/open-mic/submissions returns whole submission objects, so
+          // songUrl/songObjectKey/reviewNote are already in the payload and the
+          // queue needs no second request. It feeds `submissionRows` alone: this
+          // tab no longer renders a table off `rows`.
+          setSubmissionRows(await listOpenMicSubmissions(contestId));
           break;
         }
         case 'Finalists': setRows(await listOpenMicFinalists(contestId)); break;
@@ -575,6 +607,44 @@ export default function OpenMicContestAdminPage() {
                   </select>
                 </div>
               </div>
+            </section>
+
+            <section>
+              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Contest Banner</h3>
+              <p style={{ color: colors.muted, fontSize: 12, margin: '0 0 12px' }}>
+                JPG, PNG, or WebP up to 8 MB. Uploading stores the image; save changes to publish it on the contest.
+                Removing or replacing it unlinks the old image but does not delete its stored file.
+              </p>
+              {editForm.bannerImageUrl ? (
+                <img
+                  src={adminMediaUrl(editForm.bannerImageUrl)}
+                  alt="Contest banner preview"
+                  style={{ display: 'block', width: '100%', maxHeight: 240, objectFit: 'cover', borderRadius: 8, marginBottom: 12 }}
+                />
+              ) : (
+                <p style={{ color: colors.muted, fontSize: 12, margin: '0 0 12px' }}>No banner is set for this edition.</p>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <label htmlFor="open-mic-banner-file" style={{ ...labelStyle, margin: 0 }}>
+                  {bannerBusy ? 'Uploading banner…' : editForm.bannerImageUrl ? 'Replace banner' : 'Add banner'}
+                </label>
+                <input
+                  id="open-mic-banner-file"
+                  aria-label="Contest banner image"
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                  onChange={uploadBanner}
+                  disabled={bannerBusy || saving}
+                />
+                <Button
+                  variant="danger"
+                  onClick={removeBanner}
+                  disabled={!editForm.bannerImageUrl || bannerBusy || saving}
+                >
+                  Remove banner
+                </Button>
+              </div>
+              {bannerError && <p role="alert" style={{ color: colors.danger, fontSize: 12 }}>{bannerError}</p>}
             </section>
 
             <section>
@@ -762,43 +832,21 @@ export default function OpenMicContestAdminPage() {
         )}
 
         {!error && loadedTab === 'Submissions' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {loading ? (
-              <p style={{ color: colors.muted, margin: 0 }}>Loading submissions…</p>
-            ) : (
-              <Table
-                columns={['Artist', 'Song', 'Status', 'Handed In', 'Votes', 'Finalist', 'Winner']}
-                rows={(rows as OpenMicSubmissionRow[]).map((s) => [
-                  s.stageName, s.songTitle, s.status?.replace(/_/g, ' '),
-                  s.submittedAt ? new Date(s.submittedAt).toLocaleString() : '—',
-                  s.voteCount,
-                  s.isFinalist ? <Badge key="f" text="Finalist" color={colors.primary} /> : '—',
-                  s.isWinner ? <Badge key="w" text="Winner" color={colors.success} /> : '—',
-                ])}
-              />
-            )}
-
-            {/* The decision panel is rendered apart from `loading` on purpose:
-                it refetches itself after every decision (refreshSubmissions),
-                and unmounting it there would wipe the row the operator is
-                working through along with the confirmation they need to read. */}
-            <section style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <h3 style={{ fontSize: 13, fontWeight: 700, margin: 0 }}>Song review</h3>
-              <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>
-                Listen, then decide. Only ‘Publish for voting’ puts a track on the artist profile, the leaderboard and
-                the mobile app; ‘Approve the hand-in’ alone accepts the file and shows it to nobody.
-              </p>
-              {submissionRows === null ? (
-                <p style={{ color: colors.muted, margin: 0 }}>Loading submissions…</p>
-              ) : (
-                <OpenMicSubmissionReviewPanel
-                  submissions={submissionRows}
-                  onRefresh={refreshSubmissions}
-                  refreshing={refreshingSubmissions}
-                />
-              )}
-            </section>
-          </div>
+          // The queue IS the tab: it carries every fact the separate table used
+          // to (timestamp, votes, finalist, winner) plus the player and the
+          // decision, so a song is read in one place. Rendered apart from
+          // `loading` on purpose — it refetches itself after every decision
+          // (refreshSubmissions), and unmounting it there would wipe the row the
+          // operator is working through along with the confirmation they earned.
+          submissionRows === null ? (
+            <p style={{ color: colors.muted, margin: 0 }}>Loading submissions…</p>
+          ) : (
+            <OpenMicSubmissionReviewPanel
+              submissions={submissionRows}
+              onRefresh={refreshSubmissions}
+              refreshing={refreshingSubmissions}
+            />
+          )
         )}
 
         {!loading && !error && loadedTab === 'Finalists' && (
@@ -814,7 +862,8 @@ export default function OpenMicContestAdminPage() {
           <Table
             columns={['Winner', 'Song', 'Votes', 'Prize']}
             rows={(rows as Awaited<ReturnType<typeof listOpenMicSubmissions>>).map((w) => [
-              w.stageName, w.songTitle, w.voteCount, contest?.prizes?.[0]?.title || 'Winner Perks',
+              w.stageName, w.songTitle, w.voteCount,
+              winnerPrizeCell({ awardTitle: w.awardTitle, firstPrizeTitle: contest?.prizes?.[0]?.title }),
             ])}
           />
         )}
@@ -842,11 +891,7 @@ export default function OpenMicContestAdminPage() {
         {!loading && !error && loadedTab === 'Beat Downloads' && (
           <Table
             columns={['Artist', 'Email', 'Terms', 'Paid Access', 'Downloaded At']}
-            rows={(rows as Awaited<ReturnType<typeof listOpenMicBeatDownloads>>).map((d) => [
-              d.artistName, d.artistEmail || '—', d.termsAccepted ? 'Accepted' : 'No',
-              d.paidAccessConfirmed ? 'Confirmed' : 'Not confirmed',
-              d.downloadedAt ? new Date(d.downloadedAt).toLocaleString('en-NG') : '—',
-            ])}
+            rows={(rows as Awaited<ReturnType<typeof listOpenMicBeatDownloads>>).map((d) => beatDownloadCells(d))}
           />
         )}
 

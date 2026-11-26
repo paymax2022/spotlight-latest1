@@ -27,12 +27,14 @@ interface Props {
   formData?: Record<string, unknown> | null;
   /** `contestants.photo_url`: the same object as JSON text, or a bare URL. */
   rosterPhoto?: string | null;
+  /** Called when no stored photo can be loaded. */
+  onMissingPhoto?: () => void;
   /** Used for the initial when there is no picture to show. */
   name?: string | null;
   size?: number;
 }
 
-export default function ProfilePhotoAvatar({ formData, rosterPhoto, name, size = 56 }: Props) {
+export default function ProfilePhotoAvatar({ formData, rosterPhoto, onMissingPhoto, name, size = 56 }: Props) {
   const photo = pickProfilePhoto(formData ?? undefined) ?? profilePhotoFromStored(rosterPhoto);
   const storedUrl = photo?.previewUrl ?? null;
   const [loadableUrl, setLoadableUrl] = useState<string | null>(null);
@@ -41,6 +43,7 @@ export default function ProfilePhotoAvatar({ formData, rosterPhoto, name, size =
     let active = true;
     if (!storedUrl) {
       setLoadableUrl(null);
+      onMissingPhoto?.();
       return;
     }
     resolveUploadUrl(storedUrl)
@@ -50,18 +53,28 @@ export default function ProfilePhotoAvatar({ formData, rosterPhoto, name, size =
       .catch(() => {
         // A preview the API cannot sign is a missing picture, not an error to
         // shout about on a status page.
-        if (active) setLoadableUrl(null);
+        if (active) {
+          setLoadableUrl(null);
+          onMissingPhoto?.();
+        }
       });
     return () => {
       active = false;
     };
-  }, [storedUrl]);
+  }, [onMissingPhoto, storedUrl]);
 
   const initial = String(name ?? '').trim().charAt(0).toUpperCase();
   const circle = { width: size, height: size, borderRadius: size / 2 };
 
   if (loadableUrl) {
-    return <Image source={{ uri: loadableUrl }} style={[styles.image, circle]} accessibilityLabel="Your profile photo" />;
+    return (
+      <Image
+        source={{ uri: loadableUrl }}
+        style={[styles.image, circle]}
+        accessibilityLabel="Your profile photo"
+        onError={() => onMissingPhoto?.()}
+      />
+    );
   }
 
   return (

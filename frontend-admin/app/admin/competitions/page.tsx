@@ -129,6 +129,17 @@ export default function AdminCompetitionsPage() {
             </div>
           </Link>
 
+          <Link href="/admin/competitions/list" style={{ textDecoration: 'none' }}>
+            <div style={{ padding: 16, border: `1px solid ${colors.border}`, borderRadius: '0.5rem', background: tint(colors.primary, 0.04), cursor: 'pointer', transition: 'all .15s' }}
+              onMouseEnter={(e) => e.currentTarget.style.background = tint(colors.primary, 0.08)}
+              onMouseLeave={(e) => e.currentTarget.style.background = tint(colors.primary, 0.04)}
+            >
+              <div style={{ fontSize: 20, marginBottom: 8 }}>🌟</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Rising Star Editions</div>
+              <div style={{ fontSize: 12, color: colors.muted }}>Prizes, rules &amp; winner declaration — open a contest, then “Edition”</div>
+            </div>
+          </Link>
+
           <Link href="/admin/competitions/settings" style={{ textDecoration: 'none' }}>
             <div style={{ padding: 16, border: `1px solid ${colors.border}`, borderRadius: '0.5rem', background: tint(colors.muted, 0.04), cursor: 'pointer', transition: 'all .15s' }}
               onMouseEnter={(e) => e.currentTarget.style.background = tint(colors.muted, 0.08)}

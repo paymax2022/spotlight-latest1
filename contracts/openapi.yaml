@@ -19987,3 +19987,35 @@ paths:
         '403': { description: Missing insurance.reconciliation.resolve }
         '404': { description: "not_found — malformed uuid policy_id OR entry absent" }
         '409': { description: already_reversed }
+  /api/registration/applications/{id}/profile-photo:
+    post:
+      operationId: replaceRegistrationProfilePhoto
+      summary: Replace the signed-in applicant's profile photo after approval
+      description: >
+        Replaces only `media.profilePhoto` for the owner of an approved
+        registration. It does not change application status or other answers.
+        The uploaded object must be a JPEG, PNG, or WebP under the applicant's
+        registration upload namespace.
+      tags: [Registration]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [storageKey]
+              properties:
+                storageKey:
+                  type: string
+                  pattern: '^registration/[0-9a-f-]{36}/[0-9a-f-]{36}\.(jpg|jpeg|png|webp)$'
+      responses:
+        '200': { description: Profile photo replaced; application status is unchanged }
+        '400': { description: Invalid application ID, body, or upload key }
+        '401': { description: Authentication required }
+        '403': { description: The application or upload belongs to another user }
+        '404': { description: Application or uploaded photo not found }
+        '409': { description: Application is not in an approved, binding status }

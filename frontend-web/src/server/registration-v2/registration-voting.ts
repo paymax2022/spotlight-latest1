@@ -54,6 +54,14 @@ export interface RegistrationVoting {
   /** True only when there is an active roster row on an open contest. */
   votable: boolean;
   /**
+   * The applicant can already campaign for votes — on the roster, with a
+   * playable song, and a contest to link to, but the voting window has not
+   * opened yet (or the vote itself is unavailable for another reason that does
+   * not stop canvassing). Weaker than `votable` on purpose: reaching out to
+   * contacts BEFORE the window opens is the only time it helps.
+   */
+  shareable: boolean;
+  /**
    * Why voting is not available, when it is not. Lets the client say something
    * specific instead of hiding the section with no explanation.
    */
@@ -91,16 +99,54 @@ function notVotable(
   reason: RegistrationVoting['reason'],
   contest: RegistrationVotingContest | null = null,
   contestant: RegistrationVotingContestant | null = null,
+  shareable = false,
+  sharePath: string | null = null,
+  shareText: string | null = null,
 ): RegistrationVoting {
   return {
     votable: false,
+    shareable,
     reason,
     applicationStatus,
     contest,
     contestant,
-    sharePath: null,
-    shareText: null,
+    sharePath,
+    shareText,
   };
+}
+
+/** Pure voting/share decision used by the projection and its unit tests. */
+export function decideVotingAccess(input: {
+  applicationStatus: string;
+  promoted: boolean;
+  hasContest: boolean;
+  contestantActive: boolean;
+  contestOpen: boolean;
+  songBlocked: boolean;
+}): Pick<RegistrationVoting, 'votable' | 'shareable' | 'reason'> {
+  if (!APPROVED_STATUSES.has(input.applicationStatus)) {
+    return { votable: false, shareable: false, reason: 'not_approved' };
+  }
+  if (!input.promoted) {
+    return { votable: false, shareable: false, reason: 'not_promoted' };
+  }
+  if (!input.hasContest) {
+    return { votable: false, shareable: false, reason: 'no_contest' };
+  }
+  if (!input.contestantActive) {
+    return { votable: false, shareable: false, reason: 'contestant_inactive' };
+  }
+  if (!input.contestOpen) {
+    return {
+      votable: false,
+      shareable: !input.songBlocked,
+      reason: 'contest_not_open',
+    };
+  }
+  if (input.songBlocked) {
+    return { votable: false, shareable: false, reason: 'song_not_submitted' };
+  }
+  return { votable: true, shareable: true, reason: null };
 }
 
 /**
@@ -257,13 +303,12 @@ export async function getRegistrationVoting(
   if (!contestant.isActive) {
     return notVotable(applicationStatus, 'contestant_inactive', contest, contestant);
   }
-  if (contest.status !== 'open') {
-    return notVotable(applicationStatus, 'contest_not_open', contest, contestant);
-  }
 
-  // Open Mic only, and only last: an artist who has not handed in a song is
-  // still approved, still on the roster, still in an open contest — the single
-  // thing missing is the audio a voter would hear.
+  // The song gate is needed before checking the contest window: an approved
+  // artist may campaign before opening, but only when there is something for a
+  // voter to hear. The pure decision keeps the precedence explicit — a closed
+  // contest reports `contest_not_open`, while its song state still controls
+  // whether the share CTA is safe to show.
   const artistUserId = String((rosterRow as any).user_id ?? '').trim() || null;
   const songState = await readOpenMicSongState({
     contestSlug: contest.slug ?? ((registration as any).contest_slug as string | null) ?? null,
@@ -274,20 +319,40 @@ export async function getRegistrationVoting(
     artistUserId,
     hasPlayableSong: songState?.hasPlayableSong === true,
   });
-  if (songGate.blocked) {
-    return notVotable(applicationStatus, songGate.reason, contest, contestant);
+  const access = decideVotingAccess({
+    applicationStatus,
+    promoted: true,
+    hasContest: true,
+    contestantActive: contestant.isActive,
+    contestOpen: contest.status === 'open',
+    songBlocked: songGate.blocked,
+  });
+  const displayName = contestant.stageName || contestant.name;
+  const sharePath = `/voting/contestant-profile?contestantId=${encodeURIComponent(
+    contestant.id,
+  )}&contestId=${encodeURIComponent(contest.id)}`;
+  const shareText = `Vote for ${displayName} in ${contest.title} on Spotlight! 🎤`;
+
+  if (!access.votable) {
+    return notVotable(
+      applicationStatus,
+      access.reason,
+      contest,
+      contestant,
+      access.shareable,
+      access.shareable ? sharePath : null,
+      access.shareable ? shareText : null,
+    );
   }
 
-  const displayName = contestant.stageName || contestant.name;
   return {
     votable: true,
+    shareable: true,
     reason: null,
     applicationStatus,
     contest,
     contestant,
-    sharePath: `/voting/contestant-profile?contestantId=${encodeURIComponent(
-      contestant.id,
-    )}&contestId=${encodeURIComponent(contest.id)}`,
-    shareText: `Vote for ${displayName} in ${contest.title} on Spotlight! 🎤`,
+    sharePath,
+    shareText,
   };
 }

@@ -137,6 +137,7 @@ export type OpenMicContest = {
   year: number;
   season: string;
   description: string;
+  bannerImageUrl?: string;
   objective?: string;
   theme?: string;
   hashtag?: string;
@@ -208,10 +209,16 @@ export type OpenMicBeatDownloadLog = {
   beatId: string;
   contestId: string;
   userId?: string;
+  /** '' when the download has no profile row to read a name from. */
   artistName: string;
   artistEmail?: string;
-  termsAccepted: boolean;
-  paidAccessConfirmed: boolean;
+  /**
+   * Null means the database has no consent/payment row for this artist:
+   * `beat_download_logs` records the hand-off only, so a listing can assert these
+   * two from an enrollment row when one exists and must stay silent otherwise.
+   */
+  termsAccepted: boolean | null;
+  paidAccessConfirmed: boolean | null;
   downloadedAt: string;
 };
 
@@ -257,6 +264,12 @@ export type OpenMicSubmission = {
   leaderboardScore: number;
   isFinalist: boolean;
   isWinner: boolean;
+  /**
+   * The award `announceWinner` recorded in `winner_records.award_title`, read back
+   * for the rows that have one so the console shows the prize the database holds
+   * instead of a phrase it invented.
+   */
+  awardTitle?: string | null;
   submittedAt?: string;
   approvedAt?: string;
   publishedAt?: string;

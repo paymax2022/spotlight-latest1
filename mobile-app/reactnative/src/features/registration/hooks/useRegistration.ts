@@ -2,7 +2,12 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as reg from '../api/registration.api';
-import type { RegistrationStepKey, PickedUpload, RegistrationPaymentMethod } from '../types/registration.types';
+import type {
+  RegistrationStepKey,
+  PickedUpload,
+  UploadedFileValue,
+  RegistrationPaymentMethod,
+} from '../types/registration.types';
 
 const KEY = 'registration';
 
@@ -131,6 +136,14 @@ export function useVerifyRegistrationPayment(id: string) {
 
 export function useUploadFile() {
   return useMutation({ mutationFn: (file: PickedUpload) => reg.uploadFile(file) });
+}
+
+export function useReplaceProfilePhoto(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (photo: UploadedFileValue) => reg.replaceProfilePhoto(id, photo),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'status', id] }),
+  });
 }
 
 /**

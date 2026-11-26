@@ -20,6 +20,7 @@ import ContestHero from '@/features/voting/components/ContestHero';
 import SponsorBanner from '@/features/voting/components/SponsorBanner';
 import ContestantCard from '@/features/voting/components/ContestantCard';
 import VotingRulesCard from '@/features/voting/components/VotingRulesCard';
+import WinnersSection from '@/features/voting/components/WinnersSection';
 import ContestStatusBadge from '@/features/voting/components/ContestStatusBadge';
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
 import { HomeMenuButton } from '@/components/HomeMenu';
@@ -161,6 +162,9 @@ export default function ContestDetailsScreen() {
             <SponsorBanner sponsorName={contest.sponsorName} />
           )}
 
+          {/* Official winners — only rendered once results are published (§3). */}
+          <WinnersSection contestId={contest.id} />
+
           {/* Contestants preview */}
           {preview.length > 0 && (
             <>
@@ -186,6 +190,15 @@ export default function ContestDetailsScreen() {
 
           {/* Voting rules */}
           <VotingRulesCard freeVotesPerDay={contest.freeVotesPerDay} rulesText={contest.rulesText} />
+
+          {/* Edition contest rules & regulations (§5) — full published rules. */}
+          <Pressable
+            style={styles.rulesLink}
+            onPress={() => router.push(`/voting/edition-rules?contestId=${contest.id}&contestTitle=${encodeURIComponent(contest.title)}`)}
+          >
+            <ShieldCheck size={18} color={Colors.primary} />
+            <Text style={styles.rulesLinkText}>Rules & Regulations</Text>
+          </Pressable>
 
           {/* CTA */}
           <View style={styles.ctaRow}>
@@ -260,6 +273,8 @@ const styles = StyleSheet.create({
   row:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionHeading: { ...Typography.titleMd, color: Colors.onSurface },
   seeAll:     { ...Typography.labelMd, color: Colors.primary },
+  rulesLink:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
+  rulesLinkText: { ...Typography.labelMd, color: Colors.primary, fontWeight: '600' },
   contestantsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   contestantItem: { width: '48%' },
   ctaRow:     { gap: Spacing.sm },

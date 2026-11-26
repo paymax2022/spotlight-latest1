@@ -218,6 +218,9 @@ export default function CompetitionsListPage() {
                       <Link href={`/admin/competitions/results?contestId=${c.id}`}>
                         <Button variant="outline" sm>Leaderboard</Button>
                       </Link>
+                      <Link href={`/admin/competitions/edition?id=${c.id}`}>
+                        <Button variant="outline" sm>Edition</Button>
+                      </Link>
                     </div>
                   </td>
                 </tr>

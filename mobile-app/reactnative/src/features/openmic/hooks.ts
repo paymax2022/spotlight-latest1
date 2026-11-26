@@ -50,6 +50,7 @@ import {
   describeStage,
   formatStamp,
   playableSongUrl,
+  shouldShowSongUpload,
   type OpenMicStage,
 } from './state';
 import {
@@ -136,14 +137,6 @@ export function useArtistIdentity() {
  * the identity the beat download is logged against. A screen keeps only its own
  * pull-to-refresh, because that is a property of the scroll view, not of Open Mic.
  */
-/** Stages where the song card has something the artist can act on. */
-const UPLOAD_STAGES: OpenMicStage['kind'][] = [
-  'ready_to_upload',
-  'needs_submit',
-  'window_closed',
-  'song_live',
-];
-
 export interface OpenMicPhase {
   stage: OpenMicStage;
   eligibility: OpenMicEligibility | null;
@@ -181,7 +174,7 @@ export function useOpenMicPhase(contestSlug: string): OpenMicPhase {
     artistName: identity.displayName || identity.email,
     artistEmail: identity.email,
     showBeat: 'beat' in stage && stage.beat !== null,
-    showUpload: UPLOAD_STAGES.includes(stage.kind),
+    showUpload: shouldShowSongUpload(stage),
     missingSlug: !contestSlug,
     refresh,
     refreshing,

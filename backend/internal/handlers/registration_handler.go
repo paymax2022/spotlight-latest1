@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -157,6 +158,13 @@ func (h *RegistrationHandler) SaveStep(c *gin.Context) {
 
 	app, err := h.store.SaveStep(c.Request.Context(), userID, id, body.StepKey, body.Values, newPercent)
 	if err != nil {
+		if errors.Is(err, ErrApplicationLocked) {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "This application was approved, so its answers are now fixed. Contact support if something needs to change.",
+				"code":  "application_locked",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save step"})
 		return
 	}
@@ -192,6 +200,13 @@ func (h *RegistrationHandler) SubmitApplication(c *gin.Context) {
 
 	app, err := h.store.SubmitApplication(c.Request.Context(), userID, id)
 	if err != nil {
+		if errors.Is(err, ErrApplicationLocked) {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "This application was approved, so its answers are now fixed. Contact support if something needs to change.",
+				"code":  "application_locked",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit application"})
 		return
 	}
