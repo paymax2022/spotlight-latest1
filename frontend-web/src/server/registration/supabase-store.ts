@@ -29,6 +29,7 @@ import {
   getPersistedContestById,
 } from '@/src/server/registration-v2/contest-store';
 import { isSubmissionBinding } from '@/src/features/registration/lock';
+import { resolveConnectContestId } from '@/src/server/registration/connect-contest-id';
 import { ApplicationLockedError } from '@/src/server/registration/errors';
 import type {
   ContestRegistrationDefinition,
@@ -346,25 +347,15 @@ async function resolveAnyContest(slugOrId: string): Promise<ContestRegistrationD
 }
 
 /**
- * Look up a connect_contests.id by slug. Used by reviewRegistrationApplication
- * (AD-003/CS-004) to resolve which contest a registration's photo template
- * (contest_templates.connect_contest_id) should come from. There was no
- * existing slug -> connect_contests.id lookup in this file to reuse —
- * resolveAnyContest above resolves against public.contests / the in-memory
- * catalog, not connect_contests. Returns null (never throws) on any miss or
- * error — an unresolvable contest just means the template resolver is
- * skipped and the caller falls back to the no-template pipeline.
+ * Look up a connect_contests.id by slug — see connect-contest-id.ts, which
+ * this file now imports instead of holding its own copy. Used by
+ * reviewRegistrationApplication (AD-003/CS-004) to resolve which contest a
+ * registration's photo template (contest_templates.connect_contest_id) should
+ * come from, and by the photo registry for the same reason. There was no
+ * pre-existing slug -> connect_contests.id lookup to reuse: resolveAnyContest
+ * above resolves against public.contests / the in-memory catalog, not
+ * connect_contests.
  */
-async function resolveConnectContestId(slug: string | undefined): Promise<string | null> {
-  if (!slug) return null;
-  const { data, error } = await getSupabase()
-    .from('connect_contests')
-    .select('id')
-    .eq('slug', slug)
-    .maybeSingle();
-  if (error || !data) return null;
-  return (data as { id: string }).id;
-}
 
 export async function startRegistrationDraft(params: {
   contestSlug: string;

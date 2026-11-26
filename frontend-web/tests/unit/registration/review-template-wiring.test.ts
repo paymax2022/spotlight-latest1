@@ -85,6 +85,8 @@ describe('AD-003/CS-004: reviewRegistrationApplication template resolution wirin
       crop_mode: 'cover' as const, border_radius: 0, opacity: 1,
     };
     vi.mocked(resolveActiveTemplateForContest).mockResolvedValue({
+      templateId: 'tpl-1',
+      templateVersion: 2,
       templateUrl: 'https://cdn.test/template.png',
       templateWidth: 1080,
       templateHeight: 1350,

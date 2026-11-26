@@ -92,6 +92,26 @@ async function presign(objectKey: string, ttlSeconds: number): Promise<Fetchable
   }
 }
 
+/**
+ * The object key behind a stored photo value, or null when it is not our own
+ * upload route.
+ *
+ * Split out from `resolveFetchableSource` because the key is wanted even when
+ * no fetchable URL can be produced: the asset row stores the key, not the
+ * signed URL, and a machine with no R2 credentials still has to be able to
+ * record which photograph a contestant uploaded. Callers that only need a
+ * vendor source keep using `resolveFetchableSource`, which reads the value
+ * through this same function — so "is this our route" has exactly one answer.
+ */
+export function uploadObjectKeyFor(storedValue: string): string | null {
+  const value = (storedValue || '').trim();
+  if (!value) return null;
+  const absolute = httpUrl(value);
+  // The absolute form is what mobile and older rows store; both spellings
+  // name the same object.
+  return decodeUploadRouteKey(absolute ? absolute.pathname : value.startsWith('/') ? value : '');
+}
+
 export async function resolveFetchableSource(
   storedValue: string,
   // No `siteUrl`: the one case that would have needed it is our own upload
@@ -107,11 +127,7 @@ export async function resolveFetchableSource(
   }
 
   const absolute = httpUrl(value);
-  const objectKey = absolute
-    ? decodeUploadRouteKey(absolute.pathname)
-    : value.startsWith('/')
-      ? decodeUploadRouteKey(value)
-      : null;
+  const objectKey = uploadObjectKeyFor(value);
 
   if (objectKey) return presign(objectKey, ttlSeconds);
 
