@@ -272,7 +272,9 @@ export const featureFlags = {
    * way to curate the village tier of the state -> LGA -> village cascade without
    * shipping a migration per quarter.
    *
-   * Deliberately narrower than it looks: this gates WRITES, not reads. The public
+   * Deliberately narrower than it looks: this gates the admin curation surface — the
+   * writes to /api/admin/villages* and the list read the console needs to show them —
+   * not the applicant's reads. The public
    * pickers (/api/registration/villages, /api/registration/lgas) and the locality
    * fields on contests and applications stay ungated, because they widen surfaces
    * that are already live and unflagged — a default-off gate on a read would
