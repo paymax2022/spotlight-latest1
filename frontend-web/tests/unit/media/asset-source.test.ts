@@ -16,16 +16,65 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const r2 = vi.hoisted(() => ({ hasConfig: false, downloadUrl: vi.fn() }));
+// The whole surface @/src/lib/storage/r2 offers, because importing asset-source
+// now also imports contestant-photo (the tolerant key parser it delegates to),
+// and that module names three of these at module scope.
 vi.mock('@/src/lib/storage/r2', () => ({
   hasR2Config: () => r2.hasConfig,
   createR2DownloadUrl: r2.downloadUrl,
+  assertR2ObjectExists: vi.fn(),
+  getR2PublicUrl: vi.fn(() => null),
+  uploadR2Object: vi.fn(),
 }));
 
-import { decodeUploadRouteKey, resolveFetchableSource } from '@/src/lib/media/asset-source';
+import { decodeUploadRouteKey, resolveFetchableSource, uploadObjectKeyFor } from '@/src/lib/media/asset-source';
 
 // The shape the upload route really mints: registration/<user id>/<uuid>.<ext>.
 const key = 'registration/user-1/8f14e45f-ea29-4b88-9f3c-0a1b2c3d4e5f.jpg';
 const route = `/api/registration/uploads/${Buffer.from(key, 'utf8').toString('base64url')}`;
+
+describe('uploadObjectKeyFor: every spelling of a stored photo value', () => {
+  // The consequence of not recognising a shape is silent: the registry falls
+  // back to recording the value as `provider_url`, which is never presignable,
+  // so the render is skipped and the photo job table stays empty for the
+  // contests that submit the most photographs.
+  it('recovers the key from the relative upload route', () => {
+    expect(uploadObjectKeyFor(route)).toBe(key);
+  });
+
+  it('recovers the key from an absolute URL to our own route', () => {
+    expect(uploadObjectKeyFor(`https://www.spotlightng.com${route}`)).toBe(key);
+  });
+
+  it('accepts a bare object key, which is what media.profilePhoto holds when the client stores storageKey', () => {
+    expect(uploadObjectKeyFor(key)).toBe(key);
+  });
+
+  it('unpacks the serialised upload response the mobile client stores', () => {
+    const blob = JSON.stringify({ fileName: 'photo.jpg', previewUrl: route, storageKey: key });
+    expect(uploadObjectKeyFor(blob)).toBe(key);
+    const previewOnly = JSON.stringify({ fileName: 'photo.jpg', previewUrl: route });
+    expect(uploadObjectKeyFor(previewOnly)).toBe(key);
+  });
+
+  it('refuses anything that is not a photo object: external hosts, other prefixes, traversal', () => {
+    expect(uploadObjectKeyFor('https://cdn.test/x.jpg')).toBeNull();
+    expect(uploadObjectKeyFor('kyc/u-1/passport.pdf')).toBeNull();
+    expect(uploadObjectKeyFor('../../etc/passwd')).toBeNull();
+    expect(uploadObjectKeyFor('/uploads/other.png')).toBeNull();
+    expect(uploadObjectKeyFor('')).toBeNull();
+    expect(uploadObjectKeyFor('   ')).toBeNull();
+  });
+
+  it('hands an unrecognisable stored value back as fetchable-free rather than guessing a host', async () => {
+    // A JSON blob with no key in it has no presignable object; the answer must
+    // stay honest so the job records why it did not run.
+    r2.hasConfig = true;
+    const out = await resolveFetchableSource(JSON.stringify({ fileName: 'photo.jpg' }));
+    expect(out.ok).toBe(false);
+    expect(r2.downloadUrl).not.toHaveBeenCalled();
+  });
+});
 
 describe('decodeUploadRouteKey', () => {
   it('recognises the upload route and recovers the object key', () => {

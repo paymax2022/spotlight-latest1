@@ -4,10 +4,13 @@
  * connect_contest_id` bridge column added in
  * supabase/migrations/20270212000000_contest_templates_connect_bridge.sql.
  *
- * See src/server/registration/photo-pipeline.ts module doc and
- * supabase-store.ts reviewRegistrationApplication for how this is used:
- * a resolved template lets the review flow call processContestantPhoto
- * (full compositing) instead of processContestantPhotoNoTemplate.
+ * The live caller is `src/server/photo-jobs/registry.ts`, which asks this
+ * question *before* it queues a render: a contest with no active template
+ * queues nothing, because the runner would discover the same fact after
+ * downloading the original, presigning a vendor URL and paying for a
+ * moderation pass. `photo-pipeline.ts`'s module doc covers why the
+ * synchronous `processContestantPhoto` path is no longer what the review
+ * request calls.
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';

@@ -17,6 +17,18 @@
 import { randomUUID } from 'crypto';
 import { hasR2Config, uploadR2Object } from '@/src/lib/storage/r2';
 
+/**
+ * Every prefix under which this feature writes a *rendered* portrait.
+ *
+ * Naming them here — beside the one function that builds the key — is what
+ * lets `presentation.ts` recognise output when it finds it stored as if it
+ * were input. `composited` is what the superseded synchronous pipeline and
+ * the job runner both write; `preview` and `thumbnail` are the variant names
+ * `runner.ts` renders from the final; `transparent` is reserved for the
+ * cutout asset kind in spec §11.
+ */
+export const RENDERED_PHOTO_PREFIXES = ['composited', 'preview', 'thumbnail', 'transparent'] as const;
+
 /** Same layout `photo-pipeline.ts` has always used, so composites from both
  *  code paths land in one place instead of two near-identical prefixes. */
 export function photoObjectKey(mimeType: string, prefix: string): string {

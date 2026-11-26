@@ -55,9 +55,11 @@ export interface RegisterOutcome {
   jobId: string | null;
   /**
    * Why no job was created, or null when one was. Kept as a short machine-ish
-   * string (`noPhoto`, `assetWriteFailed`, `enqueueFailed`, or
+   * string (`noPhoto`, `assetWriteFailed`, `enqueueFailed`, `noTemplate`, or
    * `<sourceKind>: <reason>`) so a caller can log it and an operator can read
-   * it without this module owning any presentation.
+   * it without this module owning any presentation. `noTemplate` is the only
+   * one that is expected in normal operation: the original is recorded and the
+   * render is queued once an admin publishes a template.
    */
   skipped: string | null;
 }
@@ -107,7 +109,17 @@ export async function registerOriginalAndEnqueue(
   }
 
   const template = contestId ? await resolveActiveTemplateForContest(contestId) : null;
-  const templateId = template?.templateId ?? null;
+  if (!template) {
+    // Recorded, not queued. `runPhotoJob` cannot composite without an active
+    // template, and it discovers that *after* it has read the original's bytes,
+    // presigned a URL for the vendor and paid for a moderation pass — so a job
+    // queued here would spend one paid vendor call six times and then sit in
+    // `paused`, which the admin config surface correctly reports as needing an
+    // operator. In P1 that is the normal state of a contest: the template studio
+    // is P3. A configuration gap must not be written into the queue as a fault.
+    return { assetId, jobId: null, skipped: 'noTemplate' };
+  }
+  const templateId = template.templateId;
 
   const job = await enqueuePhotoJob({
     runKey: buildRunKey({ sourceAssetId: assetId, templateId, renderParams: input.renderParams }),

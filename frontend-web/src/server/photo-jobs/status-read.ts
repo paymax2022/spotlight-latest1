@@ -78,6 +78,45 @@ async function assetUrl(key: string): Promise<string | null> {
   }
 }
 
+/** The newest row of one kind, or null when the registration has none.
+ *
+ * `listPhotoAssets` is deliberately oldest-first, because an asset row is a
+ * stored fact and a ledger reads that way. The portrait a surface must show is
+ * the opposite end of that list: re-rendering with different editor settings
+ * appends a second `final` row rather than replacing the first (the immutability
+ * trigger forbids an update), so the older one is the previous answer, not the
+ * current one. Reading `.find()` here would pin a contestant to the crop they
+ * edited away from. */
+function latestOfKind(assets: PhotoAsset[], kind: (typeof PUBLISHABLE_KINDS)[number]): PhotoAsset | null {
+  for (let i = assets.length - 1; i >= 0; i -= 1) {
+    const row = assets[i];
+    if (row.kind === kind && row.storage_key) return row;
+  }
+  return null;
+}
+
+/**
+ * The published portrait for one registration, in the shape a caller that has no
+ * job row can use.
+ *
+ * Prefers `final` (the full-resolution composite) and falls through to the
+ * variants only when the runner stored those but not the final row — which it
+ * cannot do, so in practice the fallbacks exist for a partial write from an older
+ * build rather than for a normal path.
+ */
+export async function publishedPortraitFor(
+  registrationId: string,
+): Promise<{ url: string; assetId: string } | null> {
+  const assets = await listPhotoAssets(registrationId);
+  for (const kind of PUBLISHABLE_KINDS) {
+    const row = latestOfKind(assets, kind);
+    if (!row?.storage_key) continue;
+    const url = await assetUrl(row.storage_key);
+    if (url) return { url, assetId: row.id };
+  }
+  return null;
+}
+
 /**
  * The answer the poll target gives: status, truthful progress, the reason when
  * there is one, and — only for a finished job — the published asset URLs.
@@ -86,7 +125,7 @@ export async function photoJobPayload(job: PhotoJob): Promise<Record<string, unk
   const assets: PhotoAsset[] = job.status === 'ready' ? await listPhotoAssets(job.registration_id) : [];
   const urls: Record<string, string> = {};
   for (const kind of PUBLISHABLE_KINDS) {
-    const row = assets.find((asset) => asset.kind === kind && asset.storage_key);
+    const row = latestOfKind(assets, kind);
     const url = row?.storage_key ? await assetUrl(row.storage_key) : null;
     if (url) urls[kind] = url;
   }

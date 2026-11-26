@@ -23,6 +23,7 @@
  * an honest `notFetchable` rather than a guessed URL. Dev photo jobs therefore
  * need R2 creds (or the stub provider in Task 6) to reach a vendor at all.
  */
+import { contestantPhotoObjectKey } from '@/src/lib/storage/contestant-photo';
 import { createR2DownloadUrl, hasR2Config } from '@/src/lib/storage/r2';
 
 /** The route the upload endpoint mints, relative. */
@@ -102,6 +103,17 @@ async function presign(objectKey: string, ttlSeconds: number): Promise<Fetchable
  * record which photograph a contestant uploaded. Callers that only need a
  * vendor source keep using `resolveFetchableSource`, which reads the value
  * through this same function — so "is this our route" has exactly one answer.
+ *
+ * The second branch is what makes that last clause true for the key today's
+ * forms actually collect. `media.profilePhoto` holds the upload route (web
+ * wizard) or the whole upload response (the mobile client, per
+ * `validation.ts:41`), and both spellings already have a tested parser in
+ * `contestant-photo.ts` — the read side the roster and the admin console use.
+ * Recognising only the route here would mean the same photograph being
+ * presignable by one plane and recorded as an opaque `provider_url` by the
+ * other, which is how two answers to "where is this file" start to disagree.
+ * Delegating also inherits that parser's prefix allowlist, so a value that
+ * names anything outside the photo prefixes is still refused here.
  */
 export function uploadObjectKeyFor(storedValue: string): string | null {
   const value = (storedValue || '').trim();
@@ -109,7 +121,11 @@ export function uploadObjectKeyFor(storedValue: string): string | null {
   const absolute = httpUrl(value);
   // The absolute form is what mobile and older rows store; both spellings
   // name the same object.
-  return decodeUploadRouteKey(absolute ? absolute.pathname : value.startsWith('/') ? value : '');
+  const route = decodeUploadRouteKey(absolute ? absolute.pathname : value.startsWith('/') ? value : '');
+  if (route) return route;
+  // Bare object key, serialised upload response, or an absolute URL to our own
+  // preview route: three spellings of one object in our bucket.
+  return contestantPhotoObjectKey(value);
 }
 
 export async function resolveFetchableSource(

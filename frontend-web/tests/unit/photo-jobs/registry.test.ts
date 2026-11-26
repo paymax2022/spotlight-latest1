@@ -87,6 +87,7 @@ beforeEach(() => {
 
 describe('registerOriginalAndEnqueue', () => {
   it('records the original by object key and never stores the signed URL', async () => {
+    resolver.resolveActiveTemplateForContest.mockResolvedValue(template());
     const out = await registerOriginalAndEnqueue({
       registrationId: 'r-1',
       contestSlug: 'rising-star',
@@ -174,9 +175,11 @@ describe('registerOriginalAndEnqueue', () => {
   });
 
   it('reports enqueueFailed but keeps the asset id — the original is safe', async () => {
+    resolver.resolveActiveTemplateForContest.mockResolvedValue(template());
     jobStore.enqueuePhotoJob.mockResolvedValue(null);
     const out = await registerOriginalAndEnqueue({
       registrationId: 'r-1',
+      contestId: 'contest-1',
       storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
     });
     expect(out).toEqual({ assetId: 'asset-1', jobId: null, skipped: 'enqueueFailed' });
@@ -232,6 +235,7 @@ describe('registerOriginalAndEnqueue', () => {
   });
 
   it('resolves the contest from the slug when no contest id is supplied', async () => {
+    resolver.resolveActiveTemplateForContest.mockResolvedValue(template());
     await registerOriginalAndEnqueue({
       registrationId: 'r-1',
       contestSlug: 'rising-star',
@@ -244,12 +248,36 @@ describe('registerOriginalAndEnqueue', () => {
   });
 
   it('does not look up a contest when neither id nor slug is given', async () => {
-    await registerOriginalAndEnqueue({
+    const out = await registerOriginalAndEnqueue({
       registrationId: 'r-1',
       storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
     });
     expect(contests.resolveConnectContestId).not.toHaveBeenCalled();
     expect(resolver.resolveActiveTemplateForContest).not.toHaveBeenCalled();
-    expect(jobStore.enqueuePhotoJob).toHaveBeenCalledWith(expect.objectContaining({ templateId: null }));
+    // No contest means no template can be resolved, and a render with no
+    // template is impossible — so the queue is not asked for the impossible.
+    expect(jobStore.enqueuePhotoJob).not.toHaveBeenCalled();
+    expect(out).toEqual({ assetId: 'asset-1', jobId: null, skipped: 'noTemplate' });
+  });
+
+  it('records the original but queues nothing when the contest has no active template', async () => {
+    // The whole reason for this branch: runPhotoJob discovers a missing
+    // template only after reading the original's bytes, presigning a vendor URL
+    // and paying for a moderation pass. Six attempts later the row lands in
+    // `paused`, which the admin config surface reports as needing an operator —
+    // so an unconfigured contest (the normal state before the template studio
+    // ships) would look like a queue of production faults and cost real vendor
+    // calls on the way there.
+    resolver.resolveActiveTemplateForContest.mockResolvedValue(null);
+    const out = await registerOriginalAndEnqueue({
+      registrationId: 'r-1',
+      contestId: 'contest-1',
+      storedPhotoValue: ROUTE('registration/u-1/photo.jpg'),
+    });
+    expect(jobStore.upsertPhotoAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'original', storageKey: 'registration/u-1/photo.jpg' }),
+    );
+    expect(jobStore.enqueuePhotoJob).not.toHaveBeenCalled();
+    expect(out).toEqual({ assetId: 'asset-1', jobId: null, skipped: 'noTemplate' });
   });
 });

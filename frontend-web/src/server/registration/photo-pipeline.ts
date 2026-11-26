@@ -5,27 +5,37 @@
  *
  * Test-plan: G-IMG / TS-3 (docs/qa/voting-contest-test-plan.md).
  *
- * ── Template compositing reachability ───────────────────────────────────────
- * `compositeImage` needs a `CompositorInput` (templateUrl/templateWidth/
- * templateHeight/slot). `contest_templates`/`template_slots`
- * (supabase/migrations/20260405700000_contest_image_templates.sql) is the
- * only template concept in the schema, but `contest_templates.contest_id`
- * references the LEGACY `public.contests` table — not `connect_contests`,
- * which is what registrations resolve via `registrations.contest_slug`
- * (see promote_registration_to_contestant in
- * supabase/migrations/20260812010000_registration_contestant_seam.sql).
- * There is no bridge row/column linking a connect_contests contest to a
- * contest_templates row today, and no admin UI to create one (AD-003/CS-004,
- * explicitly out of scope here). So a real registration approval has no way
- * to resolve which template+slot to composite onto.
+ * ── Where this pipeline is called from now ────────────────────────────────
+ * Template compositing *is* reachable. The link this paragraph used to record
+ * as missing exists: `contest_templates.connect_contest_id`, added by
+ * supabase/migrations/20270212000000_contest_templates_connect_bridge.sql, and
+ * `template-resolver.ts` reads it (highest active version + first `contestant`
+ * slot). The claim that "no admin UI can create one" is also out of date —
+ * `resolveActiveTemplateForContest` is what the photo registry asks when it
+ * queues a job, and a contest with no active template is a normal, expected
+ * answer rather than an error.
  *
- * `processContestantPhoto` (full pipeline, moderation + bg-removal +
- * compositing) is still implemented and unit-tested here for when that link
- * exists, but the registration review wiring
- * (app/api/admin/registration/applications/[id]/review/route.ts) uses
- * `processContestantPhotoNoTemplate` — moderation + optional background-removal
- * cutout only, no compositing — because that's what's actually reachable from
- * today's data model.
+ * What changed in this release is *who* calls it. The registration review
+ * request no longer runs a synchronous vendor pipeline at all: the job runner
+ * (`src/server/photo-jobs/runner.ts`) performs moderation, extraction and
+ * `compositeImage` on the queue, with the retry ladder, idempotency key and
+ * pause-on-exhaust that a request cannot afford to host. `presentation.ts` is
+ * what the reviewer's approval consults, and it reports the job's outcome
+ * instead of waiting for it.
+ *
+ * `processContestantPhoto` (full pipeline: moderation + bg-removal +
+ * compositing) and `processContestantPhotoNoTemplate` (moderation + cutout)
+ * therefore keep their behaviour and their tests as the *synchronous* path. To
+ * be plain about their status today: after this change nothing in `src/` calls
+ * either one — the only callers left are `tests/unit/registration/
+ * photo-pipeline.test.ts`, which is what keeps the composition and fail-closed
+ * moderation semantics honest. The planned caller is the admin template studio
+ * (P3), where previewing one photograph against a draft template is exactly the
+ * thing that should block rather than queue. They are not deleted, because the
+ * runner composes with the same `compositeImage` and the same moderation
+ * helper; only the invocation moved. If you are about to call one of these from
+ * a request handler, prefer the queue: an approval that 500s because a vendor
+ * timed out loses a decision the admin already made.
  */
 
 import { moderatePhoto, removeBackground } from '@/src/lib/media/cloudinary';

@@ -29,7 +29,6 @@ import {
   getPersistedContestById,
 } from '@/src/server/registration-v2/contest-store';
 import { isSubmissionBinding } from '@/src/features/registration/lock';
-import { resolveConnectContestId } from '@/src/server/registration/connect-contest-id';
 import { ApplicationLockedError } from '@/src/server/registration/errors';
 import type {
   ContestRegistrationDefinition,
@@ -346,17 +345,6 @@ async function resolveAnyContest(slugOrId: string): Promise<ContestRegistrationD
   return null;
 }
 
-/**
- * Look up a connect_contests.id by slug — see connect-contest-id.ts, which
- * this file now imports instead of holding its own copy. Used by
- * reviewRegistrationApplication (AD-003/CS-004) to resolve which contest a
- * registration's photo template (contest_templates.connect_contest_id) should
- * come from, and by the photo registry for the same reason. There was no
- * pre-existing slug -> connect_contests.id lookup to reuse: resolveAnyContest
- * above resolves against public.contests / the in-memory catalog, not
- * connect_contests.
- */
-
 export async function startRegistrationDraft(params: {
   contestSlug: string;
   userId?: string;
@@ -603,6 +591,33 @@ export async function submitRegistrationApplication(applicationId: string) {
     // losing the audit trail for one submission is a lesser failure than
     // silently rejecting an otherwise-valid submission because of it.
     console.error(`Failed to record registration consent audit rows for ${applicationId}: ${consentError.message}`);
+  }
+
+  // Spec §6: the render starts here, not at approval, so a contestant can be
+  // shown a preview while the reviewer is still queueing — and so the first
+  // approval of a real application is not the first time the pipeline ever
+  // looked at the photograph (which is also where the moderation verdict now
+  // comes from, rather than from a vendor call inside the admin's click).
+  //
+  // Fire-and-forget on purpose. The row above is the applicant's submission and
+  // it has already succeeded: a photo queue that is down, an R2 deployment with
+  // no credentials, or a contest with no template yet must not turn that into a
+  // failed request, so the whole call is detached and its rejection swallowed.
+  // `startPhotoForSubmission` never throws and queues nothing when the
+  // application has no photograph; the check is not duplicated here so there is
+  // one rule for "what is this applicant's photo" in the file.
+  if (nextStatus === 'submitted') {
+    void import('@/src/server/photo-jobs/presentation')
+      .then(({ startPhotoForSubmission }) =>
+        startPhotoForSubmission({
+          registrationId: applicationId,
+          contestSlug: draft.contestSlug ?? null,
+          formData: draft.formData,
+        }),
+      )
+      .catch((err) =>
+        console.warn('[photo-jobs] submission enqueue failed:', err instanceof Error ? err.message : String(err)),
+      );
   }
 
   return { success: true, draft, message: `Your application has been submitted. Reference: ${draft.reference}.` };
@@ -998,77 +1013,75 @@ export async function reviewRegistrationApplication(
     }
   }
 
-  // G-IMG / TS-3 (IMG-001/SEC-010): when this decision is one that promotes
-  // the applicant to a public contestant, run their photo through moderation
-  // + background-removal BEFORE any DB write, so a failed/rejected photo
-  // leaves the application entirely untouched (admin can retry the action).
-  // promote_registration_to_contestant() reads
-  // form_data->>'media.photoUrl' (falling back to 'media.headshotUrl')
-  // verbatim into contestants.photo_url — see
-  // supabase/migrations/20260812010000_registration_contestant_seam.sql
-  // line ~104. By rewriting that same key here before the RPC fires, the
-  // RPC's existing COALESCE picks up the processed image with zero SQL
-  // changes.
-  // AD-003/CS-004: contest_templates now has a connect_contest_id bridge
-  // column (supabase/migrations/20270212000000_contest_templates_connect_bridge.sql)
-  // linking it to connect_contests — the table registrations actually
-  // resolve via contest_slug. We resolve the registration's connect_contests
-  // id, then look up an active template for it via
-  // resolveActiveTemplateForContest(). If one is configured (with a
-  // 'contestant' slot), we run the full compositing pipeline
-  // sets one up in the template manager) we fall back to
-  // processContestantPhotoNoTemplate exactly as before. See
-  // src/server/registration/photo-pipeline.ts module doc.
+  // G-IMG / TS-3 (IMG-001/SEC-010): when this decision promotes the applicant to
+  // a public contestant, the photograph is still consulted — but it is no longer
+  // rendered inside this request, and it is no longer written. Both halves of
+  // that change are deliberate (spec §6).
+  //
+  // What happened here before: `processContestantPhoto()` composed the portrait
+  // synchronously and its output was assigned over
+  // `form_data['media.photoUrl']` — the only pointer to the uploaded file. The
+  // original became unrecoverable (no asset row, no object key, nothing to
+  // re-render from), and the value a reader saw stopped telling them which of
+  // the two it was. One column had been asked to be both the input and the
+  // output.
+  //
+  // Something the old comment got wrong, and it is worth recording: since
+  // 20260812020001_contestants_profile_columns.sql:78 the promotion RPC reads
+  // `media.profilePhoto` into `contestants.photo_url`, so the composite written
+  // to `media.photoUrl` never reached the roster any more. The overwrite was
+  // destroying the source image on every approval while presenting the raw
+  // upload — which means dropping it here changes nothing a contestant or an
+  // admin can see. Surfacing the composite is P4's job, through the asset id.
+  //
+  // Now `presentation.ts` decides what a reviewer is looking at, and the row
+  // records the *decision* (`media.presentation`) plus the asset ids beside an
+  // untouched original value. It never calls a vendor: an application without a
+  // job gets one queued and the reviewer is told the portrait is pending, since
+  // an approval that 500s on a Cloudinary timeout loses a decision the admin
+  // already made. Content moderation stays fail-closed — a job whose verdict was
+  // `cancelled` still refuses the approval with 409 `photo_moderation_rejected`;
+  // what changed is that the verdict is read from the job row instead of being
+  // fetched live inside the click.
+  //
+  // The template lookup that used to sit here is gone as a caller, not as a
+  // behaviour: template resolution happens in the registry when the job is
+  // queued (and a contest with no active template queues nothing, rather than
+  // paying six times for a job that cannot succeed), and the operator-facing
+  // answer to "which contests have a template" is
+  // `/api/admin/photo-config-status`.
   if (PROMOTING_STATUSES.includes(input.status)) {
-    const rawPhotoUrl =
-      (nextFormData['media.photoUrl'] as string | undefined) ||
-      (nextFormData['media.headshotUrl'] as string | undefined);
+    const { resolveReviewPhotoOutcome, storedPhotoValueFor } = await import(
+      '@/src/server/photo-jobs/presentation'
+    );
+    const storedPhoto = storedPhotoValueFor(nextFormData);
 
-    if (rawPhotoUrl) {
-      const { processContestantPhoto, processContestantPhotoNoTemplate } = await import(
-        '@/src/server/registration/photo-pipeline'
-      );
-      const { resolveActiveTemplateForContest } = await import(
-        '@/src/server/registration/template-resolver'
-      );
+    if (storedPhoto) {
+      const outcome = await resolveReviewPhotoOutcome({
+        rawPhotoUrl: storedPhoto,
+        registrationId: applicationId,
+        contestSlug: current.contestSlug,
+      });
 
-      let pipelineResult;
-
-      const connectContestId = await resolveConnectContestId(current.contestSlug);
-      const resolvedTemplate = connectContestId
-        ? await resolveActiveTemplateForContest(connectContestId)
-        : null;
-
-      if (resolvedTemplate) {
-        pipelineResult = await processContestantPhoto({
-          rawPhotoUrl,
-          templateUrl: resolvedTemplate.templateUrl,
-          templateWidth: resolvedTemplate.templateWidth,
-          templateHeight: resolvedTemplate.templateHeight,
-          slot: resolvedTemplate.slot,
-        });
-      } else {
-        pipelineResult = await processContestantPhotoNoTemplate(rawPhotoUrl);
-      }
-
-      if (pipelineResult.status === 'rejected') {
+      if (outcome.mode === 'rejected') {
         // IMG-001/SEC-010 content-safety gate: refuse the approval outright
         // rather than silently promoting with no/unsafe photo. The admin
         // sees this as a failed review action and must resolve the photo
         // (e.g. request a new one) before retrying.
         throw new ApiError(
-          `Cannot approve: contestant photo failed content moderation (${pipelineResult.reason}). Ask the applicant for a different photo — set the application to "More information requested".`,
+          `Cannot approve: contestant photo failed content moderation (${outcome.reason}). Ask the applicant for a different photo — set the application to "More information requested".`,
           409,
           'photo_moderation_rejected',
         );
       }
 
-      // 'ready' or 'fallback' — either way we have a usable URL to promote.
-      if (nextFormData['media.photoUrl'] !== undefined) {
-        nextFormData['media.photoUrl'] = pipelineResult.photoUrl;
-      } else {
-        nextFormData['media.headshotUrl'] = pipelineResult.photoUrl;
-      }
+      // Markers only. `media.photoUrl` keeps its original value in every mode,
+      // which is what lets the asset ledger, a later re-render, and a reader
+      // asking "is this the composite?" all still answer correctly.
+      nextFormData['media.presentation'] = outcome.mode;
+      if (outcome.photoAssetId) nextFormData['media.photoAssetId'] = outcome.photoAssetId;
+      if (outcome.originalAssetId) nextFormData['media.originalAssetId'] = outcome.originalAssetId;
+      if (outcome.reason) nextFormData['media.presentationReason'] = outcome.reason;
     }
   }
 
