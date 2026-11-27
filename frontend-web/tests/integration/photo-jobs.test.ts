@@ -26,6 +26,11 @@
  * function, so `revoke ... from public` in the migration is necessary but not
  * sufficient, and only a call from the anon role proves the revocation landed.
  *
+ * P2 (docs/superpowers/specs/2026-11-27-contest-photo-blend-layer-design.md
+ * §14.12) adds one more obligation to this file: the blend migration's replay
+ * is proven here rather than by a one-off psql session, so the original-
+ * immutability proofs above are known to run on the merged chain.
+ *
  * Runs against the local Supabase (54321/54322) and skips when credentials are
  * absent, so a cited run MUST also show a non-zero executed test count:
  *
@@ -51,6 +56,10 @@ const keyFor = (kind: string) => `it/photo-jobs/${RUN}/${kind}.png`;
 
 let registrationId = '';
 let assetSeq = 0;
+// P2's blend columns live on rows this file does not otherwise create, so the
+// two fixture ids are held here for the one cleanup that removes them.
+let blendTemplateId = '';
+let blendSlotId = '';
 
 /** One registration owns every row this file creates, so cleanup is one delete. */
 async function upsert(kind: string, overrides: Record<string, unknown> = {}) {
@@ -101,6 +110,8 @@ describe.skipIf(!live)('contest photo assets and jobs (live)', () => {
   });
 
   afterAll(async () => {
+    if (blendSlotId) await db().from('template_slots').delete().eq('id', blendSlotId);
+    if (blendTemplateId) await db().from('contest_templates').delete().eq('id', blendTemplateId);
     // Deleting the owning application is the retention path the guard allows:
     // assets and jobs leave with it, and nothing here is left behind.
     await db().from('registrations').delete().eq('id', registrationId);
@@ -108,6 +119,71 @@ describe.skipIf(!live)('contest photo assets and jobs (live)', () => {
     expect(jobs ?? [], 'job fixture must not leak').toHaveLength(0);
     const { data: assets } = await db().from('contest_photo_assets').select('id').eq('registration_id', registrationId);
     expect(assets ?? [], 'asset fixture must not leak').toHaveLength(0);
+  });
+
+  // Spec §14.12 asks for P2's replay to be part of this check rather than a
+  // one-off run. Declared first on purpose: if the database only has P1's
+  // migration, the blend columns are unknown to the API and this test fails at
+  // the select — so the append-only proofs below it cannot pass against a
+  // pre-P2 schema, and a green file means both migrations were replayed here.
+  it('has the blend layer replayed, with its defaults and CHECKs live', async () => {
+    const read = await db()
+      .from('contest_templates')
+      .select('id, photo_mode, blend_preset, blend_settings')
+      .limit(1);
+    expect(read.error, `P2's template columns must exist and be readable: ${read.error?.message ?? ''}`).toBeNull();
+
+    const slotsRead = await db()
+      .from('template_slots')
+      .select('id, image_url, anchor, bleed, face_protect')
+      .limit(1);
+    expect(slotsRead.error, `P2's slot columns must exist and be readable: ${slotsRead.error?.message ?? ''}`).toBeNull();
+
+    // Defaults are what §11 promises the untouched admin row behaves like, so
+    // they are read from a row written without them — not from the catalog.
+    const { data: template, error: templateError } = await db()
+      .from('contest_templates')
+      .insert({ name: `it-blend-${RUN}`, template_url: `https://example.invalid/it-blend-${RUN}.png` })
+      .select('id, photo_mode, blend_preset, blend_settings')
+      .single();
+    expect(templateError, templateError?.message ?? '').toBeNull();
+    blendTemplateId = template!.id as string;
+    expect(template!.photo_mode).toBe('auto');
+    expect(template!.blend_preset).toBe('natural');
+    expect(template!.blend_settings).toEqual({});
+
+    const { data: slot, error: slotError } = await db()
+      .from('template_slots')
+      .insert({ template_id: blendTemplateId, slot_name: 'it-blend-slot' })
+      .select('id, image_url, anchor, bleed, face_protect')
+      .single();
+    expect(slotError, slotError?.message ?? '').toBeNull();
+    blendSlotId = slot!.id as string;
+    expect(slot!.image_url).toBeNull();
+    expect(slot!.anchor).toBe('auto');
+    expect(slot!.bleed).toBe(false);
+    expect(slot!.face_protect).toBe(true);
+
+    // The CHECKs are the migration's, not the resolver's: an admin row that
+    // names a preset the engine does not implement has to be refused by Postgres.
+    const badMode = await db().from('contest_templates').update({ photo_mode: 'cutout' }).eq('id', blendTemplateId);
+    expect(badMode.error, 'photo_mode must reject a value outside the enum').not.toBeNull();
+    expect(badMode.error!.message).toMatch(/photo_mode/);
+
+    const badPreset = await db().from('contest_templates').update({ blend_preset: 'vivid' }).eq('id', blendTemplateId);
+    expect(badPreset.error, 'blend_preset must reject a value outside the enum').not.toBeNull();
+    expect(badPreset.error!.message).toMatch(/blend_preset/);
+
+    const badAnchor = await db().from('template_slots').update({ anchor: 'middle' }).eq('id', blendSlotId);
+    expect(badAnchor.error, 'anchor must reject a value outside the enum').not.toBeNull();
+    expect(badAnchor.error!.message).toMatch(/anchor/);
+
+    // 'off' is the preset §14.11 promises renders like P1, so it must be storable.
+    const off = await db().from('contest_templates').update({ blend_preset: 'off' }).eq('id', blendTemplateId);
+    expect(off.error, off.error?.message ?? '').toBeNull();
+    const { data: stored } = await db()
+      .from('contest_templates').select('blend_preset').eq('id', blendTemplateId).single();
+    expect(stored!.blend_preset).toBe('off');
   });
 
   it('refuses to repoint an original, and refuses to delete it by hand', async () => {
