@@ -11,6 +11,18 @@
  * Every dependency is mocked at its module boundary, including `variants`,
  * because the compositor stub hands back `Buffer.from('final')` — not an image
  * sharp could decode. The resize itself is real and tested in variants.test.ts.
+ *
+ * P2 added one thing here and deliberately did not add the rest. The template
+ * stub now carries the blend columns (§11), because the resolver hands them
+ * back and the runner reads them — and it carries `blend_preset: 'off'`, which
+ * is what keeps this file the ladder test it has always been: `off` is the one
+ * configuration whose compositor call is P1's, so the moderation order, the four
+ * asset kinds, the three progress values and the all-or-nothing publish are all
+ * still proved here against the same stubs, with the engine absent rather than
+ * neutral. `blend/runner-blend.test.ts` is the file that drives the engine and
+ * asks what the three render paths hand to the compositor; the reason it is a
+ * separate file and not a seventh mock in this one is that a ladder proved on
+ * the path §14.11 promises equals main is a ladder worth keeping untouched.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -95,6 +107,14 @@ function template(overrides: Record<string, unknown> = {}) {
     templateUrl: 'https://cdn.test/template.png',
     templateWidth: 1080,
     templateHeight: 1350,
+    photoMode: 'auto',
+    // 'off' on purpose: see the header. Any other value would put the real
+    // engine on `Buffer.from('raw-bytes')`, and this file would stop being a
+    // test of the ladder and become a test of what happens when sharp is handed
+    // a string.
+    blendPreset: 'off',
+    blendSettings: null,
+    foregroundSlots: [],
     slot: slot(),
     ...overrides,
   };
