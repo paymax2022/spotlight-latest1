@@ -36,6 +36,15 @@ export interface BackendRosterEntry {
   lga?: string;
   village?: string;
   bio: string;
+  /**
+   * The contestant's picture, already resolved by the API: since #1172 Go names
+   * frontend-web's reader (`/api/v1/contestants/<id>/photo`) instead of signing the
+   * stored R2 key, because the plane holding the bytes — bucket or its own disk — is
+   * the only one that can answer for them. The value is absolute when the deployment
+   * sets WEB_APP_BASE_URL and root-relative when it has not, and empty when nothing
+   * renderable exists. Pass it through `contestantPhotoUri()` before handing it to an
+   * `<Image>`, the same way `song_url` below goes through `mediaUrl()`.
+   */
   photo_url: string;
   media_url: string;
   status: string;

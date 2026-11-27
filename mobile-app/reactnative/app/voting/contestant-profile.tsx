@@ -28,9 +28,10 @@ import VoteConfirmationSheet from '@/features/voting/components/VoteConfirmation
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
 import { formatVoteCount } from '@/features/voting/utils/voteFormatters';
 import { localityLine } from '@/features/voting/utils/rosterLocality';
+import { contestantPhotoUri } from '@/features/voting/utils/contestantPhoto';
 import SongPlayer from '@/features/openmic/components/SongPlayer';
 import { isPlayableHttpUrl } from '@/features/openmic/absolute-url';
-import { mediaUrl } from '@/features/openmic/media';
+import { appOrigin, mediaUrl } from '@/features/openmic/media';
 import type { VotePackage } from '@/features/voting/types/voting.types';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
@@ -64,6 +65,13 @@ export default function ContestantProfileScreen() {
   const [voteOpen, setVoteOpen]   = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareUrl, setShareUrl]   = useState<string | undefined>(undefined);
+  /**
+   * The photo address this screen already tried and failed to load. Held as the
+   * url rather than a boolean so moving to another contestant retries: a flag
+   * would keep showing initials for a picture that only failed on the previous
+   * profile.
+   */
+  const [failedPhoto, setFailedPhoto] = useState<string | null>(null);
 
   const { data: contestant, isLoading } = useContestantProfile(contestantId ?? '');
   const toggleLike = useToggleContestantLike(contestantId ?? '');
@@ -82,6 +90,14 @@ export default function ContestantProfileScreen() {
   const qc = useQueryClient();
 
   const sampleUrl = safeMediaUrl(contestant?.mediaUrl);
+  // The picture is the API's answer, not the stored column: since #1172 Go names
+  // frontend-web's contestant-photo reader, which serves the bytes from whichever
+  // plane holds them. That address arrives absolute or root-relative depending on
+  // the deployment's media base, so it gets the same treatment as the song URL
+  // below — this device's origin glued on — and an address there is nothing to
+  // load, or one that 404s, drops to the initials placeholder instead of an
+  // empty hero.
+  const photoUri = contestantPhotoUri(contestant?.photo, appOrigin());
   // The roster's song address is minted by our own backend, but it still passes
   // the same allowlist as any other value handed to a native player, and
   // `mediaUrl` is what turns a root-relative reader path into one this device
@@ -208,8 +224,14 @@ export default function ContestantProfileScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         {/* Hero image */}
         <View style={styles.heroWrap}>
-          {contestant.photo ? (
-            <Image source={{ uri: contestant.photo }} style={styles.heroImage} resizeMode="cover" />
+          {photoUri && photoUri !== failedPhoto ? (
+            <Image
+              source={{ uri: photoUri }}
+              style={styles.heroImage}
+              resizeMode="cover"
+              accessibilityLabel={contestant.name}
+              onError={() => setFailedPhoto(photoUri)}
+            />
           ) : (
             <View style={[styles.heroImage, styles.heroPh]}>
               <Text style={styles.heroInitial}>{contestant.name.charAt(0)}</Text>
