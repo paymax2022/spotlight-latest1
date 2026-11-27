@@ -167,6 +167,15 @@ async function applyBorderRadius(
  * source/target/clip triple is executed verbatim, because that triple is the
  * blend engine's answer to "which part of this photograph, how big, and where"
  * and re-deriving it here would put two geometry engines in one pipeline.
+ *
+ * The source forks three ways, in the order a caller states its intent: bytes
+ * it already holds, the contestant's photograph by URL, and the slot's own art.
+ * `image_url` is third rather than first because a slot that has a subject to
+ * place is a contestant slot, and the engine's refined cutout outranks any
+ * column; it is in the list at all because §8.1 makes that column where a
+ * template author's laurel or ribbon lives, and the resolver hands the row
+ * through — a renderer that ignored it would leave the column as storage nobody
+ * reads, and the overlay would silently never draw.
  */
 async function processSlot(
   slot: SlotConfig,
@@ -174,10 +183,13 @@ async function processSlot(
   _templateHeight: number,
   faceSafe: FaceSafeSpec | null
 ): Promise<OverlayOptions | null> {
-  if (!slot.photo_bytes && !slot.photo_url) return null;
+  const source = slot.photo_bytes ?? slot.photo_url ?? slot.image_url;
+  // An empty string is not a source either, so a slot whose art column was
+  // filled with '' contributes nothing instead of fetching nothing.
+  if (!source) return null;
 
   try {
-    const rawBuffer = slot.photo_bytes ?? await fetchImageBuffer(slot.photo_url as string);
+    const rawBuffer = typeof source === 'string' ? await fetchImageBuffer(source) : source;
     const placement = slot.placement ?? null;
 
     // `boxWidth`/`boxHeight` is the size the overlay is rendered at, which

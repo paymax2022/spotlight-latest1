@@ -173,6 +173,36 @@ describe('compositeImage', () => {
     expect((await pixelAt(flagged.buffer, 180, 180)).rgb).toEqual([255, 0, 0]);
   });
 
+  it('draws a foreground slot whose only source is the template author\'s own art', async () => {
+    // §8.1: `image_url` is the column that holds a decorative overlay, and the
+    // runner passes the resolver's rows through as they come back, so the
+    // renderer has to know that a slot can carry its own picture. Without this
+    // the column is storage nothing reads.
+    const badgeBytes = await flatPng(200, 200, { r: 0, g: 255, b: 0, a: 255 });
+    const fetched: string[] = [];
+    vi.stubGlobal('fetch', async (input: string | URL) => {
+      fetched.push(String(input));
+      return new Response(new Uint8Array(badgeBytes));
+    });
+
+    const r = await compositeImage({
+      templateUrl: UNFETCHABLE, templateBytes: await opaqueTemplate(400), templateWidth: 400, templateHeight: 400,
+      faceSafe: { face: { x: 150, y: 150, width: 60, height: 60 }, strength: 0.92 },
+      slots: [
+        { ...baseSlot, photo_bytes: await flatPng(200, 200, { r: 255, g: 0, b: 0, a: 255 }) },
+        { ...baseSlot, id: 's2', slot_type: 'badge', z_index: 5, face_protect: true,
+          image_url: 'https://res.cloudinary.com/demo/image/upload/banner.png' },
+      ],
+    });
+    // One fetch, and it is the art's: the template came as bytes and the subject
+    // slot has no source at all, so anything else here is a redundant read.
+    expect(fetched).toEqual(['https://res.cloudinary.com/demo/image/upload/banner.png']);
+    expect((await pixelAt(r.buffer, 110, 110)).rgb).toEqual([0, 255, 0]);            // the ribbon drew
+    const over = (await pixelAt(r.buffer, 180, 180)).rgb;                             // over the face
+    expect(over[0]).toBeGreaterThan(200);
+    expect(over[1]).toBeLessThan(60);
+  });
+
   it('encodes per §9: the smaller buffer, PNG on a tie, PNG whenever anything is transparent', async () => {
     const sizes = async (image: Buffer, quality: number) => ({
       png: (await sharp(image).png().toBuffer()).byteLength,
