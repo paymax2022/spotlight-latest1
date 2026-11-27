@@ -193,6 +193,12 @@ export interface RegistrationVotingContest {
   closesAt: string | null;
 }
 
+export interface RegistrationContestBanner {
+  title: string;
+  description: string | null;
+  bannerImageUrl: string | null;
+}
+
 export interface RegistrationVotingContestant {
   id: string;
   name: string;
@@ -220,6 +226,7 @@ export interface RegistrationVoting {
   reason: RegistrationVotingReason | null;
   applicationStatus: string;
   contest: RegistrationVotingContest | null;
+  contestBanner?: RegistrationContestBanner | null;
   contestant: RegistrationVotingContestant | null;
   /** Relative in-app path; the screen resolves it against the share origin. */
   sharePath: string | null;

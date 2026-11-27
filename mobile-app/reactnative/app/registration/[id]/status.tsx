@@ -34,6 +34,7 @@ import {
   useReplaceProfilePhoto,
 } from '@/features/registration/hooks/useRegistration';
 import ContestVotingCard from '@/features/registration/components/ContestVotingCard';
+import RegistrationContestBanner from '@/features/registration/components/RegistrationContestBanner';
 import ProfilePhotoAvatar from '@/features/registration/components/ProfilePhotoAvatar';
 import { mergeStatusTimeline } from '@/features/registration/utils/timeline';
 import OpenMicPhasePanel from '@/features/openmic/components/OpenMicPhasePanel';
@@ -130,6 +131,11 @@ export default function RegistrationStatusScreen() {
   const awaitingPayment = draft.status === 'awaiting_payment';
   const needsInfo = draft.status === 'more_information_requested';
   const bindingNotice = submissionBindingNotice(draft.status);
+  const contestBanner = votingQuery.data?.contestBanner ?? votingQuery.data?.contest;
+  const contestBannerTitle = (
+    contestBanner?.title ||
+    String(draft.formData['contest.title'] || draft.contestSlug)
+  ).trim();
 
   const contestant = votingQuery.data?.contestant ?? null;
   const displayName =
@@ -215,8 +221,15 @@ export default function RegistrationStatusScreen() {
               String(draft.formData['contest.title'] ?? '') ||
               'Spotlight Open Mic'
             }
-            subtitle={workflow?.edition?.description ?? null}
-            imageUrl={votingQuery.data?.contest?.bannerImageUrl ?? null}
+            subtitle={workflow?.edition?.description ?? contestBanner?.description ?? null}
+            imageUrl={contestBanner?.bannerImageUrl ?? null}
+          />
+        )}
+        {!isOpenMic && contestBannerTitle && (
+          <RegistrationContestBanner
+            title={contestBannerTitle}
+            subtitle={contestBanner?.description}
+            imageUrl={contestBanner?.bannerImageUrl}
           />
         )}
 

@@ -13,6 +13,8 @@ import {
   REGISTRATION_USE_MOCK, waitMock, regGet, regPost, regPatch, regUpload,
   newRegistrationIdempotencyKey,
 } from './registration.client';
+import { api } from '@/api/client';
+import { resolveContestBannerUrl } from '../utils/contest-banner-url';
 import { MOCK_CONTESTS, buildMockSteps } from './registration.mock';
 import type {
   ContestRegistrationDefinition,
@@ -274,7 +276,27 @@ export async function getRegistrationVoting(id: string): Promise<RegistrationVot
     });
   }
   const res = await regGet<RegistrationVotingResponse>(`${REG_BASE}/applications/${id}/voting`);
-  return res.voting;
+  return {
+    ...res.voting,
+    contest: res.voting.contest
+      ? {
+          ...res.voting.contest,
+          bannerImageUrl: resolveContestBannerUrl(
+            res.voting.contest.bannerImageUrl,
+            api.defaults.baseURL,
+          ),
+        }
+      : null,
+    contestBanner: res.voting.contestBanner
+      ? {
+          ...res.voting.contestBanner,
+          bannerImageUrl: resolveContestBannerUrl(
+            res.voting.contestBanner.bannerImageUrl,
+            api.defaults.baseURL,
+          ),
+        }
+      : null,
+  };
 }
 
 /**

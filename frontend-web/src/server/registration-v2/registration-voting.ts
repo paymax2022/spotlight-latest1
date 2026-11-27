@@ -36,6 +36,12 @@ export interface RegistrationVotingContest {
   closesAt: string | null;
 }
 
+export interface RegistrationContestBanner {
+  title: string;
+  description: string | null;
+  bannerImageUrl: string | null;
+}
+
 export interface RegistrationVotingContestant {
   id: string;
   name: string;
@@ -75,6 +81,7 @@ export interface RegistrationVoting {
     | 'song_not_submitted';
   applicationStatus: string;
   contest: RegistrationVotingContest | null;
+  contestBanner: RegistrationContestBanner | null;
   contestant: RegistrationVotingContestant | null;
   /**
    * Relative path to the in-app contestant page. The caller turns this into an
@@ -102,6 +109,7 @@ function notVotable(
   shareable = false,
   sharePath: string | null = null,
   shareText: string | null = null,
+  contestBanner: RegistrationContestBanner | null = null,
 ): RegistrationVoting {
   return {
     votable: false,
@@ -109,6 +117,11 @@ function notVotable(
     reason,
     applicationStatus,
     contest,
+    contestBanner: contestBanner ?? (contest ? {
+      title: contest.title,
+      description: contest.description,
+      bannerImageUrl: contest.bannerImageUrl,
+    } : null),
     contestant,
     sharePath,
     shareText,
@@ -220,8 +233,27 @@ export async function getRegistrationVoting(
   if (!registration) return null;
 
   const applicationStatus = String((registration as any).status ?? '');
+  const contestSlug = String((registration as any).contest_slug ?? '').trim();
+  let contestBanner: RegistrationContestBanner | null = null;
+  if (contestSlug) {
+    const { data: bannerRow, error: bannerErr } = await supabase
+      .from('contests')
+      .select('name, description, banner_image_url')
+      .eq('slug', contestSlug)
+      .maybeSingle();
+
+    if (bannerErr) throw new Error(`Failed to load registration contest banner: ${bannerErr.message}`);
+    if (bannerRow) {
+      contestBanner = {
+        title: String((bannerRow as any).name ?? 'Contest'),
+        description: (bannerRow as any).description ?? null,
+        bannerImageUrl: (bannerRow as any).banner_image_url ?? null,
+      };
+    }
+  }
+
   if (!APPROVED_STATUSES.has(applicationStatus)) {
-    return notVotable(applicationStatus, 'not_approved');
+    return notVotable(applicationStatus, 'not_approved', null, null, false, null, null, contestBanner);
   }
 
   // The roster row the promotion seam created, if it ran.
@@ -234,7 +266,7 @@ export async function getRegistrationVoting(
     .maybeSingle();
 
   if (rosterErr) throw new Error(`Failed to load contestant: ${rosterErr.message}`);
-  if (!rosterRow) return notVotable(applicationStatus, 'not_promoted');
+  if (!rosterRow) return notVotable(applicationStatus, 'not_promoted', null, null, false, null, null, contestBanner);
 
   const contestant: RegistrationVotingContestant = {
     id: String((rosterRow as any).id),
@@ -257,7 +289,9 @@ export async function getRegistrationVoting(
   // A registration whose contest_slug matched no contest promotes with a null
   // contest rather than failing, so this is a real and expected state.
   const connectContestId = (rosterRow as any).connect_contest_id as string | null;
-  if (!connectContestId) return notVotable(applicationStatus, 'no_contest', null, contestant);
+  if (!connectContestId) {
+    return notVotable(applicationStatus, 'no_contest', null, contestant, false, null, null, contestBanner);
+  }
 
   const { data: contestRow, error: contestErr } = await supabase
     .from('connect_contests')
@@ -268,7 +302,9 @@ export async function getRegistrationVoting(
     .maybeSingle();
 
   if (contestErr) throw new Error(`Failed to load contest: ${contestErr.message}`);
-  if (!contestRow) return notVotable(applicationStatus, 'no_contest', null, contestant);
+  if (!contestRow) {
+    return notVotable(applicationStatus, 'no_contest', null, contestant, false, null, null, contestBanner);
+  }
 
   const contest: RegistrationVotingContest = {
     id: String((contestRow as any).id),
@@ -351,6 +387,11 @@ export async function getRegistrationVoting(
     reason: null,
     applicationStatus,
     contest,
+    contestBanner: contestBanner ?? {
+      title: contest.title,
+      description: contest.description,
+      bannerImageUrl: contest.bannerImageUrl,
+    },
     contestant,
     sharePath,
     shareText,
