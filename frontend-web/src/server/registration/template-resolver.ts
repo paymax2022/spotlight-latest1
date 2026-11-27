@@ -4,10 +4,13 @@
  * connect_contest_id` bridge column added in
  * supabase/migrations/20270212000000_contest_templates_connect_bridge.sql.
  *
- * See src/server/registration/photo-pipeline.ts module doc and
- * supabase-store.ts reviewRegistrationApplication for how this is used:
- * a resolved template lets the review flow call processContestantPhoto
- * (full compositing) instead of processContestantPhotoNoTemplate.
+ * The live caller is `src/server/photo-jobs/registry.ts`, which asks this
+ * question *before* it queues a render: a contest with no active template
+ * queues nothing, because the runner would discover the same fact after
+ * downloading the original, presigning a vendor URL and paying for a
+ * moderation pass. `photo-pipeline.ts`'s module doc covers why the
+ * synchronous `processContestantPhoto` path is no longer what the review
+ * request calls.
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -28,6 +31,20 @@ function getSupabase() {
 }
 
 export interface ResolvedTemplate {
+  /**
+   * Identity of the template that was resolved, not just its pixels.
+   *
+   * The photo job queue keys each render by template, so a template edit that
+   * publishes a new version must produce a new job rather than being answered
+   * from the completed row of the version before it. That is only expressible
+   * if the resolver hands back `id` and `version` — until now it returned the
+   * URL and dimensions and dropped both, which meant callers either re-queried
+   * the table themselves or built a run key that could not tell two versions
+   * apart. Both are selected by the query below, so no caller has to cast the
+   * row or re-fetch it to learn which template a job was rendered against.
+   */
+  templateId: string;
+  templateVersion: number;
   templateUrl: string;
   templateWidth: number;
   templateHeight: number;
@@ -49,7 +66,7 @@ export async function resolveActiveTemplateForContest(
 
   const { data: template, error: templateError } = await supabase
     .from('contest_templates')
-    .select('id, template_url, width, height')
+    .select('id, version, template_url, width, height')
     .eq('connect_contest_id', connectContestId)
     .eq('status', 'active')
     .order('version', { ascending: false })
@@ -108,6 +125,8 @@ export async function resolveActiveTemplateForContest(
   };
 
   return {
+    templateId: template.id,
+    templateVersion: Number(template.version),
     templateUrl: template.template_url,
     templateWidth: Number(template.width),
     templateHeight: Number(template.height),

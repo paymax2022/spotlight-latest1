@@ -35,6 +35,30 @@ interface CloudinaryEnv {
   apiSecret: string;
 }
 
+/**
+ * The env contract, stated once, as NAMES only.
+ *
+ * `configured()` and `missingCloudinaryEnv()` are exported so the provider seam
+ * and the admin config surface report readiness from the same list this client
+ * actually reads. The alternative — each caller keeping its own array of three
+ * variable names — drifts the moment a fourth is required, and the failure mode
+ * is silent: the config screen would say "configured" while every vendor call
+ * fails closed.
+ */
+export const CLOUDINARY_ENV_VARS = [
+  'CLOUDINARY_CLOUD_NAME',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
+] as const;
+
+export function missingCloudinaryEnv(): string[] {
+  return CLOUDINARY_ENV_VARS.filter((name) => !process.env[name]);
+}
+
+export function configured(): boolean {
+  return missingCloudinaryEnv().length === 0;
+}
+
 function readCloudinaryEnv(): CloudinaryEnv | null {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
   const apiKey = process.env.CLOUDINARY_API_KEY;

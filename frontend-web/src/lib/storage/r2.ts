@@ -134,6 +134,29 @@ export async function uploadR2Object(input: {
   );
 }
 
+/**
+ * Direct server-side read of an object's bytes.
+ *
+ * The mirror of `uploadR2Object` above: a job runner that already holds the
+ * bucket credentials does not need to presign a URL in order to fetch it back
+ * from itself. `null` means the object is not in the bucket — the one answer a
+ * caller can act on — while a credential, network or SDK fault throws so the
+ * caller can tell "gone" apart from "storage was briefly unhappy" instead of
+ * treating a transient failure as a deleted photograph.
+ */
+export async function readR2Object(key: string): Promise<Buffer | null> {
+  const { bucket, client } = getR2Config();
+  try {
+    const object = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const base64 = await object.Body?.transformToString('base64');
+    return base64 ? Buffer.from(base64, 'base64') : null;
+  } catch (err) {
+    const name = err instanceof Error ? err.name : '';
+    if (name === 'NoSuchKey' || name === 'NotFound') return null;
+    throw err;
+  }
+}
+
 export function getR2PublicUrl(key: string) {
   const { publicBaseUrl } = getR2Config();
   if (!publicBaseUrl) return undefined;

@@ -53,17 +53,21 @@ vi.mock('@supabase/supabase-js', () => ({
   })),
 }));
 
-vi.mock('@/src/server/registration/photo-pipeline', () => ({
-  processContestantPhoto: vi.fn(),
-  processContestantPhotoNoTemplate: vi.fn().mockResolvedValue({ status: 'ready', photoUrl: 'https://cdn.test/cutout.png' }),
+// Since spec §6 the review request no longer runs a vendor pipeline; it asks
+// the job-backed presentation layer, which answers with a mode. That makes
+// presentation the seam this file has to mock: the guarantee being tested here
+// is that a refusal reaching the admin as a 409 (rather than a bare 500 or a
+// silent approval) still holds when the verdict arrives from a job row instead
+// of a synchronous call. review-no-overwrite.test.ts is what covers the
+// presentation rules themselves.
+const presentation = vi.hoisted(() => ({
+  storedPhotoValueFor: vi.fn(),
+  resolveReviewPhotoOutcome: vi.fn(),
+  startPhotoForSubmission: vi.fn(),
 }));
-
-vi.mock('@/src/server/registration/template-resolver', () => ({
-  resolveActiveTemplateForContest: vi.fn().mockResolvedValue(null),
-}));
+vi.mock('@/src/server/photo-jobs/presentation', () => presentation);
 
 import { reviewRegistrationApplication } from '@/src/server/registration/supabase-store';
-import { processContestantPhotoNoTemplate } from '@/src/server/registration/photo-pipeline';
 
 function baseRow(formData: Record<string, unknown>, contestSlug = 'reality-tv-show') {
   return {
@@ -96,7 +100,10 @@ beforeEach(() => {
   readError = null;
   updateError = null;
   rpcMock.mockResolvedValue({ data: null, error: null });
-  vi.mocked(processContestantPhotoNoTemplate).mockResolvedValue({ status: 'ready', photoUrl: 'https://cdn.test/cutout.png' });
+  // No photo by default: the promotion-time tests here are about consent, and
+  // the photo branch must not run for them unless a case opts in.
+  presentation.storedPhotoValueFor.mockReturnValue(undefined);
+  presentation.resolveReviewPhotoOutcome.mockResolvedValue({ mode: 'original', photoUrl: '' });
 });
 
 describe('SEC-010/RG-003/EC-006: reviewRegistrationApplication promotion-time consent gate', () => {
@@ -527,8 +534,10 @@ describe('admin review refusals must reach the admin as reasons, not bare 500s',
       'publicProfile.publicVotingConsent': true,
       'media.photoUrl': 'https://cdn.test/raw-photo.jpg',
     });
-    vi.mocked(processContestantPhotoNoTemplate).mockResolvedValue({
-      status: 'rejected',
+    presentation.storedPhotoValueFor.mockReturnValue('https://cdn.test/raw-photo.jpg');
+    presentation.resolveReviewPhotoOutcome.mockResolvedValue({
+      mode: 'rejected',
+      photoUrl: 'https://cdn.test/raw-photo.jpg',
       reason: 'adult_content',
     });
 
