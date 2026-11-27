@@ -25,6 +25,8 @@
 
 ### Task 1: Asset and job tables with the claim semantics in SQL
 
+**Executed 2026-11-26 as `c519776b5`** (`20272000000000_contest_photo_assets_and_jobs.sql`, the live-DB spec that proves it) plus `0b66aee21`, the CI guard the first application needed: `make rls-check` could not reach the database and printed a pass anyway, and a defaulted parameter followed a required one is rejected at creation time, so both are now checked before the migration is trusted.
+
 **Files:**
 - Create: `supabase/migrations/20272000000000_contest_photo_assets_and_jobs.sql`
 - Test: `frontend-web/tests/integration/photo-jobs.test.ts`
@@ -43,7 +45,7 @@
   - `public.reclaim_stale_photo_jobs(p_lock_ttl_seconds int) returns int`
   - `public.photo_job_config_summary() returns jsonb`
 
-- [ ] **Step 1: Write the migration**
+- [x] **Step 1: Write the migration**
 
 Create `supabase/migrations/20272000000000_contest_photo_assets_and_jobs.sql`:
 
@@ -417,7 +419,7 @@ grant execute on function public.photo_job_config_summary() to service_role;
 
 Corrections applied while executing this task, now reflected in the block above (the plan's first draft would not have loaded): `p_source_asset_id` needed a `default null` because Postgres rejects a non-defaulted parameter after a defaulted one, with an explicit guard keeping it required; the trigger's `errcode` had to be spelled as the condition name (a lowercase `'2f003'` raises 42704 at raise time, and `SQLSTATE '2F003'` is not accepted in `USING`); `fail_photo_job`'s unused `declare v_delay seconds` was a type that does not exist; the trigger is dropped before creation so a development re-apply is a no-op; the enqueue gained a `unique_violation` handler because `SELECT ... FOR UPDATE` cannot lock a row that does not exist yet; and the privilege block was rewritten after measuring that the schema's default privileges leave `from public` revokes ineffective for `anon`/`authenticated`. Two more corrections came out of the first executed run of the spec above: `photo_job_config_summary` lost its `authenticated` grant — the live case proved that grant had no caller, since the only client it named was refused the function while the admin surface reaches it as `service_role` through the BFF, and leaving it in would have let any logged-in contestant read other contests' queue depth — and the Step 4 recipe was rewritten because the delivered file's credentials are in the main checkout, not the worktree, and the local API will not answer at all until the schema cache finishes loading.
 
-- [ ] **Step 2: Apply it to the local database and prove it is valid SQL**
+- [x] **Step 2: Apply it to the local database and prove it is valid SQL**
 
 Run:
 ```bash
@@ -429,7 +431,7 @@ psql "$DB" -tAc "select c.relname, c.relrowsecurity from pg_class c join pg_name
 ```
 Expected: two table names, and `relrowsecurity = true` for both. `backend/.env`'s `DATABASE_URL` is the **local** 54322 database, not production — confirm before running anything else against it.
 
-- [ ] **Step 3: Write the failing live-database test**
+- [x] **Step 3: Write the failing live-database test**
 
 Create `frontend-web/tests/integration/photo-jobs.test.ts`. It must fail before the migration exists and must print an executed count:
 
@@ -748,7 +750,7 @@ describe.skipIf(!live)('contest photo assets and jobs (live)', () => {
 });
 ```
 
-- [ ] **Step 4: Run it and make sure it passes**
+- [x] **Step 4: Run it and make sure it passes**
 
 The file self-skips without credentials, so the run must be cited with an executed
 count. Two prerequisites are measured, not assumed:
@@ -773,7 +775,7 @@ NODE_OPTIONS="--require /tmp/zstd-shim.cjs" npx vitest run --config vitest.integ
 Expected: `Test Files 1 passed`, `Tests 12 passed (12)`. A run that shows `12 skipped`
 means the skip branch fired — fix the credentials or the schema cache before citing it.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add supabase/migrations/20272000000000_contest_photo_assets_and_jobs.sql \
@@ -785,6 +787,8 @@ git commit -m "feat(photo): contest photo asset rows and durable render jobs"
 
 ### Task 2: Provider seam and configuration probe
 
+**Executed 2026-11-26 as `3ca2de5aa`** (provider seam in front of `src/lib/media/cloudinary.ts`; mirrored by `5d51c48ea`).
+
 **Files:**
 - Create: `frontend-web/src/lib/media/provider.ts`
 - Modify: `frontend-web/src/lib/media/cloudinary.ts` (add an exported `configured()` helper only; no HTTP moves)
@@ -794,7 +798,7 @@ git commit -m "feat(photo): contest photo asset rows and durable render jobs"
 - Consumes: `moderatePhoto`, `removeBackground` from `cloudinary.ts`.
 - Produces: `type PhotoProviderName = 'cloudinary' | 'none'`, `interface PhotoProvider { name; configured: boolean; missing: string[]; extractBackground(url): Promise<ExtractResult>; moderate(url): Promise<ModerationResult> }`, `getPhotoProvider(): PhotoProvider`, `photoProviderConfig(): { configured: boolean; name: PhotoProviderName; missing: string[] }`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 /**
@@ -886,12 +890,12 @@ describe('photo provider seam', () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `cd frontend-web && NODE_OPTIONS="--require /tmp/zstd-shim.cjs" npx vitest run tests/unit/media/provider.test.ts`
 Expected: FAIL — `Cannot find module '@/src/lib/media/provider'`.
 
-- [ ] **Step 3: Write the seam**
+- [x] **Step 3: Write the seam**
 
 `frontend-web/src/lib/media/provider.ts`:
 
@@ -982,12 +986,12 @@ export function getPhotoProvider(): PhotoProvider {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `NODE_OPTIONS="--require /tmp/zstd-shim.cjs" npx vitest run tests/unit/media/provider.test.ts tests/unit/media/cloudinary.test.ts`
 Expected: PASS on both files (the existing 12 Cloudinary tests must stay green — this task changed nothing in that client's behaviour).
 
-- [ ] **Step 5: Commit** — `git add frontend-web/src/lib/media/provider.ts frontend-web/tests/unit/media/provider.test.ts && git commit -m "refactor(photo): provider seam in front of the Cloudinary client"`
+- [x] **Step 5: Commit** — `git add frontend-web/src/lib/media/provider.ts frontend-web/tests/unit/media/provider.test.ts && git commit -m "refactor(photo): provider seam in front of the Cloudinary client"`
 
 ---
 
@@ -1005,6 +1009,8 @@ unconfigured vendor fails *moderation* closed, not open.
 
 ### Task 3: Turn a stored value into a URL the vendor can fetch
 
+**Executed 2026-11-26 as `9f51181d0`** (`src/lib/media/asset-source.ts`, 5 cases then; 15 today after Task 9 widened `uploadObjectKeyFor`).
+
 **Files:**
 - Create: `frontend-web/src/lib/media/asset-source.ts`
 - Test: `frontend-web/tests/unit/media/asset-source.test.ts`
@@ -1015,7 +1021,7 @@ unconfigured vendor fails *moderation* closed, not open.
 
 This is the unit that fixes spec §2 defect 4: today `form_data['media.photoUrl']` holds the *relative* route `/api/registration/uploads/<base64url(key)>`, and Cloudinary's upload-by-fetch-URL cannot fetch a path.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 /**
@@ -1129,9 +1135,9 @@ describe('resolveFetchableSource', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — `npx vitest run tests/unit/media/asset-source.test.ts` → FAIL, module missing.
+- [x] **Step 2: Run to verify failure** — `npx vitest run tests/unit/media/asset-source.test.ts` → FAIL, module missing.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `frontend-web/src/lib/media/asset-source.ts`:
 
@@ -1274,8 +1280,8 @@ export async function resolveFetchableSource(
 }
 ```
 
-- [ ] **Step 4: Run to verify pass** — the five cases above green.
-- [ ] **Step 5: Commit** — `git commit -am "feat(photo): resolve a provider-fetchable source URL from a stored photo value"` (add the new test file explicitly in the same call).
+- [x] **Step 4: Run to verify pass** — the five cases above green.
+- [x] **Step 5: Commit** — `git commit -am "feat(photo): resolve a provider-fetchable source URL from a stored photo value"` (add the new test file explicitly in the same call).
 
 Corrections applied while executing this task, now reflected in the blocks above:
 the delivered unit is nine cases rather than five — an absolute upload-route URL
@@ -1294,6 +1300,8 @@ actually reads.
 
 ### Task 4: Job store — the RPC wrapper and the policy it must not re-implement
 
+**Executed 2026-11-26 as `2fb4c1b4f`** (`job-store.ts`; mirrored by `25b3fa674`).
+
 **Files:**
 - Create: `frontend-web/src/server/photo-jobs/job-store.ts`
 - Test: `frontend-web/tests/unit/photo-jobs/job-store.test.ts`
@@ -1308,7 +1316,7 @@ actually reads.
   - `enqueuePhotoJob(input): Promise<{ jobId, status, alreadyExisted } | null>`
   - `claimDuePhotoJobs(workerId, limit?)`, `setPhotoJobProgress(id, status, progress?)`, `completePhotoJob(id, resultAssetId)`, `failPhotoJob(id, error): Promise<JobStatus | null>`, `cancelPhotoJob(id, reason)`, `reclaimStalePhotoJobs(ttlSeconds?)`, `getPhotoJob(id)`, `photoJobSummary()`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 /**
@@ -1504,9 +1512,9 @@ describe('getPhotoJob', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — FAIL, module missing.
+- [x] **Step 2: Run to verify failure** — FAIL, module missing.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `frontend-web/src/server/photo-jobs/job-store.ts`. The Supabase client is created lazily and memoized exactly as `src/server/registration/template-resolver.ts` does, because `createClient` throws at module scope when env is unset (vitest collection, `next build`):
 
@@ -1747,8 +1755,8 @@ export async function photoJobSummary(): Promise<Record<string, number>> {
 }
 ```
 
-- [ ] **Step 4: Run to verify pass** — all `job-store.test.ts` cases green.
-- [ ] **Step 5: Commit** — `git commit -am "feat(photo): job store wrapping the SQL claim/backoff functions"`
+- [x] **Step 4: Run to verify pass** — all `job-store.test.ts` cases green.
+- [x] **Step 5: Commit** — `git commit -am "feat(photo): job store wrapping the SQL claim/backoff functions"`
 
 Corrections applied while executing this task: `PhotoJob` gained
 `registration_user_id` and `getPhotoJob` now selects
@@ -1765,6 +1773,8 @@ claim payload, and the two null answers of `getPhotoJob`.
 
 ### Task 5: Registry — record the original, then enqueue
 
+**Executed 2026-11-26 as `3add9853a`** (`registry.ts`; mirrored by `b4b1977f8`).
+
 **Files:**
 - Create: `frontend-web/src/server/photo-jobs/registry.ts`
 - Create: `frontend-web/src/server/registration/connect-contest-id.ts`
@@ -1780,7 +1790,7 @@ claim payload, and the two null answers of `getPhotoJob`.
   `RegisterOutcome = { assetId: string | null; jobId: string | null; skipped: string | null }`.
   Tasks 6, 9, 10 and 11 all call this; nothing else writes an `original` asset row.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // frontend-web/tests/unit/photo-jobs/registry.test.ts
@@ -2041,12 +2051,12 @@ describe('registerOriginalAndEnqueue', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `npx vitest run tests/unit/photo-jobs/registry.test.ts`
 Expected: FAIL — `Cannot find package '@/src/server/photo-jobs/registry'`, `Test Files 1 failed (1)`, `Tests 0`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `frontend-web/src/server/photo-jobs/registry.ts`:
 
@@ -2297,7 +2307,7 @@ Widening the interface breaks one existing fixture that constructs a `ResolvedTe
 pins the column list the resolver asks for, because the mock returns a whole row whatever the query
 selects and would keep passing if `version` disappeared from the `select` string.
 
-- [ ] **Step 4: Run to verify pass**
+- [x] **Step 4: Run to verify pass**
 
 Run: `npx vitest run tests/unit/photo-jobs/registry.test.ts`
 Expected: PASS — `Tests 11 passed (11)`.
@@ -2308,7 +2318,7 @@ Expected: PASS — the neighbouring suites the refactor touches stay green.
 Run: `npm run type-check`
 Expected: exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend-web/src/server/photo-jobs/registry.ts \
@@ -6046,22 +6056,116 @@ tests and then restored byte-for-byte (`git diff --quiet HEAD` clean afterwards)
 
 ### Task 10: Verification, gates, and honest status
 
-- [ ] **Step 1: Type-check.** `cd frontend-web && npx tsc --noEmit` — expected zero errors. Do not trust an exit code from a pipe without node_modules (the symlink exists in this worktree; verify with `ls -d frontend-web/node_modules` first).
-- [ ] **Step 2: Unit suite.** `NODE_OPTIONS="--require /tmp/zstd-shim.cjs" npx vitest run tests/unit/photo-jobs tests/unit/registration tests/unit/media` — record the executed test count in the PR body. Expected: all pass, and the count is greater than the 22 baseline plus the new files' cases.
-- [ ] **Step 3: Fresh replay of the migration chain** against a scratch database, because `make migrate-reset` exists precisely to catch a migration that only applies to a schema that already has the older ones:
+**Executed 2026-11-27 on `92e48ecce`** (branch `feat/contest-photo-assets-jobs`,
+20 commits onto merge-base `b926c8b4b`; **40 files** — 17 `frontend-web/src`,
+15 `frontend-web/tests`, 3 new route dirs, 1 migration, 1 `scripts/ci` guard,
+the `Makefile` `rls-check` fix, and the spec + this plan). Every number below
+was measured on that tree.
+
+- [x] **Step 1: Type-check.** `ls -d frontend-web/node_modules` (the worktree
+  symlink is present, so an exit code here means something) →
+  `npx tsc --noEmit` → **rc=0, zero errors**. `frontend-admin`, `backend` and
+  `mobile-app` are not touched by this branch, so the Go build and the admin
+  type-check lanes are unchanged by construction; `make tsc` (both frontends)
+  still runs in `integration-verify`.
+- [x] **Step 2: Unit suite.** `npx vitest run tests/unit/photo-jobs
+  tests/unit/registration tests/unit/media` → **433 passed / 2 failed (435)**,
+  46 of 47 files green. Both failures are
+  `tests/unit/registration/contest-admin-schedule-route.spec.ts`, recorded as
+  pre-existing in Task 5 and reproduced with this branch's `src/` and `tests/`
+  changes reverted. The six files this task's tests live in, run alone: **78
+  passed / 0 failed** (17 + 5 + 7 + 15 + 12 + 22). Whole `tests/unit`: **3025
+  passed / 5 failed / 3 skipped / 1 todo (298 files)** — the extra three
+  (`wallet/bank` ×2, `beat-download-origin` ×1) pass in isolation on both the
+  clean and the delivered tree, and two of them fail with this branch reverted,
+  so they are cross-file interference at full-suite scale, not this branch's.
+  No `NODE_OPTIONS` zstd shim was needed: that flag was in the draft for a
+  different failure mode and the runs above are without it.
+  `npx eslint` over the 14 touched paths: **0 errors**, 1 pre-existing warning.
+- [x] **Step 3: Fresh replay of the migration chain — done against an isolated
+  scratch database rather than `make migrate-reset` or `supabase db reset`,
+  because both of those drop the schema of the local dev database, which holds
+  1411 public tables of other sessions' fixtures and has **no `seed.sql`** to
+  restore them from. A from-zero proof that destroys shared, unrecoverable state
+  is not this task's to take. The scratch replay is the same evidence CI
+  produces (`integration-verify.yml:174` runs `make migrate-reset` on a throwaway
+  container) with no blast radius:
   ```bash
-  DB="$(grep -m1 '^DATABASE_URL' backend/.env | cut -d= -f2- | tr -d '\"')"
-  psql "$DB" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS replay_check;"
-  # Prefer the repo's own path:
-  make migrate-reset DATABASE_URL="$DB"
+  # on the local Supabase Postgres (54322), into a database nothing else uses
+  psql -d postgres -c "DROP DATABASE IF EXISTS photo_replay; CREATE DATABASE photo_replay;"
+  psql "$SCRATCH" -v ON_ERROR_STOP=1 -q -f scripts/ci/supabase-compat-prelude.sql
+  DATABASE_URL="$SCRATCH" make migrate-up    # all 760 files, in sort order
+  DATABASE_URL="$SCRATCH" make rls-check
+  psql -d postgres -c "DROP DATABASE photo_replay;"
   ```
-  Expected: succeeds and ends with `rls-check ✓ — every public table has row-level security enabled`. If `migrate-reset` is too destructive for the local stack, run `supabase db reset` on the local project instead and say which one you used.
-- [ ] **Step 4: Prove the live-DB tests ran.** `npm run test:integration` must print an executed count > 0 for `photo-jobs.test.ts`. A run that shows `skipped` for that file is not evidence; if the credentials are unavailable in this shell, say so in the PR rather than claiming the data-layer invariants passed.
-- [ ] **Step 5: Confirm what is and is not proven**, in the PR body, in these words or closer:
-  - The asset and job data model, immutability of the original, idempotent enqueue, claim/backoff/pause semantics, and the review path no longer overwriting `media.photoUrl` are covered by the tests listed above.
-  - Whether Cloudinary's extraction and moderation actually succeed against a live account is **not** proven here: `docs/qa/voting-contest-test-plan.md:154` still records that the param/response shapes are written from documented behavior with a `TODO: verify against live Cloudinary docs`, `frontend-web/.env.example` leaves `CLOUDINARY_*` as `YOUR_…` placeholders, and no server-side `CLOUDINARY_*` name appears in `docs/devops`. The `/api/admin/photo-config-status` route is the instrument that turns that unknown into a named blocker; the first call against a real account belongs in a live-mode test that this plan does not schedule.
-  - The admin template studio (P3), the engine's Mode A/B placement and blend layer (P2), and the contestant editor plus unified presentation (P4) are not in this change.
-- [ ] **Step 6: Commit the spec and plan** (if not already committed) and push the branch; open the PR against `main`. The PR must state plainly that merging this deploys to production through `release.yml` (a merge is a release in this repo) and that the migration is additive, so no existing row changes behaviour until the job runner has credentials and an R2 public base URL.
+  Result: **760 migrations applied, rc=0**, the only stderr being the
+  migration's own `NOTICE: trigger "contest_photo_assets_immutable" … does not
+  exist, skipping` — which is the re-apply guard Task 1 added, firing on a
+  schema that genuinely never had the trigger. `rls-check ✓ — every public table
+  has RLS enabled (allowlist: 'spatial_ref_sys')`. Read back out of the replayed
+  database: `contest_photo_assets` + `contest_photo_jobs` exist,
+  `relrowsecurity = true` on the new table, and all nine SQL functions the design
+  promises are present (`upsert_contest_photo_asset`, `enqueue_photo_job`,
+  `claim_due_photo_jobs`, `set_photo_job_progress`, `complete_photo_job`,
+  `fail_photo_job`, `reclaim_stale_photo_jobs`, `cancel_photo_job`,
+  `photo_job_config_summary`) plus the `reject_contest_photo_asset_mutation`
+  trigger. 1410 public tables in the replay vs 1411 in the long-lived dev
+  database — one local table is not produced by the chain; not investigated, as
+  it is outside this branch.
+- [x] **Step 4: The live-DB tests actually ran.** `npm run test:integration --
+  tests/integration/photo-jobs.test.ts` against the local Supabase →
+  **12 passed, 0 skipped** (an executed count, which is the whole point: this
+  file's own header says a cited run must show one). Run through the npm script,
+  not only the raw `vitest` invocation, so the config path is the one CI uses.
+- [x] **Step 5: What is and is not proven** — stated in the PR body.
+- [ ] **Step 6: Push and open the PR** — the branch push and the PR are the
+  owner-visible step; see the PR body for the wording this step requires
+  (merging this deploys to production through `release.yml`, and the migration is
+  additive so nothing changes behaviour until the runner has credentials and an
+  R2 public base).
+
+**Corrections to the draft:**
+
+1. Step 3's `make migrate-reset DATABASE_URL="$DB"` and its fallback
+   `supabase db reset` are both destructive to the shared local database, and the
+   draft offered them as the routine path. The scratch replay above is
+   equivalent evidence for the property being tested ("a migration that only
+   applies to a schema that already has the older ones") and gives up nothing —
+   CI runs the destructive form on a container anyway.
+2. The scratch replay needs `scripts/ci/supabase-compat-prelude.sql` first. On a
+   bare database the chain fails on `auth.users` / `storage.objects` /
+   `postgis`; 240 of the 760 migration files reference that Supabase-provided
+   surface, so "just create another database" is not executable. `postgis 3.3.7`
+   is available in the local Supabase image, so the prelude's extension lines
+   succeed there.
+3. `make DATABASE_URL=…` is not the only form that works, but note the Makefile
+   uses `?=` (line 6), so an exported `DATABASE_URL` overrides it — worth knowing
+   because the default value points at `localhost:5432/paymax`, which is not this
+   machine's stack.
+4. The draft's Step 2 command carried a `NODE_OPTIONS="--require
+   /tmp/zstd-shim.cjs"` prefix from an earlier session's environment. That file
+   is in `/tmp` (reaped) and the suites run without it; leaving it in the command
+   would make every later executor hit a module-not-loaded error and start
+   inventing shims.
+5. `npm run test:integration` with no path argument runs **every** integration
+   file (academy, open-mic, profile, referrals, registration, voting). That is a
+   fine full-suite action but not what Step 4 asks for, and its failures would be
+   indistinguishable from this feature's; the scoped `-- tests/integration/photo-jobs.test.ts`
+   form is what proves this feature's data layer executed.
+6. Step 5's Cloudinary bullet quoted `docs/qa/voting-contest-test-plan.md:154` by
+   line number and claimed "no server-side `CLOUDINARY_*` name appears in
+   `docs/devops`". Both need re-measuring before reuse: line citations here have
+   already been orphaned twice by edits above them, so quote the
+   `// TODO: verify against live Cloudinary docs` string instead (it is at
+   `frontend-web/src/lib/media/cloudinary.ts:144` today), and the devops claim is
+   only true of the *server trio* — `docs/devops` does mention Cloudinary, as
+   `EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME` (a public mobile cloud name), which is not
+   a server credential. Measured today: `frontend-web/.env.example:47-49` leaves
+   `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` as
+   `YOUR_…` placeholders, and no `CLOUDINARY_CLOUD_NAME`/`_API_KEY`/`_API_SECRET`
+   line exists anywhere under `docs/devops`. The unverified fact is unchanged:
+   nobody has seen a live extraction or moderation response from this code.
+
 
 ---
 
