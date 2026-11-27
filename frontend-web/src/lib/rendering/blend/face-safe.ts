@@ -29,9 +29,16 @@ import sharp from 'sharp';
 import type { Rect } from './subject-metrics';
 
 export interface FaceSafeInput {
-  /** where the subject sits on the canvas; the cut never reaches past it */
+  /**
+   * The extent the cut is allowed to reach, in the overlay buffer's own
+   * pixels — `{0, 0, width, height}` bounds it to the overlay itself.
+   */
   target: { left: number; top: number; width: number; height: number };
-  /** the protected box, in canvas pixels (`Placement.faceOnCanvas`) */
+  /**
+   * The protected box, also in overlay-buffer pixels. `Placement.faceOnCanvas`
+   * is canvas space, so the caller subtracts the overlay's canvas origin on the
+   * way in (see imageCompositor.ts, which is the only caller that has both).
+   */
   face: Rect;
   /** §12 `faceProtectStrength`: 1 removes the overlay completely over the face */
   strength: number;
