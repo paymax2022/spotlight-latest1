@@ -6056,10 +6056,13 @@ tests and then restored byte-for-byte (`git diff --quiet HEAD` clean afterwards)
 
 ### Task 10: Verification, gates, and honest status
 
-**Executed 2026-11-27 on `92e48ecce`** (branch `feat/contest-photo-assets-jobs`,
-20 commits onto merge-base `b926c8b4b`; **40 files** — 17 `frontend-web/src`,
+**Executed 2026-11-27 on `92e48ecce`**, closed as **PR #1180** from `d2bf32b0f`
+(branch `feat/contest-photo-assets-jobs`, 23 commits onto merge-base
+`b926c8b4b`; **41 files** — 17 `frontend-web/src`,
 15 `frontend-web/tests`, 3 new route dirs, 1 migration, 1 `scripts/ci` guard,
-the `Makefile` `rls-check` fix, and the spec + this plan). Every number below
+the `Makefile` `rls-check` fix, and the spec + this plan; the one file over that
+split is `.github/workflows/ci.yml`, wired into the `hygiene` lane by `13a860469`,
+and the renumber in `d2bf32b0f` is a rename, so it adds none). Every number below
 was measured on that tree — except Step 3's second replay, which is explicitly
 about the tree after the PR-time renumber and says so where it stands.
 
@@ -6139,11 +6142,21 @@ about the tree after the PR-time renumber and says so where it stands.
   file's own header says a cited run must show one). Run through the npm script,
   not only the raw `vitest` invocation, so the config path is the one CI uses.
 - [x] **Step 5: What is and is not proven** — stated in the PR body.
-- [ ] **Step 6: Push and open the PR** — the branch push and the PR are the
-  owner-visible step; see the PR body for the wording this step requires
-  (merging this deploys to production through `release.yml`, and the migration is
-  additive so nothing changes behaviour until the runner has credentials and an
-  R2 public base).
+- [x] **Step 6: Push and open the PR — done 2026-11-27.** `feat/contest-photo-assets-jobs`
+  was pushed at `d2bf32b0f` (the commit closing this step is the one ledger note
+  that follows it on the branch) and **PR #1180** opened against `main`:
+  <https://github.com/paymax2022/spotlight-latest1/pull/1180>. It carries the
+  wording Step 5 requires — what is proven with its counts, what is not (the
+  live Cloudinary shapes, quoting the `cloudinary.ts:144` TODO), the three
+  owner-side prerequisites before a composite can appear, that merging this IS a
+  production release through `release.yml` gated by 14 required contexts, the
+  pre-existing reds by name, and the base (merge-base `b926c8b4b`, `main` 107
+  commits ahead since). Not merged: the integration decision stays with the
+  owner, because a merge deploys.
+  Two facts were read rather than recited: the repo from
+  `gh repo view --json nameWithOwner` (`paymax2022/spotlight-latest1`) and the
+  required-context list from `python3 scripts/ci/required-checks.py --branch
+  main`.
 
 **Corrections to the draft:**
 
