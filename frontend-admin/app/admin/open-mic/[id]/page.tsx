@@ -16,13 +16,19 @@
  * /api/admin/open-mic/contests/:id already existed server-side; this is its
  * first client wiring — as is reviewing a handed-in song (Submissions tab,
  * `OpenMicSubmissionReviewPanel`), which is the action that decides whether an
- * artist's track is playable by voters at all.
+ * artist's track is playable by voters at all. Filing the edition's beat is
+ * wired here too (Edit Contest → Official Beat): until this page had it, an
+ * operator told "contestants cannot download the beat" had no control on the
+ * edition they were looking at, only on the creation form — and the beat is two
+ * requests, not one, so the section says which one Save actually makes.
  */
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useParams } from 'next/navigation';
 import {
   getOpenMicContest,
   updateOpenMicContest,
+  uploadOpenMicBeat,
+  fileOpenMicBeat,
   listOpenMicApplications,
   listOpenMicSubmissions,
   listOpenMicFinalists,
@@ -40,12 +46,14 @@ import {
   OPEN_MIC_APPLICANT_ACTION_LABELS,
   type OpenMicApplicantAction,
   type OpenMicApplicationRow,
+  type OpenMicBeatInput,
   type OpenMicContest,
   type OpenMicContestEditInput,
   type OpenMicSubmissionRow,
 } from '@/services/openMicAdminService';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 import { submissionWindowNotice, toDateTimeLocalInput } from '@/features/openmic/submission-window';
+import { beatUrlProblem } from '@/features/openmic/beat-url';
 import OpenMicSubmissionReviewPanel from '@/features/openmic/song-review-panel';
 import { adminMediaUrl, uploadContestBanner } from '@/services/contestsAdminService';
 import { beatDownloadCells, winnerPrizeCell } from './open-mic-cells';
@@ -89,7 +97,32 @@ type EditFormState = {
   /** `datetime-local` wall-clock strings ('' = unset), hydrated from the stored
    *  ISO values by toDateTimeLocalInput and turned back into ISO on save. */
   submissionStartAt: string; submissionEndAt: string;
+  /**
+   * The edition's beat. Only the two URLs come from storage: the uploader writes
+   * them and the fields are read-only, because the public beat reader serves
+   * /api/open-mic/beats/… paths and nothing else, so a hand-pasted address is a
+   * value no artist can play. The rest is metadata for the `competition_beats`
+   * row that those paths are filed into.
+   */
+  beatTitle: string; beatProducerName: string; beatDownloadUrl: string; beatPreviewUrl: string;
+  beatUsageRules: string;
 };
+
+const DEFAULT_BEAT_RULES = 'Beat is provided for this Spotlight Open Mic contest only.';
+
+const BEAT_KEYS = ['beatTitle', 'beatProducerName', 'beatDownloadUrl', 'beatPreviewUrl', 'beatUsageRules'] as const;
+
+/**
+ * The five beat fields as one comparable string.
+ *
+ * Save has to know whether the operator touched the beat. Filing a row nobody
+ * edited would retire and re-insert the active `competition_beats` row — that is
+ * what upsertBeat does to keep one live beat per edition — so an unrelated
+ * metadata save would rewrite storage it was not asked to touch.
+ */
+function beatSnapshot(form: EditFormState): string {
+  return BEAT_KEYS.map((key) => form[key]).join('|');
+}
 
 function formFromContest(c: OpenMicContest): EditFormState {
   return {
@@ -106,6 +139,9 @@ function formFromContest(c: OpenMicContest): EditFormState {
     city: c.finale.city, state: c.finale.state, date: c.finale.date ?? '', showStartTime: c.finale.showStartTime ?? '',
     playbackMode: c.finale.playbackMode ?? 'top_10',
     submissionStartAt: toDateTimeLocalInput(c.submissionStartAt), submissionEndAt: toDateTimeLocalInput(c.submissionEndAt),
+    beatTitle: c.beat?.beatTitle ?? '', beatProducerName: c.beat?.producerName || c.beat?.producerCredit || '',
+    beatDownloadUrl: c.beat?.downloadUrl ?? '', beatPreviewUrl: c.beat?.previewUrl ?? '',
+    beatUsageRules: c.beat ? (c.beat.usageRules ?? '') : DEFAULT_BEAT_RULES,
   };
 }
 
@@ -341,6 +377,14 @@ export default function OpenMicContestAdminPage() {
   const [saveMessage, setSaveMessage] = useState('');
   const [bannerBusy, setBannerBusy] = useState(false);
   const [bannerError, setBannerError] = useState<string | null>(null);
+  const [beatBusy, setBeatBusy] = useState(false);
+  const [beatError, setBeatError] = useState<string | null>(null);
+  /**
+   * The beat snapshot as last stored (hydrated from the server, or filed by a
+   * save). Compared against the live form to decide whether a Save owes a
+   * `competition_beats` write; held in a ref because it is not render input.
+   */
+  const beatStored = useRef<string>('');
 
   function setEditField<K extends keyof EditFormState>(key: K, value: EditFormState[K]) {
     setEditForm((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -374,6 +418,18 @@ export default function OpenMicContestAdminPage() {
     }
     if (windowInvalid) {
       setSaveError('The submission window cannot end before it starts — leave either date empty to clear it.');
+      return;
+    }
+    // Two separate questions: did the operator touch the beat at all, and is there
+    // a file for it to point at. An untitled upload is the half-done state that
+    // produces the 404 this section exists to prevent — the bytes sit in storage,
+    // no `competition_beats` row references them, and the applicant is still told
+    // "Beat is not available for this contest" — so it stops the save rather than
+    // filing a row named "Official Beat" behind the operator's back.
+    const beatEdited = beatSnapshot(editForm) !== beatStored.current;
+    const beatToFile = beatEdited && Boolean(editForm.beatDownloadUrl.trim());
+    if (beatToFile && !editForm.beatTitle.trim()) {
+      setBeatError('Official beat title is required — it is the name contestants see.');
       return;
     }
     setSaving(true);
@@ -413,9 +469,56 @@ export default function OpenMicContestAdminPage() {
         submissionEndAt: fromDateTimeLocalInput(editForm.submissionEndAt),
       };
       const updated = await updateOpenMicContest(contestId, patch);
-      setContest(updated);
-      setEditForm(formFromContest(updated));
-      setSaveMessage('Contest updated.');
+      let next: OpenMicContest = updated;
+      if (beatToFile) {
+        const producer = editForm.beatProducerName.trim() || 'Spotlight Producer';
+        const beatInput: OpenMicBeatInput = {
+          beatTitle: editForm.beatTitle.trim(),
+          producerName: producer,
+          producerCredit: producer,
+          downloadUrl: editForm.beatDownloadUrl.trim(),
+          previewUrl: editForm.beatPreviewUrl.trim() || editForm.beatDownloadUrl.trim(),
+          usageRules: editForm.beatUsageRules.trim() || DEFAULT_BEAT_RULES,
+          allowDownload: true,
+          previewOnly: false,
+          // The beat's own gate follows the edition's paid-entry flag, the way the
+          // old /admin/registration editor did it, so the two cannot disagree.
+          requiresPaidEntryForDownload: editForm.entryFeeRequired,
+          cleanVersionRequired: true,
+          explicitLyricsAllowed: false,
+        };
+        try {
+          await fileOpenMicBeat(contestId, beatInput);
+          next = {
+            ...updated,
+            beat: {
+              ...updated.beat,
+              beatTitle: beatInput.beatTitle,
+              producerName: beatInput.producerName,
+              producerCredit: beatInput.producerCredit,
+              downloadUrl: beatInput.downloadUrl,
+              previewUrl: beatInput.previewUrl,
+              usageRules: beatInput.usageRules,
+              allowDownload: true,
+              previewOnly: false,
+              requiresPaidEntryForDownload: beatInput.requiresPaidEntryForDownload,
+            },
+          };
+        } catch (e) {
+          // The metadata did land, so reflect it — but leave the beat fields as
+          // typed: they are still unsaved, and a retry is the operator's next move.
+          setContest(updated);
+          setSaveError(`Contest fields saved, but the beat was not filed: ${e instanceof Error ? e.message : String(e)} — the mp3 is already stored, so Save Changes finishes it.`);
+          return;
+        }
+      }
+      const form = formFromContest(next);
+      setContest(next);
+      setEditForm(form);
+      beatStored.current = beatSnapshot(form);
+      setSaveMessage(beatToFile
+        ? 'Contest updated and the beat filed — artists can now play and download it.'
+        : 'Contest updated.');
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -448,6 +551,37 @@ export default function OpenMicContestAdminPage() {
     setBannerError(null);
     setSaveError(null);
     setSaveMessage('Banner removal is pending. Save changes to apply it.');
+  }
+
+  /**
+   * Store this edition's mp3. This is only the first of the two writes: it puts
+   * the bytes in object storage and returns the reader paths, and nothing an
+   * artist can open until Save Changes files them into `competition_beats`. The
+   * note says exactly that, because "uploaded" alone reads as finished.
+   *
+   * The contest id is passed on purpose — it is part of the object key, so an
+   * upload filed without it lands under `unassigned` and cannot be traced back to
+   * the edition it belongs to.
+   */
+  async function uploadBeat(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+
+    setBeatBusy(true);
+    setBeatError(null);
+    setSaveError(null);
+    setSaveMessage('');
+    try {
+      const beat = await uploadOpenMicBeat(file, contestId);
+      setEditField('beatDownloadUrl', beat.downloadUrl);
+      setEditField('beatPreviewUrl', beat.previewUrl);
+      setSaveMessage('Beat uploaded. Save changes to publish it for this edition.');
+    } catch (e) {
+      setBeatError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBeatBusy(false);
+    }
   }
 
   const [loading, setLoading] = useState(true);
@@ -489,7 +623,13 @@ export default function OpenMicContestAdminPage() {
   useEffect(() => {
     if (!contestId) return;
     getOpenMicContest(contestId)
-      .then((c) => { setContest(c); if (c) setEditForm(formFromContest(c)); })
+      .then((c) => {
+        setContest(c);
+        if (!c) return;
+        const form = formFromContest(c);
+        setEditForm(form);
+        beatStored.current = beatSnapshot(form);
+      })
       .catch((e) => setContestError(e instanceof Error ? e.message : String(e)));
   }, [contestId]);
 
@@ -645,6 +785,78 @@ export default function OpenMicContestAdminPage() {
                 </Button>
               </div>
               {bannerError && <p role="alert" style={{ color: colors.danger, fontSize: 12 }}>{bannerError}</p>}
+            </section>
+
+            <section>
+              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Official Beat</h3>
+              <p style={{ color: colors.muted, fontSize: 12, margin: '0 0 12px' }}>
+                MP3 up to 50 MB. The two URLs below are written by the upload and are not editable:
+                the public beat reader only serves files stored through this site, so an outside link
+                is a value artists cannot play. Upload stores the file; Save Changes writes the row
+                the applicant's player reads.
+              </p>
+              {!editForm.beatDownloadUrl && (
+                <p style={{ color: colors.warning, fontSize: 12, margin: '0 0 12px' }}>
+                  No beat is filed for this edition, so every contestant who tries to play or download
+                  one is told the beat is not available.
+                </p>
+              )}
+              {beatUrlProblem(editForm.beatDownloadUrl) === 'legacy' && (
+                <p style={{ color: colors.warning, fontSize: 12, margin: '0 0 12px' }}>
+                  This beat was uploaded before the public-beat fix, so artists get an access error.
+                  Upload the mp3 here and save to replace it.
+                </p>
+              )}
+              {beatUrlProblem(editForm.beatDownloadUrl) === 'unplayable' && (
+                <p style={{ color: colors.warning, fontSize: 12, margin: '0 0 12px' }}>
+                  The programme page cannot serve that address, so the beat will not play or download.
+                  Upload the mp3 instead, then save.
+                </p>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={fieldWrap}>
+                  <label style={labelStyle} htmlFor="open-mic-beat-title">Official Beat Title</label>
+                  <Input id="open-mic-beat-title" value={editForm.beatTitle} style={{ width: '100%' }}
+                    onChange={(e) => { setEditField('beatTitle', e.target.value); setBeatError(null); }} />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle} htmlFor="open-mic-beat-producer">Producer Name</label>
+                  <Input id="open-mic-beat-producer" value={editForm.beatProducerName} style={{ width: '100%' }}
+                    onChange={(e) => { setEditField('beatProducerName', e.target.value); setBeatError(null); }} />
+                </div>
+              </div>
+              <div style={fieldWrap}>
+                <label style={labelStyle} htmlFor="open-mic-beat-file">
+                  {beatBusy ? 'Uploading beat…' : editForm.beatDownloadUrl ? 'Replace beat file (MP3)' : 'Upload Beat File (MP3)'}
+                </label>
+                <input
+                  id="open-mic-beat-file"
+                  aria-label="Open Mic beat file"
+                  type="file"
+                  accept=".mp3"
+                  onChange={uploadBeat}
+                  disabled={beatBusy || saving}
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={fieldWrap}>
+                  <label style={labelStyle} htmlFor="open-mic-beat-url">Beat File URL (Download)</label>
+                  <Input id="open-mic-beat-url" readOnly value={editForm.beatDownloadUrl} placeholder="/api/open-mic/beats/…" style={{ width: '100%' }}
+                    onChange={() => undefined} />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle} htmlFor="open-mic-beat-preview-url">Beat Preview URL</label>
+                  <Input id="open-mic-beat-preview-url" readOnly value={editForm.beatPreviewUrl} placeholder="/api/open-mic/beats/…" style={{ width: '100%' }}
+                    onChange={() => undefined} />
+                </div>
+              </div>
+              <div style={fieldWrap}>
+                <label style={labelStyle} htmlFor="open-mic-beat-rules">Beat Usage Rules</label>
+                <textarea id="open-mic-beat-rules" rows={2} value={editForm.beatUsageRules}
+                  onChange={(e) => { setEditField('beatUsageRules', e.target.value); setBeatError(null); }}
+                  style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${colors.inputBorder}`, fontSize: 13 }} />
+              </div>
+              {beatError && <p role="alert" style={{ color: colors.danger, fontSize: 12, margin: 0 }}>{beatError}</p>}
             </section>
 
             <section>
