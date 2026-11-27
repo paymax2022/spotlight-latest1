@@ -34,6 +34,7 @@
  * turns a throw into a failed job carrying the message an operator needs.
  */
 import sharp from 'sharp';
+import { boxBlurBand } from './box-blur';
 import type { BlendParams } from './params';
 
 /** §5.2 — "this pixel belongs to the subject". */
@@ -84,7 +85,7 @@ export async function refineEdges(
 
   const radius = featherRadius(params.featherPx, slot);
   applied.featherPx = radius;
-  const blurred = radius > 0 ? boxBlurAlpha(alpha, width, height, radius) : alpha;
+  const blurred = radius > 0 ? boxBlurBand(alpha, width, height, radius) : alpha;
 
   // RGB from `rgba` (defringed in place), alpha from `blurred`: the two passes
   // never write to the same array, which is how §5.3's "never to RGB" holds.
@@ -386,38 +387,4 @@ function ringColour(
     }
   }
   return n ? [Math.round(r / n), Math.round(g / n), Math.round(b / n)] : null;
-}
-
-/**
- * Separable box blur on the alpha channel, radius ≤ 2 (§5.3). Anything outside
- * the image counts as transparent, so the blur can never brighten an edge that
- * touches the frame.
- */
-function boxBlurAlpha(alpha: Uint8Array, width: number, height: number, radius: number): Uint8Array {
-  const horizontal = new Uint8Array(alpha.length);
-  const vertical = new Uint8Array(alpha.length);
-  const span = radius * 2 + 1;
-  for (let y = 0; y < height; y++) {
-    const row = y * width;
-    for (let x = 0; x < width; x++) {
-      let sum = 0;
-      for (let k = -radius; k <= radius; k++) {
-        const nx = x + k;
-        sum += nx >= 0 && nx < width ? alpha[row + nx] : 0;
-      }
-      horizontal[row + x] = Math.round(sum / span);
-    }
-  }
-  for (let y = 0; y < height; y++) {
-    const row = y * width;
-    for (let x = 0; x < width; x++) {
-      let sum = 0;
-      for (let k = -radius; k <= radius; k++) {
-        const ny = y + k;
-        sum += ny >= 0 && ny < height ? horizontal[ny * width + x] : 0;
-      }
-      vertical[row + x] = Math.round(sum / span);
-    }
-  }
-  return vertical;
 }
