@@ -34,7 +34,7 @@
 - Consumes: `contest_templates` / `template_slots` as created by `20260405700000_contest_image_templates.sql`.
 - Produces: columns `photo_mode`, `blend_preset`, `blend_settings` on `contest_templates`; `image_url`, `anchor`, `bleed`, `face_protect` on `template_slots`. Task 10 reads them.
 
-- [ ] **Step 1: Write the failing test** — read the migration text and assert the contract, then (Step 3) replay it for real:
+- [x] **Step 1: Write the failing test** — read the migration text and assert the contract, then (Step 3) replay it for real:
 
 ```ts
 // frontend-web/tests/unit/photo-jobs/blend/migration.test.ts
@@ -68,8 +68,8 @@ describe('contest photo blend migration', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails** — `cd frontend-web && npx vitest run tests/unit/photo-jobs/blend/migration.test.ts`. Expected: FAIL, ENOENT on the migration path.
-- [ ] **Step 3: Write the migration** — exactly the SQL in spec §11, prefixed by the header comment the renumber lesson earned:
+- [x] **Step 2: Run test to verify it fails** — `cd frontend-web && npx vitest run tests/unit/photo-jobs/blend/migration.test.ts`. Expected: FAIL, ENOENT on the migration path.
+- [x] **Step 3: Write the migration** — exactly the SQL in spec §11, prefixed by the header comment the renumber lesson earned:
 
 ```sql
 -- Contest photo blend layer (P2): the columns the renderer reads.
@@ -96,13 +96,19 @@ ALTER TABLE public.template_slots
   ADD COLUMN IF NOT EXISTS face_protect boolean NOT NULL DEFAULT true;
 ```
 
-- [ ] **Step 4: Run the version and parameter guards, then the test** — `bash scripts/ci/check-migration-versions.sh` (expected: "all versions unique", rc 0), `python3 scripts/ci/check-sql-param-order.py supabase/migrations` (expected: rc 0), `npx vitest run tests/unit/photo-jobs/blend/migration.test.ts` (expected: 3 passing).
-- [ ] **Step 5: Commit**
+- [x] **Step 4: Run the version and parameter guards, then the test** — `bash scripts/ci/check-migration-versions.sh` (expected: "all versions unique", rc 0), `python3 scripts/ci/check-sql-param-order.py supabase/migrations` (expected: rc 0), `npx vitest run tests/unit/photo-jobs/blend/migration.test.ts` (expected: 3 passing).
+- [x] **Step 5: Commit**
 
 ```bash
 git add supabase/migrations/20272200000000_contest_photo_blend.sql frontend-web/tests/unit/photo-jobs/blend/migration.test.ts
 git commit -m "feat(photo): store the blend layer's mode, preset and placement columns"
 ```
+
+**Executed — Task 1: Blend configuration columns** (commit `65b376e07`).
+
+- Step 2 red, as measured at the time: `npx vitest run tests/unit/photo-jobs/blend/migration.test.ts` → `Test Files 1 failed (1)` / `Tests no tests`, ENOENT on the migration path. The same claim is readable out of git today: `git cat-file -e 65b376e07^:supabase/migrations/20272200000000_contest_photo_blend.sql` → rc 128 (absent), `git cat-file -e 65b376e07:…` → rc 0.
+- Step 4 green, as measured: `3 passed (3)` — the step's predicted count, met exactly. `bash scripts/ci/check-migration-versions.sh` → "migration version guard passed — 761 migrations, all versions unique." rc 0; `python3 scripts/ci/check-sql-param-order.py supabase/migrations` → rc 0. Both guards re-run on head `111e4b8f4` with byte-identical output.
+- Head re-measure: `migration.test.ts  rc=0  Tests 3 passed (3)`, and the branch history of that file (`git log origin/feat/contest-photo-assets-jobs..HEAD -- <file>`) names only `65b376e07`, so the head number is Task 1's number, not a later file's.
 
 ---
 
@@ -116,7 +122,7 @@ git commit -m "feat(photo): store the blend layer's mode, preset and placement c
 - Consumes: nothing.
 - Produces: `BlendParams` (the §12 table as a flat typed object), `resolveBlendParams(presetName: string, overrides?: unknown): BlendParams`, `isBlendDisabled(p: BlendParams): boolean`. Every later task takes `BlendParams` — no task reads a raw string again.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { describe, expect, it } from 'vitest';
@@ -156,8 +162,8 @@ describe('blend presets', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `npx vitest run tests/unit/photo-jobs/blend/params.test.ts` → module not found.
-- [ ] **Step 3: Write `params.ts`** — the table plus a declarative bound list, so the ceiling is one list rather than a dozen `Math.min` calls scattered later:
+- [x] **Step 2: Run to verify it fails** — `npx vitest run tests/unit/photo-jobs/blend/params.test.ts` → module not found.
+- [x] **Step 3: Write `params.ts`** — the table plus a declarative bound list, so the ceiling is one list rather than a dozen `Math.min` calls scattered later:
 
 ```ts
 export type BlendPresetName = 'natural' | 'studio' | 'bold' | 'off';
@@ -194,8 +200,14 @@ const BOUNDS: Record<string, [number, number]> = {
 ```
 
 `resolveBlendParams` then: pick the preset (unknown → `natural`), copy it, and for each own key of a *plain-object* override apply it only when it passes its bound (numbers clamped into range, `shadow` accepted only from `'auto'|'on'|'off'`, everything else dropped). `isBlendDisabled` is `preset === 'off'`.
-- [ ] **Step 4: Run to verify it passes** — 5 passing.
-- [ ] **Step 5: Commit** `git add …/params.ts …/params.test.ts && git commit -m "feat(photo): name the blend presets and clamp their bounds"`
+- [x] **Step 4: Run to verify it passes** — 5 passing.
+- [x] **Step 5: Commit** `git add …/params.ts …/params.test.ts && git commit -m "feat(photo): name the blend presets and clamp their bounds"`
+
+**Executed — Task 2: Presets and bounds** (commit `be46dea00`).
+
+- Red, as measured: `params.test.ts` → `Test Files 1 failed (1)` / `Tests no tests`; `src/lib/rendering/blend/params.ts` absent at `be46dea00^` (rc 128), present at `be46dea00` (rc 0).
+- Green, as measured: `5 passed (5)` — the step's predicted count, met exactly.
+- Head re-measure: `5 passed (5)`; single-commit file, so the number transfers unchanged.
 
 ---
 
@@ -230,7 +242,7 @@ Task 4 uses `bbox`/`headTop`/`shoulderY`/`bottomY` for placement and the face bo
 
 `Rect` is exported from here and imported by Tasks 4–9 rather than redeclared.
 
-- [ ] **Step 1: Write the shared fixtures** — every later test builds its images from these, so the geometry each assertion expects is *planted*, not inferred. Boxes are half-open (`[start, end)`) so a `headWidth: 40` fixture measures exactly 40:
+- [x] **Step 1: Write the shared fixtures** — every later test builds its images from these, so the geometry each assertion expects is *planted*, not inferred. Boxes are half-open (`[start, end)`) so a `headWidth: 40` fixture measures exactly 40:
 
 ```ts
 // frontend-web/tests/unit/photo-jobs/blend/fixtures.ts
@@ -296,7 +308,7 @@ export const countAlpha = async (png: Buffer, test: (a: number) => boolean) => {
 };
 ```
 
-- [ ] **Step 2: Write the failing test** — synthetic silhouette, geometry asserted exactly:
+- [x] **Step 2: Write the failing test** — synthetic silhouette, geometry asserted exactly:
 
 ```ts
 // frontend-web/tests/unit/photo-jobs/blend/subject-metrics.test.ts
@@ -347,13 +359,19 @@ describe('measureSubject', () => {
 });
 ```
 
-- [ ] **Step 3: Run to verify it fails** — `npx vitest run tests/unit/photo-jobs/blend/subject-metrics.test.ts` → module not found.
-- [ ] **Step 4: Implement** — one pass over `sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })` reading only band 3 (spec §2 records why the raw descriptor and `.ensureAlpha()` are explicit here):
+- [x] **Step 3: Run to verify it fails** — `npx vitest run tests/unit/photo-jobs/blend/subject-metrics.test.ts` → module not found.
+- [x] **Step 4: Implement** — one pass over `sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })` reading only band 3 (spec §2 records why the raw descriptor and `.ensureAlpha()` are explicit here):
   - `rowRun[y]` = count of pixels with `alpha >= ALPHA_TEST` (8); `bbox` = min/max x/y over those same pixels; `coverage` = that count divided by the bbox area; `silhouetteHeight = bbox.height`;
   - `headWidth` = max `rowRun` within the top 12 % of the bbox height; `headBottom` = the first `y > headTop` with `rowRun[y] > 1.2 * headWidth`, else `headTop + headWidth` (a bust crop with no shoulder step); `shoulderY` = the first `y >= headBottom` with `rowRun[y] >= 1.8 * headWidth`, else `null`;
   - `face` = spec §8.2's protected box over `span = headBottom − headTop`: `y = headTop + 0.06 × span`, `height = 0.78 × span`, `width = 0.62 × headWidth`, centred on the mean x of the head rows. The constants are named at module top and asserted by *containment*, never by pixel identity, because §3 says the box only ever protects, never crops.
-- [ ] **Step 5: Run to verify it passes** — 4 passing.
-- [ ] **Step 6: Commit** `git add …/subject-metrics.ts …/fixtures.ts …/subject-metrics.test.ts && git commit -m "feat(photo): measure the contestant silhouette from its own alpha"`
+- [x] **Step 5: Run to verify it passes** — 4 passing.
+- [x] **Step 6: Commit** `git add …/subject-metrics.ts …/fixtures.ts …/subject-metrics.test.ts && git commit -m "feat(photo): measure the contestant silhouette from its own alpha"`
+
+**Executed — Task 3: Subject measurement** (commit `a6f9af4ab`, which also creates the shared `blend/fixtures.ts`).
+
+- Red, as measured: `Tests no tests` on `subject-metrics.test.ts`; `subject-metrics.ts` absent at the parent commit (rc 128).
+- Green, as measured: `4 passed (4)` — predicted 4, met exactly. The geometry each assertion wants is planted by `fixtures.ts` (`headWidth: 40` measures 40), so no number in this file is inferred from the implementation.
+- Head re-measure: `4 passed (4)`; single-commit file.
 
 ---
 
@@ -386,7 +404,7 @@ export function planPlacement(i: {
 export async function resolvePhotoMode(templatePng: Buffer, slot: SlotConfig, declared: string): Promise<PhotoMode>;
 ```
 
-- [ ] **Step 1: Write the failing test** — the three §13 rules and §13.5's normalisation, as numbers derived from `figurePng`'s planted geometry (head 40x50 at y 40, body 80 wide to y 260, canvas 200x300):
+- [x] **Step 1: Write the failing test** — the three §13 rules and §13.5's normalisation, as numbers derived from `figurePng`'s planted geometry (head 40x50 at y 40, body 80 wide to y 260, canvas 200x300):
 
 ```ts
 // frontend-web/tests/unit/photo-jobs/blend/placement.test.ts
@@ -474,8 +492,8 @@ describe('planPlacement', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `npx vitest run tests/unit/photo-jobs/blend/placement.test.ts` → module not found.
-- [ ] **Step 3: Implement `planPlacement`** exactly as spec §13 steps 1–6, with the two constants §13.5 and §13.3 require named at module top:
+- [x] **Step 2: Run to verify it fails** — `npx vitest run tests/unit/photo-jobs/blend/placement.test.ts` → module not found.
+- [x] **Step 3: Implement `planPlacement`** exactly as spec §13 steps 1–6, with the two constants §13.5 and §13.3 require named at module top:
 
 ```ts
 /** §13.5: a reference portrait shows a head that is 30 % of the visible silhouette. */
@@ -487,8 +505,13 @@ export const BLEED_PAD = 0.15;
 Mode A's scale is `min(headTargetPx / headHeightPx, boxFillPx / silhouetteHeight, boxWidth / bbox.width)` with `headTargetPx = boxFillPx * CANONICAL_HEAD_SHARE` — head-normalised, then box-capped, which is what makes §13.5's two framings agree without ever letting a silhouette spill past the slot. Mode B's scale is `max(placementWidth / bbox.width, placementHeight / bbox.height)` (cover), the source crop is the window's worth of subject pixels, positioned so `headTop` lands `0.06 × h` below the window top and the face box is horizontally centred; when the silhouette is shorter than the window at that scale, anchor on the face box rather than the bbox centre (§13.3). Anchor resolution: `bottom` puts `bbox.y + bbox.height` on the slot bottom, `centre` centres, `top` puts `headTop` at `0.06 × h` from the top, and `auto` is `bottom` when `metrics.bottomY` reaches the bottom third of the subject canvas and `centre` otherwise; `slot.anchor` overrides. `clip` is set in Mode B only — the window, never the bleed box.
 
 Then `resolvePhotoMode`: extract the slot rect from the template with `sharp(...).extract(rect).ensureAlpha().extractChannel(3).raw()`, count `>= 128` vs `< 128`, and return `photo_area` when at least half the region is transparent; `background` for `'auto'` on a solid region, and any explicit `'background'`/`'photo_area'` verbatim. A declared value outside those three (a hand-edited row) returns `'background'` with a `console.warn` — the legacy paste is the safe answer, not an exception.
-- [ ] **Step 4: Run to verify it passes** — 7 passing.
-- [ ] **Step 5: Commit** `git add …/placement.ts …/placement.test.ts && git commit -m "feat(photo): place the subject by what the matte says about it"`
+- [x] **Step 4: Run to verify it passes** — 7 passing.
+- [x] **Step 5: Commit** `git add …/placement.ts …/placement.test.ts && git commit -m "feat(photo): place the subject by what the matte says about it"`
+
+**Executed — Task 4: Placement and mode (§5)** (commit `26483f46a`).
+
+- Green, as measured: `7 passed (7)` — predicted 7, met exactly; head re-measure `7 passed (7)`, single-commit file.
+- The failing run of this file is not in the transcript slice this session can still read, so it is not quoted as a number here. What is provable from git is the condition Step 2 asserts: `placement.ts` is absent at `26483f46a^` (rc 128) and present at `26483f46a` (rc 0), so the import could only have failed before the implementation landed.
 
 ---
 
@@ -511,7 +534,7 @@ export async function refineEdges(
 ): Promise<{ png: Buffer; applied: EdgeApplied }>;
 ```
 
-- [ ] **Step 1: Write the failing test** — planted defects, measured outcomes:
+- [x] **Step 1: Write the failing test** — planted defects, measured outcomes:
 
 ```ts
 // frontend-web/tests/unit/photo-jobs/blend/edge-refine.test.ts
@@ -570,10 +593,16 @@ it('never feathers past the cap, and never softens the interior', async () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails.**
-- [ ] **Step 3: Implement** the three passes of spec §5.1–§5.3 over the raw RGBA array. The defringe is the exact unmix in §5.1 (`bg` = channel-wise median over `alpha < 32` inside a ring 12 % of the bbox's smaller side around the bbox, falling back to no defringe when fewer than 64 such pixels exist — a cutout with no residual background must not be "fixed"). Connected components are an iterative-stack flood fill over `alpha >= 8`; drop components smaller than `speckleMinArea` that are not the largest; close holes that are fully enclosed, smaller than `holeMaxArea`, and not touching the bbox edge. The feather is a separable box blur on band 3 only with `radius = clamp(params.featherPx, 0, floor(min(slot.width, slot.height) * 0.004))`, taken from the `slot` argument. Blur band 3 and rejoin it over the original RGB — do not blur the whole image, and do not read alpha back off an encoded buffer (spec §2, trap 1).
-- [ ] **Step 4: Run to verify it passes** — 4 passing.
-- [ ] **Step 5: Commit** `git commit -m "feat(photo): defringe, despeckle and cap the feather of the cutout"`
+- [x] **Step 2: Run to verify it fails.**
+- [x] **Step 3: Implement** the three passes of spec §5.1–§5.3 over the raw RGBA array. The defringe is the exact unmix in §5.1 (`bg` = channel-wise median over `alpha < 32` inside a ring 12 % of the bbox's smaller side around the bbox, falling back to no defringe when fewer than 64 such pixels exist — a cutout with no residual background must not be "fixed"). Connected components are an iterative-stack flood fill over `alpha >= 8`; drop components smaller than `speckleMinArea` that are not the largest; close holes that are fully enclosed, smaller than `holeMaxArea`, and not touching the bbox edge. The feather is a separable box blur on band 3 only with `radius = clamp(params.featherPx, 0, floor(min(slot.width, slot.height) * 0.004))`, taken from the `slot` argument. Blur band 3 and rejoin it over the original RGB — do not blur the whole image, and do not read alpha back off an encoded buffer (spec §2, trap 1).
+- [x] **Step 4: Run to verify it passes** — 4 passing.
+- [x] **Step 5: Commit** `git commit -m "feat(photo): defringe, despeckle and cap the feather of the cutout"`
+
+**Executed — Task 5: Edge refinement (§6 A)** (commit `e05583645`).
+
+- Red, as measured: `edge-refine.test.ts` → `Test Files 1 failed (1)` / `Tests no tests`; `edge-refine.ts` absent at the parent (rc 128).
+- Green, as measured: `4 passed (4)` — predicted 4, met exactly; head re-measure `4 passed (4)`, single-commit file.
+- This commit also adds the four blend columns to `SlotConfig` as optional fields, which is what keeps a row read from `template_slots` and a slot handed to the compositor one type.
 
 ---
 
@@ -598,7 +627,7 @@ export async function matchLight(subject: Buffer, subjectStats: RegionStats,
 
 `referenceStats` is not a parameter here on purpose: Task 9 computes it with `measureRegion(templatePng, dilated(placement.target))` and passes the value in, so the template is decoded once per job instead of once per stage.
 
-- [ ] **Step 1: Write the failing test** — this is where §6.B's "not identical filters" gets proved:
+- [x] **Step 1: Write the failing test** — this is where §6.B's "not identical filters" gets proved:
 
 ```ts
 // frontend-web/tests/unit/photo-jobs/blend/light-match.test.ts
@@ -668,8 +697,8 @@ it('measures only the pixels it is pointed at, and only opaque ones', async () =
 
 `flatRaw` and `meanChannels` are two six-line helpers in the same test file: `flatRaw` is `sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })`, and `meanChannels` averages bands 0-2 over opaque pixels. They exist so the luma convention in §6.1 is asserted by the test's own arithmetic instead of by whatever the implementation happens to call luma.
 
-- [ ] **Step 2: Run to verify it fails** — module not found.
-- [ ] **Step 3: Implement** per spec §6.1–§6.4, with the arithmetic pinned so no stage improvises:
+- [x] **Step 2: Run to verify it fails** — module not found.
+- [x] **Step 3: Implement** per spec §6.1–§6.4, with the arithmetic pinned so no stage improvises:
   - `luma(r,g,b) = 0.2126r + 0.7152g + 0.0722b` on the sRGB codes — one convention, stated once, asserted by the helper arithmetic above.
   - `measureSubjectLight(png)` stats over pixels with `alpha >= 200` only; `measureRegion(png, rect)` returns `null` when fewer than 64 opaque pixels fall in `rect`, which is how "no reference to match" is detected rather than guessed.
   - The reference region is the placement rect dilated by 25 % minus the rect itself (§6.2), so the subject is matched to what surrounds it, never to its own pixels.
@@ -677,8 +706,14 @@ it('measures only the pixels it is pointed at, and only opaque ones', async () =
   - `deltaR = clamp((ref.meanR / ref.meanB) / (subject.meanR / subject.meanB) - 1, -tempMax, tempMax)`; channel R is then multiplied by `1 + lumaFraction * deltaR` and B by `1 + lumaFraction * -deltaR`. G is never touched, which is why §6.3's skin-tone guard holds by construction and not by tuning. `applied.temperature` reports `{ r, b }` as the factors actually used, so `r < 1` and `b > 1` together mean "this subject was too warm for its frame".
   - `contrast` (§6.3's third term) is a `linear` on RGB with slope `1 + lumaFraction * clamp((refSpread / subjectSpread) - 1, -contrastMax, contrastMax)`, where spread is the mean absolute deviation of luma; `contrast: 0` in the `off` preset makes it a no-op.
   - Alpha is copied from the original array and rejoined, never scaled — that is what keeps the matte's identity through the light stage (and it is why §2's trap-2 channel promotion has to be defended against here too).
-- [ ] **Step 4: Run to verify it passes** — 5 passing.
-- [ ] **Step 5: Commit** `git add …/light-match.ts …/light-match.test.ts && git commit -m "feat(photo): match light to the frame it is standing in"`
+- [x] **Step 4: Run to verify it passes** — 5 passing.
+- [x] **Step 5: Commit** `git add …/light-match.ts …/light-match.test.ts && git commit -m "feat(photo): match light to the frame it is standing in"`
+
+**Executed — Task 6: Colour and lighting match (§6 B)** (commit `8405ada82`).
+
+- Red: `light-match.ts` absent at `8405ada82^` (rc 128), present at the commit (rc 0).
+- Green, as measured at the commit: `5 passed (5)` — predicted 5, met exactly.
+- Head re-measure: `6 passed (6)`. The extra case is not drift in this task's delivery: Task 9's commit `3c821fc5e` added "subtracts the placement rect it is told to exclude" to this file when the engine started passing §6.2's reference ring. Recorded here so the 5-vs-6 difference against this plan's prediction has a named cause.
 
 ---
 
@@ -703,7 +738,7 @@ export async function protectFace(overlay: Buffer, o: { rect: Rect; face: Rect; 
 
 `buildShadowLayers` returns `[]` when `params.shadow === 'off'`, when `dropOpacity` and `contactOpacity` are both 0 (the `off` preset), or when the placement carries a `clip` — §7's rule that a figure inside a window is grounded by the window's own art, not by our shadow. Each buffer is `target.width + 2*pad` by `target.height + 2*pad + shadowOffsetPx` with `pad = ceil(2 * shadowBlurPx)`, and its `left`/`top` are `placement.target.left - pad` / `placement.target.top - pad + shadowOffsetPx`, so the compositor draws it with no further arithmetic. The contact band is centred on the feet: canvas rows `bboxBottomCanvas - contactHeight .. bboxBottomCanvas + 2`, where `contactHeight = max(4, round(0.04 * target.height))` and `bboxBottomCanvas = placement.target.top + (metrics.bottomY - placement.source.y) * (target.height / source.height)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // frontend-web/tests/unit/photo-jobs/blend/shadow.test.ts
@@ -790,10 +825,16 @@ it('is a straight copy when the layer does not reach the face', async () => {
 
 Note the geometry in the second test: a face box entirely outside the layer's rect means the falloff evaluates to 0 everywhere, so the buffers must come back equal — that is the no-op proof, asserted on bytes rather than on a byte length that any PNG would satisfy.
 
-- [ ] **Step 2: Run to verify they fail.**
-- [ ] **Step 3: Implement** spec §7 (drop: blur σ from `shadowBlurPx` on band 3, scale 1.02, offset `(0, shadowOffsetPx)`, black tint, `dropOpacity`; contact: flatten the alpha into `contactHeight = max(4, 0.04 × target.height)` rows at the silhouette bottom, stronger `contactOpacity`; both multiplied by `1 − alphaSubject`) and §8.2 (radial falloff across `face`, feathered over the outer 20 %, `alpha ×= 1 − strength × falloff`).
-- [ ] **Step 4: Run to verify they pass** — 5 passing.
-- [ ] **Step 5: Commit** `git commit -m "feat(photo): ground the subject and keep its face clear"`
+- [x] **Step 2: Run to verify they fail.**
+- [x] **Step 3: Implement** spec §7 (drop: blur σ from `shadowBlurPx` on band 3, scale 1.02, offset `(0, shadowOffsetPx)`, black tint, `dropOpacity`; contact: flatten the alpha into `contactHeight = max(4, 0.04 × target.height)` rows at the silhouette bottom, stronger `contactOpacity`; both multiplied by `1 − alphaSubject`) and §8.2 (radial falloff across `face`, feathered over the outer 20 %, `alpha ×= 1 − strength × falloff`).
+- [x] **Step 4: Run to verify they pass** — 5 passing.
+- [x] **Step 5: Commit** `git commit -m "feat(photo): ground the subject and keep its face clear"`
+
+**Executed — Task 7: Shadows and face-safe layering (§6 C, §6 D)** (commit `3ab72c724`, creating `box-blur.ts`, `shadow.ts`, `face-safe.ts`).
+
+- Red, as measured: `npx vitest run shadow.test.ts face-safe.test.ts` → `Test Files 2 failed (2)` / `Tests no tests`; all three modules absent at the parent (rc 128 each).
+- Green, as measured: `2 passed (2)` files, `5 passed (5)` tests — predicted 5, met exactly (shadow 3 + face-safe 2).
+- Head re-measure: `shadow.test.ts 4 passed (4)` and `face-safe.test.ts 2 passed (2)`, i.e. 6. The extra shadow case is `3c821fc5e`'s "reads §7's rounding trigger from the slot, not only from the placement", added when the engine began calling the shadow stage with a slot.
 
 ---
 
@@ -823,7 +864,7 @@ export async function chooseEncode(image: Buffer, jpegQuality: number): Promise<
 
 Behaviour rules to honour: absent `placement` ⇒ today's geometry path exactly; absent `blend`-shaped fields ⇒ today's output; a slot with `placement.source` is cropped *before* resize; `placement.clip` clips after rotation (Mode B containment); `underlays` render between the template and the first slot; `faceSafe` is applied to a slot's rendered overlay only when that slot's `face_protect !== false` and its `z_index` is greater than the contestant slot's; the encode is spec §9's smaller-of with the transparency veto.
 
-- [ ] **Step 1: Write the failing test** — the legacy path first, because it is what makes the rest safe to ship:
+- [x] **Step 1: Write the failing test** — the legacy path first, because it is what makes the rest safe to ship:
 
 ```ts
 // frontend-web/tests/unit/rendering/compositor-blend.test.ts
@@ -905,10 +946,17 @@ it('picks the smaller encode, keeps PNG on a tie, and vetoes JPEG under transpar
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails.**
-- [ ] **Step 3: Implement** in `imageCompositor.ts`. The `blend` fields are read inside `processSlot` only when present, so the existing path stays a straight-line read. Add `async function chooseEncode(overlays): Promise<{buffer, mimeType}>` implementing §9. Keep `fetchImageBuffer` for URL sources and route bytes around it — no fetch when `photo_bytes`/`templateBytes` exist, because the runner has already paid for those reads and a second fetch of a signed URL can fail on expiry.
-- [ ] **Step 4: Run to verify it passes** — 6 passing; then `npx vitest run tests/unit/rendering tests/unit/photo-jobs` with no regressions.
-- [ ] **Step 5: Commit** `git commit -m "feat(render): let the compositor take pixels, placement, underlays and a face-safe clip"`
+- [x] **Step 2: Run to verify it fails.**
+- [x] **Step 3: Implement** in `imageCompositor.ts`. The `blend` fields are read inside `processSlot` only when present, so the existing path stays a straight-line read. Add `async function chooseEncode(overlays): Promise<{buffer, mimeType}>` implementing §9. Keep `fetchImageBuffer` for URL sources and route bytes around it — no fetch when `photo_bytes`/`templateBytes` exist, because the runner has already paid for those reads and a second fetch of a signed URL can fail on expiry.
+- [x] **Step 4: Run to verify it passes** — 6 passing; then `npx vitest run tests/unit/rendering tests/unit/photo-jobs` with no regressions.
+- [x] **Step 5: Commit** `git commit -m "feat(render): let the compositor take pixels, placement, underlays and a face-safe clip"`
+
+**Executed — Task 8: Compositor: caller bytes, explicit placement, underlays, face-safe, chosen encode** (commits `a45e61a7a`, then the fix `24bf8f450`).
+
+- Red, as measured, came down as a ladder rather than one step: `compositor-blend.test.ts` → `Test Files 1 failed (1)` / `Tests no tests` (collection error), then `Tests 7 ─` of 8 failing, then `Tests 1 ─`, with the last stage narrowed by `-t "protects the face"` before it went green.
+- The file landed with **8** cases where this step predicted 6, so the plan under-counted its own test list; the 8 are what ran.
+- Step 4's regression half, as measured: `npx vitest run tests/unit/rendering tests/unit/photo-jobs` → `17 passed (17)` files / `147 passed (147)` tests. The run taken *before* `24bf8f450` printed `1 failed | 17 passed (18)` over the same 147, which is why the follow-up commit exists: `face_protect NOT NULL DEFAULT true` made the subject slot itself the face-clip target, so the exemption had to become structural.
+- Head re-measure: `compositor-blend.test.ts 9 passed (9)` (the 9th case is Task 10's `f2ba0f856`), and the pair run is now `19 passed (19)` files / `164 passed (164)` tests with nothing failing.
 
 ---
 
@@ -940,7 +988,7 @@ export async function blendSubject(req: BlendRequest): Promise<BlendOutput>;
 
 `canvas` is in the request rather than decoded from `templatePng` inside the engine because the runner already has the template's dimensions from the resolver, and a second `sharp().metadata()` decode per job is a cost the caller can avoid.
 
-- [ ] **Step 1: Write the failing test** — the pipeline order and the decision record, not the pixels:
+- [x] **Step 1: Write the failing test** — the pipeline order and the decision record, not the pixels:
 
 ```ts
 // frontend-web/tests/unit/photo-jobs/blend/engine.test.ts
@@ -995,10 +1043,16 @@ describe('blendSubject', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails.**
-- [ ] **Step 3: Implement** the §4 sequence, returning `decisions` per spec §6.4 with `applied: true` plus the per-stage records. `empty-subject` and `no-reference-region` are the two non-throwing degenerate answers, and each names its reason in `decisions` rather than throwing, because the runner must be able to show the operator why a portrait looks paste-like.
-- [ ] **Step 4: Run to verify it passes** — 3 passing.
-- [ ] **Step 5: Commit** `git commit -m "feat(photo): sequence the blend stages and record what they decided"`
+- [x] **Step 2: Run to verify it fails.**
+- [x] **Step 3: Implement** the §4 sequence, returning `decisions` per spec §6.4 with `applied: true` plus the per-stage records. `empty-subject` and `no-reference-region` are the two non-throwing degenerate answers, and each names its reason in `decisions` rather than throwing, because the runner must be able to show the operator why a portrait looks paste-like.
+- [x] **Step 4: Run to verify it passes** — 3 passing.
+- [x] **Step 5: Commit** `git commit -m "feat(photo): sequence the blend stages and record what they decided"`
+
+**Executed — Task 9: The blend orchestrator** (commit `3c821fc5e`).
+
+- Red: `blend/index.ts` absent at `3c821fc5e^` (rc 128), present at the commit (rc 0).
+- The file landed with **8** cases where this step predicted 3 — the two non-throwing degenerate answers, the degrade path, and one case per recorded stage value were added as the decision record grew. Head re-measure: `8 passed (8)`, single-commit file.
+- This commit is also what changed the counts of two neighbours (see Task 6 and Task 7), which is the only place where this branch's test totals moved after their own task closed.
 
 ---
 
@@ -1013,7 +1067,7 @@ describe('blendSubject', () => {
 - Consumes: `blendSubject`, `resolveBlendParams`, `resolvePhotoMode`, Task 8's compositor.
 - Produces: a `final` asset whose `render_params.blend` is the decision record; a `ResolvedTemplate` that additionally carries `photoMode`, `blendPreset`, `blendSettings`, `foregroundSlots: SlotConfig[]` and the placement columns on its contestant slot.
 
-- [ ] **Step 1: Write the failing test** — spec §14.11, four cases. This file copies the mock harness from `tests/unit/photo-jobs/runner.test.ts` verbatim (the `deps` hoisted object, the `job`, `ORIGINAL`, `slot()` and `template()` builders and the `beforeEach`) and adds two lines to it, so read that file first:
+- [x] **Step 1: Write the failing test** — spec §14.11, four cases. This file copies the mock harness from `tests/unit/photo-jobs/runner.test.ts` verbatim (the `deps` hoisted object, the `job`, `ORIGINAL`, `slot()` and `template()` builders and the `beforeEach`) and adds two lines to it, so read that file first:
 
 ```ts
 // frontend-web/tests/unit/photo-jobs/blend/runner-blend.test.ts
@@ -1174,13 +1228,19 @@ it('tolerates a template with no foreground slots', async () => {
 
 The existing five cases in that file keep passing untouched: they never set `foregroundResult`, so the new query resolves `null` and the resolver maps that to `foregroundSlots: []`.
 
-- [ ] **Step 2: Run to verify they fail** — `npx vitest run tests/unit/photo-jobs/blend/runner-blend.test.ts tests/unit/registration/template-resolver.test.ts`; the resolver cases fail on `photoMode` being `undefined`, the runner cases on `blendSubject` not being called.
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run to verify they fail** — `npx vitest run tests/unit/photo-jobs/blend/runner-blend.test.ts tests/unit/registration/template-resolver.test.ts`; the resolver cases fail on `photoMode` being `undefined`, the runner cases on `blendSubject` not being called.
+- [x] **Step 3: Implement**
   - `template-resolver.ts`: extend the `select` to `'id, version, template_url, width, height, photo_mode, blend_preset, blend_settings'`, select the new slot columns, and add a second query for the non-`contestant` slots with an `image_url`, ordered by `z_index`. `ResolvedTemplate` gains `photoMode`, `blendPreset`, `blendSettings`, `foregroundSlots`.
   - `runner.ts` `compositing` step: read the cutout and the template bytes once each — `readAssetBytes({ storage_key: null, provider_url: cutout.resultUrl })` and `readAssetBytes({ storage_key: null, provider_url: template.templateUrl })` — resolve `params = resolveBlendParams(template.blendPreset, template.blendSettings)`, and when `isBlendDisabled(params)` is false and both buffers came back, call `blendSubject({ subjectPng: cutoutBytes, templatePng: templateBytes, canvas: { width: template.templateWidth, height: template.templateHeight }, slot: template.slot, params, overrides: job.render_params })` inside a `try`. Pass its output plus `template.foregroundSlots` to `compositeImage` as in Task 8; on throw, or when either buffer is `null`, fall back to today's single-slot URL call and set `decisions = { applied: false, preset, error }` (with `error: 'the cutout or template bytes could not be read'` for the null case). Store the `transparent` asset from the cutout as P1 does, then the `final` with `renderParams: { ...job.render_params, blend: decisions }`. For a disabled blend, skip the engine and the two extra reads and record `{ applied: false, preset }`.
   - `photo-pipeline.ts` (the synchronous path P3 will call) gets the same treatment behind an optional `blend` input field so a P3 preview can request it, and its existing tests stay green with `blend` absent.
-- [ ] **Step 4: Run to verify it passes** — `npx vitest run tests/unit/photo-jobs tests/unit/registration tests/unit/rendering`; then `npm run type-check`.
-- [ ] **Step 5: Commit** `git commit -m "feat(photo): render contestants through the blend engine, with a proven fallback"`
+- [x] **Step 4: Run to verify it passes** — `npx vitest run tests/unit/photo-jobs tests/unit/registration tests/unit/rendering`; then `npm run type-check`.
+- [x] **Step 5: Commit** `git commit -m "feat(photo): render contestants through the blend engine, with a proven fallback"`
+
+**Executed — Task 10: Runner and resolver wiring** (commit `f2ba0f856`).
+
+- Red, as measured: `npx vitest run blend/runner-blend.test.ts registration/template-resolver.test.ts rendering/compositor-blend.test.ts` → `Test Files 3 failed (3)` / `Tests 10 failed | 13 passed (23)`, and the three named files are exactly those three. That matches Step 2's prediction: the resolver cases fail on `photoMode` being `undefined`, the runner cases on `blendSubject` never being called.
+- Green, as measured: the P2 set → `13 passed (13)` files / `83 passed (83)` tests. Per file at head: `blend/runner-blend 6`, `photo-jobs/runner 17`, `registration/template-resolver 8`, `rendering/compositor-blend 9`.
+- `npm run type-check` → rc 0. The three §14.11 paths (off, throwing engine, unreadable pixels) are the `runner-blend.test.ts` trio, and the byte-identity proof of the `off` path is Task 11 Step 2's 9/9 digests.
 
 ---
 
@@ -1190,13 +1250,23 @@ The existing five cases in that file keep passing untouched: they never set `for
 - Modify: `docs/superpowers/plans/2026-11-27-contest-photo-blend-layer.md` (this file — close the boxes, add the executed-sha headers and the corrections list)
 - Modify: `docs/superpowers/specs/2026-11-27-contest-photo-blend-layer-design.md` (§15/§16 only if delivery narrows a claim)
 
-- [x] **Step 1: Full local gate set — run on `f2ba0f856`, 2026-11-27.** `npx vitest run` (whole `tests/unit`, `node_modules` present so the exit code means something): **3089 passed / 2 failed / 3 skipped / 1 todo across 309 files** (28.8 s). Both failures are `tests/unit/registration/contest-admin-schedule-route.spec.ts` ("rejects a schedule window that has already closed" 404-vs-500, "rejects a nonsense window with 400, not a raw Postgres error" 400-vs-500) — pre-existing, named in P1's ledger, untouched by this branch. Of the four reds P1's ledger predicted, only those two appeared here: `wallet/bank` ×2 and `beat-download-origin` ×1 passed in this run, which is what P1 expected of them too (it measured them as cross-file interference at full-suite scale, green in isolation). `npm run type-check` → **rc=0**. `bash scripts/ci/check-migration-versions.sh` → "migration version guard passed — **761 migrations, all versions unique**". `python3 scripts/ci/check-sql-param-order.py supabase/migrations` → **rc=0**. `npx eslint` over the **26** TypeScript paths this branch touches → **0 errors, 0 warnings** (empty log, rc=0). Task 10's own targeted run — `npx vitest run tests/unit/photo-jobs tests/unit/registration tests/unit/rendering` — is **438 passed / 2 failed / 54 files**, the same two pre-existing reds and nothing else.
+- [x] **Step 1: Full local gate set — run on `f2ba0f856`, 2026-11-27.** `npx vitest run` (whole `tests/unit`, `node_modules` present so the exit code means something): **3089 passed / 2 failed / 3 skipped / 1 todo across 309 files** (28.8 s). Both failures are `tests/unit/registration/contest-admin-schedule-route.spec.ts` ("writes the schedule through to Postgres" — `expected 500 to be 404`, and "rejects a nonsense window with 400, not a raw Postgres error" — `expected 500 to be 400`) — pre-existing, named in P1's ledger, untouched by this branch, and P1 records why they answer 500: `No "getRegistrationContestBySlug" export is defined on the "@/src/server/registration/store" mock`, so the route throws before it can decide a status. Of the four reds P1's ledger predicted, only those two appeared here: `wallet/bank` ×2 and `beat-download-origin` ×1 passed in this run, which is what P1 expected of them too (it measured them as cross-file interference at full-suite scale, green in isolation). `npm run type-check` → **rc=0**. `bash scripts/ci/check-migration-versions.sh` → "migration version guard passed — **761 migrations, all versions unique**". `python3 scripts/ci/check-sql-param-order.py supabase/migrations` → **rc=0**. `npx eslint` over the **26** TypeScript paths this branch touches → **0 errors, 0 warnings** (empty log, rc=0). Task 10's own targeted run — `npx vitest run tests/unit/photo-jobs tests/unit/registration tests/unit/rendering` — is **438 passed / 2 failed / 54 files**, the same two pre-existing reds and nothing else.
 - [x] **Step 2: Equivalence proof for §14.11 — done, 9 of 9 digests identical.** Rather than one case, three, driven through `runPhotoJob` itself (real `sharp`, real `imageCompositor`, real `variants`; only the vendor, the store and the job table mocked) with the template's `blend_preset: 'off'`, and hashed at the `storePhoto` boundary so the digest is of the bytes the runner asked to persist. Cases: plain `cover`, `contain` + 120 px radius + 0.5 opacity, and `fill` + 8° rotation + scale 1.25 — the three geometries where an unintended behaviour change in Task 8 would show. Subjects and templates are deterministic raw-RGBA PNGs served through a stubbed `fetch` on allowlisted hosts. The same file (md5 `ad62e074fbae696d506ef369c12f29ac`) was run here and in `.worktrees/contest-photo-jobs` at `ff1e3e304`: **9 digests out, 9 digests in, `diff` empty**. Composited: `d47024d85bec0cb2…` (plain-cover), `8943e2fbcaeb2faf…` (rounded-half-opacity), `a032c842b829e07f…` (rotated-scaled-fill). The throwaway harness was deleted from both worktrees afterwards; both are clean except the untracked `node_modules` symlinks.
 - [x] **Step 3: Merged-chain replay — 763 migrations applied, rc=0, zero errors.** The chain is the real merge result, not a hand-built directory: `git merge-tree --write-tree origin/main HEAD` → tree `7e428efbd266b7f3…`, rc=0 (clean merge), from which `supabase/migrations` was extracted with `git archive` into `/tmp` — nothing written into either worktree. Measured, not derived: **763** files (each parent tree has 761, 759 of them shared), **0** duplicate version prefixes. Server: the local Supabase Postgres on 54322 — `PostgreSQL 17.6` with the postgis the prelude needs — in a scratch database `photo_blend_replay`, exactly the form P1's Step 3 executed (see correction 25 for why not `docker run`); prelude first, then `make MIGRATIONS_DIR=/tmp/… DATABASE_URL=$SCRATCH migrate-up` → **rc=0**, `  applying ` lines **763**, `ERROR`/`FATAL` lines **0**, the only stderr the re-apply `NOTICE: trigger "contest_photo_assets_immutable" … does not exist, skipping` that P1 also measured. Apply order is proved by the log's tail: `20271900000000_rising_star_editions.sql`, `20272000000000_locality_villages.sql`, `20272100000000_contest_photo_assets_and_jobs.sql`, `20272200000000_contest_photo_blend.sql`. `make … rls-check` → **✓ every public table has RLS enabled (allowlist: 'spatial_ref_sys')**. Read back out of the replayed database: `contest_templates.photo_mode = 'auto'::text NOT NULL`, `blend_preset = 'natural'::text NOT NULL`, `blend_settings = '{}'::jsonb NOT NULL`; `template_slots.image_url` NULL, `anchor = 'auto'::text NOT NULL`, `bleed = false NOT NULL`, `face_protect = true NOT NULL`; 3 CHECK constraints over those columns; P1's `contest_photo_assets` + `contest_photo_jobs` present with `relrowsecurity` on both (2/2) and all 10 of its functions; main's own objects present in the same database (`villages` 8 columns, 3 `edition_*` tables, 6 `locality%` columns, `connect_contests.winner_methodology` + `results_status`) — so main's migrations really ran before ours rather than merely sitting in the directory. 1416 public tables. Scratch database dropped, temp chain directory removed.
 - [x] **Step 4: Duplicate-version check after `git fetch` — no renumber needed.** `origin/main` is `f6387af89` (2026-11-26) and its highest `2027*` versions are `20271700000000, 20271800000000, 20271900000000, 20272000000000`: main gained no `202722*`, so `20272200000000_contest_photo_blend.sql` keeps its number, and the merged chain measured **0** duplicate versions in Step 3. (`feat/contest-photo-assets-jobs` is on the remote, so the stacked base exists to open against.)
 - [x] **Step 5: Pushed and opened — PR #1181** <https://github.com/paymax2022/spotlight-latest1/pull/1181>, base `feat/contest-photo-assets-jobs` (#1180), head `feat/contest-photo-blend-layer` at `3230cf9df`, 17 commits / 29 files / +5701 −76. The body carries each item this step asked for: the executed test counts, the §14.11 digests and the merged-chain replay, the statement that "professionally blended" is proven numerically on synthetic geometry and **not** visually on real photographs (§15.2), that the runner reaches a real composite only with Cloudinary and R2 configured, that P2 is engine-only with no admin UI (P3) and no surface change (P4), that the PR is stackable and merging it before #1180 would be wrong (it re-edits P1's three files), and the pre-existing reds by name — proved in the moment rather than recited: `npx vitest run tests/unit/registration/contest-admin-schedule-route.spec.ts` in the P1 worktree at `ff1e3e304` gives **2 failed / 6 passed**, the same two as on this branch. The additive-only guard was also reproduced locally with the workflow's own regexes (`_reusable-migration-guard.yml:96-124`) over the one changed migration: passed.
-- [x] **Step 5b: §14.12's live-DB half — closed on `a0d5cafee`, 2026-11-27.** Step 3 replays the merged chain in a scratch database and proves the *migration*; it cannot prove that P1's append-only trigger still behaves once the chain has run, because nothing re-executes the twelve live specs there. The repo's live check for that is `frontend-web/tests/integration/photo-jobs.test.ts`, and it had no reference to `photo_mode`, `blend_preset`, `anchor`, `bleed` or `face_protect` — so it passed identically on a pre-P2 schema and "the proofs ran after the replay" was an assumption about whoever's laptop. Now the file's first live spec reads P2's seven columns through PostgREST, takes the defaults from a row inserted *without* them (§11's "an untouched admin row behaves like today": `auto` / `natural` / `{}` and NULL / `auto` / false / true), exercises all three CHECKs with an out-of-range value each, and stores `'off'` because §14.11 promises it renders like P1. Measured in the order that makes it a gate: before the replay **1 failed / 12 passed**, the failure being `column contest_templates.photo_mode does not exist` (SQLSTATE 42703, i.e. red for the right reason); after applying `20272200000000_contest_photo_blend.sql` to the same local database — `psql -f` **rc=0**, then a second run **rc=0** with exactly 7 `already exists, skipping` NOTICEs, which is the file's own idempotence — **13 passed / 13**, the twelve P1 proofs included. `npm run type-check` **rc=0**; `npx eslint tests/integration/photo-jobs.test.ts` **rc=0**. Nothing leaked: `contest_templates` where `name like 'it-blend-%'` → 0 rows, `template_slots` → 0 rows (the two pre-existing template rows are another session's, created 03:35Z). Two execution notes in correction 27.
-- [ ] **Step 6: Do not merge.** Report the CI census from `check-runs --paginate` and leave integration to the owner.
+- [x] **Step 5b: §14.12's live-DB half — closed on `a0d5cafee`, 2026-11-27.** Step 3 replays the merged chain in a scratch database and proves the *migration*; it cannot prove that P1's append-only trigger still behaves once the chain has run, because nothing re-executes the twelve live specs there. The repo's live check for that is `frontend-web/tests/integration/photo-jobs.test.ts`, and it had no reference to `photo_mode`, `blend_preset`, `anchor`, `bleed` or `face_protect` — so it passed identically on a pre-P2 schema and "the proofs ran after the replay" was an assumption about whoever's laptop. Now the file's first live spec reads P2's seven columns through PostgREST, takes the defaults from a row inserted *without* them (§11's "an untouched admin row behaves like today": `auto` / `natural` / `{}` and NULL / `auto` / false / true), exercises all three CHECKs with an out-of-range value each, and stores `'off'` because §14.11 promises it renders like P1. Measured in the order that makes it a gate: before the replay **1 failed / 12 passed**, the failure being `column contest_templates.photo_mode does not exist` (SQLSTATE 42703, i.e. red for the right reason); after applying `20272200000000_contest_photo_blend.sql` to the same local database — `psql -f` **rc=0**, then a second run **rc=0** with exactly 7 `already exists, skipping` NOTICEs, which is the file's own idempotence — **13 passed / 13**, the twelve P1 proofs included. `npm run type-check` **rc=0**; `npx eslint tests/integration/photo-jobs.test.ts` **rc=0**. Nothing leaked: `contest_templates` where `name like 'it-blend-%'` → 0 rows, `template_slots` → 0 rows. Every `contest_templates` row left in that database is studio-authored — all three carry the same `created_by` auth user, one of them ('Golibe New') written at 03:35Z while these specs were running, so another session was using the same local database — and none of them is this file's. Two execution notes in correction 27.
+
+Re-measured on the PR head after this (`111e4b8f4`): whole `tests/unit` still **3089 passed / 2 failed / 3 skipped / 1 todo** (309 files, 64.7 s); Task 9's own set — `tests/unit/photo-jobs/blend`, `photo-jobs/runner.test.ts`, `rendering/compositor-blend.test.ts`, `registration/template-resolver.test.ts` — **83 passed / 0 failed** over 13 files; `tests/unit/photo-jobs` + `registration` + `rendering` **438 passed / 2 failed** over 54 files; and `npx eslint` over the **27** TypeScript paths now in the diff (the 26 plus this file's live spec) rc=0 with an empty log from `frontend-web` — the earlier count was 26 because the live spec did not exist yet. Step 1's two reds reproduce **in isolation on both sides of the stack** — here and at `ff1e3e304` in the P1 worktree, each **2 failed / 6 passed** with the same assertions (`expected 500 to be 404`, `expected 500 to be 400`). Step 1's own text named the first of those two by a title that does not exist in the file; it is corrected above, and P1's ledger — which is where the cause comes from — has never used that title. `check-migration-versions.sh` and `check-sql-param-order.py` were re-run on this head too: "761 migrations, all versions unique", rc=0. `git fetch` shows `origin/main` still `f6387af89` with its 2027* tail ending at `20272000000000`, so the version note in the migration still does not bind.
+- [x] **Step 6: Do not merge — census reported, integration left to the owner, 2026-11-27.** The census has two sources, because this head is checked by two workflows and only one of them is the gate set.
+
+    **1. `CI — CLAUDE.md gates`, run 45935459627** — a bare `workflow_dispatch` on `111e4b8f46fa`, which is the only way a stacked head gets these gates at all (`ci.yml:76-77` scopes `pull_request` to `main`, so #1181 wrote no PR-bound `ci.yml` run). `gh run view` → **`completed / success`**, 03:39:40Z → 03:58:37Z. Per-job census from the jobs endpoint: **57 jobs, 57 `success`, zero of anything else** — including `live-DB suites (Postgres + migrations)` (job 140297782865: `Migrations apply cleanly (real Postgres)` in 37 s, `go test ./... -p 1 -count=1`, `Assert the live-DB suites actually ran` success) and the `go test` module lanes including `Realtor CI / migration-apply-and-rpc-tests`, which failed in the *previous* dispatch (45933957510) three times on `Error response from daemon: error from registry: Data limit exceeded` and succeeded here — that lane's earlier red was Docker Hub egress on a bare dispatch, not this branch.
+
+    **2. `gh api …/commits/111e4b8f46fa…/check-runs --paginate`, re-read at 04:18Z after everything settled** → **69 check-runs, 69 `completed/success`, 0 non-green** (tallied by `(status, conclusion)`, so nothing is counted twice; the first reading, at 04:00Z, was the same 69 with one still `in_progress`). The one that had been running is `verify` = run 45935432178, the PR-bound `integration-verify` lane — which correction 27 said would not exist, see correction 28 — **`completed / success`**, run 3029, `event=pull_request`, 03:39:22Z → 04:16:50Z, job 140297467328 with **21 steps, every one `completed/success`**. Among those 21: `Migrations apply cleanly (real Postgres)`, `go test ./... -race (Postgres + fakes, incl. live-DB suites)`, `Prove the live-DB suites actually ran (anti-skip canary)`, `Full tsc --noEmit (both frontends)`, `Security / dependency scan`, `Build-once image (tagged by commit SHA)` and — step 14 — **`Migration fresh replay from zero (clean-apply + RLS check)`, i.e. `make migrate-reset` (Makefile:100-103: drop + recreate `public`, `migrate-up`, `rls-check`) executed by CI on the merge ref**. That is §14.12's replay proof, so the scratch-database replay in the Verification section above is a second witness of the same fact, not the only one.
+
+    **What the PR view says.** `gh pr checks 1181` at 04:18Z lists **12 checks, all `pass`**, `verify` among them at 37m11s, and no `ci.yml` contexts — again because the base is not `main`. `gh pr view` → `mergeable: MERGEABLE`, `mergeStateStatus: CLEAN` (it was `UNSTABLE` while `verify` ran, which in this repo means one non-required check is still running, not that a gate is refusing). The 14 contexts `main` requires (`python3 scripts/ci/required-checks.py --branch main`, matching the live protection payload: 9 `ci.yml` job names + 5 bare module contexts `backend`, `frontend-admin`, `frontend-web`, `migrations`, `secrets-scan` from `app_id 15368`) are present on `origin/main`'s own head `f6387af89` — 67 check-runs there, the 5 bare names among them — and are what the *stack* will be judged by when #1180, carrying #1181's commits, is opened against `main`. #1181's own base `feat/contest-photo-assets-jobs` returns **"Branch not protected"** (HTTP 404), so nothing on this PR is blocked, but equally nothing on this PR is *gated*: merging it is a judgement the owner makes on #1180's PR checks.
+
+    **Not merged.** A merge to `main` is itself a production release here, and #1181 must not merge before #1180 (same three files: `runner.ts`, `template-resolver.ts`, `imageCompositor.ts`). Order for the owner: land #1180 → its PR-bound `ci.yml` run votes on the 14 contexts → then merge #1181 into that branch, or merge #1181 first and let #1180's PR carry both, which is what the stack note in the PR body says.
 
 ---
 
@@ -1277,3 +1347,8 @@ The existing five cases in that file keep passing untouched: they never set `for
       no recorded version). That route needs one extra verb: PostgREST caches the schema, so
       the new columns stay invisible to the API — the same 42703 — until
       `notify pgrst, 'reload schema'`.
+
+
+28. Correction 27's first reason — "a stacked PR whose base is not `main` gets no PR-bound run" — is true of `ci.yml` and false of the repo, and finding that out changes what §14.12 can claim. `.github/workflows/integration-verify.yml:18-21` triggers on `pull_request` with **no** branch filter (only `paths-ignore: ['**.md', 'docs/**']`), so head `111e4b8f4` does have a PR-bound run: 45935432178, one job `verify`, and it is the heaviest lane in the repo — real Postgres, `go test ./... -race`, both frontends' `tsc`, and step 14 `make migrate-reset`, which is a **fresh replay of the whole chain from a dropped `public` schema plus `rls-check` (Makefile:100-103), executed on the merge ref**. It settled `completed / success` with all 21 steps green. That is exactly the proof §14.12 asks the migration to earn, so the Step 3 scratch-database replay is a *second* witness rather than the only one, and the next person does not have to trust an executor's laptop for the chain-replay half.
+
+    The narrower claim survives, and it is the one Step 5b was actually about: **no lane runs the frontend-web integration specs.** `frontend-web/package.json` defines `test:integration = vitest run --config vitest.integration.config.ts`, and that string appears in no workflow, no script, and no Makefile — grepping `.github/workflows` for `vitest` returns only `_reusable-frontend-web.yml`'s three unit invocations (`npm run test:money`, `npx vitest run tests/unit/config`, `npx vitest run tests/unit/contests tests/unit/voting`); `integration-verify.yml`'s only mention of `tests/integration` is a historical comment about specs deleted in `6995b8a7`; the live-DB jobs execute `go test` and nothing else. So `tests/integration/photo-jobs.test.ts` — P1's append-only proofs *and* the seven-column spec this branch adds — is still a file that passes silently on a schema it was not written against, and stays that way until someone wires `npm run test:integration` into a lane with a database. That is a gap in the repo's CI, not in this PR's evidence, and it is recorded here rather than fixed here because the fix is a new lane for thirteen specs.
