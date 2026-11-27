@@ -23,6 +23,18 @@ export interface SlotConfig {
   border_radius: number;
   opacity: number;
   photo_url?: string | null;
+  /**
+   * Blend-layer columns from migration 20272200000000 (spec §13.4). The
+   * compositor ignores all four — it is still the renderer that knows only
+   * "paste this into that rect" — and the blend layer reads them:
+   * `planPlacement` for `anchor`/`bleed`, the face-safe pass for
+   * `face_protect`, the photo-area mode for `image_url`. They are optional so
+   * every slot row and every caller that predates P2 keeps type-checking.
+   */
+  image_url?: string | null;
+  anchor?: 'auto' | 'top' | 'centre' | 'bottom';
+  bleed?: boolean;
+  face_protect?: boolean;
 }
 
 export interface TextOverlayConfig {

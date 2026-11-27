@@ -51,7 +51,13 @@ export const BLEED_PAD = 0.15;
 /** §13.3: headroom kept above the head in both modes. */
 export const HEADROOM = 0.06;
 
-type PlacementSlot = SlotConfig & { bleed?: boolean; anchor?: string };
+/**
+ * The slot as the blend layer sees it: `SlotConfig` plus the four P2 columns,
+ * which now live on the interface itself (see imageCompositor.ts) so a slot
+ * built from a `template_slots` row and a slot built by the compositor are the
+ * same type rather than two shapes that happen to agree.
+ */
+type PlacementSlot = SlotConfig;
 
 const r = Math.round;
 
