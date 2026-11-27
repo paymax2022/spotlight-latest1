@@ -162,6 +162,15 @@ describe('compositeImage', () => {
     const subject = await compositeImage({ ...shared, faceSafe: { face, strength: 0.92 },
       slots: [{ ...baseSlot, photo_bytes: subjectBytes, placement: placed() }] });
     expect((await pixelAt(subject.buffer, 180, 180)).rgb).toEqual([255, 0, 0]);      // the subject is never cut
+
+    // …and it is still never cut when its row arrives the way the column
+    // default delivers it: `face_protect` is NOT NULL DEFAULT true on
+    // template_slots, so the contestant slot carries the flag too. The slot
+    // that carries a placement *is* the contestant, so its own face is the
+    // thing being protected and thinning it would punch a hole in a face.
+    const flagged = await compositeImage({ ...shared, faceSafe: { face, strength: 0.92 },
+      slots: [{ ...baseSlot, face_protect: true, photo_bytes: subjectBytes, placement: placed() }] });
+    expect((await pixelAt(flagged.buffer, 180, 180)).rgb).toEqual([255, 0, 0]);
   });
 
   it('encodes per §9: the smaller buffer, PNG on a tie, PNG whenever anything is transparent', async () => {

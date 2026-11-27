@@ -264,20 +264,27 @@ async function processSlot(
       }
     }
 
-    // §8.2: foreground art is thinned over the contestant's face. Only a slot
-    // that says so — `face_protect` is the template author's flag, and the
-    // default-true lives on the column, so a P1 slot that never mentions it is
-    // never touched. It runs before the clip below so the cut and the window
-    // agree on the same canvas rect.
+    // §8.2: foreground art is thinned over the contestant's face — the slot
+    // that says so, and not the slot that carries the placement.
     //
-    // `protectFace` measures pixels inside the overlay buffer, so the
-    // canvas-space face it is handed has to come over with the overlay's own
-    // origin subtracted. The buffer's extent is then the clip, which is the
-    // right bound anyway: an overlay is never asked to protect pixels it does
-    // not cover, and the feathered band is meant to spill a little past the
-    // face box.
-    if (faceSafe && slot.face_protect === true) {
+    // `face_protect` is NOT NULL DEFAULT true on `template_slots`, so the
+    // contestant's own row arrives with the flag set, and that slot is exactly
+    // the one whose face the cut exists to protect: thinning it would punch a
+    // translucent hole in a face and let the template show through the person.
+    // Carrying a placement *is* the definition of the subject slot here, since
+    // the blend engine plans one subject at a time, so the exemption is
+    // structural rather than another flag an operator has to remember.
+    //
+    // The comparison against `false` is the author's other half: art they
+    // marked as meant to cross the face is left alone. P1 slots never reach
+    // here at all, because no `faceSafe` arrives without the blend layer.
+    if (faceSafe && slot.face_protect === true && !placement) {
       const meta = await sharp(processedBuffer).metadata();
+      // `protectFace` measures pixels inside the overlay buffer, so the
+      // canvas-space face comes over with the overlay's origin subtracted, and
+      // the buffer's own extent is the clip: an overlay is never asked to
+      // protect pixels it does not cover, and the feathered band is meant to
+      // reach a little past the face box anyway.
       processedBuffer = await protectFace(processedBuffer, {
         target: { left: 0, top: 0, width: meta.width ?? 0, height: meta.height ?? 0 },
         face: {
