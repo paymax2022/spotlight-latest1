@@ -239,7 +239,9 @@ jobs:
         # with a DEFAULT, and the only place that surfaces is the apply — so a
         # migration can sit unapplied-looking until a fresh replay, which the
         # staging legs run days after the merge. It cost the first draft of
-        # 20272000000000_contest_photo_assets_and_jobs.sql exactly that. Silent
+        # 20272100000000_contest_photo_assets_and_jobs.sql exactly that, and a
+        # duplicate-version collision with main's 20272000000000_locality_villages.sql
+        # cost the same file a renumber before its PR could open. Silent
         # and sub-second across all 760 files; names the file, function and
         # parameter when a file is wrong.
         run: python3 scripts/ci/check-sql-param-order.py supabase/migrations

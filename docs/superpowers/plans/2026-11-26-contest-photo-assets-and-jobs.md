@@ -25,10 +25,10 @@
 
 ### Task 1: Asset and job tables with the claim semantics in SQL
 
-**Executed 2026-11-26 as `c519776b5`** (`20272000000000_contest_photo_assets_and_jobs.sql`, the live-DB spec that proves it) plus `0b66aee21`, the CI guard the first application needed: `make rls-check` could not reach the database and printed a pass anyway, and a defaulted parameter followed a required one is rejected at creation time, so both are now checked before the migration is trusted.
+**Executed 2026-11-26 as `c519776b5`** (`20272100000000_contest_photo_assets_and_jobs.sql`, the live-DB spec that proves it) plus `0b66aee21`, the CI guard the first application needed: `make rls-check` could not reach the database and printed a pass anyway, and a defaulted parameter followed a required one is rejected at creation time, so both are now checked before the migration is trusted.
 
 **Files:**
-- Create: `supabase/migrations/20272000000000_contest_photo_assets_and_jobs.sql`
+- Create: `supabase/migrations/20272100000000_contest_photo_assets_and_jobs.sql`
 - Test: `frontend-web/tests/integration/photo-jobs.test.ts`
 
 **Interfaces:**
@@ -47,7 +47,7 @@
 
 - [x] **Step 1: Write the migration**
 
-Create `supabase/migrations/20272000000000_contest_photo_assets_and_jobs.sql`:
+Create `supabase/migrations/20272100000000_contest_photo_assets_and_jobs.sql`:
 
 ```sql
 -- P1 of the AI contestant-photo compositing build (docs/superpowers/specs/
@@ -417,7 +417,7 @@ revoke all on function public.photo_job_config_summary() from public, anon, auth
 grant execute on function public.photo_job_config_summary() to service_role;
 ```
 
-Corrections applied while executing this task, now reflected in the block above (the plan's first draft would not have loaded): `p_source_asset_id` needed a `default null` because Postgres rejects a non-defaulted parameter after a defaulted one, with an explicit guard keeping it required; the trigger's `errcode` had to be spelled as the condition name (a lowercase `'2f003'` raises 42704 at raise time, and `SQLSTATE '2F003'` is not accepted in `USING`); `fail_photo_job`'s unused `declare v_delay seconds` was a type that does not exist; the trigger is dropped before creation so a development re-apply is a no-op; the enqueue gained a `unique_violation` handler because `SELECT ... FOR UPDATE` cannot lock a row that does not exist yet; and the privilege block was rewritten after measuring that the schema's default privileges leave `from public` revokes ineffective for `anon`/`authenticated`. Two more corrections came out of the first executed run of the spec above: `photo_job_config_summary` lost its `authenticated` grant — the live case proved that grant had no caller, since the only client it named was refused the function while the admin surface reaches it as `service_role` through the BFF, and leaving it in would have let any logged-in contestant read other contests' queue depth — and the Step 4 recipe was rewritten because the delivered file's credentials are in the main checkout, not the worktree, and the local API will not answer at all until the schema cache finishes loading.
+Corrections applied while executing this task, now reflected in the block above (the plan's first draft would not have loaded): `p_source_asset_id` needed a `default null` because Postgres rejects a non-defaulted parameter after a defaulted one, with an explicit guard keeping it required; the trigger's `errcode` had to be spelled as the condition name (a lowercase `'2f003'` raises 42704 at raise time, and `SQLSTATE '2F003'` is not accepted in `USING`); `fail_photo_job`'s unused `declare v_delay seconds` was a type that does not exist; the trigger is dropped before creation so a development re-apply is a no-op; the enqueue gained a `unique_violation` handler because `SELECT ... FOR UPDATE` cannot lock a row that does not exist yet; and the privilege block was rewritten after measuring that the schema's default privileges leave `from public` revokes ineffective for `anon`/`authenticated`. Two more corrections came out of the first executed run of the spec above: `photo_job_config_summary` lost its `authenticated` grant — the live case proved that grant had no caller, since the only client it named was refused the function while the admin surface reaches it as `service_role` through the BFF, and leaving it in would have let any logged-in contestant read other contests' queue depth — and the Step 4 recipe was rewritten because the delivered file's credentials are in the main checkout, not the worktree, and the local API will not answer at all until the schema cache finishes loading. One more, closed at verification (`13a860469`): nothing ran `scripts/ci/check-sql-param-order.py` after `0b66aee21` added it, so the guard gated nothing — it is now a step in the `hygiene` lane, and it was rewritten for the purpose because 760 separate `python3` launches (40 s, one line of noise each) is not a runnable step while one process over the directory (0.25 s, silent when clean, names file + function + parameter when not) is. Renumbered again at PR time (`20272100000000`, not `20272000000000`): while this branch sat unmerged, `c101cc015` landed `20272000000000_locality_villages.sql` on main, which is the collision the `Reject duplicate migration versions` step exists to catch — the guard scans the merge result, so the PR would have gone red on a version my branch never saw. The script's own convention decides the winner ("the NEWCOMER moves"): main keeps `20272000000000`, this migration takes the next free version above the maximum. Renaming an unapplied migration is free, and applying it AFTER `locality_villages` is the safe direction — that file only adds columns to `contests`/`contestants`/`connect_contests` and replaces `promote_registration_to_contestant`, none of which this migration defines. Verification for the merged chain is a scratch replay of all 762 migrations (this tree's 760, which already includes the renamed file, plus main's two), because the Task 10 replay ran against 760.
 
 - [x] **Step 2: Apply it to the local database and prove it is valid SQL**
 
@@ -425,7 +425,7 @@ Run:
 ```bash
 cd /Users/paymax/Documents/spotlight/main/.worktrees/contest-photo-jobs
 DB="$(grep -m1 '^DATABASE_URL' backend/.env | cut -d= -f2- | tr -d '"')"
-psql "$DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20272000000000_contest_photo_assets_and_jobs.sql
+psql "$DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20272100000000_contest_photo_assets_and_jobs.sql
 psql "$DB" -tAc "select tablename from pg_tables where schemaname='public' and tablename like 'contest_photo%' order by 1;"
 psql "$DB" -tAc "select c.relname, c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace and n.nspname='public' where c.relname in ('contest_photo_assets','contest_photo_jobs');"
 ```
@@ -778,7 +778,7 @@ means the skip branch fired — fix the credentials or the schema cache before c
 - [x] **Step 5: Commit**
 
 ```bash
-git add supabase/migrations/20272000000000_contest_photo_assets_and_jobs.sql \
+git add supabase/migrations/20272100000000_contest_photo_assets_and_jobs.sql \
         frontend-web/tests/integration/photo-jobs.test.ts
 git commit -m "feat(photo): contest photo asset rows and durable render jobs"
 ```
@@ -6060,7 +6060,8 @@ tests and then restored byte-for-byte (`git diff --quiet HEAD` clean afterwards)
 20 commits onto merge-base `b926c8b4b`; **40 files** — 17 `frontend-web/src`,
 15 `frontend-web/tests`, 3 new route dirs, 1 migration, 1 `scripts/ci` guard,
 the `Makefile` `rls-check` fix, and the spec + this plan). Every number below
-was measured on that tree.
+was measured on that tree — except Step 3's second replay, which is explicitly
+about the tree after the PR-time renumber and says so where it stands.
 
 - [x] **Step 1: Type-check.** `ls -d frontend-web/node_modules` (the worktree
   symlink is present, so an exit code here means something) →
@@ -6112,6 +6113,26 @@ was measured on that tree.
   trigger. 1410 public tables in the replay vs 1411 in the long-lived dev
   database — one local table is not produced by the chain; not investigated, as
   it is outside this branch.
+
+  Re-run at PR time against the **merge tree**, because the 760-file replay above
+  is no longer the chain that has to apply: while this branch sat unmerged,
+  `c101cc015` landed `20272000000000_locality_villages.sql` on main, which shares
+  a version with this migration's first number (see the Task 1 corrections), so
+  the PR's merge result carries **762** files. Second scratch replay: this
+  worktree's 760 migrations with this file renamed to `20272100000000`, plus
+  main's two extracted from `origin/main` into a temp chain directory (nothing
+  written into the worktree, `MIGRATIONS_DIR` overridden). Result: **762 applied,
+  rc=0, zero `ERROR`/`FATAL` lines in the log**. The apply order is proved by the
+  log itself — `20271900000000_rising_star_editions.sql`, then
+  `20272000000000_locality_villages.sql`, then
+  `20272100000000_contest_photo_assets_and_jobs.sql` — and the read-back confirms
+  `tables=2`, `rls_on_new=2`, `funcs=10` and `locality_cols=1`: a `contests`
+  column matching `%village%` exists in the same database, so main's locality
+  migration really applied before this one rather than merely being present in
+  the directory. `rls-check ✓ — every public table has RLS enabled (allowlist:
+  'spatial_ref_sys')`. The only stderr attributable to this migration is again its
+  own re-apply `NOTICE: trigger "contest_photo_assets_immutable" … does not exist,
+  skipping`. Scratch database dropped afterwards.
 - [x] **Step 4: The live-DB tests actually ran.** `npm run test:integration --
   tests/integration/photo-jobs.test.ts` against the local Supabase →
   **12 passed, 0 skipped** (an executed count, which is the whole point: this

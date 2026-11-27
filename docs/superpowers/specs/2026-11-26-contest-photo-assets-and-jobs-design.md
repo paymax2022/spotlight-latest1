@@ -105,7 +105,7 @@ P1 stores the chosen parameters on the asset so a render is reproducible.
 ## 4. Data model
 
 One forward-only additive migration, next free version:
-`supabase/migrations/20272000000000_contest_photo_assets_and_jobs.sql`.
+`supabase/migrations/20272100000000_contest_photo_assets_and_jobs.sql`.
 Conventions honoured: `gen_random_uuid()` ids, snake_case, `text` + `check` in preference to
 enums where a value set may grow, `payload`/params as `jsonb`, partial indexes on the hot
 status set, RLS enabled on every new table (`make rls-check` is a go-live gate and its
