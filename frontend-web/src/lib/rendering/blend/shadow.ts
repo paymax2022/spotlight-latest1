@@ -21,9 +21,11 @@
  * is sampled from the un-grown matte at the subject's real position, gets the
  * last word.
  *
- * The `auto` mode turns the pass off whenever the placement clips — inside a
- * photo-area window the shadow would fall on the window's own art rather than
- * on a ground, which reads as a smudge; `on` overrides that, `off` never runs.
+ * The `auto` mode turns the pass off whenever the render clips — either because
+ * the placement carries a photo-area window, or because the slot has a border
+ * radius (§7 names that one) — since a shadow would then fall on the window's
+ * own art rather than on a ground, which reads as a smudge; `on` overrides that,
+ * `off` never runs.
  *
  * Coordinates: every layer is addressed in canvas pixels, and its buffer is a
  * padded canvas — `pad = ceil(2 × shadowBlurPx)` on each side so the blur has
@@ -60,9 +62,11 @@ export async function buildShadowLayers(
   placement: Placement,
   metrics: SubjectMetrics,
   params: BlendParams,
+  /** §7's other `auto` trigger: the slot rounds its subject off (`border_radius > 0`). */
+  slotClips = false,
 ): Promise<Underlay[]> {
   if (params.shadow === 'off') return [];
-  if (params.shadow === 'auto' && placement.clip) return [];
+  if (params.shadow === 'auto' && (placement.clip !== undefined || slotClips)) return [];
 
   const wantDrop = params.dropOpacity > 0;
   const wantContact = params.contactOpacity > 0;

@@ -134,4 +134,20 @@ describe('measureRegion', () => {
     const specks = await rgbaPng(100, 100, (x, y) => (x < 7 && y < 7 ? { r: 20, g: 40, b: 80, a: 255 } : { r: 0, g: 0, b: 0, a: 0 }));
     expect(await measureRegion(specks, { x: 0, y: 0, width: 100, height: 100 })).toBeNull();
   });
+
+  it('subtracts the placement rect it is told to exclude', async () => {
+    // A ring of the frame's art around a bright window: matching to the ring is
+    // what §6.2 asks for, and matching to "ring + window" would pull the
+    // subject toward its own highlight. The window here stands in for the
+    // placement rect, which is why excluding it changes the mean to the ring's.
+    const png = await rgbaPng(100, 100, (x, y) => (x >= 25 && x < 75 && y >= 25 && y < 75
+      ? { r: 255, g: 255, b: 255, a: 255 }
+      : { r: 100, g: 100, b: 100, a: 255 }));
+    const whole = await measureRegion(png, { x: 0, y: 0, width: 100, height: 100 });
+    expect(whole).toMatchObject({ pixels: 10000 });
+    const ring = await measureRegion(png, { x: 0, y: 0, width: 100, height: 100 }, { x: 25, y: 25, width: 50, height: 50 });
+    expect(ring).toMatchObject({ pixels: 7500, meanR: 100, meanG: 100, meanB: 100, meanLuma: LUMA(100, 100, 100) });
+    // The un-excluded average is dragged up by the very rect being matched to.
+    expect(whole!.meanLuma).toBeGreaterThan(ring!.meanLuma);
+  });
 });

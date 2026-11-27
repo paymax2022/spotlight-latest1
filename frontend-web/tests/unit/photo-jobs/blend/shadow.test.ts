@@ -79,4 +79,17 @@ describe('buildShadowLayers', () => {
     expect(await buildShadowLayers(subject, placement, m, resolveBlendParams('off'))).toEqual([]);
     expect(await buildShadowLayers(subject, placement, m, resolveBlendParams('natural', { dropOpacity: 0, contactOpacity: 0 }))).toEqual([]);
   });
+
+  it('reads §7\'s rounding trigger from the slot, not only from the placement', async () => {
+    const subject = await disc();
+    const m = await measureSubject(subject);
+    // `border_radius > 0` is what §7's parenthetical names, and the compositor
+    // cuts that circle itself — so the engine, which knows the slot, has to be
+    // able to say "this render clips" about a Mode A placement that has no
+    // window of its own. Without the fifth argument the shadow would be drawn
+    // and then round-clipped away, leaving a quarter-cut smudge at each corner.
+    expect(await buildShadowLayers(subject, placement, m, natural, true)).toEqual([]);
+    expect(await buildShadowLayers(subject, placement, m, natural, false)).toHaveLength(2);
+    expect(await buildShadowLayers(subject, placement, m, resolveBlendParams('natural', { shadow: 'on' }), true)).toHaveLength(2);
+  });
 });

@@ -86,7 +86,7 @@ function emptyAccumulator(): Accumulator {
   return { r: 0, g: 0, b: 0, luma: 0, pixels: 0, hist: new Uint32Array(256) };
 }
 
-function accumulate(raw: Raw, rect: Rect | null): Accumulator {
+function accumulate(raw: Raw, rect: Rect | null, exclude: Rect | null = null): Accumulator {
   const acc = emptyAccumulator();
   const { data, width } = raw;
   const x0 = rect ? Math.max(0, rect.x) : 0;
@@ -96,6 +96,11 @@ function accumulate(raw: Raw, rect: Rect | null): Accumulator {
   if (x1 < x0 || y1 < y0) return acc;
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
+      // §6.2's "with the placement rect itself excluded": without this the
+      // subject's own window would contribute its (transparent, or in Mode A
+      // the art-behind-nothing) pixels to the average it is being matched to.
+      if (exclude && x >= exclude.x && x < exclude.x + exclude.width
+        && y >= exclude.y && y < exclude.y + exclude.height) continue;
       const p = (y * width + x) * 4;
       if (data[p + 3] < OPAQUE_ALPHA) continue;
       const l = luma(data[p], data[p + 1], data[p + 2]);
@@ -135,9 +140,15 @@ function percentile(hist: Uint32Array, total: number, fraction: number): number 
   return 255;
 }
 
-/** §6.2's reference measurement, answered null when there is nothing to match. */
-export async function measureRegion(png: Buffer, rect: Rect): Promise<RegionStats | null> {
-  const stats = finish(accumulate(await decode(png), rect));
+/**
+ * §6.2's reference measurement, answered null when there is nothing to match.
+ *
+ * `rect` is the ring the caller derived from the placement and `exclude` is the
+ * placement rect itself — the two arguments §6.2 names, and the reason the
+ * function takes a rect at all instead of averaging the frame.
+ */
+export async function measureRegion(png: Buffer, rect: Rect, exclude?: Rect | null): Promise<RegionStats | null> {
+  const stats = finish(accumulate(await decode(png), rect, exclude ?? null));
   return stats.pixels < MIN_REFERENCE_PIXELS ? null : stats;
 }
 
