@@ -31,6 +31,29 @@ import { webProxyBase } from '@/config/env';
 import { playableSongSrc } from '@/features/openmic/song-src';
 import type { OpenMicReviewDecision } from '@/features/openmic/review-decisions';
 
+/**
+ * The edition's official beat, as GET /api/admin/open-mic/contests/:id returns it.
+ *
+ * Read from `competition_beats` (mapContestRow picks the `is_active` row, then the
+ * newest, since the table keeps retired beats for the audit trail), so a contest
+ * can exist with `beat` undefined — which is exactly the state where a contestant
+ * is told "Beat is not available for this contest".
+ */
+export type OpenMicBeat = {
+  id?: string;
+  contestId?: string;
+  beatTitle: string;
+  producerName?: string;
+  producerCredit?: string;
+  previewUrl?: string;
+  downloadUrl?: string;
+  genre?: string;
+  usageRules?: string;
+  allowDownload?: boolean;
+  previewOnly?: boolean;
+  requiresPaidEntryForDownload?: boolean;
+};
+
 export type OpenMicContest = {
   id: string;
   title: string;
@@ -73,15 +96,23 @@ export type OpenMicContest = {
    */
   submissionStartAt?: string | null;
   submissionEndAt?: string | null;
+  /** Absent for an edition that has never had an mp3 filed — see OpenMicBeat. */
+  beat?: OpenMicBeat | null;
 };
 
 /**
  * Fields editable from the admin console's Edit Contest tab. A subset of
  * OpenMicContest's writable surface — PATCH /api/admin/open-mic/contests/:id
- * (updateContest) accepts more (recurrence, prizes, beat, playlist), but
- * those aren't exposed here yet. votingConfig/finale are whole-object
- * replacements server-side (no deep merge), so the caller must send the
- * complete sub-object, not a partial one.
+ * (updateContest) accepts more (recurrence, prizes, playlist), but those aren't
+ * exposed here yet. votingConfig/finale are whole-object replacements
+ * server-side (no deep merge), so the caller must send the complete sub-object,
+ * not a partial one.
+ *
+ * The beat is deliberately NOT a key here, even though the route's body is typed
+ * `Partial<OpenMicContest>` and would accept one: updateContest maps a fixed list
+ * of patch keys onto columns, and `beat` is not among them, so a PATCH carrying a
+ * beat writes nothing to `competition_beats` and the next read returns the old
+ * row. Filing a beat is `fileOpenMicBeat`, below.
  */
 export type OpenMicContestEditInput = Partial<{
   title: string;
@@ -608,4 +639,51 @@ export async function uploadOpenMicBeat(
   const downloadUrl = String(json.beat?.downloadUrl || '');
   if (!downloadUrl) throw new Error('Beat upload failed: the server returned no beat URL.');
   return { previewUrl: String(json.beat?.previewUrl || downloadUrl), downloadUrl };
+}
+
+/** What POST /api/admin/open-mic/contests/:id/beats (upsertBeat) is told. */
+export type OpenMicBeatInput = {
+  beatTitle: string;
+  producerName?: string;
+  producerCredit?: string;
+  downloadUrl: string;
+  previewUrl?: string;
+  usageRules?: string;
+  allowDownload?: boolean;
+  previewOnly?: boolean;
+  requiresPaidEntryForDownload?: boolean;
+  cleanVersionRequired?: boolean;
+  explicitLyricsAllowed?: boolean;
+};
+
+/**
+ * File the beat row for an existing edition — the second half of
+ * uploadOpenMicBeat, and the half that decides whether an artist can open it.
+ *
+ * The upload route only stores bytes and returns reader paths; nothing is
+ * downloadable until a `competition_beats` row carries them, because the public
+ * reader (/api/open-mic/contests/:slug/beat/download) resolves the edition's
+ * active beat and answers "Beat is not available for this contest" when there is
+ * none. upsertBeat retires the previous active row for the same contest, so an
+ * edition keeps exactly one beat artists record over while older submissions
+ * hold their original `beat_id`.
+ *
+ * Note this is a POST, not part of the PATCH: updateContest has no beat column
+ * mapping, so folding the beat into the metadata save would report success and
+ * store nothing.
+ */
+export async function fileOpenMicBeat(
+  contestId: string,
+  input: OpenMicBeatInput,
+): Promise<void> {
+  const res = await fetch(`${webBase()}/api/admin/open-mic/contests/${contestId}/beats`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const json = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string };
+  if (res.status === 401) throw new Error('Beat save failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Beat save failed: 403 — this account cannot edit Open Mic contests.');
+  if (res.status === 404) throw new Error('Beat save failed: contest not found.');
+  if (!res.ok || !json.success) throw new Error(`Beat save failed: ${json.error || res.status}`);
 }
