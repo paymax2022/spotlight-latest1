@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Receipt } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -8,6 +8,7 @@ import { Spacing } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import { VotingColors, VOTE_STATUS_LABELS } from '../constants/voting.constants';
 import { formatAmount, formatDate } from '../utils/voteFormatters';
+import ContestantImage from './ContestantImage';
 import type { VoteTransaction } from '../types/voting.types';
 
 interface Props {
@@ -40,10 +41,9 @@ export default function VoteReceiptCard({ transaction: tx }: Props) {
           <Text style={styles.title}>Vote Receipt</Text>
           <Text style={styles.ref}>{tx.reference}</Text>
         </View>
-        {/* Absent when the server could not sign the stored photo key. */}
-        {tx.contestantPhoto ? (
-          <Image source={{ uri: tx.contestantPhoto }} style={styles.avatar} />
-        ) : null}
+        {/* Absent when the server returned no photo, or when the stored value is not a
+            location the photo reader can serve. */}
+        <ContestantImage value={tx.contestantPhoto} style={styles.avatar} accessibilityLabel={tx.contestantName} />
       </View>
 
       <View style={styles.divider} />

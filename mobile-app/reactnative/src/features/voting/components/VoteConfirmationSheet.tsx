@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  View, Text, Modal, Pressable, ScrollView, Image, StyleSheet, KeyboardAvoidingView, Platform,
+  View, Text, Modal, Pressable, ScrollView, StyleSheet, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { X } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import VoteCounter from './VoteCounter';
 import VotePackageCard from './VotePackageCard';
 import FreeVoteBadge from './FreeVoteBadge';
+import ContestantImage from './ContestantImage';
 import type { Contestant, VotePackage, FreeVoteAllocation } from '../types/voting.types';
 import FreeVoteResetCountdown from './FreeVoteResetCountdown';
 import { formatAmount } from '../utils/voteFormatters';
@@ -47,13 +48,16 @@ export default function VoteConfirmationSheet({
           {/* Header */}
           <View style={styles.sheetHeader}>
             <View style={styles.contestantInfo}>
-              {contestant.photo ? (
-                <Image source={{ uri: contestant.photo }} style={styles.avatar} />
-              ) : (
-                <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                  <Text style={styles.avatarInitial}>{contestant.name.charAt(0)}</Text>
-                </View>
-              )}
+              <ContestantImage
+                value={contestant.photo}
+                style={styles.avatar}
+                accessibilityLabel={contestant.stageName ?? contestant.name}
+                fallback={
+                  <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                    <Text style={styles.avatarInitial}>{contestant.name.charAt(0)}</Text>
+                  </View>
+                }
+              />
               <View>
                 <Text style={styles.contestantName}>{contestant.stageName ?? contestant.name}</Text>
                 <Text style={styles.rank}>Current Rank #{contestant.rank}</Text>

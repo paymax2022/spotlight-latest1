@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronRight, Crown, Trophy } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
@@ -10,6 +10,7 @@ import { shadow1 } from '@/constants/tokens';
 import { VotingColors } from '../constants/voting.constants';
 import { formatVoteCount } from '../utils/voteFormatters';
 import ContestStatusBadge from './ContestStatusBadge';
+import ContestantImage from './ContestantImage';
 import type { Contest, LeaderboardEntry } from '../types/voting.types';
 
 interface Props {
@@ -41,13 +42,16 @@ function Contender({ entry, onPress }: { entry: LeaderboardEntry; onPress: () =>
     >
       {first ? <Crown size={18} color={ring} fill={ring} strokeWidth={0} style={styles.crown} /> : null}
       <View style={[styles.ring, { borderColor: ring, width: size + 8, height: size + 8, borderRadius: (size + 8) / 2 }]}>
-        {contestant.photo ? (
-          <Image source={{ uri: contestant.photo }} style={{ width: size, height: size, borderRadius: size / 2 }} />
-        ) : (
-          <View style={[styles.placeholder, { width: size, height: size, borderRadius: size / 2 }]}>
-            <Text style={styles.initial}>{name.charAt(0).toUpperCase()}</Text>
-          </View>
-        )}
+        <ContestantImage
+          value={contestant.photo}
+          style={{ width: size, height: size, borderRadius: size / 2 }}
+          accessibilityLabel={name}
+          fallback={
+            <View style={[styles.placeholder, { width: size, height: size, borderRadius: size / 2 }]}>
+              <Text style={styles.initial}>{name.charAt(0).toUpperCase()}</Text>
+            </View>
+          }
+        />
         <View style={[styles.medal, { backgroundColor: ring }]}>
           <Text style={styles.medalText}>{rank}</Text>
         </View>

@@ -9,6 +9,8 @@ import { shadow2 } from '@/constants/tokens';
 import ContestStatusBadge from '../ContestStatusBadge';
 import { formatVoteCount } from '../../utils/voteFormatters';
 import { Stage } from './theme';
+import { appOrigin } from '@/features/openmic/media';
+import { contestantPhotoUri } from '../../utils/contestantPhoto';
 import type { Contest, LeaderboardEntry } from '../../types/voting.types';
 
 interface Props {
@@ -49,6 +51,10 @@ export default function LeaderboardPreview({ contest, entries, onOpenContestant,
         const medal = MEDALS[entry.rank];
         const votes = typeof entry.contestant.votes === 'number' ? entry.contestant.votes : null;
         const name = entry.contestant.stageName ?? entry.contestant.name;
+        // Resolved against the API origin, not the bundle's: the roster hands back
+        // the photo reader's root-relative path. The monogram under the portrait
+        // already covers a row with nothing renderable.
+        const photoUri = contestantPhotoUri(entry.contestant.photo, appOrigin());
         return (
           <Pressable
             key={entry.contestant.id}
@@ -76,9 +82,9 @@ export default function LeaderboardPreview({ contest, entries, onOpenContestant,
               <View style={[styles.avatar, styles.avatarFallback]}>
                 <Text style={styles.avatarInitial}>{name.charAt(0).toUpperCase()}</Text>
               </View>
-              {entry.contestant.photo ? (
+              {photoUri ? (
                 <Image
-                  source={{ uri: entry.contestant.photo }}
+                  source={{ uri: photoUri }}
                   style={[styles.avatar, styles.avatarPhoto]}
                   contentFit="cover"
                   transition={160}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Crown } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -7,6 +7,7 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { VotingColors } from '../constants/voting.constants';
 import { formatVoteCount } from '../utils/voteFormatters';
+import ContestantImage from './ContestantImage';
 import type { LeaderboardEntry } from '../types/voting.types';
 
 interface Props {
@@ -34,18 +35,18 @@ function PodiumItem({ entry, position }: PodiumItemProps) {
         <Crown size={20} color={VotingColors.rankGold} fill={VotingColors.rankGold} strokeWidth={0} style={styles.crown} />
       )}
       <View style={[styles.avatarRing, { borderColor: rankColor, width: avatarSize + 6, height: avatarSize + 6, borderRadius: (avatarSize + 6) / 2 }]}>
-        {entry.contestant.photo ? (
-          <Image
-            source={{ uri: entry.contestant.photo }}
-            style={[styles.avatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]}
-          />
-        ) : (
-          <View style={[styles.avatar, styles.avatarPlaceholder, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]}>
-            <Text style={styles.avatarInitial}>
-              {(entry.contestant.stageName ?? entry.contestant.name).charAt(0)}
-            </Text>
-          </View>
-        )}
+        <ContestantImage
+          value={entry.contestant.photo}
+          style={[styles.avatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]}
+          accessibilityLabel={entry.contestant.stageName ?? entry.contestant.name}
+          fallback={
+            <View style={[styles.avatar, styles.avatarPlaceholder, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]}>
+              <Text style={styles.avatarInitial}>
+                {(entry.contestant.stageName ?? entry.contestant.name).charAt(0)}
+              </Text>
+            </View>
+          }
+        />
       </View>
 
       <Text style={styles.name} numberOfLines={1}>

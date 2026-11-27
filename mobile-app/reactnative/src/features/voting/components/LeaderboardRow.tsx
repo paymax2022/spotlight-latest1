@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { BadgeCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -8,6 +8,7 @@ import { Spacing } from '@/constants/tokens';
 import RankBadge from './RankBadge';
 import RankMovementBadge from './RankMovementBadge';
 import VoteButton from './VoteButton';
+import ContestantImage from './ContestantImage';
 import { formatVoteCount } from '../utils/voteFormatters';
 import type { LeaderboardEntry } from '../types/voting.types';
 
@@ -29,15 +30,18 @@ export default function LeaderboardRow({ entry, onPress, onVote, isVoting }: Pro
       <RankBadge rank={rank} size="md" />
 
       <View style={styles.avatarWrap}>
-        {contestant.photo ? (
-          <Image source={{ uri: contestant.photo }} style={styles.avatar} />
-        ) : (
-          <View style={[styles.avatar, styles.avatarPlaceholder]}>
-            <Text style={styles.avatarInitial}>
-              {(contestant.stageName ?? contestant.name).charAt(0).toUpperCase()}
-            </Text>
-          </View>
-        )}
+        <ContestantImage
+          value={contestant.photo}
+          style={styles.avatar}
+          accessibilityLabel={contestant.stageName ?? contestant.name}
+          fallback={
+            <View style={[styles.avatar, styles.avatarPlaceholder]}>
+              <Text style={styles.avatarInitial}>
+                {(contestant.stageName ?? contestant.name).charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          }
+        />
         {contestant.isVerified && (
           <View style={styles.verifiedDot}>
             <BadgeCheck size={12} color={Colors.secondary} fill={Colors.secondary} strokeWidth={0} />

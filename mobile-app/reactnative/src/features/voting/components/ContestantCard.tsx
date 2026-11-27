@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MapPin, BadgeCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -9,6 +9,7 @@ import { shadow1 } from '@/constants/tokens';
 import RankBadge from './RankBadge';
 import VoteButton from './VoteButton';
 import RankMovementBadge from './RankMovementBadge';
+import ContestantImage from './ContestantImage';
 import { formatVoteCount } from '../utils/voteFormatters';
 import { cardLocality } from '../utils/rosterLocality';
 import type { Contestant } from '../types/voting.types';
@@ -30,15 +31,18 @@ export default function ContestantCard({ contestant, onPress, onVote, isVoting }
       style={({ pressed }) => [styles.card, shadow1, pressed && styles.pressed]}
     >
       <View style={styles.imageWrap}>
-        {contestant.photo ? (
-          <Image source={{ uri: contestant.photo }} style={styles.image} resizeMode="cover" />
-        ) : (
-          <View style={[styles.image, styles.photoPlaceholder]}>
-            <Text style={styles.placeholderInitial}>
-              {(contestant.stageName ?? contestant.name).charAt(0).toUpperCase()}
-            </Text>
-          </View>
-        )}
+        <ContestantImage
+          value={contestant.photo}
+          style={styles.image}
+          accessibilityLabel={contestant.stageName ?? contestant.name}
+          fallback={
+            <View style={[styles.image, styles.photoPlaceholder]}>
+              <Text style={styles.placeholderInitial}>
+                {(contestant.stageName ?? contestant.name).charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          }
+        />
         <View style={styles.rankPos}>
           <RankBadge rank={contestant.rank} size="sm" />
         </View>

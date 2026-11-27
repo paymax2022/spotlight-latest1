@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { CheckCircle2, TrendingUp } from 'lucide-react-native';
 import { Colors } from '@/constants/tokens';
 import { Typography } from '@/constants/tokens';
@@ -7,6 +7,7 @@ import { Radius } from '@/constants/tokens';
 import { Spacing } from '@/constants/tokens';
 import { VotingColors } from '../constants/voting.constants';
 import { formatVoteCount } from '../utils/voteFormatters';
+import ContestantImage from './ContestantImage';
 
 interface Props {
   contestantName: string;
@@ -25,9 +26,11 @@ export default function VoteSuccessCard({ contestantName, contestantPhoto, votes
       <Text style={styles.title}>Votes Counted!</Text>
       <Text style={styles.sub}>Your vote for{'\n'}<Text style={styles.name}>{contestantName}</Text>{'\n'}has been recorded.</Text>
 
-      {contestantPhoto && (
-        <Image source={{ uri: contestantPhoto }} style={styles.photo} />
-      )}
+      {/* Nothing is painted when there is no renderable photo, which is what this
+          card already did for an empty value. The change is that a root-relative
+          reader path now counts as renderable: before, the browser asked Metro for
+          /api/v1/contestants/<id>/photo and the ring showed on its own. */}
+      <ContestantImage value={contestantPhoto} style={styles.photo} accessibilityLabel={contestantName} />
 
       <View style={styles.statsRow}>
         <View style={styles.stat}>

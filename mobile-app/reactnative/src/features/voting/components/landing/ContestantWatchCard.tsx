@@ -7,6 +7,8 @@ import { Typography } from '@/constants/tokens';
 import { Radius } from '@/constants/tokens';
 import { shadow1 } from '@/constants/tokens';
 import { Stage } from './theme';
+import { appOrigin } from '@/features/openmic/media';
+import { contestantPhotoUri } from '../../utils/contestantPhoto';
 import type { Contestant } from '../../types/voting.types';
 
 interface Props {
@@ -33,6 +35,10 @@ export default function ContestantWatchCard({
 }: Props) {
   const displayName = contestant.stageName ?? contestant.name;
   const rank = contestant.rank > 0 ? String(contestant.rank).padStart(2, '0') : null;
+  // Resolved here rather than passed straight to <Image>: the reader answers
+  // `/api/v1/contestants/<id>/photo`, and expo-image would fetch that path against
+  // the Metro bundle's origin. `undefined` leaves the monogram floor showing.
+  const photoUri = contestantPhotoUri(contestant.photo, appOrigin());
   // A wider card needs a taller portrait or the face turns into a letterbox.
   const photoHeight = width ? Math.round(width * 1.12) : 196;
 
@@ -57,9 +63,9 @@ export default function ContestantWatchCard({
         >
           <Text style={styles.initial}>{displayName.charAt(0).toUpperCase()}</Text>
         </LinearGradient>
-        {contestant.photo ? (
+        {photoUri ? (
           <Image
-            source={{ uri: contestant.photo }}
+            source={{ uri: photoUri }}
             style={StyleSheet.absoluteFill}
             contentFit="cover"
             transition={200}

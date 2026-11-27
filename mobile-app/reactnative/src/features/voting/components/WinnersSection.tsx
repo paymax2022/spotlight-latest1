@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { router } from 'expo-router';
 import { Trophy, Award } from 'lucide-react-native';
 import { Colors, Typography, Spacing, Radius, shadow1 } from '@/constants/tokens';
+import ContestantImage from './ContestantImage';
 import { getEditionWinners, getEditionPrizes } from '../api/edition.api';
 import type { EditionWinner, EditionPrize } from '../types/edition.types';
 
@@ -53,11 +54,17 @@ export default function WinnersSection({ contestId }: { contestId: string }) {
         <View style={styles.badgeRow}>
           <View style={styles.topBadge}><Text style={styles.topBadgeText}>{top.position_title || 'Overall Winner'}</Text></View>
         </View>
-        {top.contestant_photo ? (
-          <TopPhoto url={top.contestant_photo} />
-        ) : (
-          <View style={styles.photoFallback}><Text style={styles.photoInitial}>{(top.contestant_name || '?').charAt(0).toUpperCase()}</Text></View>
-        )}
+        {/* Same door the rest of the voting surfaces use: the editions read hands back
+            whatever contestants.photo_url holds, and only a value the photo reader can
+            serve is worth asking for. */}
+        <ContestantImage
+          value={top.contestant_photo}
+          style={styles.topPhoto}
+          accessibilityLabel={top.contestant_name || 'Winner'}
+          fallback={
+            <View style={styles.photoFallback}><Text style={styles.photoInitial}>{(top.contestant_name || '?').charAt(0).toUpperCase()}</Text></View>
+          }
+        />
         <Text style={styles.topName}>{top.contestant_name || 'Winner'}</Text>
         {prizeFor(top) && <Text style={styles.prize}>{prizeLabel(prizeFor(top)!)}</Text>}
       </Pressable>
@@ -88,10 +95,8 @@ function prizeLabel(p: EditionPrize): string {
 }
 
 // Vector photo frames are an edition-specific asset; until the framed asset is
-// wired per edition we render the contestant photo in a premium circular frame.
-function TopPhoto({ url }: { url: string }) {
-  return <Image source={{ uri: url }} style={styles.topPhoto} />;
-}
+// wired per edition, the overall winner is drawn in the plain circular
+// styles.topPhoto frame and the runner-ups as text rows.
 
 const styles = StyleSheet.create({
   wrap: { gap: Spacing.md, marginTop: Spacing.lg },
