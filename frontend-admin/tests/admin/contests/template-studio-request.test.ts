@@ -226,18 +226,20 @@ describe('the studio reads the art fields back off a stored template', () => {
     });
   });
 
-  it('reports a stored slot with no art as null, not undefined', async () => {
-    stubFetch(() =>
-      jsonResponse({
-        templates: [
-          {
-            id: 't-2',
-            name: 'Plain',
-            connectContestId: 'c-1',
-            templateUrl: 'https://x.test/p.png',
-            status: 'draft',
-            version: 1,
-            slots: [{ id: 's-2', slotName: 'who', slotType: 'contestant', imageUrl: null }],
+  it('states the four art fields even when the row omits them, so a read is saveable', async () => {
+    stubFetch((call) =>
+      call.url.includes('/slots')
+        ? { success: true, slots: [] }
+        : jsonResponse({
+            templates: [
+              {
+                id: 't-2',
+                name: 'Plain',
+                connectContestId: 'c-1',
+                templateUrl: 'https://x.test/p.png',
+                status: 'draft',
+                version: 1,
+                slots: [{ id: 's-2', slotName: 'who', slotType: 'contestant', imageUrl: null }],
           },
         ],
       }),
@@ -245,7 +247,25 @@ describe('the studio reads the art fields back off a stored template', () => {
 
     const { listContestTemplates } = await import('@/services/contestTemplatesService');
     const [template] = await listContestTemplates('c-1');
+    // `null` and not `undefined` is the whole difference between "this slot has no
+    // art" and "this client does not know about art", and only the first one is
+    // saveable.
     expect(template.slots[0].imageUrl).toBeNull();
+    // The other three are stated too, at the values the renderer applies when the
+    // row predates them: `faceProtect` defaults to *on* (§7), so a template stored
+    // before the column existed must not read back as having switched it off — the
+    // admin would save the row and silently change every past and future render.
+    expect(template.slots[0]).toMatchObject({ anchor: 'auto', bleed: false, faceProtect: true });
+
+    // And the point of stating them on read is that the read is saveable: the row
+    // the service just produced must pass the service's own write guard, with the
+    // defaults still on the wire rather than stripped as falsy.
+    const calls2 = stubFetch((call) => ({ success: true, slots: [] }));
+    await replaceTemplateSlots('t-2', template.slots);
+    const [sent] = bodyOf(calls2[0]).slots as Record<string, unknown>[];
+    expect(sent).toHaveProperty('imageUrl', null);
+    expect(sent).toMatchObject({ anchor: 'auto', bleed: false, faceProtect: true });
+    expect(sent).not.toHaveProperty('id');
   });
 });
 
@@ -425,6 +445,27 @@ describe('slot art and preview', () => {
     const result = await previewContestTemplate('t-1', { sample: new File([new Uint8Array([1])], 'c.png', { type: 'image/png' }) });
     expect(result.applied).toBe(false);
     expect(result.decisions).toEqual({ applied: false });
+  });
+
+  it('treats a 200 that never stated a verdict as not applied', async () => {
+    // `X-Blend-Applied` is the only place the route says whether blending ran, and
+    // a proxy between the console and the BFF can drop a custom header. Reading an
+    // absent header as "applied" would put a claim in the panel that no response
+    // made, so silence is the conservative answer — while the image bytes, which
+    // are the actual result, still come through.
+    stubFetch(
+      () =>
+        new Response(new NodeBlob([new Uint8Array([7, 7, 7])], { type: 'image/png' }) as unknown as BlobPart, {
+          status: 200,
+          headers: { 'content-type': 'image/png' },
+        }),
+    );
+
+    const result = await previewContestTemplate('t-1', { sample: new File([new Uint8Array([1])], 'c.png', { type: 'image/png' }) });
+    expect(result.applied).toBe(false);
+    expect(result.decisions).toEqual({});
+    expect(result.contentType).toBe('image/png');
+    expect(result.blob.size).toBe(3);
   });
 });
 

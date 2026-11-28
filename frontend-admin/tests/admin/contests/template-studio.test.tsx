@@ -376,7 +376,10 @@ describe('lifecycle and results', () => {
         { id: 't-2', name: 'F v2', version: 2, status: 'archived', publishedAt: null, createdAt: '2026-11-18T10:00:00Z' },
       ],
     });
-    expect(html).toContain('v3');
+    // The version badge, not the name: this fixture's rows are called "F v3" and
+    // "F v2", so a bare `toContain('v3')` would pass on the name even with the
+    // panel's own `v` prefix deleted. Pinning the element pins the prefix.
+    expect(html).toContain('<strong>v3</strong>');
     expect(html).toContain('2026-11-20T10:00:00Z');
     expect(html).toContain('never published');
   });
