@@ -35,6 +35,16 @@ export interface StudioFakeOptions {
    * with a stored row the payload can forget.
    */
   existingSlots?: any[];
+  /**
+   * Task 11. `maybeSingle()` fails before any RPC has run (the guard read that
+   * slot-art and DELETE make), and `publishedReadError` fails it afterwards (the
+   * read-back that publish/duplicate/archive do). Two options because a route that
+   * answers 404 for a database outage would pass a one-option fake.
+   */
+  templateReadError?: any;
+  publishedReadError?: any;
+  /** PostgREST failure on the `template_slots` read, for duplicate's slot copy. */
+  slotReadError?: any;
 }
 
 export interface StudioFakeCalls {
@@ -46,6 +56,15 @@ export interface StudioFakeCalls {
   rpcCalls: { fn: string; args: any }[];
   /** The array a `template_slots` replace passed to `insert()` — one row per slot. */
   insertRows: any[] | null;
+  /**
+   * Every `.eq(column, value)` the route applied, tagged with its table. Task 11
+   * needs it for one assertion in particular: after `duplicate_contest_template`
+   * mints a new id, the row and slot reads have to be scoped to THAT id — a route
+   * that re-reads the parent answers with the old template's slots and looks right.
+   */
+  eqs: { table: string; column: string; value: unknown }[];
+  /** `upload(key, buffer, options)` calls, so the stored content type is pinnable. */
+  uploads: { key: string; options: any }[];
 }
 
 export function makeSupabase(opts: StudioFakeOptions) {
@@ -57,26 +76,32 @@ export function makeSupabase(opts: StudioFakeOptions) {
     removedKeys: [] as string[],
     rpcCalls: [] as { fn: string; args: any }[],
     insertRows: null as any[] | null,
+    eqs: [] as { table: string; column: string; value: unknown }[],
+    uploads: [] as { key: string; options: any }[],
   };
 
   function templatesChain() {
     const baseRow = () => opts.insertedTemplate ?? opts.updatedTemplate ?? opts.templateRow ?? null;
     const chain: any = {
       select: () => chain,
-      eq: () => chain,
+      eq: (column: string, value: unknown) => {
+        calls.eqs.push({ table: 'contest_templates', column, value });
+        return chain;
+      },
       order: () => chain,
       limit: () => chain,
-      maybeSingle: () =>
-        Promise.resolve({
-          // After an RPC has run, the route re-reads the row to answer with the
-          // stored truth (`published_at`, `status`), so the second read must be
-          // able to differ from the guard read that came first.
-          data:
-            calls.rpcCalls.length > 0 && opts.publishedRow
-              ? opts.publishedRow
-              : (opts.templateRow ?? null),
+      maybeSingle: () => {
+        // After an RPC has run, the route re-reads the row to answer with the
+        // stored truth (`published_at`, `status`), so the second read must be
+        // able to differ from the guard read that came first.
+        const afterRpc = calls.rpcCalls.length > 0;
+        const failure = afterRpc ? opts.publishedReadError : opts.templateReadError;
+        if (failure) return Promise.resolve({ data: null, error: failure });
+        return Promise.resolve({
+          data: afterRpc && opts.publishedRow ? opts.publishedRow : (opts.templateRow ?? null),
           error: null,
-        }),
+        });
+      },
       single: () =>
         Promise.resolve(
           opts.insertError
@@ -118,11 +143,18 @@ export function makeSupabase(opts: StudioFakeOptions) {
   function slotsChain() {
     const chain: any = {
       select: () => chain,
-      eq: () => chain,
+      eq: (column: string, value: unknown) => {
+        calls.eqs.push({ table: 'template_slots', column, value });
+        return chain;
+      },
       order: () => chain,
       limit: () => Promise.resolve({ data: opts.contestantSlotExists ? [{ id: 'slot-1' }] : [], error: null }),
       then: (onFulfilled: any, onRejected: any) =>
-        Promise.resolve({ data: opts.existingSlots ?? [], error: null }).then(onFulfilled, onRejected),
+        Promise.resolve(
+          opts.slotReadError
+            ? { data: null, error: opts.slotReadError }
+            : { data: opts.existingSlots ?? [], error: null },
+        ).then(onFulfilled, onRejected),
       delete: () => {
         calls.deletedFrom.push('template_slots');
         return {
@@ -153,7 +185,10 @@ export function makeSupabase(opts: StudioFakeOptions) {
   function overlaysChain() {
     const chain: any = {
       select: () => chain,
-      eq: () => chain,
+      eq: (column: string, value: unknown) => {
+        calls.eqs.push({ table: 'template_text_overlays', column, value });
+        return chain;
+      },
       order: () => Promise.resolve({ data: [], error: null }),
     };
     return chain;
@@ -173,8 +208,9 @@ export function makeSupabase(opts: StudioFakeOptions) {
     },
     storage: {
       from: () => ({
-        upload: (key: string) => {
+        upload: (key: string, _buffer: unknown, options?: any) => {
           calls.uploadKeys.push(key);
+          calls.uploads.push({ key, options: options ?? null });
           return Promise.resolve(
             opts.uploadError ? { data: null, error: opts.uploadError } : { data: { path: key }, error: null },
           );

@@ -181,3 +181,100 @@ export function studioRpcFailure(
     'studio_rpc_failed',
   );
 }
+
+/* ---------------------------------------------------------------------------
+ * The contest-template upload contract, in one place (Task 11).
+ *
+ * These four lived inside `route.ts` while it was the only uploader. The studio's
+ * slot-art route is the second, and a mime list, a bucket id, a size ceiling and an
+ * extension map that exist twice are four chances to disagree — the failure mode the
+ * 2026-11-25 upload report was about (a legitimate file refused, or stored with a
+ * content type its extension contradicts). `route.ts` re-exports `BUCKET` and
+ * `ALLOWED_IMAGE_MIME_TYPES` so the existing importers, including
+ * `tests/unit/voting/contest-template-bucket-policy.spec.ts`, keep pinning them
+ * against the bucket row in 20260405700000.
+ * ------------------------------------------------------------------------- */
+export const BUCKET = 'contest-templates';
+
+/**
+ * Kept equal to the bucket's own `allowed_mime_types` by
+ * `contest-template-bucket-policy.spec.ts`.
+ */
+export const ALLOWED_IMAGE_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+  'image/svg+xml',
+]);
+
+/** The same list, phrased for the admin who is holding a `.tiff`. */
+export const ACCEPTED_LABEL = 'PNG, JPEG, WebP or SVG';
+
+/** Stored extension follows the *mime type*, never the client's filename. */
+export const EXT_BY_MIME: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/webp': 'webp',
+  'image/svg+xml': 'svg',
+};
+
+/**
+ * One call site for the four studio functions, so one place maps their failures.
+ *
+ * `logPrefix` is only for `console.error`: the response body never carries it, because
+ * the reason a publish failed is in the sentence the function raised, and a route name
+ * adds nothing an admin can act on.
+ */
+export async function callStudioRpc(
+  supabase: ReturnType<typeof createAdminClient>,
+  fn: 'duplicate_contest_template' | 'publish_contest_template' | 'archive_contest_template' | 'contest_template_versions',
+  args: Record<string, unknown>,
+  logPrefix: string,
+): Promise<{ ok: true; data: any } | { ok: false; response: Response }> {
+  const { data, error } = await supabase.rpc(fn, args);
+  if (error) return { ok: false, response: studioRpcFailure(logPrefix, error) };
+  return { ok: true, data: data ?? null };
+}
+
+/**
+ * Re-read the row an RPC just changed, so the route answers with stored truth.
+ *
+ * Every write route in this feature ends by returning `mapTemplateRow(row)` rather than
+ * echoing the request: `status`, `version` and `published_at` are decided inside the
+ * transaction (`now()`, the trigger, the archive-then-activate order), and D5's rule is
+ * that the API states what is stored. A read that fails or comes back empty is a 500, not
+ * a 404 — the action DID happen, so telling the admin "not found" would invite a second
+ * publish of a template that is already live.
+ */
+export async function readStudioRow(
+  supabase: ReturnType<typeof createAdminClient>,
+  templateUuid: string,
+  logPrefix: string,
+): Promise<{ ok: true; row: any } | { ok: false; response: Response }> {
+  const { data, error } = await supabase
+    .from('contest_templates')
+    .select('*')
+    .eq('id', templateUuid)
+    .maybeSingle();
+
+  if (error) {
+    console.error(`${logPrefix} row read-back:`, error.message);
+    return {
+      ok: false,
+      response: errorResponse('Failed to load template', 500, 'template_read_failed'),
+    };
+  }
+  if (!data) {
+    return {
+      ok: false,
+      response: errorResponse(
+        'The template was changed but could not be read back — reload the list before trying again.',
+        500,
+        'template_readback_missing',
+      ),
+    };
+  }
+  return { ok: true, row: data };
+}

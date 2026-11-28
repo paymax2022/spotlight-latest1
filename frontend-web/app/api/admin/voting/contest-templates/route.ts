@@ -8,34 +8,29 @@ import {
   MAX_CONTEST_TEMPLATE_UPLOAD_BYTES,
   MAX_CONTEST_TEMPLATE_UPLOAD_MB,
 } from '@/src/lib/storage/upload-limits';
-import { mapOverlayRow, mapSlotRow, mapTemplateRow, isValidStatus } from './_shared';
+import {
+  ACCEPTED_LABEL,
+  ALLOWED_IMAGE_MIME_TYPES,
+  BUCKET,
+  EXT_BY_MIME,
+  isValidStatus,
+  mapOverlayRow,
+  mapSlotRow,
+  mapTemplateRow,
+} from './_shared';
 import { effectiveBlendParams, parseStudioTemplateFields, uuidOr } from '@/src/server/template-studio/authoring';
 
-export const BUCKET = 'contest-templates';
-
 /**
- * The formats this route accepts — kept next to the bucket's own
- * `allowed_mime_types` (supabase/migrations/20260405700000_contest_image_templates.sql)
- * and pinned equal to it by tests/unit/voting/contest-template-bucket-policy.spec.ts,
- * because the two drifting is how a legitimate file ends up refused.
+ * Task 11 moved the upload contract (`BUCKET`, `ALLOWED_IMAGE_MIME_TYPES`,
+ * `ACCEPTED_LABEL`, `EXT_BY_MIME`) into `_shared.ts`, because the studio's slot-art
+ * route is a second uploader and two copies of a mime list are two chances to
+ * disagree — the same class of fault that spec §9's bucket pin exists to catch. They
+ * stay exported from this module so the two existing importers keep their path:
+ * `tests/integration/voting/contest-template-storage.test.ts` and
+ * `contest-template-bucket-policy.spec.ts`, which pins both names against the bucket
+ * row in supabase/migrations/20260405700000_contest_image_templates.sql.
  */
-export const ALLOWED_IMAGE_MIME_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/jpg',
-  'image/webp',
-  'image/svg+xml',
-]);
-
-const ACCEPTED_LABEL = 'PNG, JPEG, WebP or SVG';
-
-const EXT_BY_MIME: Record<string, string> = {
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-  'image/jpg': 'jpg',
-  'image/webp': 'webp',
-  'image/svg+xml': 'svg',
-};
+export { BUCKET, ALLOWED_IMAGE_MIME_TYPES };
 
 // contest_templates.connect_contest_id and .created_by are UUID columns with
 // foreign keys, so anything else is a guaranteed insert failure — better answered
