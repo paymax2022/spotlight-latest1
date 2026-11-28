@@ -86,15 +86,44 @@ export const allowedRemoteImageHostnames = [
   'res.cloudinary.com',
 ] as const;
 
+/**
+ * The deployment's own Supabase origin — protocol + host + port of
+ * NEXT_PUBLIC_SUPABASE_URL, the same value every Supabase client here is built
+ * from (src/lib/supabase/server.ts). Contest template rows are written with
+ * `storage.from('contest-templates').getPublicUrl(objectKey)`, so the host of a
+ * stored `template_url` is exactly this origin by construction:
+ * `http://127.0.0.1:54321` on the local stack, `https://<project>.supabase.co`
+ * in production. Null when unset or unparseable, so a deployment with no usable
+ * Supabase config trusts nothing extra. Read per call rather than cached — this
+ * is consulted from the fetch gate, and the module already caches env reads.
+ */
+export function configuredSupabaseOrigin(): string | null {
+  const raw = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!raw) return null;
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return null;
+  }
+}
+
 export function isAllowedRemoteImageUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
-    return (
-      parsed.protocol === 'https:' &&
+    // Credentials in the URL are never a match, even when the origin is.
+    if (parsed.username || parsed.password) return false;
+    if (
       allowedRemoteImageHostnames.includes(
         parsed.hostname as (typeof allowedRemoteImageHostnames)[number]
       )
-    );
+    ) {
+      return parsed.protocol === 'https:';
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    // Exact-origin equality, not a host or prefix test: another port, another
+    // scheme, or a host that merely ends in the configured one stays refused.
+    const configured = configuredSupabaseOrigin();
+    return configured !== null && parsed.origin === configured;
   } catch {
     return false;
   }
