@@ -8,33 +8,29 @@ import {
   MAX_CONTEST_TEMPLATE_UPLOAD_BYTES,
   MAX_CONTEST_TEMPLATE_UPLOAD_MB,
 } from '@/src/lib/storage/upload-limits';
-import { mapOverlayRow, mapSlotRow, mapTemplateRow, isValidStatus } from './_shared';
-
-export const BUCKET = 'contest-templates';
+import {
+  ACCEPTED_LABEL,
+  ALLOWED_IMAGE_MIME_TYPES,
+  BUCKET,
+  EXT_BY_MIME,
+  isValidStatus,
+  mapOverlayRow,
+  mapSlotRow,
+  mapTemplateRow,
+} from './_shared';
+import { effectiveBlendParams, parseStudioTemplateFields, uuidOr } from '@/src/server/template-studio/authoring';
 
 /**
- * The formats this route accepts — kept next to the bucket's own
- * `allowed_mime_types` (supabase/migrations/20260405700000_contest_image_templates.sql)
- * and pinned equal to it by tests/unit/voting/contest-template-bucket-policy.spec.ts,
- * because the two drifting is how a legitimate file ends up refused.
+ * Task 11 moved the upload contract (`BUCKET`, `ALLOWED_IMAGE_MIME_TYPES`,
+ * `ACCEPTED_LABEL`, `EXT_BY_MIME`) into `_shared.ts`, because the studio's slot-art
+ * route is a second uploader and two copies of a mime list are two chances to
+ * disagree — the same class of fault that spec §9's bucket pin exists to catch. They
+ * stay exported from this module so the two existing importers keep their path:
+ * `tests/integration/voting/contest-template-storage.test.ts` and
+ * `contest-template-bucket-policy.spec.ts`, which pins both names against the bucket
+ * row in supabase/migrations/20260405700000_contest_image_templates.sql.
  */
-export const ALLOWED_IMAGE_MIME_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/jpg',
-  'image/webp',
-  'image/svg+xml',
-]);
-
-const ACCEPTED_LABEL = 'PNG, JPEG, WebP or SVG';
-
-const EXT_BY_MIME: Record<string, string> = {
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-  'image/jpg': 'jpg',
-  'image/webp': 'webp',
-  'image/svg+xml': 'svg',
-};
+export { BUCKET, ALLOWED_IMAGE_MIME_TYPES };
 
 // contest_templates.connect_contest_id and .created_by are UUID columns with
 // foreign keys, so anything else is a guaranteed insert failure — better answered
@@ -169,6 +165,19 @@ export async function POST(request: Request) {
       );
     }
 
+    // Studio fields (P3, spec §6) join the same pre-upload gate for the same
+    // reason: `blendPreset: 'vivid'` is a typo, and a typo that reaches storage
+    // leaves a frame PNG no row will ever reference. A multipart part is text, so
+    // blendSettings arrives as JSON-in-a-string — validateBlendSettings parses it.
+    // An absent part is absent: photo_mode/blend_preset/blend_settings then keep
+    // their column defaults, which is what the shipped console still does.
+    const studio = parseStudioTemplateFields({
+      photoMode: formData.has('photoMode') ? formData.get('photoMode') : undefined,
+      blendPreset: formData.has('blendPreset') ? formData.get('blendPreset') : undefined,
+      blendSettings: formData.has('blendSettings') ? formData.get('blendSettings') : undefined,
+    });
+    if (!studio.ok) return errorResponse(studio.error, 400, studio.code);
+
     // Validate it's an image mime type. The client-supplied File.type is the
     // only signal formData() gives us (unlike the registration uploads route,
     // there's no filename-extension allowlist that's already the source of
@@ -234,9 +243,7 @@ export async function POST(request: Request) {
     // (src/server/admin/auth.ts:77). created_by is a UUID referencing
     // user_profiles, so writing it verbatim failed the insert for every
     // server-to-server create — after the image was already uploaded.
-    const createdBy = typeof identity?.actorId === 'string' && UUID_RE.test(identity.actorId)
-      ? identity.actorId
-      : null;
+    const createdBy = uuidOr(identity?.actorId);
 
     const { data: inserted, error: insertError } = await supabase
       .from('contest_templates')
@@ -251,6 +258,7 @@ export async function POST(request: Request) {
         aspect_ratio: aspectRatio,
         status: 'draft',
         created_by: createdBy,
+        ...studio.updates,
       })
       .select('*')
       .single();
@@ -267,8 +275,16 @@ export async function POST(request: Request) {
       return errorResponse(verdict.message, verdict.status, verdict.code);
     }
 
+    // D5's answer: `effectiveParams` is the number set the compositor will use for
+    // this row, read back off the stored row rather than echoed from the request,
+    // so a column default the client never sent is included too.
     return successResponse(
-      { success: true, template: { ...mapTemplateRow(inserted), slots: [], textOverlays: [] } },
+      {
+        success: true,
+        template: { ...mapTemplateRow(inserted), slots: [], textOverlays: [] },
+        effectiveParams: effectiveBlendParams(inserted.blend_preset, inserted.blend_settings),
+        clamped: studio.clamped,
+      },
       201,
     );
   } catch (error) {

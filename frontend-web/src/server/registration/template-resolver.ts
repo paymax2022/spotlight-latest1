@@ -52,11 +52,17 @@ function getSupabase() {
  * value whose type has widened to `string` resolves to its `GenericStringError`
  * row type instead of a row. Split this across lines with `+` and the query stops
  * type-checking, which is the loudest possible outcome for a two-line refactor.
+ *
+ * Exported because the studio preview needs the same row shape the queue resolves, and
+ * a second column list is a second place a new art column can be forgotten.
  */
-const SLOT_COLUMNS = 'id, slot_name, slot_type, slot_order, x, y, width, height, rotation, z_index, scale, crop_mode, border_radius, opacity, image_url, anchor, bleed, face_protect';
+export const SLOT_COLUMNS = 'id, slot_name, slot_type, slot_order, x, y, width, height, rotation, z_index, scale, crop_mode, border_radius, opacity, image_url, anchor, bleed, face_protect';
 
-/** §11's blend columns on `contest_templates`, plus the identity P1 already needed. */
-const TEMPLATE_COLUMNS = 'id, version, template_url, width, height, photo_mode, blend_preset, blend_settings';
+/**
+ * §11's blend columns on `contest_templates`, plus the identity P1 already needed.
+ * Exported for the same reason as `SLOT_COLUMNS`: the preview reads these eight.
+ */
+export const TEMPLATE_COLUMNS = 'id, version, template_url, width, height, photo_mode, blend_preset, blend_settings';
 
 /** §11's `anchor` domain, validated the way `params.ts` validates `shadow`. */
 const ANCHORS = ['auto', 'top', 'centre', 'bottom'] as const;
@@ -108,8 +114,14 @@ export interface ResolvedTemplate {
   foregroundSlots: SlotConfig[];
 }
 
-/** One row → one `SlotConfig`. The numeric cast mirrors the column types (numeric). */
-function toSlot(row: Record<string, unknown>): SlotConfig {
+/**
+ * One row → one `SlotConfig`. The numeric cast mirrors the column types (numeric).
+ *
+ * Exported for P3 Task 10: the studio preview has to build the same slot the queue
+ * will build, and a second copy of this mapping is a second place `anchor`'s domain
+ * or `face_protect`'s default can be re-invented and disagree with a render.
+ */
+export function toSlot(row: Record<string, unknown>): SlotConfig {
   const r = row as typeof row & {
     id: string; slot_name: string; slot_type: string; slot_order: number;
     x: unknown; y: unknown; width: unknown; height: unknown;

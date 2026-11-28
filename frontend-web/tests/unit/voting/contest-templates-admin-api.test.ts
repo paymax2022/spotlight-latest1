@@ -22,6 +22,8 @@ import {
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
+// Shared with tests/unit/voting/contest-templates-studio.test.ts — one fake, both files.
+import { makeSupabase } from './_contest-template-fake';
 
 function ctx(templateId = 'tpl-1') {
   return { params: Promise.resolve({ templateId }) };
@@ -37,110 +39,6 @@ function multipartReq(fields: Record<string, string | File>) {
   return new Request('https://x.test/api/admin/voting/contest-templates', { method: 'POST', body: fd });
 }
 
-/**
- * A single flexible fake Supabase admin client covering everything these
- * routes touch: .from('contest_templates'|'template_slots'|'template_text_overlays')
- * and .storage.from(bucket) for the upload path.
- *
- * `uploadError` / `insertError` make the two failure seams reachable without a
- * database, and `calls` records what the route did at each one — including
- * whether it cleaned the object it had already written when the row insert then
- * failed, which is the difference between a retryable upload and an orphan in
- * the bucket forever.
- */
-function makeSupabase(opts: {
-  templateRow?: any;
-  contestantSlotExists?: boolean;
-  insertedTemplate?: any;
-  updatedTemplate?: any;
-  uploadError?: any;
-  insertError?: any;
-}) {
-  const calls: any = {
-    insertPayload: null,
-    updatePayload: null,
-    deletedFrom: [] as string[],
-    uploadKeys: [] as string[],
-    removedKeys: [] as string[],
-  };
-
-  function templatesChain() {
-    const chain: any = {
-      select: () => chain,
-      eq: () => chain,
-      order: () => chain,
-      limit: () => chain,
-      maybeSingle: () => Promise.resolve({ data: opts.templateRow ?? null, error: null }),
-      single: () =>
-        Promise.resolve(
-          opts.insertError
-            ? { data: null, error: opts.insertError }
-            : {
-                data: opts.insertedTemplate ?? opts.updatedTemplate ?? opts.templateRow ?? null,
-                error: null,
-              },
-        ),
-      insert: (payload: any) => {
-        calls.insertPayload = payload;
-        return chain;
-      },
-      update: (payload: any) => {
-        calls.updatePayload = payload;
-        return chain;
-      },
-      delete: () => {
-        calls.deletedFrom.push('contest_templates');
-        return chain;
-      },
-    };
-    return chain;
-  }
-
-  function slotsChain() {
-    const chain: any = {
-      select: () => chain,
-      eq: () => chain,
-      order: () => chain,
-      limit: () => Promise.resolve({ data: opts.contestantSlotExists ? [{ id: 'slot-1' }] : [], error: null }),
-    };
-    return chain;
-  }
-
-  function overlaysChain() {
-    const chain: any = {
-      select: () => chain,
-      eq: () => chain,
-      order: () => Promise.resolve({ data: [], error: null }),
-    };
-    return chain;
-  }
-
-  const client: any = {
-    from: (table: string) => {
-      if (table === 'contest_templates') return templatesChain();
-      if (table === 'template_slots') return slotsChain();
-      if (table === 'template_text_overlays') return overlaysChain();
-      throw new Error(`Unexpected table: ${table}`);
-    },
-    storage: {
-      from: () => ({
-        upload: (key: string) => {
-          calls.uploadKeys.push(key);
-          return Promise.resolve(
-            opts.uploadError ? { data: null, error: opts.uploadError } : { data: { path: key }, error: null },
-          );
-        },
-        remove: (keys: string[]) => {
-          calls.removedKeys.push(...keys);
-          return Promise.resolve({ data: keys.map((path) => ({ path })), error: null });
-        },
-        getPublicUrl: (key: string) => ({ data: { publicUrl: `https://cdn.test/${key}` } }),
-      }),
-    },
-  };
-
-  return { client, calls };
-}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -196,36 +94,72 @@ describe('AD-003/CS-004: contest-templates admin API', () => {
     expect(calls.insertPayload).toMatchObject({ status: 'draft', contest_id: null, connect_contest_id: CONTEST_UUID });
   });
 
-  it('PATCH to active is rejected when the template has no contestant slot', async () => {
-    const { client } = makeSupabase({
-      templateRow: { id: 'tpl-1', status: 'draft' },
-      contestantSlotExists: false,
-    });
-    vi.mocked(createAdminClient).mockReturnValue(client);
-
-    const res = await itemPATCH(jsonReq('PATCH', { status: 'active' }), ctx('tpl-1'));
-    expect(res.status).toBe(400);
-  });
-
-  it('PATCH to active succeeds when a contestant slot is present', async () => {
-    const updatedTemplate = {
+  /**
+   * D6, rewritten for P3: `PATCH status:'active'` keeps its shape for old callers
+   * but no longer writes the column. The pre-P3 route set `status='active'` with a
+   * local `hasContestantSlot()` read, which is why two templates could be active
+   * for one contest at the same time (spec §2 D2 names that as the shipped
+   * behaviour). `publish_contest_template` archives the others in the same
+   * transaction, so the route's job is now to call it and answer with the stored
+   * row — and to prove it never takes the old shortcut.
+   */
+  it('PATCH to active goes through the publish RPC and never writes status itself', async () => {
+    const published = {
       id: 'tpl-1', name: 'Frame', connect_contest_id: 'contest-1', contest_id: null,
       template_url: 'https://cdn/x.png', file_format: 'png', width: 1080, height: 1080,
       aspect_ratio: '1:1', status: 'active', version: 1, created_by: 'admin-1',
+      published_at: '2026-01-02T00:00:00Z', published_by: null,
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z',
     };
     const { client, calls } = makeSupabase({
       templateRow: { id: 'tpl-1', status: 'draft' },
-      contestantSlotExists: true,
-      updatedTemplate,
+      publishedRow: published,
+      rpcResults: { publish_contest_template: { template_id: 'tpl-1', version: 1, archived_ids: ['tpl-0'] } },
     });
     vi.mocked(createAdminClient).mockReturnValue(client);
 
     const res = await itemPATCH(jsonReq('PATCH', { status: 'active' }), ctx('tpl-1'));
     expect(res.status).toBe(200);
+    expect(calls.rpcCalls).toEqual([
+      { fn: 'publish_contest_template', args: { p_template_id: 'tpl-1', p_actor: null } },
+    ]);
+    expect(calls.updatePayload, 'publishing must not be a plain UPDATE').toBeNull();
     const body = await res.json();
     expect(body.template.status).toBe('active');
-    expect(calls.updatePayload).toMatchObject({ status: 'active' });
+    expect(body.archivedIds).toEqual(['tpl-0']);
+  });
+
+  it('PATCH to active answers the RPC\'s own refusal, not a locally rebuilt one', async () => {
+    const { client } = makeSupabase({
+      templateRow: { id: 'tpl-1', status: 'draft' },
+      rpcError: {
+        code: '22023',
+        message: 'publish_contest_template: template "Finale" (tpl-1) has no contestant slot — add one before publishing',
+      },
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await itemPATCH(jsonReq('PATCH', { status: 'active' }), ctx('tpl-1'));
+    const body = await res.json();
+    expect(res.status).toBe(400);
+    expect(body.code).toBe('publish_needs_contestant_slot');
+    expect(body.error).toContain('no contestant slot');
+  });
+
+  it('PATCH to active reports a vanished template as 404', async () => {
+    const { client } = makeSupabase({
+      templateRow: { id: 'tpl-1', status: 'draft' },
+      rpcError: {
+        code: '22023',
+        message: 'publish_contest_template: no contest template 7f0f1a2b-3c4d-5e6f-7a8b-9c0d1e2f3a4b to publish',
+      },
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await itemPATCH(jsonReq('PATCH', { status: 'active' }), ctx('tpl-1'));
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.code).toBe('template_not_found');
   });
 
   it('DELETE on an active template is refused with 409', async () => {

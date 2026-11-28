@@ -86,16 +86,83 @@ export const allowedRemoteImageHostnames = [
   'res.cloudinary.com',
 ] as const;
 
-export function isAllowedRemoteImageUrl(value: string): boolean {
+/**
+ * Buckets whose *public* objects this app's own Storage may serve to the
+ * compositing readers. `contest-templates` is the bucket
+ * `supabase/migrations/20260405700000_contest_image_templates.sql` creates public
+ * and that `app/api/admin/voting/contest-templates/route.ts:227` writes a row's
+ * `template_url` from. A private bucket is deliberately absent: reaching it is a
+ * storage-API call with a service key, not a URL the renderer should fetch.
+ */
+export const TEMPLATE_STORAGE_BUCKETS = ['contest-templates'] as const;
+
+/** The one Storage path shape that serves a public object anonymously. */
+export const PUBLIC_OBJECT_PATH_PREFIX = '/storage/v1/object/public/';
+
+/**
+ * The origin this app's own Supabase client would use — protocol + host + port.
+ *
+ * Read from `NEXT_PUBLIC_SUPABASE_URL`, the only Supabase URL the repo consumes
+ * (`src/lib/supabase/server.ts:16`, `runtime.ts:2`), and read from the server's
+ * environment rather than from a request or a database row. That provenance is
+ * what makes an exact comparison below safe: the trusted origin is something the
+ * deployment decides, never something a stored template can change. Dev resolves
+ * to `http://127.0.0.1:54321`; production to `https://<project>.supabase.co` from
+ * the same variable that already has to be set for the app to start at all.
+ */
+export function configuredSupabaseOrigin(): string | null {
+  const raw = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  if (!raw) return null;
   try {
-    const parsed = new URL(value);
-    return (
-      parsed.protocol === 'https:' &&
-      allowedRemoteImageHostnames.includes(
-        parsed.hostname as (typeof allowedRemoteImageHostnames)[number]
-      )
-    );
+    const url = new URL(raw);
+    return url.host ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Exact-origin equality against `configuredSupabaseOrigin()` — never a suffix or host match. */
+export function isConfiguredSupabaseOrigin(value: string): boolean {
+  const trusted = configuredSupabaseOrigin();
+  if (!trusted) return false;
+  try {
+    return new URL(value).origin === trusted;
   } catch {
     return false;
   }
+}
+
+/** True for `/storage/v1/object/public/<allowlisted bucket>/<non-empty key>`. */
+function isPublicTemplateObject(pathname: string): boolean {
+  if (!pathname.startsWith(PUBLIC_OBJECT_PATH_PREFIX)) return false;
+  const rest = pathname.slice(PUBLIC_OBJECT_PATH_PREFIX.length);
+  const slash = rest.indexOf('/');
+  if (slash <= 0 || slash === rest.length - 1) return false;
+  const bucket = rest.slice(0, slash);
+  return (TEMPLATE_STORAGE_BUCKETS as readonly string[]).includes(bucket);
+}
+
+export function isAllowedRemoteImageUrl(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  // Credentials would make `origin` the trusted host while the request carries
+  // a basic-auth token for it, so they end the check before either branch runs.
+  if (parsed.username || parsed.password) return false;
+  if (
+    parsed.protocol === 'https:' &&
+    allowedRemoteImageHostnames.includes(
+      parsed.hostname as (typeof allowedRemoteImageHostnames)[number]
+    )
+  ) {
+    return true;
+  }
+  // Our own bucket: same origin byte-for-byte (so a port, a scheme or a
+  // look-alike host fails), and a public template object. Both compositing
+  // readers call this one function, which is the only reason they cannot
+  // disagree about what a template URL may be.
+  return parsed.origin === configuredSupabaseOrigin() && isPublicTemplateObject(parsed.pathname);
 }

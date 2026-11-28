@@ -44,8 +44,16 @@ export interface BlendParams {
   jpegQuality: number;
 }
 
-/** The §12 table, verbatim. Every number a render may use lives here. */
-const PRESETS: Record<BlendPresetName, BlendParams> = {
+/**
+ * The §12 table, verbatim. Every number a render may use lives here.
+ *
+ * Exported (P3 Task 8) so the admin write gate can validate against this table
+ * instead of a copy: `src/server/template-studio/authoring.ts` refuses an unknown
+ * key and clamps an out-of-bound one using these exact entries, which is the only
+ * way "the number the form stored" and "the number the render used" stay one
+ * number. Contents unchanged from §12.
+ */
+export const PRESETS: Record<BlendPresetName, BlendParams> = {
   natural: {
     preset: 'natural', subjectFill: 0.94, featherPx: 1, speckleMinArea: 24, holeMaxArea: 24,
     lumaFraction: 0.45, lumaBias: 0.97, gainMin: 0.92, gainMax: 1.08, tempMax: 0.04, contrastMax: 0.06,
@@ -76,8 +84,14 @@ const PRESETS: Record<BlendPresetName, BlendParams> = {
   },
 };
 
-/** Hard ceilings (§5.3, §6.3, §7, §9): an override may narrow these, never pass them. */
-const BOUNDS: Partial<Record<keyof BlendParams, [number, number]>> = {
+/**
+ * Hard ceilings (§5.3, §6.3, §7, §9): an override may narrow these, never pass them.
+ *
+ * The studio console renders one slider per entry and `template-studio/authoring.ts`
+ * clamps writes to these, both by importing this object rather than restating it —
+ * a second copy is how a form ends up offering a value the renderer silently ignores.
+ */
+export const BOUNDS: Partial<Record<keyof BlendParams, [number, number]>> = {
   subjectFill: [0.5, 1],
   featherPx: [0, 2],
   speckleMinArea: [0, 400],
@@ -96,7 +110,8 @@ const BOUNDS: Partial<Record<keyof BlendParams, [number, number]>> = {
   jpegQuality: [85, 95],
 };
 
-const SHADOW_MODES: readonly ShadowMode[] = ['auto', 'on', 'off'];
+/** The three shadow modes. Exported for the same reason as `BOUNDS`. */
+export const SHADOW_MODES: readonly ShadowMode[] = ['auto', 'on', 'off'];
 
 function clampTo(key: keyof BlendParams, value: number): number {
   const bound = BOUNDS[key];

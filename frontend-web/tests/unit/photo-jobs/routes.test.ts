@@ -19,6 +19,10 @@
  * things an env var cannot prove. It reports names and verdicts, never values:
  * the sentinel test below injects real-shaped secrets and asserts none of them
  * reach the body, because this payload is readable by any admin-role caller.
+ * Task 12 added two sections to it — a census of the stored template URLs, which
+ * is the probe that keeps P2's invisible "no environment can read a template"
+ * defect from coming back, and the renderer's own blend tables so the studio's
+ * sliders cannot drift from the numbers the compositor clamps against.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -37,19 +41,34 @@ const r2 = vi.hoisted(() => ({
   getR2PublicUrl: vi.fn(),
   createR2DownloadUrl: vi.fn(),
 }));
+/**
+ * Task 12 gives this route its first direct database read: the template census.
+ * Mocked rather than real because the census runs on every page view of the
+ * configuration surface, and the P2 defect it exists to catch — a template URL
+ * the reader will refuse — is provable from the stored shape without a storage
+ * service answering.
+ */
+const supabase = vi.hoisted(() => ({ createAdminClient: vi.fn() }));
 
 vi.mock('@/src/server/photo-jobs/job-store', () => store);
 vi.mock('@/src/server/photo-jobs/worker', () => worker);
 vi.mock('@/src/lib/auth/server', () => auth);
 vi.mock('@/src/server/admin/auth', () => adminAuth);
 vi.mock('@/src/lib/storage/r2', () => r2);
+vi.mock('@/lib/supabase/server', () => supabase);
 
 import { GET, POST } from '@/app/api/photo-jobs/[id]/route';
 import { GET as LATEST } from '@/app/api/photo-jobs/latest/route';
 import { GET as CONFIG } from '@/app/api/admin/photo-config-status/route';
 import { isUuidId } from '@/src/server/photo-jobs/status-read';
+import { BOUNDS, PRESETS, SHADOW_MODES } from '@/lib/rendering/blend/params';
+import { PHOTO_MODES, SLOT_ANCHORS } from '@/src/server/template-studio/authoring';
 
 const uuid = 'b7f3f1d2-3f1c-4a5e-9c3b-2a1d0e4f5a6b';
+/** The origin the reader trusts, because `configuredSupabaseOrigin()` reads it from
+ *  the server environment rather than from a row: it is stubbed in `beforeEach` so a
+ *  template URL built from it is the same shape an admin upload produces. */
+const ORIGIN = 'http://127.0.0.1:54321';
 /** Both ids in these cases are real uuids because the routes refuse anything
  *  else: `id` and `registration_id` are uuid columns, and a non-uuid filter value
  *  reaches Postgres as 22P02, so the guard is a 400 here rather than a 500 there.
@@ -91,6 +110,11 @@ const ENV_KEYS = [
   'CLOUDINARY_API_SECRET',
   'R2_PUBLIC_BASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
+  // Task 12: the census classifies a stored URL against this origin, so the tests
+  // need it to hold the dev value the reader trusts. Snapshot-restored like the
+  // others, because a Supabase origin left pointing at 127.0.0.1 would change how
+  // the next file's template URLs classify.
+  'NEXT_PUBLIC_SUPABASE_URL',
 ] as const;
 const envSnapshot = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
@@ -101,6 +125,21 @@ beforeEach(() => {
   r2.hasR2Config.mockReturnValue(true);
   r2.getR2PublicUrl.mockImplementation((k: string) => `https://cdn.test/${k}`);
   r2.createR2DownloadUrl.mockImplementation(async ({ key: k }: { key: string }) => `https://signed.test/${k}`);
+  process.env.NEXT_PUBLIC_SUPABASE_URL = ORIGIN;
+  // Default: an empty table. The four pre-existing config-status cases are about
+  // provider/storage/jobs truth, and a route that gained an unmocked database read
+  // would otherwise answer 500 for them — which is exactly the regression this
+  // fake exists to make visible rather than to hide.
+  supabase.createAdminClient.mockReturnValue({
+    from: () => ({
+      select: () => ({
+        in: () => {
+          const p = Promise.resolve({ data: [], error: null });
+          return Object.assign(p, { limit: () => p });
+        },
+      }),
+    }),
+  });
   store.listPhotoAssets.mockResolvedValue([]);
   store.photoJobSummary.mockResolvedValue({ queued: 0, processing: 0, failed: 0, paused: 0, ready: 0 });
 });
@@ -260,6 +299,9 @@ describe('GET /api/admin/photo-config-status', () => {
   it('is gated by the admin permission the review surfaces already use', async () => {
     adminAuth.assertAdminPermission.mockRejectedValue(new Error('FORBIDDEN'));
     expect((await CONFIG(configRequest())).status).toBe(403);
+    // Auth first, before any read: the census is the route's only database call and
+    // a rejected caller must not be able to make it.
+    expect(supabase.createAdminClient).not.toHaveBeenCalled();
   });
 
   it('names the missing provider variables as a blocker when nothing is configured', async () => {
@@ -317,5 +359,170 @@ describe('GET /api/admin/photo-config-status', () => {
     expect(body.provider.extractionProbe).toBe('not_attempted');
     expect(body.provider.moderationProbe).toBe('not_attempted');
     expect(body.provider.probeNote).toContain('test asset');
+  });
+
+  // ─── Task 12: the template census and the published blend bounds ───────────
+  //
+  // This exists because of a defect that stayed invisible for two phases: P2's
+  // blend tests handed the resolver a `https://cdn.test/template.png`, so nothing
+  // ever ran the real trust predicate against the URL shape an admin upload
+  // actually produces — which meant no environment could read a template at all,
+  // and every job degraded to a paste while the configuration page looked green.
+  // A probe that has to fetch would not have caught it either (the shape is the
+  // fault), and a probe that only runs when an admin presses preview cannot tell
+  // the operator about it before a contestant notices.
+
+  function census(rows: any[] | null, error: any = null) {
+    const seen: { table: string; columns: string; filter: { column: string; values: unknown[] }; limit?: number }[] = [];
+    supabase.createAdminClient.mockReturnValue({
+      from: (table: string) => ({
+        select: (columns: string) => ({
+          in: (column: string, values: unknown[]) => {
+            const entry: any = { table, columns, filter: { column, values } };
+            const result = Promise.resolve(error ? { data: null, error } : { data: rows ?? [], error: null });
+            // `.limit()` is recorded because it is the difference between a census
+            // and an unbounded select on a diagnostics page, and the only way a
+            // dropped cap shows up as a failing assertion instead of a slower page.
+            seen.push(entry);
+            return Object.assign(result, {
+              limit: (n: number) => {
+                entry.limit = n;
+                return result;
+              },
+            });
+          },
+        }),
+      }),
+    });
+    return seen;
+  }
+
+  const frame = (over: Record<string, unknown> = {}) => ({
+    id: uuid,
+    name: 'Graduation 2026',
+    status: 'active',
+    template_url: `${ORIGIN}/storage/v1/object/public/contest-templates/templates/tpl-1/frame.png`,
+    ...over,
+  });
+
+  it('counts a readable active frame and raises no template blocker', async () => {
+    const seen = census([frame()]);
+
+    const body = await (await CONFIG(configRequest())).json();
+    expect(body.templates).toMatchObject({
+      counted: true,
+      activeCount: 1,
+      readableCount: 1,
+      draftCount: 0,
+      refused: [],
+    });
+    expect(body.blockers.join(' ')).not.toMatch(/template/i);
+
+    // The filter is the point of the read: an archived row is history, and
+    // counting it would report a broken frame that no contest can resolve.
+    expect(seen).toHaveLength(1);
+    expect(seen[0].table).toBe('contest_templates');
+    expect(seen[0].filter).toEqual({ column: 'status', values: ['active', 'draft'] });
+    // Not `select('*')`: the census needs four columns per row, and a configuration
+    // page that drags every template's `blend_settings` and thumbnails on every
+    // page view is a slow page for information nobody reads there.
+    expect(seen[0].columns).toContain('template_url');
+    expect(seen[0].columns).not.toBe('*');
+    expect(typeof seen[0].limit).toBe('number');
+  });
+
+  it('names the host and the reason for a frame the reader will refuse', async () => {
+    census([frame({ template_url: 'https://evil.test/x.png' })]);
+
+    const body = await (await CONFIG(configRequest())).json();
+    expect(body.templates.readableCount).toBe(0);
+    expect(body.templates.refused).toEqual([
+      { id: uuid, name: 'Graduation 2026', reason: 'host-not-allowed', host: 'evil.test' },
+    ]);
+    const blockers = body.blockers.join(' ');
+    expect(blockers).toContain('1 active template');
+    expect(blockers).toContain('host-not-allowed');
+    // The sentence has to name the fix, not just the count — this is the state the
+    // whole feature was invisible in.
+    expect(blockers).toMatch(/re-upload|edit the template|storage/i);
+  });
+
+  it('separates a same-origin row in the wrong bucket from a foreign host', async () => {
+    census([frame({ template_url: `${ORIGIN}/storage/v1/object/public/avatars/face.png` })]);
+
+    const body = await (await CONFIG(configRequest())).json();
+    expect(body.templates.refused[0].reason).toBe('bucket-not-allowed');
+  });
+
+  it('counts an allowlisted remote frame as readable', async () => {
+    census([frame({ template_url: 'https://images.unsplash.com/photo-1.png' })]);
+
+    const body = await (await CONFIG(configRequest())).json();
+    // `templateImagePlan` answers `remote`, not `storage`, for a host on the closed
+    // SSRF list, and the compositor can read it. Counting only same-origin objects
+    // would report a working template as broken — a blocker nobody can act on.
+    expect(body.templates).toMatchObject({ activeCount: 1, readableCount: 1, refused: [] });
+    expect(body.blockers.join(' ')).not.toMatch(/template/i);
+  });
+
+  it('reports a row with no stored frame, and no invented host', async () => {
+    census([frame({ template_url: null })]);
+
+    const body = await (await CONFIG(configRequest())).json();
+    // `empty` is its own reason — the fix is to upload a frame, not to move one —
+    // and `host` stays null rather than becoming the string "null" in a console cell.
+    expect(body.templates.refused).toEqual([{ id: uuid, name: 'Graduation 2026', reason: 'empty', host: null }]);
+  });
+
+  it('counts every refusal but lists the cap', async () => {
+    census(Array.from({ length: 25 }, (_, i) => frame({ id: `t${i}`, name: `Template ${i}`, template_url: 'https://evil.test/x.png' })));
+
+    const body = await (await CONFIG(configRequest())).json();
+    expect(body.templates).toMatchObject({ activeCount: 25, readableCount: 0, refusedCount: 25 });
+    // The count in the sentence is the true one; the array is what a banner can
+    // render. Both properties matter, so neither is allowed to imply the other.
+    expect(body.templates.refused).toHaveLength(20);
+    expect(body.blockers.join(' ')).toContain('25 active templates');
+  });
+
+  it('separates "nothing published yet" from "nothing readable"', async () => {
+    census([
+      frame({ id: 'd1', status: 'draft', template_url: 'https://evil.test/a.png' }),
+      frame({ id: 'd2', status: 'draft' }),
+      frame({ id: 'a1' }),
+    ]);
+
+    const body = await (await CONFIG(configRequest())).json();
+    // A broken draft is a studio problem, not a contestant outage: the blocker
+    // fires on the active set only, and `draftCount` is what stops a fresh
+    // environment (0 active) from being reported as a reader that works.
+    expect(body.templates).toMatchObject({ activeCount: 1, readableCount: 1, draftCount: 2, refused: [] });
+    expect(body.blockers.join(' ')).not.toMatch(/template/i);
+  });
+
+  it('survives a failed census as a blocker instead of a 500 on the status page', async () => {
+    census(null, { code: '42P01', message: 'relation "contest_templates" does not exist' });
+
+    const res = await CONFIG(configRequest());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.templates).toMatchObject({ counted: false, activeCount: 0, readableCount: 0, refused: [] });
+    expect(body.blockers.join(' ')).toContain('templates could not be counted');
+  });
+
+  it('publishes the renderer\'s own bounds and preset list, verbatim', async () => {
+    census([]);
+    const body = await (await CONFIG(configRequest())).json();
+
+    // The parity assertion is made against the imported table, not a literal:
+    // the point is that the console's sliders are bounded by the same numbers the
+    // compositor clamps against, so a seventh knob or a widened range reaches the
+    // admin UI without anyone editing two packages.
+    expect(body.blend.bounds).toEqual(BOUNDS);
+    expect(body.blend.bounds.featherPx).toEqual([0, 2]);
+    expect(body.blend.presets).toEqual(Object.keys(PRESETS));
+    expect(body.blend.shadowModes).toEqual([...SHADOW_MODES]);
+    expect(body.blend.modes).toEqual([...PHOTO_MODES]);
+    expect(body.blend.anchors).toEqual([...SLOT_ANCHORS]);
   });
 });
