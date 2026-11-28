@@ -1159,9 +1159,57 @@ The survivor is the finding, not a rounding error: with two *drafts*, the CTE's 
 
 ## Task 14: Sweep, push, stacked PR, census
 
-- [ ] **Step 1:** `cd frontend-web && npx vitest run tests/unit 2>&1 | tail -20`, `npm run type-check`, `npm run lint`; `cd ../frontend-admin && npx vitest run && npm run type-check`; `cd ../backend && go build ./... && go vet ./tests/voting/`; `bash scripts/ci/check-migration-versions.sh`; `npx @redocly/cli@1 lint contracts/openapi.yaml --config redocly.yaml --max-problems=3000` if any contract file changed.
-- [ ] **Step 2:** `git push -u origin feat/contest-template-studio`, then `gh pr create --base feat/contest-photo-blend-layer --title "feat(contest-studio): P3 admin template studio" --body-file <draft>` recording the measured numbers from Step 1 and Task 4's live output, and stating that no production env var is required.
-- [ ] **Step 3:** `gh workflow run "CI — CLAUDE.md gates" --ref feat/contest-template-studio` (stacked heads are outside `ci.yml:76-77`'s `pull_request` scope) and read the census from `commits/<sha>/check-runs --paginate | sort | uniq -c`, using `python3 scripts/ci/required-checks.py --branch main` for the required-context names.
+- [x] **Step 1:** `cd frontend-web && npx vitest run tests/unit 2>&1 | tail -20`, `npm run type-check`, `npm run lint`; `cd ../frontend-admin && npx vitest run && npm run type-check`; `cd ../backend && go build ./... && go vet ./tests/voting/`; `bash scripts/ci/check-migration-versions.sh`; `npx @redocly/cli@1 lint contracts/openapi.yaml --config redocly.yaml --max-problems=3000` if any contract file changed.
+
+  Executed on `8bb5feb40` with every command's output redirected to a file and `echo RC=$?` immediately after it (piping to `tail` reports `tail`'s status, not the gate's). Measured:
+
+  | Gate | Result |
+  | --- | --- |
+  | `frontend-web` `npx vitest run tests/unit` | `Test Files 3 failed \| 314 passed \| 1 skipped (318)` · `Tests 5 failed \| 3284 passed \| 4 skipped \| 1 todo (3294)` · 138.77 s · **rc=1** |
+  | — the five red | `openmic/beat-download-origin.spec.ts` ×1, `registration/contest-admin-schedule-route.spec.ts` ×2, `wallet/bank.spec.ts` ×2 |
+  | — attribution: same three files alone | `Test Files 1 failed \| 2 passed (3)` · `Tests 2 failed \| 12 passed (14)` — **byte-identical verdict on base `7c7ead9e8` and on HEAD**; only `contest-admin-schedule-route.spec.ts` stays red, and both of its tests need a live Postgres |
+  | `frontend-web` `npm run type-check` | **rc=0**, no diagnostics |
+  | `frontend-web` `npm run lint` | `✖ 484 problems (0 errors, 484 warnings)` — and the 484 are not ours: `npx eslint -f json` over **the 32 changed `frontend-web` files** reports `files scanned: 32 · total errors: 0 · total warnings: 0`, rc=0. Scanning them by name is the point — absence from the repo-wide log alone would only prove eslint never looked |
+  | `frontend-admin` `npx vitest run tests/admin/contests` | `Test Files 2 passed (2)` · `Tests 51 passed (51)` · 4.63 s · **rc=0** |
+  | `frontend-admin` `npx vitest run` (whole package) | `Test Files 20 passed (20)` · `Tests 213 passed (213)` · **`Errors 71 errors`** · rc=1 |
+  | — the 71, counted not assumed | 91 `*.test.*`/`*.spec.*` files on disk = **20 that boot + 71 that cannot** (71 unique paths, all of them real files). Cause is Node 22.14.0 vs `undici@8.12.3/lib/interceptor/decompress.js:78` binding `zlib.createZstdDecompress`; **neither new test file is in the 71** — matched on basenames, because the worktree path again contains the branch name |
+  | `frontend-admin` `npm run type-check` | **rc=0** (`/tmp/p3_admtsc_final.log`) |
+  | `frontend-admin` `NODE_ENV=production npm run check:mock-flags` | `45 flags · 45 live · 0 allowlisted-mock · 0 unlisted-mock` · `✔ No unlisted modules ship mock.` · rc=0 |
+  | `backend` `go build ./...` / `go vet ./tests/voting/` | rc=0 / rc=0, both logs empty |
+  | `bash scripts/ci/check-migration-versions.sh` | `migration version guard passed — 762 migrations, all versions unique.` rc=0 |
+  | redocly contract lint | **not run — no `contracts/**` file is in the diff** (`git diff --name-only 7c7ead9e8..HEAD \| grep ^contracts/` → empty) |
+
+  The `frontend-web` unit rc=1 is the only red on the tree, and it is not this PR's: two of the three files pass in isolation and the third fails identically on the base commit. **Read the row above as "4 of 5 failures are parallel-run artifacts, 2 are pre-existing and need a database"**, not as a green suite. CI runs no vitest lane for either frontend (`ci.yml:100-113` gives `frontend-admin` type-check + mock-flags only), so these local numbers are the actual evidence for the test layers.
+
+- [x] **Step 2:** `git push -u origin feat/contest-template-studio`, then `gh pr create --base feat/contest-photo-blend-layer --title "feat(contest-studio): P3 admin template studio" --body-file <draft>` recording the measured numbers from Step 1 and Task 4's live output, and stating that no production env var is required.
+
+  Pushed `7c7ead9e8..8bb5feb40` (24 commits), then **PR #1189** — https://github.com/paymax2022/spotlight-latest1/pull/1189 — base `feat/contest-photo-blend-layer`, head `feat/contest-template-studio`. `gh pr view 1189 --json` returns `{"add":10110,"del":283,"files":41,"mergeable":"MERGEABLE","mergeStateStatus":"UNSTABLE"}`; `commits` = 24; by area `frontend-web/tests` 13, `frontend-web/app` 11, `frontend-web/src` 8, `frontend-admin/tests` 2, `frontend-admin/app` 2, `docs/superpowers` 2, `supabase/migrations` 1, `frontend-admin/src` 1, `backend/tests` 1. `UNSTABLE` here means non-required lanes were still running, not a block. Body drafted at `/tmp/p3_pr_body.md`; it carries Task 4's live-DB output, the 100-mutant census (4+5+9+10+15+22+15+20), the four places the implementation left the plan (templateBytes→census, 409-vs-502, `getBlendConfig`→`getStudioConfig`, always-state-the-art-fields), and the production-env statement.
+
+  **A collision arrived mid-Task-14, from another session.** PR **#1188** (`fix/contest-template-supabase-origin`, commit `147156d4e`) landed in a sibling session and rewrites the *same* `isAllowedRemoteImageUrl` that Task 1 rewrote here (`43828bc4f`), adding an identically-named `configuredSupabaseOrigin()`. It is **not** on `main` — measured `gh pr view 1188 --json state,mergedAt` → `OPEN` / `null`, `origin/main` is `d4a837f64`, and `git merge-base --is-ancestor 147156d4e origin/main` fails — so whoever merges second hits a conflict in `frontend-web/src/lib/config/index.ts`. Both sides reject userinfo, keep the six CDN literals https-only, compare `URL#origin` exactly, and return null with no config; #1188 trusts **any path** on the configured origin, Task 1 requires `/storage/v1/object/public/<allowlisted bucket>/<key>`. Cross-ran both suites rather than debating the diff (temp file deleted, `config/index.ts` restored byte-identical, sha256 `8caf9feb…` before and after, `git status` clean):
+
+  | Cross-run | Measured |
+  | --- | --- |
+  | #1188's 16 tests against **this** `config/index.ts` | `Test Files 1 passed (1)` · `Tests 16 passed (16)` · rc=0 |
+  | **this** Task 1 spec (10 tests) against **#1188's** `config/index.ts` | `Tests 4 failed \| 6 passed (10)` — 2 × `TypeError: isConfiguredSupabaseOrigin is not a function` (an export only this branch adds), 2 × `expected true to be false` on `/storage/v1/object/private/…`, another bucket, `/rest/v1/contest_templates` and `/` |
+
+  Task 1's path predicate is therefore the reason a wrong `template_url` still surfaces as `host-not-allowed` instead of a Sharp decode error, and #1188's own tests pass on it. Recorded as a "Collides with #1188" section in the PR body with the resolution order for both directions; nothing was merged, and the sibling session was sent these numbers.
+- [x] **Step 3:** `gh workflow run "CI — CLAUDE.md gates" --ref feat/contest-template-studio` (stacked heads are outside `ci.yml:76-77`'s `pull_request` scope) and read the census from `commits/<sha>/check-runs --paginate | sort | uniq -c`, using `python3 scripts/ci/required-checks.py --branch main` for the required-context names.
+
+  Dispatched run **46144771321** on `8bb5feb4042d05303999b5de462054f7eb02c2a8` and watched it to the end. Final state, read twice (the watcher's own tally, then `gh run view` + `gh api …/check-runs --paginate` directly, because the watcher started printing `no check-runs reported yet` on transient empty responses — an empty API page is not evidence of anything):
+
+  - `gh run view 46144771321 --json status,conclusion` → `status: completed`, `conclusion: success`, **0 non-completed jobs**.
+  - **69 check-runs, 69 distinct names, `completed/success` for every one** (`ALL 69 SUCCESS: True`).
+
+  Against `python3 scripts/ci/required-checks.py --branch main` (14 names), the census is **9 present-and-green, 5 absent by construction** — and the five are not a gap in this branch:
+
+  | Required context | On `8bb5feb40` |
+  | --- | --- |
+  | `backend (go build + vet) / verify`, `frontend-admin (type-check) / typecheck`, `frontend-web (regression + money + contract + tsc + lint) / verify`, `hygiene (client secrets + live-DB test gate + migration versions)`, `migrations (additive-only guard) / guard`, `mobile (whole-app tsc) / typecheck`, `openapi (validate all contracts) / validate`, `which modules changed`, `workflows (actionlint)` | **9/9 completed/success** — all emitted by `ci.yml` ("CI — CLAUDE.md gates"), some through `_reusable-*.yml` calls, hence the `caller / inner` name form |
+  | `backend`, `frontend-admin`, `frontend-web`, `migrations`, `secrets-scan` | **ABSENT** — these five live only in `.github/workflows/ci-optimized.yml:14,35,54,72,137` ("CI (Zero-Billing Optimized)"), whose trigger is `push: branches:[main]` / `pull_request: branches:[main]` (`ci-optimized.yml:3-6`) and whose expensive jobs carry `if: github.event_name == 'pull_request' \|\| github.ref == 'refs/heads/main'`. #1189's base is `feat/contest-photo-blend-layer`, so that workflow never runs. Same shape as #1181: a non-`main` base gets no PR-bound gate run, so you dispatch `ci.yml` by hand and expect fewer contexts |
+
+  So the stack carries the nine contexts `ci.yml` can produce, green, and the remaining five will appear the moment the PR is rebased to target `main` — nothing here hides a red.
+
+  **This record is itself a docs-only commit.** Per #1181's lesson (the commit that records a census restarts the lanes), the new head's gate numbers go into the PR body rather than into another commit; `git diff --stat 8bb5feb40..HEAD` is one markdown file.
 - [ ] **Step 4:** Report. **Do not merge.**
 
 ---
