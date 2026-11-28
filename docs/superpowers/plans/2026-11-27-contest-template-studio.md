@@ -1030,8 +1030,54 @@ The survivor is the finding, not a rounding error: with two *drafts*, the CTE's 
 - Consumes: `templateImagePlan` (no network), `BOUNDS`/`PRESETS`.
 - Produces: response gains `templates: { activeCount, readableCount, refused: [{ id, name, reason, host }] }` and `blend: { presets: string[], bounds: Record<string, [number, number]> }`, plus a blocker sentence when `refused.length > 0`.
 
-- [ ] **Step 1: Failing test**: one active template with a `contest-templates` object URL → `readableCount 1`, no template blocker; one with `https://evil.test/x.png` → `refused[0].reason === 'host-not-allowed'` and a blocker naming the count; `blend.bounds.featherPx` equals `[0, 2]` verbatim from `params.ts` (this is the parity test that keeps the console's slider bounds honest — no cross-package import needed).
-- [ ] **Step 2: Implement, run, commit** `feat(contest-studio): census stored templates and publish blend bounds`.
+- [x] **Step 1: Failing test**: one active template with a `contest-templates` object URL → `readableCount 1`, no template blocker; one with `https://evil.test/x.png` → `refused[0].reason === 'host-not-allowed'` and a blocker naming the count; `blend.bounds.featherPx` equals `[0, 2]` verbatim from `params.ts` (this is the parity test that keeps the console's slider bounds honest — no cross-package import needed).
+
+  Nine tests added → **`9 failed | 22 passed (31)`** against the pre-change route (re-measured after the commit by checking out `11ad83d54`'s blob, running, and restoring; the restore was confirmed by blob hash `29ef53fce6…` and a clean `git status`). The 22 pre-existing config-status assertions never went red, so the failure is the new payload, not a rewrite of the old one.
+
+- [x] **Step 2: Implement, run, commit** `feat(contest-studio): census stored templates and publish blend bounds`.
+
+  `npx vitest run tests/unit/photo-jobs/routes.test.ts` → **31 passed**; `npx vitest run tests/unit/photo-jobs tests/unit/voting` → **90 files passed + 1 skipped, 864 passed | 1 skipped | 1 todo (866)** (Task 11's closing number for the same pair was 855, and 855 + 9 = 864); `npm run type-check` → **rc=0**; `npx eslint` on the three changed files → **rc=0, no output**.
+
+  Committed → `35556c10e feat(contest-studio): census stored templates and publish blend bounds` (3 files, +360 / −1).
+
+  **Where the implementation left the plan, and why.** The plan's `Produces` line asked for `activeCount/readableCount/refused` and `blend.presets/bounds`; the route ships five more fields, each because one of the nine tests would otherwise have been an assertion about a number that could lie:
+
+  | added | the failure it closes |
+  | --- | --- |
+  | `refusedCount` (exact) beside `refused` (capped at 20) | my own cap test caught this: with 25 refused rows the banner computed its count from `refused.length` and would have announced "20 active templates" — the page that exists to size a problem understating it. |
+  | `draftCount` | `refusedCount: 0, activeCount: 0` and "every active frame is refused" are the same screen without it. A test asserts a drafts-only table raises **no** blocker. |
+  | `truncated` | an unbounded scan capped at 500 turns "the first 500 rows" into a total in silence. The cap lives in the route because this read runs on every view of a page an admin can add rows to forever. |
+  | `counted` + `code` | a census that cannot run degrades to a blocker naming the SQLSTATE (`42P01` = migrations not applied here) instead of a 500. The spec's rule is that this page is how an operator finds out the feature is broken; erroring out loses the provider and job verdicts it already had. |
+  | `source: 'url-shape'` + `note` | the honesty field — see below. |
+  | `blend.modes/anchors/shadowModes` | the studio needs all four renderer tables, and restating any of them in `frontend-admin` is exactly the drift `bounds` is pinned against. |
+
+  **Spec §6/§8 vs. the plan: `templateBytes` is not what shipped.** The attached spec asked this endpoint for `templateBytes: { sampledTemplateId, ok, reason?, source }` — a fetch of one sampled row's bytes. I built the shape census instead, because a probe that reads one row cannot answer "how many of my templates are broken", and because a diagnostics `GET` that fetches remote images is a page whose latency and failure mode belong to somebody else's CDN. The spec's underlying demand — that the fact be *visible on `photo-config-status` without an admin having to try* — is met in two parts rather than one: the census reports, with no network at all, every row the compositor's own predicate `templateImagePlan` refuses, and it is the only surface that names the **host** (`refused[].host`, from `new URL(...).host`, `null` when the stored value is not parseable), which is the half of §8's "names the reason and the host" the preview route does not carry: `buildPreview` refuses with `template_bytes_unreadable:<reason>` and a sentence about the reason only. The two reasons a shape check cannot see — `http-status`, `not-fetchable` — are named in `templates.note` as the preview's job. So `source: 'url-shape'` is a real field, not decoration: it tells the reader which half of the question this payload is answering. Carried to the PR body: that refusal answers **409** where spec §6's table row said **502**, a divergence Task 10's record does not mention; the census's own `blend.bounds` parity and `403 before Supabase` assertions are unaffected.
+
+  The read is `createAdminClient()`, and that matters for one field specifically: the table's `public_read_contest_templates` policy in migration `20260405700000_contest_image_templates.sql` answers only `status = 'active'` rows, so `draftCount` is information an admin read is the only way to get. One test pins the request shape rather than trusting it: the filter must be `{ column: 'status', values: ['active', 'draft'] }`, the column list must contain `template_url` and must not be `'*'`, and a numeric `.limit` must be applied — which is what kills M13/M14 without a second suite.
+
+  **Fifteen mutants against `route.ts` (baseline 31 passed), driven by `/tmp/t12_mutants.py`** — same anchor-uniqueness preflight (`anchors unique for all 15 mutants`), same per-mutant restore verified by sha256, `git status` clean afterwards. **No survivors:**
+
+  | mutant | red |
+  | --- | --- |
+  | M1 filter counts drafts as active | 1 |
+  | M2 filter excludes drafts | 1 |
+  | M3 `activeCount` counts every row | 1 |
+  | M4 `readableCount` ignores the plan | 2 |
+  | M5 refused list uncapped | 1 |
+  | M6 blocker counts the listed page | 1 |
+  | M7 census error treated as success | 1 |
+  | M8 host invented from the raw value | 2 |
+  | M9 `bounds` restated, not imported | 1 |
+  | M10 preset list hardcoded short | 1 |
+  | M11 photo modes truncated | 1 |
+  | M12 refused blocker never fires | 2 |
+  | M13 `select('*')` | 1 |
+  | M14 no scan cap on the read | 1 |
+  | M15 admin gate skipped | 1 |
+
+  M7 and M15 are the two that had no other way to be seen: the first is a census that silently reports a healthy zero templates, the second is an admin gate skipped in a way no response-shape test would notice, which is why the 403 test now also asserts `expect(supabase.createAdminClient).not.toHaveBeenCalled()` — the page must not read the table for someone who cannot see the page.
+
+  Also in this commit: `src/server/template-studio/authoring.ts` had a docstring pointing at `lifecycle.ts`, a file Task 11 deliberately never created (its constants live in `_shared.ts` beside `studioRpcFailure`). Comment-only, one line.
 
 ## Task 13: The console studio
 
