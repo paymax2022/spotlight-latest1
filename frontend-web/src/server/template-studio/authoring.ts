@@ -23,7 +23,7 @@
  *   Same table, opposite failure policy, on purpose.
  *
  * Nothing here throws, and nothing here touches the database — the RPC calls live
- * in the routes and in `lifecycle.ts`, so these functions stay testable without a
+ * in the lifecycle routes and in `_shared.ts` beside `studioRpcFailure`, so these functions stay testable without a
  * client.
  */
 import {

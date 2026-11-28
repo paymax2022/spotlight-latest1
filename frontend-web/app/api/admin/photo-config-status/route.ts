@@ -19,14 +19,123 @@
  * the one who needs to know why their portrait is not appearing. A narrower
  * permission would be a new entry in the RBAC seed and a grant on three roles,
  * which is a decision for the owner, not for this route.
+ *
+ * Task 12 added the two things P3 made knowable. `templates` censuses the stored
+ * frame URLs through `templateImagePlan`, which is the same predicate the
+ * compositor runs before it spends a fetch, and a census that fails is a blocker
+ * rather than a 500, because this page exists to explain broken state. The read
+ * arrives through the service-role client like every other admin route here, and
+ * that matters for one field: the table's public SELECT policy only answers
+ * `status = 'active'` rows, so `draftCount` is something only an admin read can
+ * report. `blend` hands the console the renderer's own preset list, numeric
+ * bounds and enums instead of letting the studio restate them in another package.
  */
 import { handleApiError, successResponse } from '@/src/lib/api/responses';
 import { photoProviderConfig } from '@/src/lib/media/provider';
+import { templateImagePlan } from '@/src/lib/media/template-image';
 import { hasR2Config } from '@/src/lib/storage/r2';
+import { BOUNDS, PRESETS, SHADOW_MODES } from '@/src/lib/rendering/blend/params';
+import { createAdminClient } from '@/src/lib/supabase/server';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { photoJobSummary } from '@/src/server/photo-jobs/job-store';
+import { PHOTO_MODES, SLOT_ANCHORS } from '@/src/server/template-studio/authoring';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * How many rows the census looks at, and why the number is in the route rather
+ * than left to Postgres: this read runs on every view of a diagnostics page, and
+ * an unbounded `select` over a table an admin can add rows to without limit is a
+ * page that gets slower on its own. `truncated` says when the cap was reached
+ * instead of letting the counts quietly become "the first 500".
+ */
+const TEMPLATE_CENSUS_LIMIT = 500;
+
+/** Refused rows are listed for the operator; the counts stay exact either way. */
+const REFUSED_LIST_LIMIT = 20;
+
+interface TemplateCensus {
+  counted: boolean;
+  activeCount: number;
+  readableCount: number;
+  draftCount: number;
+  refused: { id: string; name: string; reason: string; host: string | null }[];
+  /** Exact, unlike `refused`, which is the list a banner can render. */
+  refusedCount: number;
+  truncated: boolean;
+  code?: string;
+}
+
+/**
+ * Classify the stored template URLs without fetching any of them.
+ *
+ * `templateImagePlan` is the same predicate `readTemplateImage` runs before it
+ * spends a request, so a row this reports as refused is a row the compositor will
+ * refuse too — which is the whole P3 reason the census exists (P2's defect was a
+ * URL shape no test had ever put through the real guard). Two failures it cannot
+ * see — `http-status` and `not-fetchable` — are named in the payload's `note`
+ * rather than guessed at, because the preview route is the surface that pays a
+ * fetch and reports them.
+ */
+async function censusTemplates(supabase: ReturnType<typeof createAdminClient>): Promise<TemplateCensus> {
+  const { data, error } = await supabase
+    .from('contest_templates')
+    .select('id, name, status, template_url')
+    .in('status', ['active', 'draft'])
+    .limit(TEMPLATE_CENSUS_LIMIT);
+
+  if (error) {
+    // A census that could not run is a blocker with a code, not a 500: this page is
+    // how an operator finds out the feature is broken, and turning it into an error
+    // page loses the provider and job verdicts it already had. `code` is the
+    // Postgres SQLSTATE (`42P01` = the migration is not applied here), never the
+    // message — the payload's rule is names and verdicts, not values.
+    return {
+      counted: false,
+      activeCount: 0,
+      readableCount: 0,
+      draftCount: 0,
+      refused: [],
+      refusedCount: 0,
+      truncated: false,
+      code: error.code ?? 'unknown',
+    };
+  }
+
+  const rows = data ?? [];
+  const active = rows.filter((r) => r.status === 'active');
+  const refused: TemplateCensus['refused'] = [];
+  let readable = 0;
+  let refusedCount = 0;
+
+  for (const row of active) {
+    const plan = templateImagePlan(row.template_url);
+    if (plan.kind === 'refused') {
+      refusedCount += 1;
+      let host: string | null = null;
+      try {
+        host = new URL(String(row.template_url)).host;
+      } catch {
+        host = null;
+      }
+      if (refused.length < REFUSED_LIST_LIMIT) {
+        refused.push({ id: row.id, name: row.name, reason: plan.reason, host });
+      }
+      continue;
+    }
+    readable += 1;
+  }
+
+  return {
+    counted: true,
+    activeCount: active.length,
+    readableCount: readable,
+    draftCount: rows.length - active.length,
+    refused,
+    refusedCount,
+    truncated: rows.length === TEMPLATE_CENSUS_LIMIT,
+  };
+}
 
 export async function GET(request: Request) {
   try {
@@ -34,6 +143,7 @@ export async function GET(request: Request) {
 
     const provider = photoProviderConfig();
     const summary = await photoJobSummary();
+    const templates = await censusTemplates(createAdminClient());
     const r2Configured = hasR2Config();
     const publicBaseUrlConfigured = Boolean(process.env.R2_PUBLIC_BASE_URL);
     const paused = summary.paused ?? 0;
@@ -55,6 +165,26 @@ export async function GET(request: Request) {
     }
     if (paused > 0) {
       blockers.push(`${paused} paused job(s) exhausted their retries and need operator review`);
+    }
+    if (!templates.counted) {
+      blockers.push(
+        `Stored templates could not be counted — the template read failed (code ${templates.code}). Apply the contest-photo migrations, then reload this page.`,
+      );
+    } else if (templates.refusedCount > 0) {
+      // The blocker P2 could not raise: every job for these contests pastes the
+      // portrait instead of compositing it, and nothing but this page says so
+      // before a contestant notices. Reasons are deduplicated because the common
+      // shape of this failure is one policy mistake repeated across every row, and they
+      // are the reasons of the listed page — an exhaustive set would need the uncapped
+      // array this cap exists to avoid.
+      const reasons = [...new Set(templates.refused.map((r) => r.reason))].join(', ');
+      const n = templates.refusedCount;
+      blockers.push(
+        `${n} active template${n === 1 ? ' has' : 's have'} a frame the image reader refuses (${reasons}), ` +
+          `so ${n === 1 ? 'its contest' : 'their contests'} paste the portrait instead of compositing ` +
+          `it — re-upload each frame into the contest-templates bucket, or edit the template URL to a ` +
+          `public object on this project's own Supabase origin.`,
+      );
     }
 
     return successResponse({
@@ -87,6 +217,28 @@ export async function GET(request: Request) {
         // migration's summary function counts statuses, and inventing
         // `failedRecently` here would mean a number nothing computes.
         failed: summary.failed ?? 0,
+      },
+      templates: {
+        ...templates,
+        // Spec §7 asked this surface to say where its verdict came from, and the
+        // honest answer is "the stored shape". `http-status` and `not-fetchable` —
+        // an object deleted from the bucket, or a storage service that is down —
+        // need the bytes read, which is what the studio's preview route pays for.
+        source: 'url-shape',
+        note:
+          'Every verdict here is derived from the URL stored on the row, with no fetch: it is the same predicate the compositor runs before it spends a request. A frame that passes can still fail to download; the studio preview is where that answer comes from.',
+      },
+      blend: {
+        // The renderer's own tables, passed through rather than restated, so the
+        // console's selects and sliders cannot drift from what the compositor will
+        // clamp to. `bounds` is the parity the studio depends on: a slider whose
+        // max disagrees with `BOUNDS` lets an admin save a number that silently
+        // renders as something else.
+        presets: Object.keys(PRESETS),
+        bounds: BOUNDS,
+        modes: [...PHOTO_MODES],
+        anchors: [...SLOT_ANCHORS],
+        shadowModes: [...SHADOW_MODES],
       },
       blockers,
     });
