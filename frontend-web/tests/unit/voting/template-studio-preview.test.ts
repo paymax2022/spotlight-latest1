@@ -343,7 +343,11 @@ describe('POST /api/admin/voting/contest-templates/[id]/preview', () => {
     expect(res.headers.get('content-type')).toMatch(/^image\//);
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(res.headers.get('x-blend-applied')).toBe('true');
-    const decisions = JSON.parse(decodeURIComponent(res.headers.get('x-render-decisions') ?? ''));
+    const rawHeader = res.headers.get('x-render-decisions') ?? '';
+    // Percent-encoded, not raw JSON: a header value is a single ASCII token, and the
+    // decision record carries operator prose that can hold a non-ASCII character.
+    expect(rawHeader).not.toContain('{');
+    const decisions = JSON.parse(decodeURIComponent(rawHeader));
     expect(decisions).toMatchObject({ applied: true, mode: { declared: 'background' } });
     const bytes = Buffer.from(await res.arrayBuffer());
     expect(bytes.byteLength).toBeGreaterThan(0);
