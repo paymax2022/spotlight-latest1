@@ -1089,14 +1089,73 @@ The survivor is the finding, not a rounding error: with two *drafts*, the CTE's 
 
 **Interfaces:**
 - Consumes: the routes from Tasks 8-12.
-- Produces: service adds `duplicateContestTemplate`, `publishContestTemplate`, `archiveContestTemplate`, `listContestTemplateVersions`, `uploadSlotArt`, `previewContestTemplate`, `getBlendConfig`; `TemplateSlot` gains `imageUrl/anchor/bleed/faceProtect`; `ContestTemplate` gains `photoMode/blendPreset/blendSettings/publishedAt`; `replaceTemplateSlots` payloads **always include the four art fields** (the route's defaults must never be reached by this client).
+- Produces: service adds `duplicateContestTemplate`, `publishContestTemplate`, `archiveContestTemplate`, `listContestTemplateVersions`, `uploadSlotArt`, `previewContestTemplate`, `getStudioConfig` — named for what it returns, the whole Task 12 payload (census and blockers included) rather than only the blend tables; `TemplateSlot` gains `imageUrl/anchor/bleed/faceProtect`; `ContestTemplate` gains `photoMode/blendPreset/blendSettings/publishedAt`; `replaceTemplateSlots` payloads **always include the four art fields** (the route's defaults must never be reached by this client).
 
   Task 9 tightened why that last rule is load-bearing: the PUT route's `ownsArt` test is "`image_url` is stated on **every** slot", so a payload that omits it on even one slot is treated as an art-unaware client and gets 400 `slot_art_would_be_dropped` wherever stored art exists. Send `imageUrl: null` for a slot with no art — never leave the key out.
 
-- [ ] **Step 1: Failing request test** asserting the PUT body from `replaceTemplateSlots` contains all four fields for every slot (this is what closes the silent-drop path that the replace semantics create).
-- [ ] **Step 2: Failing component test** (jsdom + `@testing-library/react`): the panel renders one range input per `bounds` key with `min`/`max` from the fetched config; a `409 template_is_published` on save shows the server sentence; the preview button renders the returned object URL in an `<img>` and shows `blend applied`/`blend declined` from the header.
-- [ ] **Step 3: Implement** the panel (preset select, photo-mode select, sliders from bounds, slot-art row with upload + anchor select + bleed/face-protect toggles, Publish/Duplicate/Archive/History buttons, preview pane), mount it in the existing row expansion of `page.tsx`, and keep the current numeric editor working unchanged.
-- [ ] **Step 4: Run** `cd frontend-admin && npx vitest run tests/admin/contests && npm run type-check && npm run check:mock-flags` (with `NODE_ENV=production`, the CI form) → pass. Commit `feat(contest-studio): admin template studio panel`.
+- [x] **Step 1: Failing request test** asserting the PUT body from `replaceTemplateSlots` contains all four fields for every slot (this is what closes the silent-drop path that the replace semantics create).
+
+  Written first, and re-measured red after the fact rather than remembered: with `d183c4eac^`'s service blob restored into the tree (sha256 `0fb26f0d8d…`), `npx vitest run tests/admin/contests/template-studio-request.test.ts` → **16 failed | 3 passed (19)**, rc=1, the failures being `TypeError: duplicateContestTemplate is not a function`, `publishContestTemplate is not a function`, `…Versions`, `…SlotArt`, `previewContestTemplate` and the art-field assertions. The file was then restored from a copy and verified by hash (`63742cb7fd…`) with `git status` clean — not with `git checkout --`, which would have thrown away the uncommitted implementation.
+
+  The three that passed against the old service are the ones worth naming, because they are the pre-existing surface the new rules had to stay compatible with: the ten numeric fields still go on the wire, the geometry-only client still raises rather than sending, and a `409` sentence still reaches the caller verbatim.
+
+- [x] **Step 2: Failing component test** (jsdom + `@testing-library/react`): the panel renders one range input per `bounds` key with `min`/`max` from the fetched config; a `409 template_is_published` on save shows the server sentence; the preview button renders the returned object URL in an `<img>` and shows `blend applied`/`blend declined` from the header.
+
+  **The plan's testing stack is not what ran, and the reason is measured.** `frontend-admin` on this machine is Node **22.14.0**, and its jsdom environment cannot start a worker at all: `node_modules/undici@8.12.3/lib/interceptor/decompress.js:78` binds `zlib.createZstdDecompress` at module load and that function only exists from Node 22.15. Baseline on the branch: **18 files / 162 tests pass, 71 files die with "Failed to start forks worker"** — 71 of the app's 89 test files, i.e. the DOM corpus of this console is already unrunnable here, and a `@testing-library/react` test would have joined it. So `template-studio.test.tsx` declares `// @vitest-environment node` and asserts on `renderToStaticMarkup`, which needs no DOM and no undici. That only covers the initial render, so the panel was built as a **pure function of props** — no `useState`, no `useEffect`, no service import, no `fetch` — which makes the initial render *every* render, and the file asserts exactly that (`for (const forbidden of ['fetch(', 'useEffect(', 'useState(', 'XMLHttpRequest'])` plus a regex that admits type-only imports from the service but not its functions). Red for this step was re-measured by moving `TemplateStudio.tsx` aside: `Error: Cannot find module '../../../app/admin/voting/templates/TemplateStudio'`, 1 failed file, rc=1, restored hash-verified (`664a006d9e…`).
+
+  Two React behaviours were probed, not assumed, with throwaway `renderToStaticMarkup` runs inside the package (a probe outside it fails on module resolution): a controlled `<input>` emits **`value` last**, and a `<select>` renders `<option value="x" selected="">x</option>` — `selected` lands *after* `value`. Attribute order is therefore not a contract, which is why the assertions go through the panel's own `data-*` attributes (`data-field`, `data-action`, `data-selected`, `data-on`, `data-set`, `data-art`) and a `tag(html, action)` helper that finds a control by its action, and why the option-count assertion counts `<option value="` occurrences rather than whole tags.
+
+  **The fixture was wrong on the first draft, and fixing it changed the design.** It invented knobs — `exposure`, `saturation`, `vignette`, `grain`, `intensity` — which are not in the renderer's table and would have proven nothing about what the console actually receives. Replacing them with the sixteen real `BOUNDS` keys read out of `frontend-web/src/lib/rendering/blend/params.ts` surfaced a fact the invented knobs hid: **`shadow` is an override key with no numeric bound**, so it can never appear in `bounds` and needs its own `<select>` (from `blend.shadowModes`) — no slider renders it. The option census consequently became presets + modes + anchors + shadowModes.
+
+- [x] **Step 3: Implement** the panel (preset select, photo-mode select, sliders from bounds, slot-art row with upload + anchor select + bleed/face-protect toggles, Publish/Duplicate/Archive/History buttons, preview pane), mount it in the existing row expansion of `page.tsx`, and keep the current numeric editor working unchanged.
+
+  `TemplateStudio.tsx` (463 lines) is the panel; the page owns the draft, the fetches and the object URLs. Three things made the mount non-trivial:
+
+  - **`newDraft()` in `page.tsx` now states the four art fields.** The shipped geometry editor built slots from ten numeric fields, and Task 9/11's `toWireSlot` refuses a slot that does not state `imageUrl` — so leaving the editor as it was would have made the console's own PUT fail on every row the studio had touched. Stating them on creation is what keeps the numeric editor working unchanged *and* saveable.
+  - **The studio draft is a separate object merged at the prop boundary** (`template={{ ...t, ...studioDraft }}`), so `Save` PATCHes only the fields the admin actually moved instead of restating a whole row, and a studio error cannot be mistaken for the upload form's (its own `error`/`notice`/`busy` channels).
+  - **Task 12's census has a visible consumer here** — `templates.readableCount`/`activeCount`, the `refused[]` names with reason and host, and `blockers[]` all render, and when the read itself failed (`counted: false`) the panel prints the SQLSTATE-faithful "could not be read" and refuses to show a `N of M` number it does not have.
+
+  `rangeFields(config)` is exported because the count of sliders is a claim the tests need to make without hardcoding sixteen.
+
+- [x] **Step 4: Run** `cd frontend-admin && npx vitest run tests/admin/contests && npm run type-check && npm run check:mock-flags` (with `NODE_ENV=production`, the CI form) → pass. Commit `feat(contest-studio): admin template studio panel`.
+
+  | gate | result |
+  | --- | --- |
+  | `npx vitest run tests/admin/contests` | **2 files / 51 tests passed**, rc=0, 4.63 s |
+  | `npm run type-check` (`tsc --noEmit`) | **rc=0** |
+  | `NODE_ENV=production npm run check:mock-flags` | **45 flags · 45 live · 0 allowlisted-mock · 0 unlisted-mock**, `✔ No unlisted modules ship mock`, rc=0 |
+  | `npx vitest run` (whole admin package) | **20 files passed / 213 tests passed / 71 errors**, rc=1, 35.80 s |
+  | copied from Task 13's baseline run | 18 files / 162 tests / **the same 71 worker-boot errors** |
+
+  The whole-package run is rc=1 for the pre-existing reason and nothing else: 213 − 162 = **+51 tests**, +2 files, and the 71 errors are the identical jsdom/undici count, so no file this task added or touched depends on the broken environment. **There is no admin vitest lane in CI to catch any of it**: `.github/workflows/ci.yml:100-113` runs `npm run type-check && NODE_ENV=production npm run check:mock-flags` for `frontend-admin` and no test command, and the package's `lint` script is `next lint` with no `eslint.config.*` shipped (an `npx eslint` attempt pulled eslint 10 off the network and errored), so the two files above are the gate — stated as such rather than described as "CI runs the suite".
+
+  Committed → `d183c4eac feat(contest-studio): admin template studio panel` (5 files, **+1923 / −5**: `TemplateStudio.tsx` 463, `page.tsx` +299, `contestTemplatesService.ts` +258, request test 468, panel test 440).
+
+  **Twenty mutants, and three survivors worth writing down.** Driven by `/tmp/p3_mutate.py` against the two source files with an anchor-uniqueness preflight (no `ANCHOR-MISS`), each mutant reverted from an in-memory copy and the revert verified by sha256 (`TemplateStudio.tsx 664a006d9e`, `contestTemplatesService.ts 63742cb7fd`), `git status` clean afterwards:
+
+  | mutant | first pass | mutant | first pass |
+  | --- | --- | --- | --- |
+  | M1 `locked` always false | killed (3) | M11 server sentence wrapped in "Preview failed:" | killed (1) |
+  | M2 slider `disabled` dropped | killed (3) | M12 "Saving…" line removed | killed (1) |
+  | M3 `data-set` always "true" | killed (1) | M13 `counted` always true | killed (1) |
+  | M4 stored value not clamped | killed (1) | M14 refused art's host hidden | killed (1) |
+  | M5 "not overridden" wording | killed (1) | M15 empty chain never says "No earlier versions" | killed (1) |
+  | M6 one slider dropped | killed (2) | M16 version badge loses its `v` | **SURVIVED** |
+  | M7 anchors invented (`['auto','top']`) | killed (1) | M17 `toWireSlot` art guard removed | killed (1) |
+  | M8 unstated art treated as stated | killed (1) | M18 explicit `imageUrl: null` → `undefined` | killed (1) |
+  | M9 publish gate ignored | killed (2) | M19 absent `X-Blend-Applied` read as applied | **SURVIVED** |
+  | M10 preview verdict always "applied" | killed (1) | M20 stored `faceProtect` default flipped to opt-in | **SURVIVED** |
+
+  Each survivor was a real hole, not a fluke:
+
+  - **M16** — the history test asserted `toContain('v3')`, and its own fixture names the rows *`F v3`* and *`F v2`*, so the name satisfied it while the panel's `v` prefix was free to disappear. Now `toContain('<strong>v3</strong>')`.
+  - **M19** — both preview tests set the header, so nothing pinned the case where a proxy drops it: the implementation read it as *not applied*, and the mutant read it as applied, and the panel would have claimed a blend no response stated. New test: a 200 image with no blend headers → `applied: false`, `decisions: {}`, bytes intact.
+  - **M20** — the read-back test asserted only `imageUrl`, so `faceProtect: row.faceProtect !== false` could become `=== true` unnoticed. That is not a cosmetic default: a template stored before the column existed would read back as face-protect *off* and the next save would change every render of it. The test now states all four defaults and — the part that makes it worth having — saves the row it just read and asserts the wire body carries `imageUrl: null`, `anchor: 'auto'`, `bleed: false`, `faceProtect: true`, which is the round trip that proves a row this service produced passes this service's own write guard.
+
+  Fix commit → `ff5e8ec39 test(contest-studio): kill the three mutants the assertions missed` (2 test files, +57 / −13, no production code changed). Re-run: **20/20 killed**, `tests/admin/contests` 51 passed, `npm run type-check` rc=0.
+
+  **Two deliberate limits, carried to the PR body.** (1) A knob with no stored override renders its thumb at the bound midpoint and reads "not overridden": `/api/admin/photo-config-status` publishes bounds, not per-preset values, so the number a render actually uses for an unset knob is `PRESETS[preset]`'s and the panel declines to display a figure it would have to duplicate. (2) Nothing here types into a field — click/keystroke coverage needs jsdom, which this package cannot boot at Node 22.14.0 — so an *edit* is covered at the request layer (the `updateContestTemplate`/`replaceTemplateSlots` bodies, `toStudioPatch` merge semantics) rather than through a DOM event.
+
 
 ## Task 14: Sweep, push, stacked PR, census
 
