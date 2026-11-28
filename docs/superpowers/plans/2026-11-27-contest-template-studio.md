@@ -41,6 +41,8 @@
 | Enums | `template_status = draft,active,archived`; `template_slot_type = contestant,runner_up,badge,logo,custom`; `template_crop_mode = cover,contain,fill,none` |
 | Go live-DB home | `backend/tests/voting/` = `package voting_test`, helper `votingPool(t)` (`fixtures_test.go:53`), `newContest(t,ctx,pool,contestOpts{})` seeds `connect_contests`, gate is `TEST_DATABASE_URL` only |
 | vitest scope | `vitest.config.ts:16-18` → `environment: 'node'`, include `tests/unit/**/*.test.ts|spec.ts` |
+| Production rows already hold the configured origin | Read-only memory record (proved from the served `_next/static/chunks/*.js`, not a credential): prod `template_url` is `https://nmseefdlliejmdbxytej.supabase.co/storage/v1/object/public/contest-templates/…`, i.e. exactly the `getPublicUrl()` shape. So Task 1 repairs **production**, not only dev, and needs no new variable — the trusted origin is the one `NEXT_PUBLIC_SUPABASE_URL` already carries there |
+| The refusal is reachable today | `resolveActiveTemplateForContest` → `compositeImage` is live on `origin/main`, so a prod template with an active contest throws `Remote image host is not allowed` (only P2's `applied:false` degrade reporting is unmerged) |
 
 ---
 
@@ -81,7 +83,7 @@
   - `export function isConfiguredSupabaseOrigin(value: string): boolean`
   - `export function isAllowedRemoteImageUrl(value: string): boolean` — signature unchanged, meaning extended.
 
-- [ ] **Step 1: Write the failing test.** Cover the acceptance list, in both directions, with the dev shape the database actually holds and the production shape the examples document.
+- [x] **Step 1: Write the failing test.** Cover the acceptance list, in both directions, with the dev shape the database actually holds and the production shape the examples document.
 
 ```ts
 /**
@@ -182,8 +184,8 @@ describe('the literal CDN entries still work', () => {
 });
 ```
 
-- [ ] **Step 2: Run it, read the red.** `npx vitest run tests/unit/config/trusted-image-origin.test.ts` — expect failures naming `configuredSupabaseOrigin` as not exported, and the dev-object case returning `false` (that `false` **is** the defect).
-- [ ] **Step 3: Implement.** Add beside the existing array, then extend the predicate. `isAllowedRemoteImageUrl` must stay one function: its two callers (`photo-jobs/assets.ts:32`, `imageCompositor.ts:123`) then agree by construction, which is the point of requirement 2.
+- [x] **Step 2: Run it, read the red.** `npx vitest run tests/unit/config/trusted-image-origin.test.ts` — expect failures naming `configuredSupabaseOrigin` as not exported, and the dev-object case returning `false` (that `false` **is** the defect).
+- [x] **Step 3: Implement.** Add beside the existing array, then extend the predicate. `isAllowedRemoteImageUrl` must stay one function: its two callers (`photo-jobs/assets.ts:32`, `imageCompositor.ts:123`) then agree by construction, which is the point of requirement 2.
 
 ```ts
 /**
@@ -262,8 +264,8 @@ export function isAllowedRemoteImageUrl(value: string): boolean {
 }
 ```
 
-- [ ] **Step 4: Run the new file plus the suite that already asserts the guard's neighbours.** `npx vitest run tests/unit/config tests/unit/photo-jobs/assets.test.ts tests/unit/rendering` — expect all pass (`assets.test.ts` mocks the guard, so it is unaffected; `tests/unit/photo-jobs/blend/*` may show the `cdn.test` cases still green — Task 3 replaces them).
-- [ ] **Step 5: `npm run type-check`, then commit** `git add -A src/lib/config tests/unit/config && git commit -m "fix(contest-studio): trust the configured Supabase origin for template objects"`.
+- [x] **Step 4: Run the new file plus the suite that already asserts the guard's neighbours.** `npx vitest run tests/unit/config tests/unit/photo-jobs/assets.test.ts tests/unit/rendering` — expect all pass (`assets.test.ts` mocks the guard, so it is unaffected; `tests/unit/photo-jobs/blend/*` may show the `cdn.test` cases still green — Task 3 replaces them).
+- [x] **Step 5: `npm run type-check`, then commit** `git add -A src/lib/config tests/unit/config && git commit -m "fix(contest-studio): trust the configured Supabase origin for template objects"`.
 
 ## Task 2: `readTemplateImage` — bytes, or a named reason
 
@@ -280,7 +282,7 @@ export function isAllowedRemoteImageUrl(value: string): boolean {
   - `export type TemplateImageRead = { ok: true; bytes: Buffer } | { ok: false; reason: TemplateReadFailure; status?: number }`
   - `export function readTemplateImage(value: string | null | undefined): Promise<TemplateImageRead>`
 
-- [ ] **Step 1: Failing test.** The plan is what the config page will census without spending a request, so it is tested on its own; the read is tested against a stubbed `globalThis.fetch`.
+- [x] **Step 1: Failing test.** The plan is what the config page will census without spending a request, so it is tested on its own; the read is tested against a stubbed `globalThis.fetch`.
 
 ```ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -346,8 +348,8 @@ describe('readTemplateImage', () => {
 
 The last case needs a seventh failure name: add `'redirected-off-origin'` to `TemplateReadFailure` in Step 3 (the test states the intent first; the union grows to match it).
 
-- [ ] **Step 2: Run, read red** (`Cannot find module '@/src/lib/media/template-image'`).
-- [ ] **Step 3: Implement.**
+- [x] **Step 2: Run, read red** (`Cannot find module '@/src/lib/media/template-image'`).
+- [x] **Step 3: Implement.**
 
 ```ts
 /**
@@ -438,8 +440,8 @@ export async function readTemplateImage(value: string | null | undefined): Promi
 }
 ```
 
-- [ ] **Step 4: Run** `npx vitest run tests/unit/media/template-image.test.ts` → pass.
-- [ ] **Step 5: Commit** `git add -A src/lib/media/template-image.ts tests/unit/media/template-image.test.ts && git commit -m "feat(contest-studio): read template bytes with a named failure reason"`.
+- [x] **Step 4: Run** `npx vitest run tests/unit/media/template-image.test.ts` → pass.
+- [x] **Step 5: Commit** `git add -A src/lib/media/template-image.ts tests/unit/media/template-image.test.ts && git commit -m "feat(contest-studio): read template bytes with a named failure reason"`.
 
 ## Task 3: Point the pipeline at it, and unmask the defect in the test
 
@@ -453,8 +455,8 @@ export async function readTemplateImage(value: string | null | undefined): Promi
 - Consumes: `readTemplateImage` (Task 2).
 - Produces: `render_params.blend.error` values of the form `the cutout bytes could not be read (<reason>)` / `the template bytes could not be read (<reason>)`, and a blend test whose template URL is one production config can emit.
 
-- [ ] **Step 1: Rewrite the masking fixtures.** In `runner-blend.test.ts` set `const TEMPLATE_URL = 'http://127.0.0.1:54321/storage/v1/object/public/contest-templates/templates/c2eca087/3491eee5.png'` (the shape the dev DB holds today), set `process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://127.0.0.1:54321'` in `beforeAll`, mock `@/src/lib/media/template-image` alongside `readAssetBytes`, and replace the `provider_url === 'https://cdn.test/template.png'` branch with `readTemplateImage` returning `template-png-bytes`.
-- [ ] **Step 2: Add the regression case the mock was hiding**, asserting the two things that were impossible before: the URL the console writes reaches `applied: true`, and a refused URL names the reason.
+- [x] **Step 1: Rewrite the masking fixtures.** In `runner-blend.test.ts` set `const TEMPLATE_URL = 'http://127.0.0.1:54321/storage/v1/object/public/contest-templates/templates/c2eca087/3491eee5.png'` (the shape the dev DB holds today), set `process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://127.0.0.1:54321'` in `beforeAll`, mock `@/src/lib/media/template-image` alongside `readAssetBytes`, and replace the `provider_url === 'https://cdn.test/template.png'` branch with `readTemplateImage` returning `template-png-bytes`.
+- [x] **Step 2: Add the regression case the mock was hiding**, asserting the two things that were impossible before: the URL the console writes reaches `applied: true`, and a refused URL names the reason.
 
 ```ts
 it('blends a template stored by the admin console, not only a CDN one', async () => {
@@ -478,8 +480,8 @@ it('names which byte read failed, and why', async () => {
 });
 ```
 
-- [ ] **Step 3: Run to red** — `npx vitest run tests/unit/photo-jobs/blend/runner-blend.test.ts` must fail on `readTemplateImage is not a function of the mock` / the `applied:true` expectation, proving the runner still reads templates through the old path.
-- [ ] **Step 4: Implement in the runner.**
+- [x] **Step 3: Run to red** — `npx vitest run tests/unit/photo-jobs/blend/runner-blend.test.ts` must fail on `readTemplateImage is not a function of the mock` / the `applied:true` expectation, proving the runner still reads templates through the old path.
+- [x] **Step 4: Implement in the runner.**
 
 ```ts
   // Two reads, one each. The cutout comes from the vendor (a signed CDN URL, so
@@ -500,35 +502,45 @@ it('names which byte read failed, and why', async () => {
 ```
 
 Update the two existing assertions the change invalidates: the read-call list (line ~259) now expects only the cutout via `readAssetBytes`, and the byte-unreadable case (~279) now expects the named reason. Do not touch the `preset: 'off'` case — §14.11 still requires `readAssetBytes` to be called exactly once there, and the new code keeps that true because the template read happens after the `isBlendDisabled` short-circuit.
-- [ ] **Step 5: Run** the whole `photo-jobs` directory: `npx vitest run tests/unit/photo-jobs` → all pass. Then `npm run type-check`.
-- [ ] **Step 6: Commit** `git commit -am "fix(contest-studio): composite Supabase-hosted templates, and test the URL shape the console writes"`.
+- [x] **Step 5: Run** the whole `photo-jobs` directory: `npx vitest run tests/unit/photo-jobs` → all pass. Then `npm run type-check`.
+- [x] **Step 6: Commit** `git commit -am "fix(contest-studio): composite Supabase-hosted templates, and test the URL shape the console writes"`.
 
 ## Task 4: Live proof against a stored row
 
 **Files:**
-- Create: `frontend-web/scripts/qa/template-blend-live.ts` (dev-only, excluded from build; `scripts/qa/` already holds comparable harnesses)
+- Create: `frontend-web/tests/unit/photo-jobs/live/template-blend-live.test.ts`
 
 **Interfaces:**
-- Consumes: `readTemplateImage`, `resolveActiveTemplateForContest` (for the slot row), `blendSubject`, `compositeImage`.
-- Produces: a printed verdict object `{ row, plan, bytes, decisions, composite }` and a PNG at `outputs/live-blend/<template-id>.png`.
+- Consumes: `readTemplateImage`, `templateImagePlan`, `resolveBlendParams`, `blendSubject`, `compositeImage`, and `figurePng` from `tests/unit/photo-jobs/blend/fixtures.ts`.
+- Produces: a printed verdict array `[{ templateId, url, plan, bytes, applied, decisions, placement, composite }]` and one composited file per blended row under `$TMPDIR/spotlight-live-blend/`.
 
-- [ ] **Step 1: Write the harness.** It reads the three real rows, and for each one prints the plan, the byte length, then runs the engine and compositor over a generated alpha subject and reports `applied`.
+**Correction found while executing (why not `scripts/qa/*.ts`).** There is no `scripts/qa/` directory in this repo — `frontend-web/scripts/` holds only `contract-check.mjs` — and no TS loader: `node_modules/.bin` has `vitest` but neither `tsx` nor `ts-node`. `node --experimental-strip-types` therefore cannot run a harness at all, because every module it would import (`src/lib/media/template-image.ts`, `src/lib/rendering/blend/index.ts`, `imageCompositor.ts`) reaches its neighbours through the `@/src` alias, which only vitest's `resolve.alias` maps. So the harness is a gated vitest file. `tests/unit/photo-jobs/live/` is inside `vitest.config.ts`'s `include` (`tests/unit/**/*.test.ts`), which is why the file must carry `describe.skipIf(!process.env.LIVE_TEMPLATE_PROOF)`: CI's unit lane has no database and no storage service, and a live assertion that "passes" in a container that cannot reach either is worse than no assertion. Written composites go to `$TMPDIR/spotlight-live-blend/` rather than `outputs/` because `outputs/` is not in `.gitignore`.
 
-```ts
-/**
- * Live check: can this working tree composite a template row that the admin
- * console actually wrote? Nothing here is a unit test — it needs the local
- * Supabase stack on 127.0.0.1:54321 and the rows in the dev database, and it is
- * read-only against both. Run with:
- *   NEXT_PUBLIC_SUPABASE_URL=$(grep -m1 ^NEXT_PUBLIC_SUPABASE_URL ../.env.local | cut -d= -f2-) \
- *   node --experimental-strip-types scripts/qa/template-blend-live.ts
- */
+- [x] **Step 1: Write the harness.** It reads the three real rows over the Storage REST path with the service key, and for each one prints the plan and the byte length, then runs the engine and compositor over the P2 figure fixture and reports `applied`. Dev has **zero `template_slots` rows** (`select count(*) from template_slots` → `0`), so the slot is synthesized from the row's own `width`/`height` rather than inserting a row into the shared database; that is the state P3's studio (Tasks 9 and 11) exists to end. `storePhoto` is not exercised — dropping objects into the shared dev bucket to prove a URL is readable would leave state behind.
+
+Run command:
+
+```bash
+cd frontend-web
+set -a; . ../../../frontend-web/.env.local; set +a   # dev Supabase URL + service key
+LIVE_TEMPLATE_PROOF=1 npx vitest run tests/unit/photo-jobs/live
 ```
 
-The body queries the rows over the Storage REST endpoint is **not** available to a script without the service key, so use `psql` for the row list (documented in the header) and the module for the bytes; the generated subject is a 400×600 sharp PNG with an elliptical alpha matte.
-- [ ] **Step 2: Run it** and capture output verbatim into the commit message body and the PR description. Expected: for at least one row, `{ bytes: 2849495, applied: true, width: 1080, height: 1350 }` and a written PNG; the two rows with no `contestant` slot must print `no contestant slot` rather than fail.
-- [ ] **Step 3: Record restarts.** Next dev caches `src/lib/config`; if a dev server is running against the branch, restart it and note the pid/command. Nothing in the fix needs a new env var — state that in the PR (production already sets `NEXT_PUBLIC_SUPABASE_URL`, so **no production variable is required and none is written**).
-- [ ] **Step 4: Commit** `git add scripts/qa/template-blend-live.ts && git commit -m "test(contest-studio): prove a console-written template row composites live"`.
+- [x] **Step 2: Run it.** Measured on 2026-11-28, vitest 5.1.0, exit 0, 1 passed in 19.2 s. All three stored rows reached `applied: true`:
+
+| stored object | bytes read | `mode` | placement target | composite written |
+|---|---|---|---|---|
+| `…/templates/c2eca087…/3491eee5….png` | 2,849,495 | declared `auto` → used `background` | 279×670 at (401, 281) | `d842480f….jpg` 1080×1080, 112,411 B |
+| `…/templates/895eae80…/c231c0c0….png` | 2,849,495 | `auto` → `background` | 279×670 at (401, 281) | `1e788b8f….jpg` 1080×1080, 112,411 B |
+| `…/templates/103d2e4e…/f5743aaf….jpg` | 165,840 | `auto` → `background` | 279×670 at (401, 281) | `57c3d369….jpg` 1080×1080, 198,174 B |
+
+Each verdict also carries `edge.featherPx: 1`, `light.gain: 0.92` with `temperature {r:1.018, b:0.982}` and `contrast 1.027` recorded as clamped, `shadow.layers: 2`, `faceProtected.on: true` at strength 0.92, `jpegQuality: 90`. Every URL planned as `{kind:'storage', bucket:'contest-templates', key:'templates/…'}`, and the last assertion re-points `NEXT_PUBLIC_SUPABASE_URL` at `https://other-project.supabase.co` and gets `{ok:false, reason:'host-not-allowed'}` for the identical stored URL — so the trusted origin is demonstrably the deployment's, not the row's.
+
+- [x] **Step 3: Record restarts.** Nothing was rebuilt and no server was restarted: the harness imports the modules from source and `configuredSupabaseOrigin()` reads `process.env.NEXT_PUBLIC_SUPABASE_URL` at call time, so no cache sits between the config and the check. **No new environment variable is needed anywhere** — dev resolves to `http://127.0.0.1:54321` and production already sets `NEXT_PUBLIC_SUPABASE_URL` to `https://nmseefdlliejmdbxytej.supabase.co` (proved from the shipped `frontend-web` chunks), which is the origin the console's `getPublicUrl()` writes. Nothing was written to production.
+
+Full-suite census, for the PR record: two `npx vitest run` passes over this tree gave 12 and 9 failing tests, of which 10 and 7 were `Test timed out in 5000ms`, and the failing *set* differed between runs — the signature of CPU contention (three Qoder sessions share this laptop). The failures that reproduce in isolation — `certificate-artifact`, `beat-download-origin`, `contest-admin-schedule-route` ×2, `wallet/bank` ×2 — reproduce **verbatim at base `7c7ead9e8`** with the same file list: 6 failed / 123 passed at base against 6 failed / 152 passed here, the 29-test difference being Tasks 1–4's new tests. No regression was introduced, and the live file reports `1 skipped` when `LIVE_TEMPLATE_PROOF` is unset.
+
+- [x] **Step 4: Commit** `git add frontend-web/tests/unit/photo-jobs/live/template-blend-live.test.ts && git commit -m "test(contest-studio): prove a console-written template row composites live"`.
 
 ## Task 5: `compositeWithBlend` — one render path for the runner and the preview
 
