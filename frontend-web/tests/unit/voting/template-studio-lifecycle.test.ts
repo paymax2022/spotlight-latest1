@@ -478,6 +478,24 @@ describe('POST …/archive', () => {
     expect((await res.json()).changed).toBe(false);
   });
 
+  it('passes p_actor null for an api-key caller, whose id would fail the uuid signature', async () => {
+    const { client, calls } = makeSupabase({
+      publishedRow: storedRow({ status: 'archived' }),
+      rpcResults: { archive_contest_template: { template_id: TID, status: 'archived', changed: true } },
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client as any);
+    vi.mocked(assertAdminPermission).mockResolvedValueOnce({ actorId: 'api-key', role: 'service' } as any);
+
+    const res = await archivePOST(post(`${TID}/archive`), ctx());
+
+    // `archive_contest_template` never reads p_actor — published_at/published_by stay
+    // as history — but the parameter is still declared `uuid`, so the literal
+    // 'api-key' would reach Postgres and come back as a 500 for a call that was the
+    // admin's to make.
+    expect(res.status).toBe(200);
+    expect(calls.rpcCalls[0].args).toEqual({ p_template_id: TID, p_actor: null });
+  });
+
   it('answers false rather than undefined when the RPC reports nothing at all', async () => {
     const { client } = makeSupabase({ publishedRow: storedRow({ status: 'archived' }) });
     vi.mocked(createAdminClient).mockReturnValue(client as any);
