@@ -853,9 +853,42 @@ The survivor is the finding, not a rounding error: with two *drafts*, the CTE's 
 - Consumes: `templateImagePlan` (Task 2) to validate `imageUrl`.
 - Produces: `SlotInput` gains `imageUrl?: string | null; anchor?: string; bleed?: boolean; faceProtect?: boolean`; `mapSlotRow` returns `imageUrl, anchor, bleed, faceProtect`.
 
-- [ ] **Step 1: Failing tests**: PUT carrying the four fields inserts them (`insert` payload assertion); omitted fields insert the column defaults `anchor:'auto'`, `bleed:false`, `face_protect:true`, `image_url:null` — the replace semantics of PUT, stated rather than hidden; `imageUrl: 'https://evil.test/x.png'` → 400 `slot_image_not_readable`; **the drop guard**: when an existing slot row has a non-null `image_url` that no slot in the payload repeats, PUT answers 400 `slot_art_would_be_dropped` naming it, and `delete` was never called.
-- [ ] **Step 2: Implement** (validate → read existing rows → drop guard → delete → insert). Keep the pre-existing "active template must keep a contestant slot" guard untouched; the studio fields are draft-gated by `isEditableStatus`, but only when the payload actually sets one of the four (so the shipped console keeps working while it does not know them yet).
-- [ ] **Step 3: Run** `npx vitest run tests/unit/voting && npm run type-check` → pass. Commit `feat(contest-studio): slots carry their own art`.
+  As executed, `SlotInput` carries those four as one parsed fragment — `artColumns: Record<string, unknown>` in storage shape — because `parseStudioSlotFields` already returns snake_case columns and re-translating them would be a second table to keep in sync. `mapSlotRow` already returned all four (Task 8 Step 4).
+
+- [x] **Step 1: Failing tests** — 13 of them, and they went red for the right reason (9 failing before the route changed; the 2 that passed immediately are the regression pair: a geometry-only PUT on an art-free template, and the shipped contestant guard).
+
+  They live in `tests/unit/voting/contest-templates-studio.test.ts` under `describe('slot art round-trips through PUT')` rather than in `contest-templates-admin-api.test.ts` as sketched: that file has no slot tests at all (the PUT route was untested before this task), and the studio file already owns the fake, the `draftRow()` fixture and the trusted-host env stub. Coverage: the four fields insert and read back; omitted fields insert `image_url null / anchor 'auto' / bleed false / face_protect true`; `https://evil.test/x.png` → 400 `slot_image_not_readable` with no delete; `anchor 'middle'` and the American `'center'` → `slot_anchor_invalid`; `bleed 'maybe'`, `faceProtect 1` → `slot_flag_invalid`; the drop guard on a geometry-only payload (naming the URL, no delete); a geometry payload allowed when nothing is stored; `imageUrl: null` honoured as a clear; the payload repeating the stored URL; a published row refusing art → 409 `template_is_published`; the shipped console's geometry PUT on an active template still succeeding; and the contestant guard still refusing.
+- [x] **Step 2: Implement** — order is validate → read template → contestant guard (untouched, still first) → read stored art → D6 409 → drop guard → delete → insert.
+
+  One correction to the step's wording before execution: the guard as first written ("an existing `image_url` that no slot in the payload repeats") also refuses the studio's own **clear**, since a slot that sends `imageUrl: null` does not "repeat" anything — art could then never be removed. The implemented rule asks who is responsible for the art set:
+
+  - `ownsArt` — every slot states `image_url`, a URL or `null`. A payload that states it owns the set (so `null` deletes); one that never names it cannot delete anything.
+  - `setsArtField` — any of the four named makes this the studio's request, so `isEditableStatus` gates it (409 on `active`/`archived`).
+
+  The two are mutually exclusive by construction, which is what keeps the shipped console's PUTs passing on every template that has no art (all of them today — nothing has written art yet) while refusing the case the plan was written for. `ownsArt` is checked across the whole list rather than per slot because a replace has no stable slot identity: rows are deleted and re-inserted, so "slot 2 got `anchor`, slot 1's art was forgotten" is indistinguishable from "slot 1's art is wanted gone", and the safe reading of an ambiguous destructive request is a refusal that names the URL. An empty `slots: []` therefore cannot clear a template that has art — it has no row left to carry `null`, and the error says to clear the art first.
+
+  Also repaired: the function's own header comment, which `44e3fb835 refactor: strip noise comments` had cut mid-sentence on `origin/main` ("two calls — not a money path, no DB / set must include at least one 'contestant' slot"). Comments only, no behaviour change.
+- [x] **Step 3: Run** `npx vitest run tests/unit/voting && npm run type-check` → **68 files, 605 passed, 1 todo** (was 592 passed + 1 todo before the 13 new tests), `tsc --noEmit` clean.
+
+  **Ten mutants, each run against `contest-templates-studio.test.ts` (baseline 26 passed), all red, every file restored byte-identically (sha256 equal):**
+
+  | mutant | red count |
+  | --- | --- |
+  | `ownsArt` hardcoded `true` | 3 |
+  | drop guard ignores ownership (`storedArt.length > 0` alone) | 2 |
+  | drop guard inverted (`&& ownsArt`) | 5 |
+  | `SLOT_ART_DEFAULTS` spread after `artColumns` (defaults win) | 2 |
+  | `artColumns: {}` (parsed art discarded) | 4 |
+  | stored-art read returns `[]` | 3 |
+  | D6 409 gate disabled | 1 |
+  | published refusal sent as 400 instead of 409 | 1 |
+  | per-slot `parseStudioSlotFields` refusal disabled | 2 |
+  | `slot_art_would_be_dropped` renamed | 3 |
+
+  The first run scored M9 as `-1/-1`, i.e. no summary at all: the replacement text left an unbalanced brace, so vitest failed to collect the file. Recorded because "did not go red" and "did not run" look the same from a count, and the fix was to balance the block before re-running the whole census.
+
+  Two counts worth reading: the single-red mutants (D6 gate, status code) are each covered by exactly one assertion, which is honest for a rule no shipped client can hit yet; and the stored-art read (3 red) shows the guard genuinely depends on the read rather than on the payload alone.
+- [x] Committed → `db9bec195 feat(contest-studio): slots carry their own art` (3 files, +413 / −8).
 
 ## Task 10: Preview — sample portrait in, composited PNG out
 
@@ -911,6 +944,8 @@ The survivor is the finding, not a rounding error: with two *drafts*, the CTE's 
 **Interfaces:**
 - Consumes: the routes from Tasks 8-12.
 - Produces: service adds `duplicateContestTemplate`, `publishContestTemplate`, `archiveContestTemplate`, `listContestTemplateVersions`, `uploadSlotArt`, `previewContestTemplate`, `getBlendConfig`; `TemplateSlot` gains `imageUrl/anchor/bleed/faceProtect`; `ContestTemplate` gains `photoMode/blendPreset/blendSettings/publishedAt`; `replaceTemplateSlots` payloads **always include the four art fields** (the route's defaults must never be reached by this client).
+
+  Task 9 tightened why that last rule is load-bearing: the PUT route's `ownsArt` test is "`image_url` is stated on **every** slot", so a payload that omits it on even one slot is treated as an art-unaware client and gets 400 `slot_art_would_be_dropped` wherever stored art exists. Send `imageUrl: null` for a slot with no art — never leave the key out.
 
 - [ ] **Step 1: Failing request test** asserting the PUT body from `replaceTemplateSlots` contains all four fields for every slot (this is what closes the silent-drop path that the replace semantics create).
 - [ ] **Step 2: Failing component test** (jsdom + `@testing-library/react`): the panel renders one range input per `bounds` key with `min`/`max` from the fetched config; a `409 template_is_published` on save shows the server sentence; the preview button renders the returned object URL in an `<img>` and shows `blend applied`/`blend declined` from the header.
