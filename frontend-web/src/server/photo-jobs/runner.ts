@@ -33,6 +33,7 @@
  */
 import { resolveFetchableSource } from '@/src/lib/media/asset-source';
 import { getPhotoProvider } from '@/src/lib/media/provider';
+import { readTemplateImage } from '@/src/lib/media/template-image';
 import { blendSubject } from '@/src/lib/rendering/blend';
 import { isBlendDisabled, resolveBlendParams, type BlendParams } from '@/src/lib/rendering/blend/params';
 import { compositeImage, type CompositorInput } from '@/src/lib/rendering/imageCompositor';
@@ -251,17 +252,22 @@ async function chooseRender(args: {
   }
 
   // Two reads, one each: the subject and the frame. The original photograph is
-  // not among them — it was read above purely to prove it still exists.
-  const [subjectPng, templatePng] = await Promise.all([
+  // not among them — it was read above purely to prove it still exists. The
+  // cutout is a vendor CDN URL, so `readAssetBytes`; the frame is a
+  // `contest-templates` public object on this project's own origin, so
+  // `readTemplateImage`, whose named reasons are what make the record below
+  // actionable instead of merely negative.
+  const [subjectPng, templateRead] = await Promise.all([
     readAssetBytes({ storage_key: null, provider_url: args.cutoutUrl }),
-    readAssetBytes({ storage_key: null, provider_url: template.templateUrl }),
+    readTemplateImage(template.templateUrl),
   ]);
+  const templatePng = templateRead.ok ? templateRead.bytes : null;
 
   if (!subjectPng || !templatePng) {
-    return {
-      input: paste(),
-      record: { applied: false, preset: params.preset, error: 'the cutout or template bytes could not be read' },
-    };
+    const error = !subjectPng
+      ? 'the cutout bytes could not be read'
+      : `the template bytes could not be read (${(templateRead as { reason: string }).reason})`;
+    return { input: paste(), record: { applied: false, preset: params.preset, error } };
   }
 
   try {
