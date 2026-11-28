@@ -9,6 +9,7 @@ import {
   MAX_CONTEST_TEMPLATE_UPLOAD_MB,
 } from '@/src/lib/storage/upload-limits';
 import { mapOverlayRow, mapSlotRow, mapTemplateRow, isValidStatus } from './_shared';
+import { effectiveBlendParams, parseStudioTemplateFields, uuidOr } from '@/src/server/template-studio/authoring';
 
 export const BUCKET = 'contest-templates';
 
@@ -169,6 +170,19 @@ export async function POST(request: Request) {
       );
     }
 
+    // Studio fields (P3, spec §6) join the same pre-upload gate for the same
+    // reason: `blendPreset: 'vivid'` is a typo, and a typo that reaches storage
+    // leaves a frame PNG no row will ever reference. A multipart part is text, so
+    // blendSettings arrives as JSON-in-a-string — validateBlendSettings parses it.
+    // An absent part is absent: photo_mode/blend_preset/blend_settings then keep
+    // their column defaults, which is what the shipped console still does.
+    const studio = parseStudioTemplateFields({
+      photoMode: formData.has('photoMode') ? formData.get('photoMode') : undefined,
+      blendPreset: formData.has('blendPreset') ? formData.get('blendPreset') : undefined,
+      blendSettings: formData.has('blendSettings') ? formData.get('blendSettings') : undefined,
+    });
+    if (!studio.ok) return errorResponse(studio.error, 400, studio.code);
+
     // Validate it's an image mime type. The client-supplied File.type is the
     // only signal formData() gives us (unlike the registration uploads route,
     // there's no filename-extension allowlist that's already the source of
@@ -234,9 +248,7 @@ export async function POST(request: Request) {
     // (src/server/admin/auth.ts:77). created_by is a UUID referencing
     // user_profiles, so writing it verbatim failed the insert for every
     // server-to-server create — after the image was already uploaded.
-    const createdBy = typeof identity?.actorId === 'string' && UUID_RE.test(identity.actorId)
-      ? identity.actorId
-      : null;
+    const createdBy = uuidOr(identity?.actorId);
 
     const { data: inserted, error: insertError } = await supabase
       .from('contest_templates')
@@ -251,6 +263,7 @@ export async function POST(request: Request) {
         aspect_ratio: aspectRatio,
         status: 'draft',
         created_by: createdBy,
+        ...studio.updates,
       })
       .select('*')
       .single();
@@ -267,8 +280,16 @@ export async function POST(request: Request) {
       return errorResponse(verdict.message, verdict.status, verdict.code);
     }
 
+    // D5's answer: `effectiveParams` is the number set the compositor will use for
+    // this row, read back off the stored row rather than echoed from the request,
+    // so a column default the client never sent is included too.
     return successResponse(
-      { success: true, template: { ...mapTemplateRow(inserted), slots: [], textOverlays: [] } },
+      {
+        success: true,
+        template: { ...mapTemplateRow(inserted), slots: [], textOverlays: [] },
+        effectiveParams: effectiveBlendParams(inserted.blend_preset, inserted.blend_settings),
+        clamped: studio.clamped,
+      },
       201,
     );
   } catch (error) {
