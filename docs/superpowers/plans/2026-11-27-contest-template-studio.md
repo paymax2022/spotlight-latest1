@@ -553,26 +553,36 @@ Full-suite census, for the PR record: two `npx vitest run` passes over this tree
 - Consumes: `blendSubject`, `compositeImage`, `isBlendDisabled`, `SlotConfig`, `CanvasSize`, `BlendParams`.
 - Produces:
   - `export interface BlendOverrides { xOffset?: number; yOffset?: number; scale?: number }`
-  - `export interface BlendCompositingArgs { templatePng: Buffer; canvas: CanvasSize; slot: SlotConfig; foregroundSlots?: SlotConfig[]; subjectPng: Buffer; params: BlendParams; photoMode?: string; overrides?: BlendOverrides; metrics?: SubjectMetrics }`
+  - `export interface BlendCompositingArgs { templatePng: Buffer; canvas: CanvasSize; slot: SlotConfig; foregroundSlots?: SlotConfig[]; subjectPng: Buffer; params: BlendParams; photoMode?: string; overrides?: BlendOverrides; metrics?: SubjectMetrics; fallback?: CompositorInput }`
   - `export interface BlendCompositingResult extends CompositorResult { decisions: Record<string, unknown> }`
   - `export async function compositeWithBlend(args: BlendCompositingArgs): Promise<BlendCompositingResult>`
 
-- [ ] **Step 1: Failing test** with real sharp inputs (a 60×80 template, a 40×60 alpha subject): assert (a) `decisions.applied === true`, (b) the compositor receives `underlays`/`faceSafe`/`jpegQuality` and `templateBytes` with no `templateUrl`, (c) with a slot whose `face_protect` is false `decisions.faceProtected.on` is false, (d) the output buffer byte-length differs from the unblended `compositeImage` call over the same inputs (the blend changed pixels), and (e) calling it with `resolveBlendParams('off')` returns decisions `applied:false` and a buffer byte-identical to the direct P1-shaped `compositeImage({ templateBytes, slots:[{...slot, photo_bytes: subject}] })` call.
-- [ ] **Step 2: Run to red** (`Cannot find module`).
-- [ ] **Step 3: Implement** — the body is exactly the input construction currently inlined at `runner.ts:277-293`, plus the declined-path input, plus `compositeImage`:
+- [x] **Step 1: Failing test** with real sharp inputs (a 400×400 `opaqueTemplate`, a `figurePng` subject at 200×300 — the plan said 60×80/40×60, which is too small for `measureSubject`'s fringe statistics to be meaningful, so the house fixtures' sizes are used): assert (a) `decisions.applied === true`, (b) the compositor receives `underlays`/`faceSafe`/`jpegQuality` and `templateBytes` with no `templateUrl`, (c) with a slot whose `face_protect` is false `decisions.faceProtected.on` is false, (d) the output buffer byte-length differs from the unblended `compositeImage` call over the same inputs (the blend changed pixels), and (e) calling it with `resolveBlendParams('off')` returns decisions `applied:false` and a buffer byte-identical to the direct P1-shaped `compositeImage({ templateBytes, slots:[{...slot, photo_bytes: subject}] })` call. Two cases were added beyond the plan: the §10 fallback (below) and throw-through-without-fallback.
+- [x] **Step 2: Run to red** — `Error: Cannot find package '@/src/lib/rendering/blend/composite'` (vitest 5's wording for the missing module), 1 file failed.
+- [x] **Step 3: Implement** — the body is the input construction that was inlined in `chooseRender`, plus the declined-path input, plus `compositeImage`. One deliberate addition beyond the plan's snippet, because §10's rule would otherwise have stayed duplicated in the runner and been absent from the preview: `BlendCompositingArgs` carries `fallback?: CompositorInput`, and the `blendSubject` call is wrapped so that **an engine which throws renders the caller's fallback and records `{ applied: false, preset, error }`** — with no `fallback` supplied the throw propagates (a caller that has nothing to fall back to must not silently ship an unblended portrait). The composite and store calls stay un-caught: those still end a job.
 
 ```ts
+const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
 export async function compositeWithBlend(args: BlendCompositingArgs): Promise<BlendCompositingResult> {
-  const blend = await blendSubject({
-    subjectPng: args.subjectPng,
-    templatePng: args.templatePng,
-    canvas: args.canvas,
-    slot: args.slot,
-    params: args.params,
-    metrics: args.metrics,
-    photoMode: args.photoMode,
-    overrides: args.overrides,
-  });
+  const fallback = args.fallback;
+  let blend: BlendOutput;
+  try {
+    blend = await blendSubject({
+      subjectPng: args.subjectPng,
+      templatePng: args.templatePng,
+      canvas: args.canvas,
+      slot: args.slot,
+      params: args.params,
+      metrics: args.metrics,
+      photoMode: args.photoMode,
+      overrides: args.overrides,
+    });
+  } catch (err) {
+    if (!fallback) throw err;
+    const degraded = await compositeImage(fallback);
+    return { ...degraded, decisions: { applied: false, preset: args.params.preset, error: messageOf(err) } };
+  }
   const foreground = args.foregroundSlots ?? [];
   const input: CompositorInput = blend.placement
     ? {
@@ -596,27 +606,49 @@ export async function compositeWithBlend(args: BlendCompositingArgs): Promise<Bl
 }
 ```
 
-- [ ] **Step 4: Refactor the runner** so `chooseRender` answers `{ kind: 'paste'; input: CompositorInput; record }` or `{ kind: 'blend'; args: BlendCompositingArgs }`, and `runPhotoJob` composes inside its existing try:
+Two import notes the snippet has to get right: `BlendOutput` is exported by
+`blend/index.ts`, but `CanvasSize` is **not** (it lives in `blend/placement.ts`
+and `index.ts` only imports it), and `tsc --noEmit` reports TS2459 rather than an
+esbuild error, so the file transpiles and fails the type-check lane if you copy
+both from the index.
+
+- [x] **Step 4: Refactor the runner** so `chooseRender` answers a declared `type Render = { kind: 'paste'; input: CompositorInput; record } | { kind: 'blend'; args: BlendCompositingArgs }` and `runPhotoJob` composes inside its existing try. The blend arm supplies `fallback: paste()`, which is why the engine-throw case keeps its exact record `{ applied: false, preset: 'natural', error: 'median exploded' }` and still reaches `ready` with `compositeImage` called once. `BlendOverrides` is no longer declared in `runner.ts` — it is imported from the seam, so the two callers cannot drift the nudge keys.
 
 ```ts
   let composited: { key: string; buffer: Buffer; mimeType: string; width: number; height: number };
   let blendRecord: Record<string, unknown>;
   try {
     if (render.kind === 'blend') {
-      const r = await compositeWithBlend(render.args);
-      blendRecord = r.decisions;
-      composited = { buffer: r.buffer, mimeType: r.mimeType, width: r.width, height: r.height, key: await storePhoto(r.buffer, r.mimeType, 'composited') };
+      const blended = await compositeWithBlend(render.args);
+      blendRecord = blended.decisions;
+      composited = { buffer: blended.buffer, mimeType: blended.mimeType, width: blended.width,
+        height: blended.height, key: await storePhoto(blended.buffer, blended.mimeType, 'composited') };
     } else {
       blendRecord = render.record;
-      const r = await compositeImage(render.input);
-      composited = { ...r, key: await storePhoto(r.buffer, r.mimeType, 'composited') };
+      const pasted = await compositeImage(render.input);
+      composited = { ...pasted, key: await storePhoto(pasted.buffer, pasted.mimeType, 'composited') };
     }
   } catch (err) {
     return fail(job, `Compositing failed: ${messageOf(err)}`);
   }
 ```
-- [ ] **Step 5: Run** `npx vitest run tests/unit/photo-jobs tests/unit/rendering && npm run type-check` → all pass, with `runner-blend.test.ts`'s existing assertions about `compositeImage`'s argument shape unchanged (vitest mocks are module-level, so `composite.ts` sees them too).
-- [ ] **Step 6: Commit** `git commit -am "refactor(contest-studio): one blended-composite path for the runner and the studio preview"`.
+
+- [x] **Step 5: Run** `npx vitest run tests/unit/photo-jobs tests/unit/rendering` and `npx tsc --noEmit -p tsconfig.json`.
+
+| Command | Result |
+| --- | --- |
+| `npx vitest run tests/unit/photo-jobs tests/unit/rendering` | `vitest_exit=0` — `Test Files 20 passed \| 1 skipped (21)`, `Tests 176 passed \| 1 skipped (177)` |
+| `npx vitest run --no-file-parallelism …/composite.test.ts …/runner-blend.test.ts …/runner.test.ts` | `exit=0` — `Tests 35 passed (35)` |
+| `npx tsc --noEmit -p tsconfig.json` | `tsc_exit=0`, log 0 bytes |
+
+`runner-blend.test.ts`'s assertions about `compositeImage`'s argument shape needed
+no change and still pass (vitest mocks are module-level, so `composite.ts` sees
+them too). One intermediate run of the parallel suite reported 1 failure in
+`composite.test.ts` with no assertion diff — a `Test timed out in 5000ms` of the
+known kind under three sessions on one laptop; the same file passes in isolation
+(8/8, 5.9 s) and serially (35/35), so the number above is the settled one.
+
+- [x] **Step 6: Commit** → `de1040743 refactor(contest-studio): one blended-composite path for the runner and the studio preview` (3 files, +374/−53).
 
 ## Task 6: Migration `20272300000000` — the columns and four RPCs
 
@@ -627,10 +659,25 @@ export async function compositeWithBlend(args: BlendCompositingArgs): Promise<Bl
 **Interfaces:**
 - Produces RPCs `public.duplicate_contest_template(uuid, uuid) → jsonb`, `public.publish_contest_template(uuid, uuid) → jsonb`, `public.archive_contest_template(uuid, uuid) → jsonb`, `public.contest_template_versions(uuid) → jsonb`; columns `contest_templates.published_at timestamptz`, `contest_templates.published_by uuid`.
 
-- [ ] **Step 1: Write the migration.** `add column if not exists` for the two columns (`published_by uuid references public.user_profiles(id) on delete set null`), a partial index on `parent_template_id`, then the four functions per the preamble in Global Constraints. `publish_contest_template` refuses (`22023`) a non-draft status, a NULL `connect_contest_id`, and a template with no `contestant` slot; it archives **every** active row of that contest in the same transaction (D2 — enforced in the transaction, not by an index), then inserts a new active row copying `template_url, thumbnail_url, file_format, width, height, aspect_ratio, is_reusable, contest_id, connect_contest_id, photo_mode, blend_preset, blend_settings` with `version = coalesce(prev.version,0)+1`, `parent_template_id = prev.id`, `published_at = now()`, `published_by = p_actor_id`, and copies `template_slots` (all 18 authoring columns) and `template_text_overlays` (label, field_type, content, x, y, font_size, font_weight, color, z_index) from the draft. `contest_template_versions` walks `parent_template_id` up to the root with `with recursive`, then down with a `depth < 100` guard, and returns `jsonb_agg(... order by version)`.
-- [ ] **Step 2: Unit-test the text invariants** that no other lane would catch: the four `revoke all … from public, anon, authenticated` lines equal the four function names; every function has `security definer` and `set search_path = public, pg_temp`; the file contains no `drop ` / `delete from ` statement; `publish_contest_template` contains both `status = 'archived'` and `slot_type = 'contestant'`. Read the file with `readFileSync(new URL('../../../../supabase/migrations/…', import.meta.url))`.
-- [ ] **Step 3: Run** `npx vitest run tests/unit/photo-jobs/template-studio-migration.test.ts` → pass.
-- [ ] **Step 4: Replay the whole chain into a scratch database** — never the shared dev DB. Use the DSN from the main checkout's `backend/.env`, derive the scratch DSN by substitution (so no credential is typed or printed), create, replay, probe, drop:
+- [x] **Step 1: Write the migration.** `add column if not exists` for the two columns (`published_by uuid references public.user_profiles(id) on delete set null`, both nullable), a partial index on `parent_template_id`, then the four functions per the preamble in Global Constraints.
+
+  **Corrected before execution — the first draft of this step contradicted the approved spec, and the spec won.** It said `publish_contest_template` "inserts a new active row copying …" with `version = coalesce(prev.version,0)+1` and "refuses a non-draft status". Spec D1 says the opposite on all three points: a published row is immutable because its `id` is inside P1's job idempotency key (`job-store.ts:84-90`), so re-publishing different pixels under the same id would answer a re-render from the completed row of the OLD template; therefore **"publish" activates the draft it is handed and mints nothing**, `duplicate_contest_template` is the only id-minting path, and publishing an already-active row is legal (it is how an admin re-times a publication). What publish DOES refuse is the two states §4 names: `connect_contest_id is null` (no contest can ever resolve it — `template-resolver.ts:165`) and no `slot_type = 'contestant'` row (§10: the pipeline drops such a template with a warning).
+
+  Shipped shapes: `duplicate_contest_template(uuid,uuid)` inserts the new draft (`'draft', v.version + 1, v.id, …, p_actor, null, null`) after reading the source `for share`, then copies **all 19** `template_slots` authoring columns (15 from `20260405700000:107-130` plus P2's `image_url, anchor, bleed, face_protect` — the plan's "18" was off by one, and `x/y` are copied too) listed explicitly rather than via `select s.*` so a future column fails loudly at replay instead of silently defaulting, and the 9 `template_text_overlays` columns; returns `{template_id, version, slot_count, overlay_count}`. `publish_contest_template(uuid,uuid)` does `for update`, then a data-modifying CTE `with archived as (update … set status='archived' where connect_contest_id = v.connect_contest_id and id <> p_template_id and status='active' returning id)` — D2 enforced in the transaction, never a partial unique index — then `set status='active', published_at = now(), published_by = p_actor` (no hand-written `updated_at`: `trg_contest_templates_updated_at` at `20260405700000:162` is a BEFORE UPDATE trigger on this table, which is why P1's job functions DO set it by hand and these three do not); returns `{template_id, version, archived_ids}`. `archive_contest_template(uuid,uuid)` returns `{changed:false}` when already archived, else flips `status` only — `published_at`/`published_by` stay, they are the versions panel's history — and does NOT store `p_actor`, because `contest_templates` has no `archived_by` column and §4's column list did not ask for one. `contest_template_versions(uuid)` is `stable`, walks `parent_template_id` up to the root and back down (the tip is not necessarily the row you were handed), guards BOTH recursions with `depth < 100` because the FK has no cycle protection, and returns `{chain:[…] order by version desc, created_at desc}`.
+- [x] **Step 2: Unit-test the text invariants** that no other lane would catch: the four `revoke all … from public, anon, authenticated` lines equal the four function names **as a set**, every function body individually carries `security definer` and `set search_path = public, pg_temp`, no `drop`/`delete from`/`create unique index` anywhere in the file, and `publish_contest_template`'s own body still contains `status = 'archived'`, `id <> p_template_id` and `slot_type = 'contestant'`. Read with `readFileSync(fileURLToPath(new URL('../../../../supabase/migrations/…', import.meta.url)))` — **four** levels from `tests/unit/photo-jobs/`, not P2's five; the wrong depth is an ENOENT at import, not an assertion failure. Assertions are scoped per function body (`body()` slices `create or replace function public.<name>` → its closing `$$;`) because a file-wide grep lets one guarded function vouch for four. One trap this caught while being written: "no backfill UPDATE" must be tested against the DDL region only (`sql.slice(0, index of 'create or replace function')`), since publish's own `update public.contest_templates set …` is the point of the file.
+- [x] **Step 3: Run** `npx vitest run tests/unit/photo-jobs/template-studio-migration.test.ts` → **`Test Files 1 passed (1)` / `Tests 11 passed (11)`**, exit 0.
+
+  **Red-first note, stated rather than papered over:** the SQL was drafted before this file, so there is no pre-implementation red run. The predicate-capture evidence is a four-mutant proof instead (`/tmp/p3_task6_mutation.py`, file restored by sha256 `a814dfbd…`):
+
+  | mutant | test that went red | others |
+  | --- | --- | --- |
+  | `DROP INDEX …` added before the partial index | `is additive only` | 10 passed |
+  | one `revoke` renamed (`contest_template_versions_v2`) | `closes each rpc to anon and authenticated by name` | 10 passed |
+  | `set search_path` removed from **one** body | `gives every function the definer preamble on its own declaration` | 10 passed |
+  | `and id <> p_template_id` deleted | `publishes by archiving the contest s other actives in the same body (D2)` | 10 passed |
+
+  Each turned exactly one assertion red — including mutant 3, which a file-wide grep would have missed, and mutant 2, which the `grant execute` test cannot see. Verdict `4/4 mutants caught, file restored`.
+- [x] **Step 4: Replay the whole chain into a scratch database** — never the shared dev DB. Use the DSN from the main checkout's `backend/.env`, derive the scratch DSN by substitution (so no credential is typed or printed), create, replay, probe, drop:
 
 ```bash
 MAIN=/Users/paymax/Documents/spotlight/main
@@ -645,8 +692,46 @@ psql "$REPLAY" -qAt -c "select column_name from information_schema.columns where
 psql "$REPLAY" -qAt -c "select proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like '%contest_template%' order by 1"
 ```
 Expected: the chain reaches `20272300000000` with no error, two columns, four function names.
-- [ ] **Step 5: Also run the version gate** `bash scripts/ci/check-migration-versions.sh` → pass.
-- [ ] **Step 6: Commit** `git add supabase/migrations/20272300000000_contest_template_studio.sql frontend-web/tests/unit/photo-jobs/template-studio-migration.test.ts && git commit -m "feat(contest-studio): publish/duplicate/archive/version RPCs"`.
+
+Measured (`/tmp/p3_task6_replay.sh`, output kept out of the credential by printing only the
+host shape `localhost:54322` and the dbname):
+
+```
+dsn_host_shape: localhost:54322      replay_db: p3_chain_replay
+files_applied=762  failures=0        last_file=20272300000000_contest_template_studio.sql
+columns probe:  published_at, published_by
+function probe: archive_contest_template, contest_template_versions, duplicate_contest_template, publish_contest_template
+acl probe:      all four → postgres=X/postgres|service_role=X/postgres
+```
+
+Two additions the plan did not ask for and both earned their place. The script refuses to
+continue unless the `sed` substitution actually changed the dbname (`case "$REPLAY" in
+*"$URL"*) exit 1`), because a silently un-substituted DSN would replay the whole chain —
+including trigger and RLS edits — into the shared dev database. And the `proacl` probe is
+what proves the ALTER-DEFAULT-PRIVILEGES reasoning in the SQL comment: no `anon=`/`authenticated=`
+entry survives on any of the four functions.
+
+The replay only proves the DDL parses — plpgsql compiles a body at first call — so each
+function was also executed there with an id that cannot exist:
+
+```
+ERROR:  duplicate_contest_template: no contest template 549a633a-… to duplicate
+ERROR:  publish_contest_template: no contest template 549a633a-… to publish
+ERROR:  archive_contest_template: no contest template 549a633a-… to archive
+ versions | {"chain": []}
+```
+
+and a `do $$ … exception when others … $$` block reported the SQLSTATE each one raises:
+`22023` for all three mutators, which is the code Task 8's `studioRpcFailure` maps to a 400.
+Two psql attempts failed before that worked and are worth recording as traps: `:id` created
+by `\set id "'…'::uuid"` is an **identifier** substitution (it produced `column "'f97a1a23…'::uuid"
+does not exist`), so the id has to be interpolated as a SQL literal; and `ON_ERROR_STOP=0`
+makes a refusal run exit **0**, so the verdict has to come from the printed messages.
+
+The scratch database is deliberately **not** dropped here: Task 7 runs against it (Step 2 of
+that task). Drop it once Task 7 is green.
+- [x] **Step 5: Also run the version gate** `bash scripts/ci/check-migration-versions.sh` → `migration version guard passed — 762 migrations, all versions unique.`, exit 0.
+- [x] **Step 6: Commit** → `55596c2e0 feat(contest-studio): publish/duplicate/archive/version RPCs` (2 files, +452: the SQL +305, the test +147). Staged by path; the untracked `frontend-web/node_modules` and `frontend-admin/node_modules` symlinks stayed out of the index (`git diff --cached --name-only` verified before committing).
 
 ## Task 7: Live-DB proofs of the lifecycle invariants
 
@@ -657,21 +742,39 @@ Expected: the chain reaches `20272300000000` with no error, two columns, four fu
 - Consumes: `votingPool(t)`, `newContest(t, ctx, pool, contestOpts{})`, the four RPCs from Task 6.
 - Produces: no production API — this is the only lane that executes the SQL.
 
-- [ ] **Step 1: Write the tests**, each seeding a draft template + slots with `uuid.NewString()` ids and cleaning up in `t.Cleanup` (slots before template; `template_text_overlays` too):
-  1. publish a draft with a contestant slot → one active row, `version = 1`, the draft stays `draft`, slots copied;
-  2. publish a second draft for the same contest → the first published row is `archived`, the new one is `version = 2` with `parent_template_id` = row 1, and exactly one active row remains;
-  3. publish a draft with no contestant slot → `*pgconn.PgError` with `Code == "22023"`;
-  4. publish a template whose `connect_contest_id` is NULL → same code;
-  5. `duplicate_contest_template` copies slot count and the four P2 slot columns;
-  6. `contest_template_versions` returns the lineage root-to-tip in version order, length 2 after two publishes;
-  7. `archive_contest_template` twice → second returns `{"changed": false}`.
-- [ ] **Step 2: Run against the scratch DB from Task 6** (recreate it if dropped):
+- [x] **Step 1: Write the tests**, each seeding a draft template + slots with `uuid.NewString()` ids and cleaning up in `t.Cleanup` (the template row, since slots and overlays cascade off it; registered AFTER `votingPool`'s cleanup so LIFO deletes before `pool.Close`).
+
+  **Corrected before execution, same defect as Task 6 Step 1:** proofs 1 and 2 here said "publish a draft → the draft stays `draft`, slots copied" and "the new one is `version = 2` with `parent_template_id` = row 1" — that is the old insert-a-new-row design, which spec D1 rejects. Under D1 publishing changes the draft row in place, and only `duplicate` creates a version. The list the file actually implements:
+
+  1. `PublishActivatesTheDraftInPlace` — the returned `template_id` IS the draft's id, `version` stays 1, `archived_ids` is empty, and the row reads back `status='active'` with `published_at` set and `published_by = p_actor`.
+  2. `SecondPublishArchivesTheFirst` — publishing a second draft of the same contest returns the first id in `archived_ids`, `count(status='active') = 1`, and the archived row still has `published_at` (history, not a flag).
+  3. `RepublishingTheLiveRowArchivesNothing` — added *because of a surviving mutant*, see Step 2b: the already-active row reports `archived_ids = []`, stays `active`, keeps one active row, and its `published_at` moves.
+  4. `PublishRefusesAMissingContestantSlot` — `*pgconn.PgError` with `Code == "22023"` whose message names "contestant slot", and the refusal activates nothing (`status` still `draft`, zero active rows).
+  5. `PublishRefusesAnUnlinkedTemplate` — same code, message names "connect contest".
+  6. `DuplicateMintsTheNextVersionAndCopiesAuthoring` — new id ≠ source, `version = 2`, `parent_template_id` = source, `created_by` = actor, `published_at` NULL, `slot_count`/`overlay_count` = 1/1, and P2's four slot columns copied verbatim (`image_url`, `anchor='top'`, `bleed=true`, `face_protect=false` — the last one matters because `face_protect` defaults to **true**, so a copy that silently fell back to the default would pass a weaker test); the source row is untouched.
+  7. `VersionsReturnsTheLineageNewestFirst` — asked from the ORIGINAL row (which is why the function walks up before it walks down), chain length 2, versions `2` then `1`, statuses `active` then `archived`, `published_at` key present.
+  8. `ArchiveIsIdempotent` — first press `changed=true`, second `changed=false`, `published_at`/`published_by` still set, zero active rows.
+- [x] **Step 2: Run against the scratch DB from Task 6** (recreate it if dropped):
 
 ```bash
 cd backend && TEST_DATABASE_URL="$REPLAY" go test ./tests/voting/ -run 'TestLiveDB_TemplateStudio' -count=1 -v 2>&1 | tail -30
 ```
-Expected: every test `--- PASS`, and `grep -c '^=== RUN   TestLiveDB_TemplateStudio'` equals the number of test functions (the canary the live-DB lane greps for).
-- [ ] **Step 3: `go vet ./tests/voting/`** then commit `git add backend/tests/voting/template_studio_live_db_test.go && git commit -m "test(contest-studio): live proofs for publish/duplicate/archive/version invariants"`.
+
+Measured (log at `/tmp/p3_task7_run.log`, ANSI-stripped): `grep -c '^=== RUN   TestLiveDB_TemplateStudio'` = **8**, `grep -c '^--- PASS'` = **8**, `grep -cE '^(--- FAIL|FAIL)'` = **0**, `ok spotlight/backend/tests/voting 11.129s`. `go vet ./tests/voting/` exit 0; `gofmt -l tests/voting/` empty; `bash scripts/ci/check-live-db-gate.sh` → `live-DB gate guard passed — no test reads DATABASE_URL.`
+
+**Step 2b: the behaviour mutation proof, which is why this task is not just a passing suite.** Every body was mutated *in the scratch database* (`/tmp/p3_task7_mutation.py` applies a perturbed copy of the migration with `create or replace`, then restores by replaying the pristine file) and each suite run was expected to go red:
+
+| mutant | intended victim | result |
+| --- | --- | --- |
+| delete `and id <> p_template_id` | `SecondPublishArchivesTheFirst` | **PASS — survived** |
+| publish's slot guard becomes `if false and not exists (…)` | `PublishRefusesAMissingContestantSlot` | FAIL (caught) |
+| duplicate writes `v.version` instead of `v.version + 1` | `DuplicateMintsTheNextVersionAndCopiesAuthoring` | FAIL (caught) |
+| chain ordered `version asc` | `VersionsReturnsTheLineageNewestFirst` | FAIL (caught) |
+| archive also sets `published_at = null` | `ArchiveIsIdempotent` | FAIL (caught) |
+
+The survivor is the finding, not a rounding error: with two *drafts*, the CTE's `status = 'active'` filter can never match the row being published, so deleting the self-exclusion is invisible to that test — the guard only bites when the row is ALREADY active, and even then the following update re-activates it, so the only observable is the lie in `archived_ids`. That produced test 3, and re-running the same mutant against it gives `--- FAIL: TestLiveDB_TemplateStudio_RepublishingTheLiveRowArchivesNothing (0.63s)` → **5/5 caught**, and the restored database passes all eight again.
+
+- [x] **Step 3: `go vet ./tests/voting/`** (clean, above) then commit → `690e2952a test(contest-studio): live proofs for publish/duplicate/archive/version invariants` (1 file, +480).
 
 ## Task 8: Authoring layer and studio fields on create/PATCH
 
