@@ -784,23 +784,64 @@ The survivor is the finding, not a rounding error: with two *drafts*, the CTE's 
 - Test: `frontend-web/tests/unit/voting/template-studio-authoring.test.ts`, extend `tests/unit/voting/contest-templates-admin-api.test.ts`
 
 **Interfaces:**
-- Consumes: `BOUNDS`/`PRESETS` from `blend/params.ts` (export both consts in this task; keep their contents identical), `resolveBlendParams`.
-- Produces:
-  - `export const PHOTO_MODES = ['auto','background','photo_area'] as const`
+- Consumes: `BOUNDS`, `PRESETS`, `SHADOW_MODES` and `resolveBlendParams` from `blend/params.ts` (export the three consts in this task; their contents stay identical — the mutation census pins that a changed bound breaks the suite, not the import), plus `templateImagePlan` from `lib/media/template-image.ts` for the slot-art trust rule.
+- Produces (as executed — `frontend-web/src/server/template-studio/authoring.ts`):
+  - `export const PHOTO_MODES = ['auto','background','photo_area'] as const` + `export type PhotoMode`
+  - `export const BLEND_PRESET_NAMES: BlendPresetName[]`, derived as `Object.keys(PRESETS)` so a fifth preset in the renderer can never be refused by the write gate
+  - `export const SLOT_ANCHORS = ['auto','top','centre','bottom'] as const` (British spelling, verbatim from `20272200000000_contest_photo_blend.sql:28`)
   - `export type FieldVerdict = { ok: true; value: unknown } | { ok: false; code: string; error: string }`
-  - `export function validatePhotoMode(raw: unknown): FieldVerdict`
-  - `export function validateBlendPreset(raw: unknown): FieldVerdict`
-  - `export function validateBlendSettings(raw: unknown): { ok: true; value: Record<string, unknown>; clamped: string[] } | { ok: false; code: string; error: string }`
+  - `export function validatePhotoMode(raw: unknown): FieldVerdict` and `export function validateBlendPreset(raw: unknown): FieldVerdict`
+  - `export type BlendSettingsVerdict = { ok: true; value: Record<string, unknown>; clamped: string[] } | { ok: false; code: string; error: string }`
+  - `export function validateBlendSettings(raw: unknown): BlendSettingsVerdict`
   - `export function effectiveBlendParams(preset: unknown, settings: unknown): BlendParams`
+  - `export type StudioFieldsVerdict = { ok: true; updates: Record<string, unknown>; clamped: string[] } | { ok: false; code: string; error: string }` and `export function parseStudioTemplateFields(body: Record<string, unknown>): StudioFieldsVerdict`
+  - `export type SlotFieldsVerdict = { ok: true; row: Record<string, unknown> } | { ok: false; code: string; error: string }` and `export function parseStudioSlotFields(raw: unknown): SlotFieldsVerdict` — Task 9 consumes these; written here so the slot trust rule is one function, not two
   - `export function isEditableStatus(status: string): boolean`
   - `export function uuidOr(value: unknown): string | null`
-  - in `_shared.ts`: `export function studioRpcFailure(prefix: string, error: { code?: string; message?: string }): Response`
+  - in `_shared.ts`: `export function studioRpcFailure(prefix: string, error: { code?: string; message?: string } | null | undefined): Response`
 
-- [ ] **Step 1: Failing unit tests** for the validator: unknown key → `blend_setting_unknown` naming the key; non-number → `blend_setting_not_a_number`; `shadow: 'loud'` → `blend_setting_invalid`; `featherPx: 99` → clamped with `clamped: ['featherPx']`; a JSON string is parsed, an array or `null` is accepted as "no overrides"; `photoMode: 'blur'` → `photo_mode_invalid`; preset outside the four → `blend_preset_invalid`; `isEditableStatus('active')` false and `('draft')` true.
-- [ ] **Step 2: Run to red**, implement, run to green.
-- [ ] **Step 3: Route tests, then routes.** In `contest-templates-admin-api.test.ts` add: POST with `blendPreset=studio` + `blendSettings={"featherPx":2}` stores both and answers `template.blendPreset === 'studio'`; POST with `blendSettings='{'featherPx':"two"}'` → 400 `blend_setting_not_a_number` and **no storage upload** (assert the fake client's `upload` was not called — the ordering rule the create route already documents); PATCH of `photoMode` on a draft → 200 and the row carries it; PATCH of `photoMode` on an `active` row → 409 `template_is_published`; PATCH `status:'active'` on a draft → calls `rpc('publish_contest_template', { p_draft_id, p_actor_id })` and returns `{ success: true, template }` from the published row, and the legacy "no contestant slot" refusal now comes from the RPC's `22023` mapped through `studioRpcFailure` → 400.
-- [ ] **Step 4: `mapTemplateRow` gains** `photoMode`, `blendPreset`, `blendSettings`, `publishedAt`, `publishedBy` (from `published_at`/`published_by`).
-- [ ] **Step 5: Run** `npx vitest run tests/unit/voting && npm run type-check` → pass. Commit `feat(contest-studio): studio fields on create and patch, published rows read-only`.
+  Two placements differ from the sketch above, and Task 11 reads them from here: `uuidOr` lives in `authoring.ts` rather than `_shared.ts` (it is a field rule; `_shared.ts` is the route layer that imports it), and `studioRpcFailure`'s error argument is nullable because PostgREST hands `null` as readily as an object. `_shared.ts` also gained `const RPC_NAME_PREFIX`, which strips the `publish_contest_template: ` prefix the migration writes — the format is pinned by the migration-text test in `template-studio-authoring.test.ts`, not by memory.
+
+- [x] **Step 1: Failing unit tests** (`tests/unit/voting/template-studio-authoring.test.ts`, 48 tests) for the validator: unknown key → `blend_setting_unknown` naming the key and listing the legal ones; non-number and non-finite → `blend_setting_not_a_number`; `shadow: 'loud'` → `blend_setting_invalid`; `featherPx: 99` → clamped with `clamped: ['featherPx']`; a JSON string is parsed, `null`/array/blank accepted as "no overrides", a non-object refused as `blend_setting_invalid`; `photoMode: 'blur'` → `photo_mode_invalid`; a preset outside the four → `blend_preset_invalid`; `isEditableStatus('draft')` true and `('active')`/`('archived')`/`('pending')` false.
+
+  Three additions the plan's list did not name, each because a weaker test would have passed for the wrong reason:
+
+  1. **Parity with the renderer is asserted, not assumed.** For every key in `BOUNDS` the test builds a payload at that knob's ceiling and asserts the accepted key set equals `Object.keys(BOUNDS) ∪ {shadow}` — so adding a knob to `params.ts` cannot leave the gate refusing it. And `effectiveBlendParams('natural', saved.value)` is compared against `resolveBlendParams('natural', saved.value)`: if the two clamped differently, the studio preview and the delivered photo would disagree and neither would be wrong.
+  2. **The field layer, not the validator, owns "blank means not sent."** `validateBlendSettings('')` legitimately answers `{}` — an empty override set is a legal set — but `parseStudioTemplateFields` must not turn a blank part into a written `{}`: on PATCH the column already holds the admin's overrides, and a form posting an untouched blank textarea would erase them. That is the one behaviour this task implemented backwards first (the red is recorded in Step 2).
+  3. **The three field lists are pinned against the migration's own `CHECK (… IN (…))` text** the way `contest-template-bucket-policy.spec.ts` pins the mime allowlist, because a validator that accepts what the column refuses is a 500 on save.
+- [x] **Step 2: Run to red**, implement, run to green. Red first showed the expected shape — `Cannot find module '@/src/server/template-studio/authoring'`; after the routes existed, one genuine red (`expected { blend_settings: {} } to deeply equal {}`) drove the blank-part fix above.
+
+  `npm run type-check` then caught a defect the suite could not: `StudioFieldsVerdict`'s success member was declared without the `ok: true` discriminant, so every `if (studio.ok)` narrowed nothing. Vitest strips types, so all 80 tests passed on the broken union — recorded because it is the reason Step 5 keeps the type-check in the gate rather than trusting the suite. Re-measured after the fact by deleting the line again on the committed tree: **31 × TS2339 plus 1 × TS2322**, and `tsc --noEmit` back to **0 errors** with the line restored (`git diff` for the file empty, so the mutation left no residue).
+- [x] **Step 3: Route tests, then routes.** The route coverage went into its own file, `tests/unit/voting/contest-templates-studio.test.ts` (13 tests), rather than into `contest-templates-admin-api.test.ts`: the two files assert different contracts (studio field semantics vs. the shipped upload/auth/lifecycle behaviour) and the existing file had already grown a 200-line comment block explaining its own failure modes. `contest-templates-admin-api.test.ts` was edited where D6 changed its subject — its two `hasContestantSlot` PATCH tests became three: `PATCH to active goes through the publish RPC and never writes status itself` (asserts `rpcCalls` equals exactly `[{ fn: 'publish_contest_template', args: { p_template_id: 'tpl-1', p_actor: null } }]` **and** `updatePayload === null`), `answers the RPC's own refusal, not a locally rebuilt one`, `reports a vanished template as 404`.
+
+  The fake client both files needed was extracted to `tests/unit/voting/_contest-template-fake.ts` (the `_` prefix keeps vitest from collecting it, per the existing `_idempotency-fake.ts`), extended with `rpc()` and a `publishedRow` for the post-RPC re-read — and with the read-back merging the insert payload, which is what PostgREST's `INSERT … RETURNING` actually answers. Without that merge the clamped-value assertion could pass while the route reported the fixture's guess instead of what it wrote.
+
+  What the routes do, beyond the plan's wording:
+
+  - POST validates the studio fields **inside** the existing pre-upload gate (beside the `connectContestId` UUID check at `route.ts:161-170`) and spreads `studio.updates` last into the insert, so an absent part keeps the column default. `created_by` went through the new `uuidOr` — same rule, one implementation.
+  - PATCH order is: read `id, status` → 404 → validate → 400 → if the payload writes a studio field and the row is not a draft, 409 `template_is_published` **before** the update object is built (so a request that also renames the template cannot apply the legal half) → UPDATE → then, only if `status:'active'` was asked, the publish RPC → then always a fresh read, because the UPDATE's row is stale by exactly the columns the RPC writes. `archivedIds` is read from the RPC's jsonb `archived_ids`.
+  - `isEditableStatus` accepts `draft` only, so an `archived` row is refused too: `contest_photo_assets.template_id` points at past rows, and D6's own heading is "writable on draft rows only". `status` and `name`/`width`/`height` stay writable on any row — `DELETE` refuses an active template, so blocking lifecycle would strand it, and the shipped console sends those four today.
+  - Both routes answer `effectiveParams` and `clamped` at the **top level** of the success body (not nested in `template`), and `effectiveParams` carries `preset` + the 16 knobs and never `photoMode`, which selects a placement path rather than a blend number.
+- [x] **Step 4: `mapTemplateRow` gains** `photoMode`, `blendPreset`, `blendSettings` (defaulting `{}` when the column reads null), `publishedAt`, `publishedBy`; `mapSlotRow` gains `imageUrl`, `anchor`, `bleed`, `faceProtect` for Task 9.
+- [x] **Step 5: Run** `npx vitest run tests/unit/voting && npm run type-check` → pass. Measured: **68 files, 592 tests passed, 1 todo**, `tsc --noEmit` clean. The one exception in a re-run was `free-vote.spec.ts > assertVotingOpen > throws if voting is disabled` timing out at its own 30000 ms; the same file passes 72/72 with `--no-file-parallelism` (that test alone takes 12.4 s serially, 25.6 s under parallel load), and `git diff --name-only` touches none of `engine`, `composite`, `wallet`, `free-vote` — the contention signature the Task 4 census already recorded for this laptop. The full 316-file suite hits the same wall (18 timeouts, 4 files); the two P2 blend files pass 16/16 serially with `--testTimeout=40000`.
+
+  **Mutation census — nine mutants of the new logic, each run over the three files (baseline 80 passed), all caught, every file restored byte-identically by sha256:**
+
+  | mutant | red count |
+  | --- | --- |
+  | `BOUNDS.featherPx` ceiling `2` → `9` | 4 failed / 76 |
+  | unknown-key code `blend_setting_unknown` → `blend_setting_not_a_number` | 4 / 76 |
+  | `clamped.push(key)` removed | 5 / 75 |
+  | `isEditableStatus` also accepts `'active'` | 3 / 77 |
+  | blank part no longer treated as "not sent" | 3 / 77 |
+  | slot trust gate never matches (`plan.kind === 'never'`) | 2 / 78 |
+  | fake answers the fixture row, ignoring the insert payload | 1 / 79 |
+  | PATCH gate refuses `active` only (archived becomes editable) | 2 / 78 |
+  | POST's `if (!studio.ok) return …` disabled | 3 / 77 |
+
+  The last two matter more than the counts suggest: disabling the create-route gate is caught only by the `uploadKeys` assertions, which is the sole proof that validation runs before the byte transfer, and the fake row proves the read-back merge carries weight rather than decorating the fixture.
+
+- [x] Committed → `8e8ccb40c feat(contest-studio): studio fields on create and patch, published rows read-only` (9 files, +1582 / −158).
 
 ## Task 9: Slot art round-trips through PUT
 
@@ -843,7 +884,7 @@ The survivor is the finding, not a rounding error: with two *drafts*, the CTE's 
 - Consumes: `studioRpcFailure`, `uuidOr`, the four RPCs, `ALLOWED_IMAGE_MIME_TYPES`/`MAX_CONTEST_TEMPLATE_UPLOAD_BYTES`/`describeStorageFailure`/`EXT_BY_MIME` equivalents from the create route (move `EXT_BY_MIME` and `ACCEPTED_LABEL` into `_shared.ts` so the two upload paths cannot drift).
 - Produces: `POST duplicate` → 201 `{ success, templateId, version }`; `POST publish` → 200 `{ success, template, archivedIds }`; `POST archive` → 200 `{ success, changed }`; `GET versions` → 200 `{ success, versions }`; `POST slot-art` (multipart `file`) → 201 `{ success, imageUrl }` with key `slots/<templateId>/<uuid>.<ext>` in the same bucket.
 
-- [ ] **Step 1: Failing tests**: each route 403s before touching Supabase (the guard runs first, same as today); `publish` passes `p_actor_id: null` when the caller's `actorId` is `'api-key'` (the precedent at `route.ts:237`) and a real uuid otherwise; an RPC error with `does not exist` → 404 `template_not_found`; `22023` → 400 carrying the RPC's sentence; `slot-art` refuses an oversized file with 413 `file_too_large` before uploading and refuses an unknown mime with 400 `file_type_unsupported`.
+- [ ] **Step 1: Failing tests**: each route 403s before touching Supabase (the guard runs first, same as today); `publish` passes `p_actor: null` when the caller's `actorId` is `'api-key'` (the precedent at `route.ts:237`) and a real uuid otherwise; an RPC error with `does not exist` → 404 `template_not_found`; `22023` → 400 carrying the RPC's sentence; `slot-art` refuses an oversized file with 413 `file_too_large` before uploading and refuses an unknown mime with 400 `file_type_unsupported`.
 - [ ] **Step 2: Implement**, then run `npx vitest run tests/unit/voting && npm run type-check`. Commit `feat(contest-studio): duplicate/publish/archive/versions/slot-art routes`.
 
 ## Task 12: Configuration surface tells the truth about stored templates
