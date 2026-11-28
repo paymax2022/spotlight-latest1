@@ -29,6 +29,12 @@ export interface StudioFakeOptions {
   rpcResults?: Record<string, any>;
   /** PostgREST-shaped failure from an RPC, e.g. `{ code: '22023', message: '…' }`. */
   rpcError?: any;
+  /**
+   * Rows `template_slots` already holds, as the PUT route's art-round-trip read
+   * sees them (`select('id, image_url')`). Task 9's drop guard is only testable
+   * with a stored row the payload can forget.
+   */
+  existingSlots?: any[];
 }
 
 export interface StudioFakeCalls {
@@ -38,6 +44,8 @@ export interface StudioFakeCalls {
   uploadKeys: string[];
   removedKeys: string[];
   rpcCalls: { fn: string; args: any }[];
+  /** The array a `template_slots` replace passed to `insert()` — one row per slot. */
+  insertRows: any[] | null;
 }
 
 export function makeSupabase(opts: StudioFakeOptions) {
@@ -48,6 +56,7 @@ export function makeSupabase(opts: StudioFakeOptions) {
     uploadKeys: [] as string[],
     removedKeys: [] as string[],
     rpcCalls: [] as { fn: string; args: any }[],
+    insertRows: null as any[] | null,
   };
 
   function templatesChain() {
@@ -98,12 +107,45 @@ export function makeSupabase(opts: StudioFakeOptions) {
     return chain;
   }
 
+  /**
+   * Task 9 gives `template_slots` a second reader: PUT's drop guard reads the
+   * stored art before it clears the table, then replaces the rows. So the chain
+   * is awaitable (an unawaited `select().eq()` used to be the whole surface) and
+   * `delete`/`insert` record what the route did — `deletedFrom` is how the tests
+   * prove a refusal happened *before* the clear, which is the only way the guard
+   * can be told apart from a route that deletes and then apologises.
+   */
   function slotsChain() {
     const chain: any = {
       select: () => chain,
       eq: () => chain,
       order: () => chain,
       limit: () => Promise.resolve({ data: opts.contestantSlotExists ? [{ id: 'slot-1' }] : [], error: null }),
+      then: (onFulfilled: any, onRejected: any) =>
+        Promise.resolve({ data: opts.existingSlots ?? [], error: null }).then(onFulfilled, onRejected),
+      delete: () => {
+        calls.deletedFrom.push('template_slots');
+        return {
+          eq: () => ({ then: (f: any) => Promise.resolve({ data: null, error: null }).then(f) }),
+        };
+      },
+      insert: (rows: any[]) => {
+        calls.insertRows = rows;
+        // `INSERT … RETURNING *`: the stored rows echo their payload plus the id
+        // the database minted, so asserting the response proves the write.
+        const stored = rows.map((r, i) => ({
+          id: `slot-${i + 1}`,
+          created_at: '2026-11-28T00:00:00Z',
+          updated_at: '2026-11-28T00:00:00Z',
+          ...r,
+        }));
+        const after: any = {
+          select: () => after,
+          then: (onFulfilled: any, onRejected: any) =>
+            Promise.resolve({ data: stored, error: null }).then(onFulfilled, onRejected),
+        };
+        return after;
+      },
     };
     return chain;
   }

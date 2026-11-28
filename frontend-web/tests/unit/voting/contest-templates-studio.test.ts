@@ -33,6 +33,7 @@ import {
   GET as itemGET,
   PATCH as itemPATCH,
 } from '@/app/api/admin/voting/contest-templates/[templateId]/route';
+import { PUT as slotsPUT } from '@/app/api/admin/voting/contest-templates/[templateId]/slots/route';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 import { makeSupabase } from './_contest-template-fake';
@@ -285,5 +286,267 @@ describe('studio fields read back', () => {
       publishedAt: '2026-02-01T00:00:00Z',
       publishedBy: ADMIN_UUID,
     });
+  });
+});
+
+/**
+ * Task 9 — slot art survives (or is deliberately removed by) a PUT that replaces
+ * the whole list.
+ *
+ * PUT's semantics are what make this dangerous: the route deletes every row and
+ * re-inserts, so a field the payload does not carry is a field the database drops.
+ * The old console has thirteen geometry fields and no idea `image_url` exists, so a
+ * geometry-only PUT of a template whose art was set from the studio would delete
+ * that art with no error anywhere. Two rules close it, and the tests below are
+ * exactly the two rules:
+ *
+ * - a payload that **does not mention art at all** keeps every stored art url
+ *   (`slot_art_would_be_dropped` refuses the replace instead), and
+ * - a payload that **does** mention art is the studio's own, so its `null` is read
+ *   as an intentional clear and its writes obey D6 (`draft` rows only).
+ *
+ * The defaults assertion is the other half of the round-trip: omitting `anchor`
+ * must produce the same stored row as sending `'auto'`, and the route says so in
+ * the payload rather than relying on a column default it then cannot report.
+ */
+describe('slot art round-trips through PUT', () => {
+  const slotArtUrl =
+    'http://127.0.0.1:54321/storage/v1/object/public/contest-templates/slots/tpl-1/art.png';
+
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'http://127.0.0.1:54321');
+  });
+
+  function baseSlot(over: Record<string, unknown> = {}) {
+    return {
+      slotName: 'Center', slotType: 'contestant', slotOrder: 1, x: 120, y: 240,
+      width: 600, height: 800, rotation: 0, zIndex: 2, scale: 1, cropMode: 'cover',
+      borderRadius: 12, opacity: 1,
+      ...over,
+    };
+  }
+
+  function slotsReq(slots: unknown[]) {
+    return new Request('https://x.test/api/admin/voting/contest-templates/tpl-1/slots', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ slots }),
+    });
+  }
+
+  /** `cleared` is the tell that matters: a refusal must never have run the delete. */
+  function expectNothingCleared(deletedFrom: string[]) {
+    expect(deletedFrom, 'a refused replace must not clear the table first').not.toContain('template_slots');
+  }
+
+  it('stores the four art fields and answers them back', async () => {
+    const { client, calls } = makeSupabase({ templateRow: draftRow(), existingSlots: [] });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await slotsPUT(
+      slotsReq([baseSlot({ imageUrl: slotArtUrl, anchor: 'centre', bleed: true, faceProtect: false })]),
+      ctx('tpl-1'),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(calls.insertRows).toHaveLength(1);
+    expect(calls.insertRows![0]).toMatchObject({
+      image_url: slotArtUrl,
+      anchor: 'centre',
+      bleed: true,
+      face_protect: false,
+    });
+    expect(body.slots[0]).toMatchObject({
+      imageUrl: slotArtUrl,
+      anchor: 'centre',
+      bleed: true,
+      faceProtect: false,
+    });
+  });
+
+  it('writes the column defaults for the fields a plain geometry payload omits', async () => {
+    const { client, calls } = makeSupabase({ templateRow: draftRow(), existingSlots: [] });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await slotsPUT(slotsReq([baseSlot()]), ctx('tpl-1'));
+
+    expect(res.status).toBe(200);
+    // Stated in the row, not left to the DDL: the response has to describe what
+    // was stored, and `mapSlotRow` reads these columns back.
+    expect(calls.insertRows![0]).toMatchObject({
+      image_url: null,
+      anchor: 'auto',
+      bleed: false,
+      face_protect: true,
+    });
+  });
+
+  it('refuses art hosted outside the renderer’s trust rule before clearing anything', async () => {
+    const { client, calls } = makeSupabase({ templateRow: draftRow(), existingSlots: [] });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await slotsPUT(slotsReq([baseSlot({ imageUrl: 'https://evil.test/x.png' })]), ctx('tpl-1'));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe('slot_image_not_readable');
+    expect(body.error).toMatch(/renderer/i);
+    expect(calls.insertRows).toBeNull();
+    expectNothingCleared(calls.deletedFrom);
+  });
+
+  it('refuses an anchor the column would reject, and a non-boolean flag', async () => {
+    for (const [over, code] of [
+      [{ anchor: 'middle' }, 'slot_anchor_invalid'],
+      [{ anchor: 'center' }, 'slot_anchor_invalid'],
+      [{ bleed: 'maybe' }, 'slot_flag_invalid'],
+      [{ faceProtect: 1 }, 'slot_flag_invalid'],
+    ] as [Record<string, unknown>, string][]) {
+      const { client, calls } = makeSupabase({ templateRow: draftRow(), existingSlots: [] });
+      vi.mocked(createAdminClient).mockReturnValue(client);
+
+      const res = await slotsPUT(slotsReq([baseSlot(over)]), ctx('tpl-1'));
+      expect(res.status, JSON.stringify(over)).toBe(400);
+      expect((await res.json()).code, JSON.stringify(over)).toBe(code);
+      expectNothingCleared(calls.deletedFrom);
+    }
+  });
+
+  it('refuses to drop stored art that a payload unaware of art does not repeat', async () => {
+    const { client, calls } = makeSupabase({
+      templateRow: draftRow(),
+      existingSlots: [{ id: 'slot-1', slot_name: 'Center', image_url: slotArtUrl }],
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    // The shipped console's exact request: geometry only.
+    const res = await slotsPUT(slotsReq([baseSlot()]), ctx('tpl-1'));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe('slot_art_would_be_dropped');
+    expect(body.error, 'the message has to name the art at risk').toContain(slotArtUrl);
+    expectNothingCleared(calls.deletedFrom);
+  });
+
+  it('lets a geometry payload through when no stored slot has art', async () => {
+    const { client, calls } = makeSupabase({
+      templateRow: draftRow(),
+      existingSlots: [{ id: 'slot-1', slot_name: 'Center', image_url: null }],
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await slotsPUT(slotsReq([baseSlot()]), ctx('tpl-1'));
+
+    expect(res.status).toBe(200);
+    expect(calls.deletedFrom).toContain('template_slots');
+  });
+
+  it('honours an explicit null as the studio clearing art on purpose', async () => {
+    const { client, calls } = makeSupabase({
+      templateRow: draftRow(),
+      existingSlots: [{ id: 'slot-1', slot_name: 'Center', image_url: slotArtUrl }],
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await slotsPUT(slotsReq([baseSlot({ imageUrl: null, anchor: 'centre' })]), ctx('tpl-1'));
+
+    expect(res.status).toBe(200);
+    expect(calls.insertRows![0].image_url).toBeNull();
+    expect(calls.deletedFrom).toContain('template_slots');
+  });
+
+  it('keeps the stored art when the payload repeats it', async () => {
+    const { client, calls } = makeSupabase({
+      templateRow: draftRow(),
+      existingSlots: [{ id: 'slot-1', slot_name: 'Center', image_url: slotArtUrl }],
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await slotsPUT(slotsReq([baseSlot({ imageUrl: slotArtUrl })]), ctx('tpl-1'));
+
+    expect(res.status).toBe(200);
+    expect(calls.insertRows![0].image_url).toBe(slotArtUrl);
+  });
+
+  it('refuses to write art onto a published template (D6)', async () => {
+    const { client, calls } = makeSupabase({
+      templateRow: draftRow({ status: 'active' }),
+      existingSlots: [],
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await slotsPUT(slotsReq([baseSlot({ anchor: 'bottom' })]), ctx('tpl-1'));
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe('template_is_published');
+    expect(body.error).toMatch(/Duplicate/i);
+    expectNothingCleared(calls.deletedFrom);
+  });
+
+  it('still lets the shipped console edit geometry on an active template', async () => {
+    const { client, calls } = makeSupabase({
+      templateRow: draftRow({ status: 'active' }),
+      existingSlots: [{ id: 'slot-1', slot_name: 'Center', image_url: null }],
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await slotsPUT(slotsReq([baseSlot({ x: 10, y: 20 })]), ctx('tpl-1'));
+
+    expect(res.status).toBe(200);
+    expect(calls.insertRows![0]).toMatchObject({ x: 10, y: 20, anchor: 'auto', image_url: null });
+  });
+
+  it('refuses a payload that manages art on one slot but forgets it on the stored one', async () => {
+    // The case `ownsArt` exists for: a client that discovered `anchor` but not
+    // `image_url`. Half-managing the art set is indistinguishable from forgetting
+    // it, and the difference is one deleted overlay.
+    const { client, calls } = makeSupabase({
+      templateRow: draftRow(),
+      existingSlots: [{ id: 'slot-1', slot_name: 'Center', image_url: slotArtUrl }],
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await slotsPUT(slotsReq([baseSlot({ anchor: 'top' })]), ctx('tpl-1'));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe('slot_art_would_be_dropped');
+    expect(body.error).toContain(slotArtUrl);
+    expectNothingCleared(calls.deletedFrom);
+  });
+
+  it('refuses to delete every slot of a template that has art', async () => {
+    // An empty list has no slot left to carry `imageUrl: null`, so the studio has
+    // to clear the art before emptying the template — two deliberate steps rather
+    // than one destructive one.
+    const { client, calls } = makeSupabase({
+      templateRow: draftRow(),
+      existingSlots: [{ id: 'slot-1', slot_name: 'Center', image_url: slotArtUrl }],
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await slotsPUT(slotsReq([]), ctx('tpl-1'));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe('slot_art_would_be_dropped');
+    expectNothingCleared(calls.deletedFrom);
+  });
+
+  it('keeps refusing to strip the last contestant slot from an active template', async () => {
+    const { client, calls } = makeSupabase({
+      templateRow: draftRow({ status: 'active' }),
+      existingSlots: [{ id: 'slot-1', slot_name: 'Center', image_url: null }],
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client);
+
+    const res = await slotsPUT(slotsReq([baseSlot({ slotName: 'Badge', slotType: 'badge' })]), ctx('tpl-1'));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/contestant/i);
+    expectNothingCleared(calls.deletedFrom);
   });
 });
