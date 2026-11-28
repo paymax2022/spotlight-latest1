@@ -24,17 +24,19 @@
  * Nothing here catches an exception to keep going, with two exceptions, both of
  * them about losing polish rather than losing the portrait. Variants are one: a
  * thumbnail is decoration on a result that is already finished and stored, so
- * losing it must not un-publish anything. The other is the blend pass, and
- * `chooseRender` below is where it lives — an engine that throws, or whose
- * pixels could not be read, answers with P1's paste and a record saying so,
- * because §10's promise is that the contestant still gets a framed photograph.
+ * losing it must not un-publish anything. The other is the blend pass, and it is
+ * deliberately not a `catch` in this file: `chooseRender` hands P1's paste to
+ * `compositeWithBlend` as its `fallback`, so an engine that throws — or pixels
+ * that could not be read — answers with the unblended portrait and a record
+ * saying so, and the studio preview degrades the same way because it calls the
+ * same path. §10's promise is that the contestant still gets a framed photograph.
  * Neither exception reaches the composite-and-store pair, whose failure is still
  * fatal by design: there is no portrait to publish without those two calls.
  */
 import { resolveFetchableSource } from '@/src/lib/media/asset-source';
 import { getPhotoProvider } from '@/src/lib/media/provider';
 import { readTemplateImage } from '@/src/lib/media/template-image';
-import { blendSubject } from '@/src/lib/rendering/blend';
+import { compositeWithBlend, type BlendCompositingArgs, type BlendOverrides } from '@/src/lib/rendering/blend/composite';
 import { isBlendDisabled, resolveBlendParams, type BlendParams } from '@/src/lib/rendering/blend/params';
 import { compositeImage, type CompositorInput } from '@/src/lib/rendering/imageCompositor';
 import { resolveActiveTemplateForContest, type ResolvedTemplate } from '@/src/server/registration/template-resolver';
@@ -128,7 +130,7 @@ export async function runPhotoJob(job: PhotoJob): Promise<RunOutcome> {
 
   await setPhotoJobProgress(job.id, 'compositing', 70);
 
-  const { input: renderInput, record: blendRecord } = await chooseRender({
+  const render = await chooseRender({
     template,
     params,
     cutoutUrl: cutout.resultUrl,
@@ -137,9 +139,23 @@ export async function runPhotoJob(job: PhotoJob): Promise<RunOutcome> {
   });
 
   let composited: { key: string; buffer: Buffer; mimeType: string; width: number; height: number };
+  let blendRecord: Record<string, unknown>;
   try {
-    const rendered = await compositeImage(renderInput);
-    composited = { ...rendered, key: await storePhoto(rendered.buffer, rendered.mimeType, 'composited') };
+    if (render.kind === 'blend') {
+      const blended = await compositeWithBlend(render.args);
+      blendRecord = blended.decisions;
+      composited = {
+        buffer: blended.buffer,
+        mimeType: blended.mimeType,
+        width: blended.width,
+        height: blended.height,
+        key: await storePhoto(blended.buffer, blended.mimeType, 'composited'),
+      };
+    } else {
+      blendRecord = render.record;
+      const pasted = await compositeImage(render.input);
+      composited = { ...pasted, key: await storePhoto(pasted.buffer, pasted.mimeType, 'composited') };
+    }
   } catch (err) {
     // §10: this is the one throw allowed to fail the job after the blend's own
     // degrade. Nothing was stored, so nothing can be published, and the reason
@@ -179,13 +195,6 @@ export async function runPhotoJob(job: PhotoJob): Promise<RunOutcome> {
   return 'ready';
 }
 
-/** The contestant editor's nudges (P4), in the shape `planPlacement` expects. */
-interface BlendOverrides {
-  xOffset?: number;
-  yOffset?: number;
-  scale?: number;
-}
-
 /**
  * Pick the three keys the engine understands out of `render_params`.
  *
@@ -202,6 +211,18 @@ function overridesFrom(renderParams: Record<string, unknown>): BlendOverrides {
 }
 
 /**
+ * What `chooseRender` decides, before any of it is drawn.
+ *
+ * `paste` is the whole P1 render plus the record that explains why the blend is
+ * absent; `blend` is the argument list for the one shared blended-composite path
+ * (`blend/composite.ts`), which is also what the studio preview will call, so the
+ * pixels an author previews are the pixels the queue publishes.
+ */
+type Render =
+  | { kind: 'paste'; input: CompositorInput; record: Record<string, unknown> }
+  | { kind: 'blend'; args: BlendCompositingArgs };
+
+/**
  * Decide what the compositor is asked to draw, and what the job records about
  * that decision.
  *
@@ -211,18 +232,20 @@ function overridesFrom(renderParams: Record<string, unknown>): BlendOverrides {
  * - **`off`** returns P1's call verbatim — no byte reads, no placement, no
  *   quality — so the byte-identity proof is about a code path an operator can
  *   select, not about arithmetic that happens to be an identity.
- * - **the blend** returns the engine's own render: the template as the bytes it
- *   was already measured from, the *refined cutout* as the slot's pixels (never
- *   the original photograph, which is what §14.12's three separate assets are
- *   for), the foreground art appended, and the underlays, face box and quality
- *   the engine decided.
- * - **either degrade** — the bytes could not be read, or the engine threw —
- *   returns that same P1 call with a named reason, because §10's promise is that
- *   a failed blend costs the blend and not the portrait. The paste re-fetches
- *   both URLs itself, so a byte read that failed on a hiccup still renders.
+ * - **the blend** hands `compositeWithBlend` the bytes both callers need and the
+ *   engine's own parameters: the template as the bytes it was already measured
+ *   from, the *refined cutout* as the slot's pixels (never the original
+ *   photograph, which is what §14.12's three separate assets are for), the
+ *   foreground art appended, and the underlays, face box and quality the engine
+ *   decided.
+ * - **the read degrade** returns that same P1 call with a named reason. An engine
+ *   that *throws* degrades inside the shared path, onto the `fallback` supplied
+ *   here, because §10's promise belongs to both callers rather than to the queue
+ *   alone. The paste re-fetches both URLs itself, so a byte read that failed on a
+ *   hiccup still renders.
  *
- * It does not throw. `compositeImage` and `storePhoto` still can, and that is the
- * one failure left allowed to end the job.
+ * It does not throw. `compositeImage`, `compositeWithBlend` and `storePhoto` still
+ * can, and that is the failure left allowed to end the job.
  */
 async function chooseRender(args: {
   template: ResolvedTemplate;
@@ -232,7 +255,7 @@ async function chooseRender(args: {
   /** what the paste draws: the cutout, or the original when there is no cutout */
   pasteUrl: string;
   overrides: BlendOverrides;
-}): Promise<{ input: CompositorInput; record: Record<string, unknown> }> {
+}): Promise<Render> {
   const { template, params } = args;
 
   // P1's call, with §8.1's foreground art appended. The ribbon belongs over the
@@ -248,7 +271,7 @@ async function chooseRender(args: {
   });
 
   if (isBlendDisabled(params)) {
-    return { input: paste(), record: { applied: false, preset: params.preset } };
+    return { kind: 'paste', input: paste(), record: { applied: false, preset: params.preset } };
   }
 
   // Two reads, one each: the subject and the frame. The original photograph is
@@ -267,39 +290,26 @@ async function chooseRender(args: {
     const error = !subjectPng
       ? 'the cutout bytes could not be read'
       : `the template bytes could not be read (${(templateRead as { reason: string }).reason})`;
-    return { input: paste(), record: { applied: false, preset: params.preset, error } };
+    return { kind: 'paste', input: paste(), record: { applied: false, preset: params.preset, error } };
   }
 
-  try {
-    const blend = await blendSubject({
-      subjectPng,
+  return {
+    kind: 'blend',
+    args: {
       templatePng,
+      subjectPng,
       canvas: { width: template.templateWidth, height: template.templateHeight },
       slot: template.slot,
+      foregroundSlots: template.foregroundSlots,
       params,
       photoMode: template.photoMode,
       overrides: args.overrides,
-    });
-    return {
-      record: blend.decisions,
-      input: {
-        // No `templateUrl` beside these bytes: §14.11's "the read is paid for"
-        // is only true if nothing downstream fetches the same URL a second time.
-        templateBytes: templatePng,
-        templateWidth: template.templateWidth,
-        templateHeight: template.templateHeight,
-        slots: [
-          { ...template.slot, photo_bytes: blend.subjectPng, placement: blend.placement },
-          ...template.foregroundSlots,
-        ],
-        underlays: blend.underlays,
-        faceSafe: blend.faceSafe,
-        jpegQuality: blend.jpegQuality,
-      },
-    };
-  } catch (err) {
-    return { input: paste(), record: { applied: false, preset: params.preset, error: messageOf(err) } };
-  }
+      // The engine's own failure lands here rather than on `fail()`, and it is the
+      // URL-shaped paste rather than these bytes: a fetch that succeeded twice
+      // after a hiccup proves the compositor can still get both images.
+      fallback: paste(),
+    },
+  };
 }
 
 /** Preview and thumbnail. A failure here is logged and skipped: the portrait is
